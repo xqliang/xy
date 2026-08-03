@@ -157,8 +157,11 @@ function shade(hex: string, amt: number): string {
 }
 
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
-  // 背景
-  ctx.fillStyle = '#17110b';
+  // 背景：宣纸浅色（参考原作）
+  const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  bg.addColorStop(0, '#efe6cf');
+  bg.addColorStop(1, '#e2d5b8');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   drawBoard(ctx, b, ui);
@@ -236,14 +239,14 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       const y = BOARD_Y + r * CELL;
       if (isPathCell(c, r)) continue;
       const isUnlocked = unlocked.has(`${c},${r}`);
-      roundRect(ctx, x + 3, y + 3, CELL - 6, CELL - 6, 8);
-      ctx.fillStyle = isUnlocked ? '#2d2417' : '#201a12';
+      roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 6);
+      ctx.fillStyle = isUnlocked ? '#9cc084' : '#c7cdb0'; // 已解锁=鲜绿，未解锁=灰绿
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = isUnlocked ? 'rgba(255,200,120,0.25)' : 'rgba(255,255,255,0.05)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = isUnlocked ? '#6f9a5a' : 'rgba(90,80,60,0.35)';
       ctx.stroke();
       if (!isUnlocked) {
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fillStyle = 'rgba(70,60,40,0.4)';
         ctx.font = '20px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -251,16 +254,12 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       }
     }
   }
-  // 拖拽高亮目标格
-  if (ui.dragFrom && ui.dragPos) {
-    // 高亮在 drawDragGhost 里
-  }
 }
 
 function drawPath(ctx: CanvasRenderingContext2D) {
   ctx.save();
-  ctx.strokeStyle = '#5a4326';
-  ctx.lineWidth = CELL * 0.66;
+  ctx.strokeStyle = '#cbab74'; // 土黄路面
+  ctx.lineWidth = CELL * 0.72;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -270,8 +269,8 @@ function drawPath(ctx: CanvasRenderingContext2D) {
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
-  // 路面中线
-  ctx.strokeStyle = 'rgba(255,220,150,0.18)';
+  // 路面中线（虚线）
+  ctx.strokeStyle = 'rgba(120,90,50,0.35)';
   ctx.lineWidth = 3;
   ctx.setLineDash([10, 12]);
   ctx.stroke();
@@ -384,18 +383,21 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
-  ctx.fillStyle = '#241a10';
+  // 浅木色 HUD 条
+  ctx.fillStyle = '#d8c49a';
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
-  ctx.fillStyle = '#ffcf7a';
+  ctx.fillStyle = 'rgba(90,70,40,0.3)';
+  ctx.fillRect(0, HUD_H - 2, VIEW_W, 2);
+  ctx.fillStyle = '#7a3b12';
   ctx.font = 'bold 24px "PingFang SC", sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(`🍑 ${b.peach}`, 20, HUD_H / 2);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = '#4a3a1a';
   ctx.fillText(`第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2);
   ctx.textAlign = 'right';
-  ctx.fillStyle = '#ff8a8a';
+  ctx.fillStyle = '#c23b3b';
   ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);
 }
 
@@ -438,7 +440,7 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
     }
   }
   // 提示信息
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillStyle = 'rgba(70,50,20,0.8)';
   ctx.font = '14px "PingFang SC", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

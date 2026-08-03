@@ -8,21 +8,20 @@ export interface Cell {
   r: number;
 }
 
-// 取经路：从顶部 spawn（c3,r-1）蜿蜒到唐僧（c3,r9）。妖怪在相邻路点间线性插值移动。
+// 取经路：从左上角入场蜿蜒到右下角唐僧（参考原作"巨鹿"式：绿格块 + 蜿蜒土黄路 + 角落斗）。
 export const PATH: Cell[] = [
-  { c: 3, r: -1 },
-  { c: 3, r: 0 }, { c: 3, r: 1 }, { c: 3, r: 2 },
-  { c: 4, r: 2 }, { c: 5, r: 2 },
+  { c: 1, r: -1 },
+  { c: 1, r: 0 }, { c: 1, r: 1 }, { c: 1, r: 2 },
+  { c: 2, r: 2 }, { c: 3, r: 2 }, { c: 4, r: 2 }, { c: 5, r: 2 },
   { c: 5, r: 3 }, { c: 5, r: 4 },
   { c: 4, r: 4 }, { c: 3, r: 4 }, { c: 2, r: 4 }, { c: 1, r: 4 },
   { c: 1, r: 5 }, { c: 1, r: 6 },
   { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }, { c: 5, r: 6 },
   { c: 5, r: 7 }, { c: 5, r: 8 },
-  { c: 4, r: 8 }, { c: 3, r: 8 },
-  { c: 3, r: 9 }, // 唐僧
+  { c: 6, r: 8 }, { c: 6, r: 9 }, // 唐僧（右下角）
 ];
 
-export const TANGSENG_CELL: Cell = { c: 3, r: 9 };
+export const TANGSENG_CELL: Cell = { c: 6, r: 9 };
 
 const pathKey = (c: number, r: number) => `${c},${r}`;
 const PATH_SET = new Set(PATH.map((p) => pathKey(p.c, p.r)));
