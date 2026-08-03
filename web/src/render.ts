@@ -76,14 +76,21 @@ export function getButtons(b: Battle): Button[] {
   }
   const trayEmpty = b.tray.length === 0;
   const canSummon = trayEmpty && b.peach >= b.summonCost;
-  const third =
-    b.status === 'playing'
-      ? { id: 'palm', label: '如来神掌 🖐', enabled: b.palmAvailable() }
-      : { id: 'wave', label: '立即开战 ▶', enabled: b.status === 'ready' };
+  // 对战中：4 键（征兵/布阵/绝招/神掌）；备战中：3 键（征兵/布阵/立即开战）
+  if (b.status === 'playing') {
+    const w4 = 124;
+    const ultLabel = b.ultReady() ? '绝招 就绪🔥' : `绝招 ${Math.ceil(b.ultCooldownRemaining())}s`;
+    return [
+      { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 20, y, w: w4, h, enabled: canSummon },
+      { id: 'autoplace', label: '布阵', x: 152, y, w: w4, h, enabled: !trayEmpty },
+      { id: 'ult', label: ultLabel, x: 284, y, w: w4, h, enabled: b.ultReady() },
+      { id: 'palm', label: '神掌🖐', x: 416, y, w: w4, h, enabled: b.palmAvailable() },
+    ];
+  }
   return [
     { id: 'summon', label: `征兵 (${b.effectiveSummonCost()}🍑)`, x: 20, y, w: 168, h, enabled: canSummon },
     { id: 'autoplace', label: '一键布阵', x: 196, y, w: 168, h, enabled: !trayEmpty },
-    { id: third.id, label: third.label, x: 372, y, w: 168, h, enabled: third.enabled },
+    { id: 'wave', label: '立即开战 ▶', x: 372, y, w: 168, h, enabled: b.status === 'ready' },
   ];
 }
 
@@ -261,8 +268,25 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
           ctx.fillStyle = unlocked.has(`${c},${r}`) ? th.cellUnlocked : th.cellLocked;
         }
       } else {
-        // AI 半场：路径格用较深紫；非路径格=AI 可布武器的阵位，用较亮紫展示
-        ctx.fillStyle = onPath ? 'rgba(150,120,160,0.4)' : 'rgba(174,150,205,0.34)';
+        // AI 半场：路径格用较深紫；非路径格=AI 可布武器阵位，用明亮紫填充+浅内框，清晰标出
+        if (onPath) {
+          ctx.fillStyle = 'rgba(150,120,160,0.42)';
+          ctx.fill();
+        } else {
+          ctx.fillStyle = 'rgba(196,168,224,0.5)';
+          ctx.fill();
+          ctx.save();
+          ctx.strokeStyle = 'rgba(150,110,180,0.55)';
+          ctx.lineWidth = 1.5;
+          roundRect(ctx, x + 5, y + 5, CELL - 10, CELL - 10, 4);
+          ctx.stroke();
+          ctx.restore();
+        }
+        roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(80,70,55,0.28)';
+        ctx.stroke();
+        continue;
       }
       ctx.fill();
       ctx.lineWidth = 1;
@@ -748,6 +772,15 @@ function drawHeroEnergy(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.drawImage(spr, cx - (spr.width * scale) / 2, cy - (spr.height * scale) / 2 - rad * 0.2, spr.width * scale, spr.height * scale);
     ctx.restore();
   }
+  // 绝招 CD 倒计时 / 就绪 文字（叠在能量条右侧）
+  ctx.fillStyle = full ? '#5a3a08' : 'rgba(90,60,20,0.85)';
+  ctx.font = `bold 11px "PingFang SC", sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  const label = b.status === 'playing'
+    ? (full ? '绝招就绪·点下方按钮' : `绝招 ${Math.ceil(b.ultCooldownRemaining())}s`)
+    : '绝招蓄力';
+  ctx.fillText(label, x0 + w - 4, cy);
   ctx.restore();
 }
 
@@ -808,10 +841,20 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.fillText(def?.desc ?? '', btn.x + btn.w / 2, btn.y + 60);
     } else {
       ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
-      ctx.font = 'bold 20px "PingFang SC", sans-serif';
+      ctx.font = `bold ${btn.w < 140 ? 16 : 20}px "PingFang SC", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+      // 绝招就绪高亮描边
+      if (btn.id === 'ult' && btn.enabled) {
+        ctx.save();
+        ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 130);
+        ctx.strokeStyle = '#ffe27a';
+        ctx.lineWidth = 3;
+        roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+        ctx.stroke();
+        ctx.restore();
+      }
       // 征兵闪光
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();

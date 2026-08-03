@@ -29,6 +29,7 @@ import {
   mirrorCell,
   slotUnlockOrder,
   placeableCells,
+  placeableByProximity,
   isPathCell,
   MAPS,
   type GameMap,
@@ -38,12 +39,12 @@ import {
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 export const TUNING = {
-  monsterSpd: 0.55, // 格/秒
-  monsterHpBase: 6, // 第 n 波 HP = base + step*n
-  monsterHpStep: 3,
+  monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
+  monsterHpBase: 24, // 第 n 波 HP = base + step*n（按基准实测校准：波5起形成压力，波1-4仍轻松）
+  monsterHpStep: 16,
   bossEveryWave: 5, // 每 5 波出一个 BOSS
-  bossHpMul: 6,
-  spawnInterval: 0.8, // 秒/只
+  bossHpMul: 7,
+  spawnInterval: 1.0, // 秒/只（出怪节奏；较宽松，避免同屏怪潮过密）
   summonCostStart: 12, // 首次征兵成本（对齐原作"征兵"量级）
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
@@ -66,12 +67,15 @@ export const TUNING = {
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
   // —— 英雄绝招（定期蓄力释放的大范围爆发，独立于武将基础数值，伤害有上限）——
-  ultChargeTime: 12, // 从空到满的蓄力秒数
+  ultChargeTime: 20, // 从空到满的蓄力秒数（手动释放；调长以降低清场频率）
   ultRadius: 2.5, // 绝招作用半径（格）
   ultDmgMul: 2.6, // 绝招伤害 = 当前波基础怪血 × 该系数（清扫一片小怪）
   // 命中判定宽容量：基础 rge 为欧氏距离，斜向相邻格中心≈1.414，若不放宽则 rge=1 的
   // 近战(棍猴)几乎无法命中相邻怪。加 0.5 格宽容使近战可覆盖相邻格(含斜角)。基础 rge 展示不变。
   rangeTolerance: 0.5,
+  // AI 对手每波部署的新单位数(基数 + 波次×系数)，使 AI 战力与玩家大致对称(伪竞技公平性)
+  aiDeployBase: 8,
+  aiDeployPerWave: 1.5,
 };
 
 // 怪物技能：对附近武将施加的减益类型
@@ -193,6 +197,7 @@ export class Battle {
   ultCenter: { c: number; r: number } | null = null; // 绝招爆心（渲染用）
   ultCount = 0; // 本局绝招释放次数
   ultChargeMul = 1; // 绝招蓄力时间倍率（功德商店可降低）
+  aiHeroEnergy = 0; // AI 英雄绝招能量（对称：AI 也有英雄定期清场，维持伪竞技公平）
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -241,7 +246,7 @@ export class Battle {
     this.aiPath = mirrorPath(map.path);
     this.aiPathLen = lenOf(this.aiPath);
     this.aiTangseng = mirrorCell(map.tangseng);
-    this.aiCells = placeableCells(map).map(mirrorCell);
+    this.aiCells = placeableByProximity(map).map(mirrorCell); // 按贴路远近排序，AI 优先占贴路格
     // 局外功德加成注入
     this.peach += meta.bonusPeach;
     this.tangsengHP += meta.bonusHp;
@@ -548,10 +553,11 @@ export class Battle {
   // AI 自动部署：每波在上半场镜像格补兵并合成升阶（模拟一名对手玩家）
   private aiDeploy(): void {
     const types = Object.keys(UNITS) as UnitType[];
-    // 本波补 2 个 1 阶到空的 AI 格
+    // 本波补若干 1 阶到空的 AI 格（数量随波次与难度增长，逼近玩家战力曲线并跟上高境界怪物）
     let added = 0;
+    const target = Math.round((TUNING.aiDeployBase + this.wave * TUNING.aiDeployPerWave) * this.difficultyMul);
     for (const cell of this.aiCells) {
-      if (added >= 2) break;
+      if (added >= target) break;
       if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
       this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
       added++;
@@ -610,6 +616,21 @@ export class Battle {
   // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
   private updateAi(dt: number): void {
     this.updateAiUnits(dt);
+    // AI 英雄绝招：随境界增强以跟上高难度怪物(维持对手不被单方碾压)。就绪后带随机时机，仍弱于玩家。
+    if (this.aiMonsters.length > 0) {
+      this.aiHeroEnergy = Math.min(1, this.aiHeroEnergy + dt / (TUNING.ultChargeTime * 1.4) * this.difficultyMul);
+      if (this.aiHeroEnergy >= 1 && this.rng.next() < dt * 0.6) {
+        let front = this.aiMonsters[0]!;
+        for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+        const center = posAlong(this.aiPath, front.dist);
+        const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * TUNING.ultDmgMul * 0.7 * this.difficultyMul;
+        for (const m of this.aiMonsters) {
+          const p = posAlong(this.aiPath, m.dist);
+          if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.ultRadius) { m.hp -= dmg; m.hitFlash = 0.15; }
+        }
+        this.aiHeroEnergy = 0;
+      }
+    }
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
@@ -731,19 +752,29 @@ export class Battle {
     else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
   }
 
-  // 英雄绝招：战斗中持续蓄力，满能量后自动对最靠前妖怪群释放大范围爆发。
+  // 英雄绝招：战斗中持续蓄力；满能量后由玩家手动释放（不再自动触发）。
   private updateHero(dt: number): void {
-    if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt);
     if (this.status !== 'playing' || this.monsters.length === 0) return;
     this.heroEnergy = Math.min(1, this.heroEnergy + dt / (TUNING.ultChargeTime * this.ultChargeMul));
-    if (this.heroEnergy >= 1) this.castUltimate();
   }
 
-  private castUltimate(): void {
+  // 绝招是否就绪（能量满且对战中有怪可打）
+  ultReady(): boolean {
+    return this.status === 'playing' && this.heroEnergy >= 1 && this.monsters.length > 0;
+  }
+
+  // 距绝招就绪的剩余秒数（用于 CD 倒计时显示）
+  ultCooldownRemaining(): number {
+    return Math.max(0, (1 - this.heroEnergy) * TUNING.ultChargeTime * this.ultChargeMul);
+  }
+
+  // 手动释放绝招：以最靠前妖怪为中心大范围爆发。返回是否成功。
+  castUltimate(): boolean {
+    if (!this.ultReady()) return false;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
     const center = posAtDistance(this.map, front.dist);
-    // 伤害以“当前波基础怪血 × 系数”封顶，保证不喧宾夺主，不改动武将基础数值
+    // 伤害以"当前波基础怪血 × 系数"封顶，保证不喧宾夺主，不改动武将基础数值
     const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * TUNING.ultDmgMul;
     for (const m of this.monsters) {
       const p = posAtDistance(this.map, m.dist);
@@ -758,6 +789,7 @@ export class Battle {
     this.ultCount++;
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
     this.message = '齐天大圣·绝招！金箍棒横扫';
+    return true;
   }
 
   private updateMonsters(dt: number): void {
@@ -793,6 +825,7 @@ export class Battle {
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
+    if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
   }
 
   // 推进 dt 秒
@@ -898,6 +931,13 @@ export class Battle {
     for (const m of this.monsters) if (m.skill) skillMonsters++;
     let debuffed = 0;
     for (const u of this.units.values()) if (u.stunT > 0 || u.slowT > 0 || u.weakenT > 0) debuffed++;
+    // POW 诊断：塔总战力(ATK×FRQ×RGE×目标) 与 场上怪总战力(HP×SPD)，用于数值校准
+    let towerPowTotal = 0;
+    for (const u of this.units.values()) towerPowTotal += towerPOW(u.type, u.tier);
+    let aiPowTotal = 0;
+    for (const u of this.aiUnits) aiPowTotal += towerPOW(u.type, u.tier);
+    let monsterPowTotal = 0;
+    for (const m of this.monsters) monsterPowTotal += monsterPOW(m.hp, m.spd);
     return {
       peach: this.peach,
       tangsengHP: this.tangsengHP,
@@ -917,6 +957,9 @@ export class Battle {
       debuffed,
       heroEnergy: Math.round(this.heroEnergy * 100),
       ultCount: this.ultCount,
+      towerPow: Math.round(towerPowTotal),
+      aiPow: Math.round(aiPowTotal),
+      monsterPow: Math.round(monsterPowTotal),
       itemsPicked: this.pickedItems.length,
       shopOpen: this.pendingShop !== null,
       message: this.message,

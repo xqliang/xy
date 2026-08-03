@@ -1,5 +1,5 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
-import { Battle } from './battle';
+import { Battle, TUNING } from './battle';
 import {
   draw,
   getButtons,
@@ -118,6 +118,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
+      else if (btn.id === 'ult') battle.castUltimate();
       else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
@@ -232,6 +233,7 @@ interface GameHook {
   summon: () => boolean;
   wave: () => boolean;
   palm: () => boolean;
+  ult: () => boolean;
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   autoPlace: () => void;
@@ -239,6 +241,7 @@ interface GameHook {
   enterBattle: () => void;
   openShop: () => void;
   grantMerit: (n: number) => void;
+  tuning: typeof TUNING;
   restart: (s?: number, diff?: number, mapId?: string) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
@@ -253,6 +256,7 @@ const hook: GameHook = {
   summon: () => battle.summon(),
   wave: () => battle.startNextWave(),
   palm: () => battle.usePalm(),
+  ult: () => battle.castUltimate(),
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   autoPlace: () => battle.autoPlaceTray(),
@@ -260,6 +264,7 @@ const hook: GameHook = {
   enterBattle: () => { screen = 'battle'; },
   openShop: () => { screen = 'shop'; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
+  tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap);
     endHandled = false;
