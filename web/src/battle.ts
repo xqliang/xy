@@ -65,6 +65,10 @@ export const TUNING = {
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
+  // —— 英雄绝招（定期蓄力释放的大范围爆发，独立于武将基础数值，伤害有上限）——
+  ultChargeTime: 12, // 从空到满的蓄力秒数
+  ultRadius: 2.5, // 绝招作用半径（格）
+  ultDmgMul: 2.6, // 绝招伤害 = 当前波基础怪血 × 该系数（清扫一片小怪）
 };
 
 // 怪物技能：对附近武将施加的减益类型
@@ -167,6 +171,13 @@ export class Battle {
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   summonFlash = 0; // 征兵闪光(1→0)
   palmUsedThisWave = false; // 如来神掌每波限用一次
+
+  // —— 英雄绝招 ——
+  heroKey = 'hero-wukong'; // 出战英雄（默认齐天大圣，后续可从菜单选择）
+  heroEnergy = 0; // 绝招能量 0..1
+  ultFlash = 0; // 绝招释放特效计时(秒)
+  ultCenter: { c: number; r: number } | null = null; // 绝招爆心（渲染用）
+  ultCount = 0; // 本局绝招释放次数
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -676,6 +687,35 @@ export class Battle {
     else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
   }
 
+  // 英雄绝招：战斗中持续蓄力，满能量后自动对最靠前妖怪群释放大范围爆发。
+  private updateHero(dt: number): void {
+    if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt);
+    if (this.status !== 'playing' || this.monsters.length === 0) return;
+    this.heroEnergy = Math.min(1, this.heroEnergy + dt / TUNING.ultChargeTime);
+    if (this.heroEnergy >= 1) this.castUltimate();
+  }
+
+  private castUltimate(): void {
+    let front = this.monsters[0]!;
+    for (const m of this.monsters) if (m.dist > front.dist) front = m;
+    const center = posAtDistance(this.map, front.dist);
+    // 伤害以“当前波基础怪血 × 系数”封顶，保证不喧宾夺主，不改动武将基础数值
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * TUNING.ultDmgMul;
+    for (const m of this.monsters) {
+      const p = posAtDistance(this.map, m.dist);
+      if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.ultRadius) {
+        m.hp -= dmg;
+        m.hitFlash = 0.15;
+      }
+    }
+    this.heroEnergy = 0;
+    this.ultFlash = 0.6;
+    this.ultCenter = center;
+    this.ultCount++;
+    this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
+    this.message = '齐天大圣·绝招！金箍棒横扫';
+  }
+
   private updateMonsters(dt: number): void {
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
@@ -748,6 +788,7 @@ export class Battle {
     }
     this.updateUnits(dt);
     this.updateMonsterSkills(dt);
+    this.updateHero(dt);
     this.updateMonsters(dt);
     this.updateAi(dt);
     this.updateFx(dt);
@@ -828,6 +869,8 @@ export class Battle {
       aiDefeated: this.aiDefeated,
       skillMonsters,
       debuffed,
+      heroEnergy: Math.round(this.heroEnergy * 100),
+      ultCount: this.ultCount,
       itemsPicked: this.pickedItems.length,
       shopOpen: this.pendingShop !== null,
       message: this.message,

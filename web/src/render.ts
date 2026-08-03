@@ -178,8 +178,10 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawUnits(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
+  drawHeroUlt(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b);
+  drawHeroEnergy(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
   drawDragGhost(ctx, b, ui);
@@ -635,8 +637,86 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillText(b.aiDefeated ? '对手已败' : `对手 ❤${b.aiTangsengHP}`, x, y - rad - 12);
 }
 
+// 英雄绝招爆发：金色扩散冲击波 + 放射光束
+function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.ultFlash <= 0 || !b.ultCenter) return;
+  const { x, y } = cellCenterPx(b.ultCenter.c, b.ultCenter.r);
+  const t = 1 - b.ultFlash / 0.6; // 0→1
+  ctx.save();
+  // 扩散冲击环
+  ctx.globalAlpha = 1 - t;
+  ctx.strokeStyle = '#ffe27a';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(x, y, 10 + t * TUNING.ultRadius * CELL * 1.1, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#fff3c4';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 4 + t * TUNING.ultRadius * CELL * 0.7, 0, Math.PI * 2);
+  ctx.stroke();
+  // 放射金棒光束
+  ctx.strokeStyle = '#ffd23c';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + t * 0.5;
+    const r0 = 8;
+    const r1 = 16 + (1 - t) * CELL * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+    ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 英雄绝招能量条（HUD 与棋盘之间的细条）+ 头像
+function drawHeroEnergy(ctx: CanvasRenderingContext2D, b: Battle) {
+  const y = HUD_H + 3;
+  const h = 6;
+  const x0 = BOARD_X + 22;
+  const w = CELL * COLS - 22;
+  ctx.save();
+  // 底槽
+  roundRect(ctx, x0, y, w, h, 3);
+  ctx.fillStyle = 'rgba(60,45,25,0.35)';
+  ctx.fill();
+  // 充能
+  const pct = Math.max(0, Math.min(1, b.heroEnergy));
+  const full = pct >= 1;
+  roundRect(ctx, x0, y, Math.max(2, w * pct), h, 3);
+  ctx.fillStyle = full ? '#ffe27a' : '#e0a83c';
+  ctx.fill();
+  if (full) {
+    ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 120);
+    ctx.strokeStyle = '#fff3c4';
+    ctx.lineWidth = 2;
+    roundRect(ctx, x0 - 1, y - 1, w + 2, h + 2, 4);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // 头像圆（左端）
+  const cx = BOARD_X + 12;
+  const cy = y + h / 2;
+  const rad = 12;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+  ctx.fillStyle = full ? '#ffcf4d' : '#b98a3a';
+  ctx.fill();
+  const spr = sprite(b.heroKey as Parameters<typeof sprite>[0]);
+  if (spr) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad - 1, 0, Math.PI * 2);
+    ctx.clip();
+    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
+    ctx.drawImage(spr, cx - (spr.width * scale) / 2, cy - (spr.height * scale) / 2 - rad * 0.2, spr.width * scale, spr.height * scale);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
-  // 主题色 HUD 条
   ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
   ctx.fillStyle = 'rgba(90,70,40,0.3)';
