@@ -1,0 +1,25 @@
+import puppeteer from 'puppeteer-core';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../shots');
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--force-device-scale-factor=2'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 560, height: 1010, deviceScaleFactor: 2 });
+const logs = [];
+page.on('pageerror', (e) => logs.push('[pageerror] ' + e.message));
+await page.goto('http://127.0.0.1:5180/?seed=7', { waitUntil: 'networkidle0' });
+await page.waitForFunction('window.__game && window.__game.snapshot');
+await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
+const cell = await page.evaluate(() => {
+  const g = window.__game;
+  g.enterBattle(); g.grantPeach(200); g.summon(); g.autoPlace();
+  const u = [...g.battle.units.values()][0];
+  g.select(u ? u.cell : null);
+  return u ? u.cell : null;
+});
+await new Promise((r) => setTimeout(r, 150));
+await page.screenshot({ path: path.join(OUT, 'select-panel.png') });
+console.log('selected cell:', JSON.stringify(cell));
+console.log('errors:', logs.join('\n') || '(none)');
+await browser.close();

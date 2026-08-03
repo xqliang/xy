@@ -10,7 +10,7 @@ import {
   type Cell,
 } from './board';
 import { Battle, unitColorOf, TUNING, itemById } from './battle';
-import { UNITS, getUnitStat } from '@core';
+import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
 
@@ -91,6 +91,7 @@ export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
+  selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
 }
 
 // HUD 显示的境界名（由 main 设置）
@@ -177,6 +178,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawUnits(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
+  drawSelection(ctx, b, ui);
   drawHud(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
@@ -435,16 +437,84 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   for (const u of b.units.values()) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    // 攻击范围淡圈
-    const stat = getUnitStat(u.type, u.tier);
-    ctx.beginPath();
-    ctx.arc(x, y, stat.rge * CELL, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(60,90,40,0.05)';
-    ctx.fill();
     // 开火脉冲：放大 + 上跳
     const pulse = u.firePulse;
     drawUnit(ctx, u.type, u.tier, x, y - pulse * 4, CELL * 0.72 * (1 + pulse * 0.16));
   }
+}
+
+// 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
+function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (!ui.selected) return;
+  const u = b.units.get(`${ui.selected.c},${ui.selected.r}`);
+  if (!u) return;
+  const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+  const stat = getUnitStat(u.type, u.tier);
+  // 攻击范围环
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, stat.rge * CELL, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(90,150,70,0.16)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(120,200,90,0.85)';
+  ctx.setLineDash([7, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 选中格描边
+  const gx = BOARD_X + u.cell.c * CELL;
+  const gy = BOARD_Y + u.cell.r * CELL;
+  roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffe08a';
+  ctx.stroke();
+  ctx.restore();
+
+  // 信息面板：名称/等级 + 攻击力/攻速/范围/目标/法宝
+  const cfg = UNITS[u.type];
+  const pw = 176;
+  const ph = 120;
+  let px = x - pw / 2;
+  let py = gy - ph - 8; // 默认显示在单位上方
+  if (py < BOARD_Y) py = gy + CELL + 8; // 顶部空间不足则显示在下方
+  px = Math.max(8, Math.min(VIEW_W - pw - 8, px));
+  ctx.save();
+  roundRect(ctx, px, py, pw, ph, 10);
+  ctx.fillStyle = 'rgba(28,22,14,0.92)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#c8792b';
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  // 标题行：名称 + Lv
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText(`${cfg.name}`, px + 12, py + 18);
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 14px "PingFang SC", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`Lv.${u.tier}`, px + pw - 12, py + 18);
+  // 属性行
+  const rows: [string, string][] = [
+    ['攻击力', damage(stat.atk).toFixed(2)],
+    ['攻速', `${stat.frq.toFixed(2)}/s`],
+    ['攻击范围', stat.rge.toFixed(1)],
+    ['目标数', stat.targets.toFixed(1)],
+    ['法宝', cfg.origin],
+  ];
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ry = py + 40;
+  for (const [k, v] of rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillText(k, px + 12, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff6e6';
+    ctx.fillText(v, px + pw - 12, ry);
+    ry += 16;
+  }
+  ctx.restore();
 }
 
 function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {

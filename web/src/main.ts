@@ -34,7 +34,7 @@ let menuToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
 let battle = new Battle(seed, rank.difficulty, currentMap);
 let endHandled = false; // 本局胜负是否已结算入境界
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
 
 function newGame() {
   currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
@@ -112,21 +112,24 @@ canvas.addEventListener('pointerdown', (e) => {
     handleMenu(x, y);
     return;
   }
-  if (handleButton(x, y)) return;
+  if (handleButton(x, y)) { ui.selected = null; return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
   if (ti !== null && battle.tray[ti]) {
+    ui.selected = null;
     ui.dragTrayIndex = ti;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  // 棋盘单位拖拽（重新布阵/合成）
+  // 棋盘单位拖拽（重新布阵/合成）或点击选中查看信息
   const cell = pxToCell(x, y);
   if (cell && battle.units.has(`${cell.c},${cell.r}`)) {
     ui.dragFrom = cell;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
+  } else {
+    ui.selected = null; // 点击空白处取消选中
   }
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -145,7 +148,14 @@ canvas.addEventListener('pointerup', () => {
         battle.placeFromTray(ui.dragTrayIndex, target);
       }
     } else if (ui.dragFrom && target) {
-      battle.dragUnit(ui.dragFrom, target);
+      if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
+        // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
+        const same = ui.selected && ui.selected.c === target.c && ui.selected.r === target.r;
+        ui.selected = same ? null : { c: target.c, r: target.r };
+      } else {
+        battle.dragUnit(ui.dragFrom, target);
+        ui.selected = null;
+      }
     }
   }
   ui.dragFrom = null;
@@ -191,6 +201,7 @@ interface GameHook {
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   autoPlace: () => void;
+  select: (cell: Cell | null) => void;
   enterBattle: () => void;
   restart: (s?: number, diff?: number, mapId?: string) => void;
   step: (dt: number) => void;
@@ -209,6 +220,7 @@ const hook: GameHook = {
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   autoPlace: () => battle.autoPlaceTray(),
+  select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
   enterBattle: () => { screen = 'battle'; },
   restart: (s?: number, diff?: number, mapId?: string) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap);
