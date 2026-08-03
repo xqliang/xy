@@ -46,8 +46,8 @@ export const TUNING = {
   winWave: 8, // 通关波次（切片演示）
 };
 
-// 候选区令牌：兵种 或 铲子
-export type TrayToken = { kind: 'unit'; type: UnitType } | { kind: 'shovel' };
+// 候选区令牌：兵种（带阶数，可在候选区内合并）或 铲子
+export type TrayToken = { kind: 'unit'; type: UnitType; tier: number } | { kind: 'shovel' };
 
 export type Status = 'ready' | 'playing' | 'won' | 'lost';
 
@@ -118,6 +118,11 @@ export class Battle {
   fx: HitFx[] = [];
   palmUsedThisWave = false; // 如来神掌每波限用一次
 
+  // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
+  introT = 0;
+  introDone = false;
+  static readonly INTRO_DUR = 6; // 秒
+
   // 候选区（征兵产出）与铲子（开格资源）
   tray: TrayToken[] = [];
   shovels = TUNING.initialShovels;
@@ -166,11 +171,12 @@ export class Battle {
     return this.slotOrder.filter((s) => !this.unlocked.has(cellKey(s.c, s.r)));
   }
 
-  // 征兵：消耗蟠桃，随机产出 5 个候选（兵种/铲子）放入候选区。成本递增。候选区非空时不可再征兵。
+  // 征兵：消耗蟠桃，随机产出 5 个候选（兵种/铲子）放入候选区。成本递增。
+  // 候选区非空时：若棋盘仍有空位则须先布阵；若无空位则本次征兵覆盖候选区剩余。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
-    if (this.tray.length > 0) {
-      this.message = '先把候选区的兵/铲子拖到棋盘';
+    if (this.tray.length > 0 && this.hasEmptyUnlocked()) {
+      this.message = '先把候选区的兵拖到绿格';
       return false;
     }
     const cost = this.effectiveSummonCost();
@@ -180,16 +186,21 @@ export class Battle {
     }
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
+    this.tray = []; // 覆盖剩余候选
     const types = Object.keys(UNITS) as UnitType[];
     for (let i = 0; i < TUNING.summonDraws; i++) {
       if (this.rng.next() < TUNING.shovelDrawChance) {
         this.tray.push({ kind: 'shovel' });
       } else {
-        this.tray.push({ kind: 'unit', type: this.rng.pick(types) });
+        this.tray.push({ kind: 'unit', type: this.rng.pick(types), tier: 1 });
       }
     }
     this.message = '把候选区的兵拖到绿格，铲子拖到锁定格开挖';
     return true;
+  }
+
+  private hasEmptyUnlocked(): boolean {
+    return this.unlockedCells().some((c) => !this.units.has(cellKey(c.c, c.r)));
   }
 
   // 计入道具修正后的当前征兵成本
@@ -197,9 +208,25 @@ export class Battle {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
 
+  // 候选区内合并：把第 from 个令牌拖到第 to 个上，同型同级则合并升阶。
+  mergeTrayTokens(from: number, to: number): boolean {
+    if (from === to) return false;
+    const a = this.tray[from];
+    const b = this.tray[to];
+    if (!a || !b || a.kind !== 'unit' || b.kind !== 'unit') return false;
+    if (a.type !== b.type || a.tier !== b.tier || b.tier >= MAX_TIER) {
+      this.message = '候选区只有同型同级可合并';
+      return false;
+    }
+    this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+    this.tray.splice(from, 1);
+    this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
+    return true;
+  }
+
   // 从候选区把第 index 个令牌落到目标格：
-  // - 兵种 → 空的已解锁格放置；同型同级则合成升阶
   // - 铲子 → 锁定的可摆放格 → 开挖解锁
+  // - 兵种 → 空绿格放置；同型同级则合并升阶；非同型则替换（旧单位被换下）
   placeFromTray(index: number, to: Cell): boolean {
     const token = this.tray[index];
     if (!token) return false;
@@ -213,24 +240,26 @@ export class Battle {
       this.message = '铲子挖开了新阵位';
       return true;
     }
-    // 兵种令牌
     if (!this.isUnlocked(to.c, to.r)) {
       this.message = '只能放到已解锁的绿格';
       return false;
     }
     const exist = this.units.get(cellKey(to.c, to.r));
     if (exist) {
-      if (canMerge({ type: exist.type, tier: exist.tier }, { type: token.type, tier: 1 })) {
-        const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: 1 });
+      if (canMerge({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier })) {
+        const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier });
         this.units.set(cellKey(to.c, to.r), { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
         this.tray.splice(index, 1);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
         return true;
       }
-      this.message = '该格已有其它单位';
-      return false;
+      // 非同型同级 → 替换：新兵占位，旧兵换下
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0 });
+      this.tray.splice(index, 1);
+      this.message = `替换为 ${UNITS[token.type].name} ${token.tier} 阶`;
+      return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: 1, cell: { c: to.c, r: to.r }, cooldown: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     return true;
@@ -262,8 +291,11 @@ export class Battle {
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
         return true;
       }
-      this.message = '只有同型同级可合成';
-      return false;
+      // 非同型同级 → 两格交换位置
+      this.units.set(cellKey(from.c, from.r), { ...b, cell: { c: from.c, r: from.r }, cooldown: 0 });
+      this.units.set(cellKey(to.c, to.r), { ...a, cell: { c: to.c, r: to.r }, cooldown: 0 });
+      this.message = '交换了两个单位位置';
+      return true;
     }
     // 移动到空格
     this.units.delete(cellKey(from.c, from.r));
@@ -280,6 +312,8 @@ export class Battle {
       this.message = '请先选择一件道具';
       return false;
     }
+    this.introDone = true; // 手动开波则跳过入场
+    this.introT = Battle.INTRO_DUR;
     this.wave += 1;
     this.status = 'playing';
     this.waveActive = true;
@@ -288,6 +322,13 @@ export class Battle {
     this.spawnTimer = 0;
     this.message = `第 ${this.wave} 波来袭`;
     return true;
+  }
+
+  // 唐僧当前渲染位置（入场时沿路走向归位；归位后固定在终点格）
+  tangsengRenderPos(): { c: number; r: number } {
+    if (this.introDone) return posAtDistance(PATH_TOTAL_LEN);
+    const p = Math.min(1, this.introT / Battle.INTRO_DUR);
+    return posAtDistance(p * PATH_TOTAL_LEN);
   }
 
   // 如来神掌是否可用（对战中且本波未用过）
@@ -434,6 +475,16 @@ export class Battle {
 
   // 推进 dt 秒
   step(dt: number): void {
+    // 开局入场：唐僧归位前的备战窗口（玩家可征兵布阵），归位后自动开打第一波
+    if (!this.introDone && this.status === 'ready' && this.wave === 0) {
+      this.introT += dt;
+      this.message = '唐僧归位中…抓紧征兵布阵！';
+      if (this.introT >= Battle.INTRO_DUR) {
+        this.startNextWave();
+      }
+      this.updateFx(dt);
+      return;
+    }
     if (this.status !== 'playing') {
       this.updateFx(dt);
       return;
@@ -488,8 +539,8 @@ export class Battle {
       }
       const token = this.tray[0]!;
       if (token.kind !== 'unit') { this.tray.splice(0, 1); continue; }
-      // 优先合成：找同型 1 阶单位
-      const mergeTarget = [...this.units.values()].find((u) => u.type === token.type && u.tier === 1);
+      // 优先合成：找同型同级单位
+      const mergeTarget = [...this.units.values()].find((u) => u.type === token.type && u.tier === token.tier);
       if (mergeTarget) {
         if (this.placeFromTray(0, mergeTarget.cell)) continue;
       }

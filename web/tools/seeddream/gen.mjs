@@ -10,15 +10,15 @@ const MODEL = 'doubao-seedream-4-0-250828';
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets');
 mkdirSync(OUT, { recursive: true });
 
-const STYLE = '，Q版卡通，厚涂手绘，圆润可爱，全身立绘，居中构图，纯白色背景，无阴影，无文字，游戏角色图标，高清';
+const STYLE = '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，纯白色背景，无阴影，无文字，高辨识度';
 const jobs = [
-  { id: 'tangseng', prompt: '唐僧，慈眉善目圆脸，金红色锦襕袈裟，戴毗卢帽，双手合十' + STYLE },
-  { id: 'unit-monkey', prompt: '孙悟空猴兵，金色毛发火眼金睛，虎皮裙，手持金箍棒，威风凛凛' + STYLE },
-  { id: 'unit-spear', prompt: '天庭天兵，银白铠甲红缨，手持长枪，英武' + STYLE },
-  { id: 'unit-cavalry', prompt: '天将骑白色天马，金甲红披风，冲锋姿态' + STYLE },
-  { id: 'unit-archer', prompt: '神箭手，青绿劲装，手持长弓拉满弓弦，冷峻' + STYLE },
-  { id: 'monster-minion', prompt: '西游小妖怪，青绿皮肤獠牙，破旧铠甲，手持钉耙，凶恶滑稽' + STYLE },
-  { id: 'monster-boss', prompt: '牛魔王大妖王，赤红肌肉，巨大牛角，黑色铠甲，霸气怒目' + STYLE },
+  { id: 'tangseng', prompt: '唐僧，圆脸慈眉、金红色袈裟、毗卢帽、双手合十，主色金红' + STYLE },
+  { id: 'unit-monkey', prompt: '孙悟空猴兵，金黄毛发、手持金箍棒，主色橙金色' + STYLE },
+  { id: 'unit-spear', prompt: '天兵长枪手，蓝色铠甲、手持一杆长枪，主色蓝色' + STYLE },
+  { id: 'unit-cavalry', prompt: '天将骑白色天马冲锋，绿色披风，主色绿色' + STYLE },
+  { id: 'unit-archer', prompt: '神箭手，紫色劲装、手持弓箭拉满，主色紫色' + STYLE },
+  { id: 'monster-minion', prompt: '西游小妖卒，青绿皮肤獠牙、手持木棍，主色青绿色' + STYLE },
+  { id: 'monster-boss', prompt: '牛魔王妖王，赤红肌肉、大牛角、黑铠甲，主色红色' + STYLE },
 ];
 
 async function gen(job) {

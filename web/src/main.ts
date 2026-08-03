@@ -91,9 +91,16 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerup', () => {
   if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
-    if (target) {
-      if (ui.dragTrayIndex !== null) battle.placeFromTray(ui.dragTrayIndex, target);
-      else if (ui.dragFrom) battle.dragUnit(ui.dragFrom, target);
+    const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
+    if (ui.dragTrayIndex !== null) {
+      // 候选区令牌：拖到另一候选槽→合并；拖到棋盘→落位
+      if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
+        battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
+      } else if (target) {
+        battle.placeFromTray(ui.dragTrayIndex, target);
+      }
+    } else if (ui.dragFrom && target) {
+      battle.dragUnit(ui.dragFrom, target);
     }
   }
   ui.dragFrom = null;

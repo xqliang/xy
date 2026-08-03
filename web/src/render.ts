@@ -186,7 +186,7 @@ export function trayIndexAt(x: number, y: number): number | null {
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
 }
-function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; type: UnitType } | { kind: 'shovel' }, x: number, y: number, s: number) {
+function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; type: UnitType; tier: number } | { kind: 'shovel' }, x: number, y: number, s: number) {
   if (token.kind === 'shovel') {
     roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
     ctx.fillStyle = '#e0b24a';
@@ -197,7 +197,7 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; typ
     ctx.textBaseline = 'middle';
     ctx.fillText('🪏', x, y);
   } else {
-    drawUnit(ctx, token.type, 1, x, y, s);
+    drawUnit(ctx, token.type, token.tier, x, y, s);
   }
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
@@ -279,8 +279,9 @@ function drawPath(ctx: CanvasRenderingContext2D) {
   ctx.restore();
 }
 
-function drawTangseng(ctx: CanvasRenderingContext2D, _b: Battle) {
-  const { x, y } = cellCenterPx(TANGSENG_CELL.c, TANGSENG_CELL.r);
+function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
+  const pos = b.tangsengRenderPos();
+  const { x, y } = cellCenterPx(pos.c, pos.r);
   const rad = CELL * 0.46;
   // 金色光晕底座
   ctx.beginPath();
