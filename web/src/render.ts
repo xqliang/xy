@@ -171,12 +171,23 @@ function shade(hex: string, amt: number): string {
 }
 
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
-  // 背景：地图主题色
-  const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-  bg.addColorStop(0, b.map.theme.bg0);
-  bg.addColorStop(1, b.map.theme.bg1);
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  // 背景：优先用当地图生成的场景大图(cover铺满)，叠一层同色系薄纱使网格清晰；无图时回退主题渐变
+  const bgKey = `map-${b.map.id}` as Parameters<typeof sprite>[0];
+  const bgImg = sprite(bgKey);
+  if (bgImg) {
+    const scale = Math.max(VIEW_W / bgImg.width, VIEW_H / bgImg.height);
+    const dw = bgImg.width * scale;
+    const dh = bgImg.height * scale;
+    ctx.drawImage(bgImg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
+    ctx.fillStyle = 'rgba(20,16,12,0.18)'; // 轻微压暗，提升前景对比
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  } else {
+    const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    bg.addColorStop(0, b.map.theme.bg0);
+    bg.addColorStop(1, b.map.theme.bg1);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  }
 
   drawBoard(ctx, b, ui);
   drawTangseng(ctx, b);
@@ -262,24 +273,13 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
       const onPath = isPathCell(b.map, src.c, src.r);
       const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : aiUnlocked.has(`${c},${r}`);
-      // 双方半场使用完全相同的主题配色：路径/已开放/未开放一致，仅靠栅栏与单位区分敌我
+      // 双方半场同色系协调：路径=道路色，可放置=近白(cellUnlocked)，不可放置=深色(cellLocked)；不加锁
       roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
-      if (onPath) {
-        ctx.fillStyle = th.path;
-      } else {
-        ctx.fillStyle = cellOpen ? th.cellUnlocked : th.cellLocked;
-      }
+      ctx.fillStyle = onPath ? th.path : cellOpen ? th.cellUnlocked : th.cellLocked;
       ctx.fill();
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(80,70,55,0.28)';
+      ctx.strokeStyle = 'rgba(40,36,30,0.32)';
       ctx.stroke();
-      if (!onPath && !cellOpen) {
-        ctx.fillStyle = 'rgba(70,60,40,0.4)';
-        ctx.font = '18px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🔒', x + CELL / 2, y + CELL / 2);
-      }
     }
   }
   drawFence(ctx, b);
@@ -802,7 +802,7 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const btn of getButtons(b)) {
     const isItem = btn.id.startsWith('item');
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    ctx.fillStyle = btn.enabled ? (isItem ? '#3a2c53' : '#c8792b') : '#3a3128';
+    ctx.fillStyle = btn.enabled ? (isItem ? '#3a2c53' : b.map.theme.accent) : '#3a3128';
     ctx.fill();
     if (isItem) {
       ctx.lineWidth = 2;

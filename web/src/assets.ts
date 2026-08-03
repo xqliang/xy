@@ -20,7 +20,11 @@ export type AssetKey =
   | 'hero-tieshan'
   | 'hero-baigujing'
   | 'hero-niumowang'
-  | 'hero-mile';
+  | 'hero-mile'
+  | 'map-huoyanshan'
+  | 'map-liushahe'
+  | 'map-baiguling'
+  | 'map-pansidong';
 
 const FILES: Record<AssetKey, string> = {
   tangseng: '/assets/tangseng.png',
@@ -42,6 +46,10 @@ const FILES: Record<AssetKey, string> = {
   'hero-baigujing': '/assets/hero-baigujing.png',
   'hero-niumowang': '/assets/hero-niumowang.png',
   'hero-mile': '/assets/hero-mile.png',
+  'map-huoyanshan': '/assets/map-huoyanshan.jpg',
+  'map-liushahe': '/assets/map-liushahe.jpg',
+  'map-baiguling': '/assets/map-baiguling.jpg',
+  'map-pansidong': '/assets/map-pansidong.jpg',
 };
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
