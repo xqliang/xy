@@ -32,9 +32,10 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 export function menuButtons(): MenuButton[] {
   const cx = VIEW_W / 2;
   return [
-    { id: 'start', x: cx - 150, y: 620, w: 300, h: 78 },
-    { id: 'ad', x: cx - 150, y: 716, w: 145, h: 52 },
-    { id: 'share', x: cx + 5, y: 716, w: 145, h: 52 },
+    { id: 'start', x: cx - 150, y: 612, w: 300, h: 74 },
+    { id: 'ad', x: cx - 150, y: 700, w: 145, h: 50 },
+    { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
+    { id: 'shop', x: cx - 150, y: 762, w: 300, h: 50 },
     { id: 'codex', x: 40, y: 880, w: 140, h: 78 },
     { id: 'rank', x: VIEW_W / 2 - 70, y: 880, w: 140, h: 78 },
     { id: 'bag', x: VIEW_W - 180, y: 880, w: 140, h: 78 },
@@ -93,7 +94,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   for (const b of menuButtons()) {
     const isStart = b.id === 'start';
     roundRect(ctx, b.x, b.y, b.w, b.h, 12);
-    ctx.fillStyle = isStart ? '#b5391f' : b.id === 'ad' ? '#c8792b' : b.id === 'share' ? '#4a8a4a' : '#8a6a3a';
+    ctx.fillStyle =
+      isStart ? '#b5391f' :
+      b.id === 'ad' ? '#c8792b' :
+      b.id === 'share' ? '#4a8a4a' :
+      b.id === 'shop' ? '#7a4aa0' : '#8a6a3a';
     ctx.fill();
     ctx.fillStyle = '#fff4e0';
     ctx.textAlign = 'center';
@@ -102,6 +107,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       b.id === 'start' ? '开始游戏 ⚡1' :
       b.id === 'ad' ? '📺 体力+10' :
       b.id === 'share' ? '↗ 分享+5' :
+      b.id === 'shop' ? '🛒 神秘商人' :
       b.id === 'codex' ? '图鉴' :
       b.id === 'rank' ? '排行榜' : '武器背包';
     ctx.font = isStart ? 'bold 26px "PingFang SC", sans-serif' : '16px "PingFang SC", sans-serif';
@@ -112,6 +118,6 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   if (info.toast) {
     ctx.fillStyle = '#b5391f';
     ctx.font = '16px "PingFang SC", sans-serif';
-    ctx.fillText(info.toast, VIEW_W / 2, 800);
+    ctx.fillText(info.toast, VIEW_W / 2, 840);
   }
 }

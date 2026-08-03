@@ -156,6 +156,17 @@ interface Modifiers {
   summonCostDelta: number;
 }
 
+// 局外「功德商店」买断的永久加成，开局注入本局（数值温和有上限，避免破坏塔 DPS 平衡）
+export interface MetaBonuses {
+  bonusPeach: number; // 初始蟠桃 +
+  bonusHp: number; // 唐僧初始血 +
+  bonusSlots: number; // 额外初始阵位 +
+  atkPct: number; // 全体攻击 +（加到 atkMul）
+  frqPct: number; // 全体攻速 +（加到 frqMul）
+  ultChargeMul: number; // 绝招蓄力时间倍率（<1 更快）
+}
+export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, atkPct: 0, frqPct: 0, ultChargeMul: 1 };
+
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
 export class Battle {
@@ -178,6 +189,7 @@ export class Battle {
   ultFlash = 0; // 绝招释放特效计时(秒)
   ultCenter: { c: number; r: number } | null = null; // 绝招爆心（渲染用）
   ultCount = 0; // 本局绝招释放次数
+  ultChargeMul = 1; // 绝招蓄力时间倍率（功德商店可降低）
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -216,7 +228,7 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META) {
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
     this.map = map;
@@ -227,8 +239,16 @@ export class Battle {
     this.aiPathLen = lenOf(this.aiPath);
     this.aiTangseng = mirrorCell(map.tangseng);
     this.aiCells = placeableCells(map).map(mirrorCell);
-    // 初始解锁：地图的初始 6 格
-    for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
+    // 局外功德加成注入
+    this.peach += meta.bonusPeach;
+    this.tangsengHP += meta.bonusHp;
+    this.aiTangsengHP += meta.bonusHp; // 对手同享，维持对称
+    this.mods.atkMul += meta.atkPct;
+    this.mods.frqMul += meta.frqPct;
+    this.ultChargeMul = meta.ultChargeMul;
+    // 初始解锁：地图的初始 6 格 + 功德额外阵位
+    const openSlots = TUNING.initialOpenSlots + meta.bonusSlots;
+    for (let i = 0; i < openSlots && i < this.slotOrder.length; i++) {
       const s = this.slotOrder[i]!;
       this.unlocked.add(cellKey(s.c, s.r));
     }
@@ -652,8 +672,8 @@ export class Battle {
         hitCount++;
       }
       if (hitCount > 0) u.firePulse = 1; // 开火脉冲
-      // 减速减益：拉长攻击间隔（等效攻速下降）
-      u.cooldown = (1 / stat.frq) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
+      // 攻速修正(道具/功德 frqMul) + 减速减益(拉长间隔)
+      u.cooldown = (1 / (stat.frq * this.mods.frqMul)) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }
   }
 
@@ -691,7 +711,7 @@ export class Battle {
   private updateHero(dt: number): void {
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt);
     if (this.status !== 'playing' || this.monsters.length === 0) return;
-    this.heroEnergy = Math.min(1, this.heroEnergy + dt / TUNING.ultChargeTime);
+    this.heroEnergy = Math.min(1, this.heroEnergy + dt / (TUNING.ultChargeTime * this.ultChargeMul));
     if (this.heroEnergy >= 1) this.castUltimate();
   }
 
