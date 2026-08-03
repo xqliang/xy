@@ -1,0 +1,16 @@
+{
+  "name": "dasheng-game-core",
+  "version": "0.1.0",
+  "description": "《大圣与唐僧》战斗数值内核（引擎无关的纯 TS）",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
