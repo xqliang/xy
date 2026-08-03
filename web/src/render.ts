@@ -179,6 +179,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawFx(ctx, b);
   drawBursts(ctx, b);
   drawHeroUlt(ctx, b);
+  drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b);
   drawHeroEnergy(ctx, b);
@@ -260,7 +261,8 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
           ctx.fillStyle = unlocked.has(`${c},${r}`) ? th.cellUnlocked : th.cellLocked;
         }
       } else {
-        ctx.fillStyle = onPath ? 'rgba(150,120,160,0.35)' : 'rgba(150,130,170,0.2)'; // AI 半场淡紫
+        // AI 半场：路径格用较深紫；非路径格=AI 可布武器的阵位，用较亮紫展示
+        ctx.fillStyle = onPath ? 'rgba(150,120,160,0.4)' : 'rgba(174,150,205,0.34)';
       }
       ctx.fill();
       ctx.lineWidth = 1;
@@ -357,63 +359,65 @@ function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 单个怪物渲染（图标/圆形兜底 + 血条 + 受击闪白 + 技能环）——玩家侧与 AI 侧共用
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad: number, m: { hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number }) {
+  const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
+  if (spr) {
+    const box = rad * 2.3;
+    const scale = Math.min(box / spr.width, box / spr.height);
+    ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+  } else {
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
+    ctx.fill();
+  }
+  // 血条
+  const bw = rad * 2;
+  const hpPct = Math.max(0, m.hp / m.maxHp);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x - bw / 2, y - rad - 9, bw, 5);
+  ctx.fillStyle = hpPct > 0.4 ? '#7dff8a' : '#ff6a6a';
+  ctx.fillRect(x - bw / 2, y - rad - 9, bw * hpPct, 5);
+  // 受击闪白
+  if (m.hitFlash > 0) {
+    ctx.globalAlpha = Math.min(0.8, m.hitFlash / 0.12);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // 精英/BOSS 技能标识：彩色环 + 图标；施法瞬间脉冲光圈
+  if (m.skill) {
+    const meta = SKILL_META[m.skill as keyof typeof SKILL_META];
+    ctx.save();
+    ctx.strokeStyle = meta.color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(x, y, rad + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    if (m.castFlash > 0) {
+      ctx.globalAlpha = m.castFlash;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, rad + 3 + (1 - m.castFlash) * 20, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.font = `${Math.round(rad)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(meta.icon, x, y - rad - 12);
+    ctx.restore();
+  }
+}
+
 function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.monsters) {
     const p = posAtDistance(b.map, m.dist);
     const { x, y } = cellCenterPx(p.c, p.r);
-    const rad = m.isBoss ? CELL * 0.42 : CELL * 0.28;
-    const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
-    if (spr) {
-      const box = rad * 2.3;
-      const scale = Math.min(box / spr.width, box / spr.height);
-      const dw = spr.width * scale;
-      const dh = spr.height * scale;
-      ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
-    } else {
-      ctx.beginPath();
-      ctx.arc(x, y, rad, 0, Math.PI * 2);
-      ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
-      ctx.fill();
-    }
-    // 血条
-    const bw = rad * 2;
-    const hpPct = Math.max(0, m.hp / m.maxHp);
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - bw / 2, y - rad - 9, bw, 5);
-    ctx.fillStyle = hpPct > 0.4 ? '#7dff8a' : '#ff6a6a';
-    ctx.fillRect(x - bw / 2, y - rad - 9, bw * hpPct, 5);
-    // 受击闪白
-    if (m.hitFlash > 0) {
-      ctx.globalAlpha = Math.min(0.8, m.hitFlash / 0.12);
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(x, y, rad, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-    // 精英/BOSS 技能标识：彩色环 + 图标；施法瞬间脉冲光圈
-    if (m.skill) {
-      const meta = SKILL_META[m.skill];
-      ctx.save();
-      ctx.strokeStyle = meta.color;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(x, y, rad + 3, 0, Math.PI * 2);
-      ctx.stroke();
-      if (m.castFlash > 0) {
-        ctx.globalAlpha = m.castFlash;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(x, y, rad + 3 + (1 - m.castFlash) * 20, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      ctx.font = `${Math.round(rad)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(meta.icon, x, y - rad - 12);
-      ctx.restore();
-    }
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m);
   }
 }
 
@@ -585,56 +589,87 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 伪竞技 AI 对手（上半场，对角唐僧）
+// 伪竞技 AI 对手（上半场，对角唐僧）。路径用棋盘格背景表示，不再画描边线。
 function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
-  ctx.save();
-  ctx.strokeStyle = 'rgba(110,90,120,0.28)';
-  ctx.lineWidth = CELL * 0.5;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  b.aiPath.forEach((p, i) => {
-    const { x, y } = cellCenterPx(p.c, p.r);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.restore();
+  // AI 怪物：图标 + 血条（与玩家侧一致，尺寸略小）
   for (const m of b.aiMonsters) {
     const p = b.aiMonsterPos(m);
     const { x, y } = cellCenterPx(p.c, p.r);
-    const rad = m.isBoss ? CELL * 0.3 : CELL * 0.2;
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
-    ctx.fillStyle = m.isBoss ? '#a24a6a' : '#8a5a5a';
-    ctx.fill();
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.34 : CELL * 0.24, m);
   }
   // AI 单位（上半场自动部署）
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     drawUnit(ctx, u.type, u.tier, x, y - u.firePulse * 3, CELL * 0.66 * (1 + u.firePulse * 0.14));
   }
+  // 对手终点：唐僧立绘（不再用「斗」字）
   const tp = b.aiTangsengRenderPos();
   const { x, y } = cellCenterPx(tp.c, tp.r);
-  const rad = CELL * 0.4;
+  const rad = CELL * 0.42;
   ctx.beginPath();
   ctx.arc(x, y, rad, 0, Math.PI * 2);
-  const g = ctx.createRadialGradient(x, y - 6, 3, x, y, rad);
-  g.addColorStop(0, '#d2d0f0');
-  g.addColorStop(1, '#8a86c0');
+  const g = ctx.createRadialGradient(x, y - 8, 4, x, y, rad);
+  g.addColorStop(0, '#cfd0ee');
+  g.addColorStop(1, '#8a86c0'); // 对手唐僧用冷色调区分敌我
   ctx.fillStyle = g;
   ctx.fill();
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#5a5a8a';
   ctx.stroke();
-  ctx.fillStyle = '#3a3a6a';
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('斗', x, y);
+  const spr = sprite('tangseng');
+  if (spr) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, rad - 2, 0, Math.PI * 2);
+    ctx.clip();
+    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
+    ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2 - rad * 0.1, spr.width * scale, spr.height * scale);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#3a3a6a';
+    ctx.font = 'bold 22px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('唐', x, y);
+  }
   ctx.fillStyle = b.aiDefeated ? '#9a9a9a' : '#7a5aa0';
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText(b.aiDefeated ? '对手已败' : `对手 ❤${b.aiTangsengHP}`, x, y - rad - 12);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(b.aiDefeated ? '对手已败' : `对手唐僧 ❤${b.aiTangsengHP}`, x, y - rad - 12);
+}
+
+// 危险提示：怪物距唐僧≤3格时，在唐僧所在格叠加红色呼吸描边 + "危险"标签（玩家/AI 两侧）
+function drawDanger(ctx: CanvasRenderingContext2D, b: Battle) {
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 140);
+  const mark = (cx: number, cy: number) => {
+    const gx = BOARD_X + cx * CELL;
+    const gy = BOARD_Y + cy * CELL;
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.4 * pulse;
+    ctx.strokeStyle = '#ff3b3b';
+    ctx.lineWidth = 4;
+    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+    ctx.stroke();
+    ctx.globalAlpha = 0.15 + 0.2 * pulse;
+    ctx.fillStyle = '#ff3b3b';
+    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+    ctx.fill();
+    ctx.globalAlpha = 0.7 + 0.3 * pulse;
+    ctx.fillStyle = '#ffe0e0';
+    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('危险', gx + CELL / 2, gy + CELL / 2);
+    ctx.restore();
+  };
+  if (b.status === 'playing' && b.dangerNear()) {
+    const t = b.map.tangseng;
+    mark(t.c, t.r);
+  }
+  if (b.status === 'playing' && !b.aiDefeated && b.aiDangerNear()) {
+    mark(b.aiTangseng.c, b.aiTangseng.r);
+  }
 }
 
 // 英雄绝招爆发：金色扩散冲击波 + 放射光束

@@ -628,6 +628,27 @@ export class Battle {
     this.aiMonsters = survivors;
   }
 
+  // 对手唐僧阵亡 → 我方获胜（伪竞技对局的胜利条件之一）
+  private checkOpponentDefeated(): boolean {
+    if (this.aiDefeated && this.status !== 'won' && this.status !== 'lost') {
+      this.status = 'won';
+      this.waveActive = false;
+      this.message = '对方唐僧被妖怪吃了，我方获胜！';
+      return true;
+    }
+    return false;
+  }
+
+  // 危险提示：任一怪物距唐僧（沿路剩余）≤3 格
+  dangerNear(): boolean {
+    for (const m of this.monsters) if (this.pathLen - m.dist <= 3) return true;
+    return false;
+  }
+  aiDangerNear(): boolean {
+    for (const m of this.aiMonsters) if (this.aiPathLen - m.dist <= 3) return true;
+    return false;
+  }
+
   private unitColor(type: UnitType): string {
     switch (type) {
       case 'monkey': return '#ff9a3c';
@@ -791,6 +812,7 @@ export class Battle {
       this.nextWaveTimer -= dt;
       this.message = `第 ${this.wave + 1} 波准备中…${Math.max(0, Math.ceil(this.nextWaveTimer))}s（可继续布阵）`;
       this.updateAi(dt); // AI 侧继续清理残余怪
+      if (this.checkOpponentDefeated()) { this.updateFx(dt); return; }
       this.updateFx(dt);
       if (this.nextWaveTimer <= 0) this.startNextWave();
       return;
@@ -815,6 +837,7 @@ export class Battle {
     this.updateMonsters(dt);
     this.updateAi(dt);
     this.updateFx(dt);
+    if (this.checkOpponentDefeated()) return; // 对手先阵亡 → 我方胜
 
     // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
