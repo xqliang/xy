@@ -18,7 +18,7 @@ for (const id of MAPS) {
   await page.waitForFunction('window.__game && window.__game.snapshot');
   await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
   // 布几个兵展示
-  await page.evaluate(() => { const g = window.__game; g.grantPeach(200); g.summon(); g.autoPlace(); });
+  await page.evaluate(() => { const g = window.__game; g.enterBattle(); g.grantPeach(200); g.summon(); g.autoPlace(); });
   await new Promise((r) => setTimeout(r, 200));
   await page.screenshot({ path: path.join(OUT, `map-${id}.png`) });
   console.log(id, JSON.stringify(await page.evaluate(() => window.__game.snapshot())).slice(0, 90));

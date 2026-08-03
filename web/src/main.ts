@@ -14,6 +14,8 @@ import type { Cell } from './board';
 import { pickDailyMap, mapById } from './board';
 import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState } from './rank';
+import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
+import { drawMenu, menuButtonAt } from './menu';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -24,15 +26,43 @@ void loadAssets();
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') ?? '1') || 1;
 
+type Screen = 'menu' | 'battle';
+let screen: Screen = 'menu';
 let rank: RankState = loadRank();
+let stamina: Stamina = loadStamina();
+let menuToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
 let battle = new Battle(seed, rank.difficulty, currentMap);
 let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null };
 
 function newGame() {
+  currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
   battle = new Battle(seed, rank.difficulty, currentMap);
   endHandled = false;
+}
+
+function handleMenu(x: number, y: number) {
+  const id = menuButtonAt(x, y);
+  if (!id) return;
+  if (id === 'start') {
+    const r = spendStamina(stamina);
+    if (!r.ok) {
+      menuToast = '体力不足！看广告或分享补充';
+      return;
+    }
+    stamina = r.state;
+    newGame();
+    screen = 'battle';
+  } else if (id === 'ad') {
+    stamina = addStamina(stamina, 10);
+    menuToast = '体力 +10';
+  } else if (id === 'share') {
+    stamina = addStamina(stamina, 5);
+    menuToast = '体力 +5';
+  } else {
+    menuToast = '该功能开发中…';
+  }
 }
 
 // —— 画布尺寸 / DPR —— //
@@ -68,7 +98,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
       else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
-      else if (btn.id === 'restart') newGame();
+      else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
     }
   }
@@ -78,6 +108,10 @@ function handleButton(x: number, y: number): boolean {
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   const { x, y } = toLogical(e.clientX, e.clientY);
+  if (screen === 'menu') {
+    handleMenu(x, y);
+    return;
+  }
   if (handleButton(x, y)) return;
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -125,6 +159,17 @@ function frame(now: number) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
+  if (screen === 'menu') {
+    drawMenu(ctx, {
+      rankLevel: rank.level,
+      rankName: rankName(rank.level),
+      stamina: stamina.value,
+      mapName: currentMap.name,
+      toast: menuToast,
+    });
+    requestAnimationFrame(frame);
+    return;
+  }
   battle.step(dt);
   // 胜负结算入境界（仅一次）
   if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
@@ -146,6 +191,7 @@ interface GameHook {
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   autoPlace: () => void;
+  enterBattle: () => void;
   restart: (s?: number, diff?: number, mapId?: string) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
@@ -163,9 +209,11 @@ const hook: GameHook = {
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   autoPlace: () => battle.autoPlaceTray(),
+  enterBattle: () => { screen = 'battle'; },
   restart: (s?: number, diff?: number, mapId?: string) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap);
     endHandled = false;
+    screen = 'battle';
   },
   step: (dt: number) => battle.step(dt),
   fastForward: (seconds: number, dt = 1 / 60) => {

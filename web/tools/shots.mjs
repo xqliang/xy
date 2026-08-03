@@ -24,6 +24,12 @@ await page.waitForFunction('window.__game && window.__game.snapshot');
 await page.waitForFunction('window.__assetsReady === true', { timeout: 15000 }).catch(() => {});
 await new Promise((r) => setTimeout(r, 300));
 
+// 0) 主菜单
+await shot(page, '00-menu.png');
+
+// 进入对局
+await page.evaluate(() => window.__game.enterBattle());
+
 // 1) 初始界面
 await shot(page, '01-initial.png');
 console.log('01 initial:', JSON.stringify(await snap(page)));
