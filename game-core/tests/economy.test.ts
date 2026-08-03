@@ -3,7 +3,7 @@ import {
   INITIAL_PEACH, PEACH_PER_KILL, PEACH_PER_BLEED, PEACH_PER_BOSS, TANGSENG_INITIAL_HP,
 } from '../src/config/economy';
 import {
-  monstersInWave, dropInWave, peachAfterWave, firstDeficitWave, sellBloodReward,
+  monstersInWave, dropInWave, costInWave, remainingPeach, firstDeficitWave, sellBloodReward,
 } from '../src/domain/economy';
 
 describe('蟠桃经济常量（照搬原作）', () => {
@@ -28,14 +28,26 @@ describe('波次产耗曲线（照搬原作表格）', () => {
     expect(dropInWave(10)).toBe(19);
   });
 
+  it('抽卡成本单调递增（原文「消耗」列）：wave1..6 = 10,12,14,16,18,20', () => {
+    expect(costInWave(1)).toBe(10);
+    expect(costInWave(2)).toBe(12);
+    expect(costInWave(3)).toBe(14);
+    expect(costInWave(4)).toBe(16);
+    expect(costInWave(5)).toBe(18);
+    expect(costInWave(6)).toBe(20);
+    for (let n = 2; n <= 10; n++) {
+      expect(costInWave(n)).toBeGreaterThan(costInWave(n - 1));
+    }
+  });
+
   it('剩余蟠桃逐波还原原文表格：10,8,5,1,-4,-10 与 wave10=-44', () => {
-    expect(peachAfterWave(1)).toBe(10);
-    expect(peachAfterWave(2)).toBe(8);
-    expect(peachAfterWave(3)).toBe(5);
-    expect(peachAfterWave(4)).toBe(1);
-    expect(peachAfterWave(5)).toBe(-4);
-    expect(peachAfterWave(6)).toBe(-10);
-    expect(peachAfterWave(10)).toBe(-44);
+    expect(remainingPeach(1)).toBe(10);
+    expect(remainingPeach(2)).toBe(8);
+    expect(remainingPeach(3)).toBe(5);
+    expect(remainingPeach(4)).toBe(1);
+    expect(remainingPeach(5)).toBe(-4);
+    expect(remainingPeach(6)).toBe(-10);
+    expect(remainingPeach(10)).toBe(-44);
   });
 
   it('蟠桃在第 5 波首次转负（第5波危机）', () => {

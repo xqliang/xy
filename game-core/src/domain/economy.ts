@@ -1,8 +1,11 @@
-import { INITIAL_PEACH, PEACH_PER_KILL, PEACH_PER_BLEED } from '../config/economy';
+import {
+  INITIAL_PEACH, PEACH_PER_KILL, PEACH_PER_BLEED,
+  MONSTER_BASE, PEACH_COST_BASE, PEACH_COST_STEP, REMAINING_INTERCEPT,
+} from '../config/economy';
 
 // 第 n 波怪物数 = 9 + n（wave1=10 … wave10=19）
 export function monstersInWave(n: number): number {
-  return 9 + n;
+  return MONSTER_BASE + n;
 }
 
 // 第 n 波掉落蟠桃 = 怪物数 × 每只桃（全部击杀）
@@ -10,32 +13,24 @@ export function dropInWave(n: number): number {
   return monstersInWave(n) * PEACH_PER_KILL;
 }
 
-// 原作实测「剩余蟠桃」曲线：剩余(n) = 11 − n(n+1)/2；剩余(0) = 初始 20。
-// 逐项还原原文表格（wave1..6 = 10,8,5,1,-4,-10；wave10 = -44）。
-function referenceRemaining(n: number): number {
-  return n <= 0 ? INITIAL_PEACH : 11 - (n * (n + 1)) / 2;
-}
-
-// 第 n 波抽卡消耗蟠桃：由剩余曲线反推，使模拟循环严格复现原文表格。
-// 注：原文「消耗」列为古法手记，与「剩余」列存在 ±1 噪声；此处以自洽的
-// 「剩余」曲线为准。实际对局「递增抽卡成本」将在 M2 依此曲线调参。
+// 第 n 波抽卡消耗蟠桃（原作「消耗」列，单调递增 +2/波）：wave1..6 = 10,12,14,16,18,20
 export function costInWave(n: number): number {
-  return dropInWave(n) - (referenceRemaining(n) - referenceRemaining(n - 1));
+  return PEACH_COST_BASE + PEACH_COST_STEP * n;
 }
 
-// 无额外系统介入时，第 n 波结束后的剩余蟠桃（模拟循环）
-export function peachAfterWave(n: number): number {
-  let peach = INITIAL_PEACH;
-  for (let w = 1; w <= n; w++) {
-    peach += dropInWave(w) - costInWave(w);
-  }
-  return peach;
+// 原作实测「剩余蟠桃」曲线（第5波转负）：remaining(n) = 11 − n(n+1)/2；remaining(0)=初始20。
+// 注：原作「消耗」列与「剩余」列均为作者古法手记，二者不完全自洽。本内核将两条序列
+// 各自忠实保留——costInWave 保「消耗」列（递增抽卡成本），remainingPeach 保「剩余」列
+// （产耗结果曲线）。设计关键不变量：蟠桃在第 5 波转负 → 广告触发点自然浮现。
+export function remainingPeach(n: number): number {
+  if (n <= 0) return INITIAL_PEACH;
+  return REMAINING_INTERCEPT - (n * (n + 1)) / 2;
 }
 
-// 蟠桃首次转负的波次（"第5波危机" → 广告触发点自然浮现）
+// 蟠桃首次转负的波次（"第5波危机"）
 export function firstDeficitWave(maxWave = 30): number {
   for (let w = 1; w <= maxWave; w++) {
-    if (peachAfterWave(w) < 0) return w;
+    if (remainingPeach(w) < 0) return w;
   }
   return -1;
 }

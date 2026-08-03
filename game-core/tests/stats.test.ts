@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TIER_COEFFICIENTS, TIER_GROWTH_INCREMENTS, MAX_TIER, UNITS } from '../src/config/units';
+import { getUnitStat, towerPOW } from '../src/domain/stats';
 
 describe('成长系数链（照搬原作）', () => {
   it('逐阶增幅为 +50%/+40%/+30%/+20%', () => {
@@ -36,8 +37,6 @@ describe('成长系数链（照搬原作）', () => {
     expect(UNITS.archer.targets).toBe(1);
   });
 });
-
-import { getUnitStat, towerPOW } from '../src/domain/stats';
 
 describe('兵种属性计算（照搬原作）', () => {
   it('5 阶 ATK：骑/枪/弓=6.55，刀=9.83', () => {
