@@ -338,6 +338,8 @@ export class Battle {
 
   // 便于自测/渲染读取的快照
   snapshot() {
+    let maxDist = 0;
+    for (const m of this.monsters) if (m.dist > maxDist) maxDist = m.dist;
     return {
       peach: this.peach,
       tangsengHP: this.tangsengHP,
@@ -347,6 +349,8 @@ export class Battle {
       openSlots: this.openSlots,
       units: this.units.size,
       monsters: this.monsters.length,
+      dangerPct: Math.round((maxDist / PATH_TOTAL_LEN) * 100), // 最靠前妖怪的推进百分比
+      palmReady: this.palmAvailable(),
       message: this.message,
     };
   }
