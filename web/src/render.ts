@@ -176,6 +176,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawMonsters(ctx, b);
   drawUnits(ctx, b, ui);
   drawFx(ctx, b);
+  drawBursts(ctx, b);
   drawHud(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
@@ -346,6 +347,56 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillRect(x - bw / 2, y - rad - 9, bw, 5);
     ctx.fillStyle = hpPct > 0.4 ? '#7dff8a' : '#ff6a6a';
     ctx.fillRect(x - bw / 2, y - rad - 9, bw * hpPct, 5);
+    // 受击闪白
+    if (m.hitFlash > 0) {
+      ctx.globalAlpha = Math.min(0.8, m.hitFlash / 0.12);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+// 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
+function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const bt of b.bursts) {
+    const { x, y } = cellCenterPx(bt.c, bt.r);
+    const t = 1 - bt.ttl / bt.maxTtl; // 0→1
+    ctx.save();
+    if (bt.kind === 'hit') {
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = bt.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, 6 + t * 22, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (bt.kind === 'death') {
+      const R = (bt.big ? 40 : 24) * (0.4 + t);
+      ctx.globalAlpha = 1 - t;
+      ctx.fillStyle = bt.color;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(a) * R, y + Math.sin(a) * R, 4 * (1 - t) + 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // merge 星爆
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = bt.color;
+      ctx.lineWidth = 3;
+      const R = 8 + t * 26;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + t * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(a) * (R * 0.4), y + Math.sin(a) * (R * 0.4));
+        ctx.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 }
 
@@ -357,9 +408,11 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const stat = getUnitStat(u.type, u.tier);
     ctx.beginPath();
     ctx.arc(x, y, stat.rge * CELL, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fillStyle = 'rgba(60,90,40,0.05)';
     ctx.fill();
-    drawUnit(ctx, u.type, u.tier, x, y, CELL * 0.72);
+    // 开火脉冲：放大 + 上跳
+    const pulse = u.firePulse;
+    drawUnit(ctx, u.type, u.tier, x, y - pulse * 4, CELL * 0.72 * (1 + pulse * 0.16));
   }
 }
 
@@ -450,6 +503,16 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+      // 征兵闪光
+      if (btn.id === 'summon' && b.summonFlash > 0) {
+        ctx.save();
+        ctx.globalAlpha = b.summonFlash;
+        ctx.strokeStyle = '#ffe89a';
+        ctx.lineWidth = 4;
+        roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   }
   // 提示信息

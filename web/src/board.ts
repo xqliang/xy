@@ -59,6 +59,20 @@ export function placeableCellsByPathProximity(): Cell[] {
     .map((x) => x.cell);
 }
 
+// 玩家开局的 6 个阵位（2×3 块，参考原作巨鹿：被取经路环绕、覆盖面好）
+export const INITIAL_BLOCK: Cell[] = [
+  { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+  { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
+];
+
+// 阵位解锁顺序：初始 2×3 块在前，其余按到路径距离（铲子沿此顺序开挖扩展）
+export function slotUnlockOrder(): Cell[] {
+  const inBlock = (c: Cell) => INITIAL_BLOCK.some((b) => b.c === c.c && b.r === c.r);
+  const block = INITIAL_BLOCK.filter((c) => !isPathCell(c.c, c.r));
+  const rest = placeableCellsByPathProximity().filter((c) => !inBlock(c));
+  return [...block, ...rest];
+}
+
 // 路径总长度（格），用于按 SPD（格/秒）推进。
 export function pathSegments(): { from: Cell; to: Cell; len: number }[] {
   const segs: { from: Cell; to: Cell; len: number }[] = [];

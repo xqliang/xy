@@ -22,7 +22,7 @@ import {
   ROWS,
   PATH_TOTAL_LEN,
   posAtDistance,
-  placeableCellsByPathProximity,
+  slotUnlockOrder,
   isPathCell,
   type Cell,
 } from './board';
@@ -56,6 +56,7 @@ export interface PlacedUnit {
   tier: number;
   cell: Cell;
   cooldown: number; // 距下次攻击的秒数
+  firePulse: number; // 开火脉冲(1→0)，用于渲染缩放
 }
 
 export interface Monster {
@@ -65,6 +66,7 @@ export interface Monster {
   maxHp: number;
   spd: number;
   isBoss: boolean;
+  hitFlash: number; // 受击闪白(秒)
 }
 
 export interface HitFx {
@@ -72,6 +74,17 @@ export interface HitFx {
   to: { c: number; r: number };
   ttl: number;
   maxTtl: number;
+  color: string;
+}
+
+// 爆发型特效（命中/击杀/合成），渲染于格坐标
+export interface Burst {
+  kind: 'hit' | 'death' | 'merge';
+  c: number;
+  r: number;
+  ttl: number;
+  maxTtl: number;
+  big: boolean;
   color: string;
 }
 
@@ -116,6 +129,8 @@ export class Battle {
   units = new Map<string, PlacedUnit>();
   monsters: Monster[] = [];
   fx: HitFx[] = [];
+  bursts: Burst[] = []; // 命中/击杀/合成爆发特效
+  summonFlash = 0; // 征兵闪光(1→0)
   palmUsedThisWave = false; // 如来神掌每波限用一次
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
@@ -134,7 +149,7 @@ export class Battle {
   pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
   private rng: RNG;
-  private slotOrder: Cell[] = placeableCellsByPathProximity();
+  private slotOrder: Cell[] = slotUnlockOrder();
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private nextMonsterId = 1;
@@ -186,6 +201,7 @@ export class Battle {
     }
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
+    this.summonFlash = 1; // 征兵闪光
     this.tray = []; // 覆盖剩余候选
     const types = Object.keys(UNITS) as UnitType[];
     for (let i = 0; i < TUNING.summonDraws; i++) {
@@ -249,17 +265,18 @@ export class Battle {
       if (canMerge({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier })) {
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier });
         this.units.set(cellKey(to.c, to.r), { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.tray.splice(index, 1);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
         return true;
       }
-      // 非同型同级 → 替换：新兵占位，旧兵换下
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0 });
-      this.tray.splice(index, 1);
-      this.message = `替换为 ${UNITS[token.type].name} ${token.tier} 阶`;
+      // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0 });
+      this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
+      this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     return true;
@@ -288,6 +305,7 @@ export class Battle {
         const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
         this.units.set(cellKey(to.c, to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
         this.units.delete(cellKey(from.c, from.r));
+        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
         return true;
       }
@@ -394,6 +412,7 @@ export class Battle {
       maxHp: hp,
       spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.1 * (this.difficultyMul - 1)), // 高境界妖怪更快
       isBoss,
+      hitFlash: 0,
     });
   }
 
@@ -409,14 +428,13 @@ export class Battle {
   // 单位攻击结算
   private updateUnits(dt: number): void {
     for (const u of this.units.values()) {
+      u.firePulse = Math.max(0, u.firePulse - dt * 6); // 开火脉冲衰减
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier); // atk/frq/rge/targets（来自 game-core）
-      // 命中平均目标数：整数部分 + 小数部分按概率
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      // 找范围内妖怪（按距离近优先）
       const inRange = this.monsters
         .map((m) => {
           const p = posAtDistance(m.dist);
@@ -427,19 +445,17 @@ export class Battle {
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
       const dmg = damage(stat.atk * this.mods.atkMul); // 道具增伤
+      const color = this.unitColor(u.type);
       let hitCount = 0;
       for (const target of inRange) {
         if (hitCount >= maxTargets) break;
         target.m.hp -= dmg;
-        this.fx.push({
-          from: { c: u.cell.c, r: u.cell.r },
-          to: target.p,
-          ttl: 0.16,
-          maxTtl: 0.16,
-          color: this.unitColor(u.type),
-        });
+        target.m.hitFlash = 0.12; // 受击闪白
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.16, maxTtl: 0.16, color });
+        this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
+      if (hitCount > 0) u.firePulse = 1; // 开火脉冲
       u.cooldown = 1 / stat.frq; // 攻速（次/秒）
     }
   }
@@ -447,8 +463,11 @@ export class Battle {
   private updateMonsters(dt: number): void {
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
+      if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
+        const dp = posAtDistance(m.dist);
+        this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
         continue;
       }
       m.dist += m.spd * dt;
@@ -471,6 +490,9 @@ export class Battle {
   private updateFx(dt: number): void {
     for (const f of this.fx) f.ttl -= dt;
     this.fx = this.fx.filter((f) => f.ttl > 0);
+    for (const bt of this.bursts) bt.ttl -= dt;
+    this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
   }
 
   // 推进 dt 秒
@@ -503,16 +525,15 @@ export class Battle {
     this.updateMonsters(dt);
     this.updateFx(dt);
 
-    // 波次清空判定
-    if (this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
+    // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
+    if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
       if (this.wave >= TUNING.winWave) {
         this.status = 'won';
         this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
       } else {
         this.status = 'ready';
-        this.rollShop(); // 胜利后开出 3 选 1 道具商店
-        this.message = `第 ${this.wave} 波已清，选择一件道具`;
+        this.message = `第 ${this.wave} 波已清，继续征兵布阵，点「下一波」`;
       }
     }
   }
