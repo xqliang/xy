@@ -10,13 +10,13 @@ export const TIER_GROWTH_INCREMENTS = [0.5, 0.4, 0.3, 0.2] as const;
 export const TIER_COEFFICIENTS: number[] = (() => {
   const coeffs = [1.0];
   for (const inc of TIER_GROWTH_INCREMENTS) {
-    coeffs.push(coeffs[coeffs.length - 1] * (1 + inc));
+    coeffs.push(coeffs[coeffs.length - 1]! * (1 + inc));
   }
   return coeffs;
 })();
 
 // 基础攻速：四兵种统一，且使 5 阶攻速 = BASE_FRQ × 3.276 ≈ 4.09
-export const BASE_FRQ = 4.09 / TIER_COEFFICIENTS[4];
+export const BASE_FRQ = 4.09 / TIER_COEFFICIENTS[4]!;
 
 export const UNITS: Record<UnitType, UnitConfig> = {
   monkey:  { type: 'monkey',  name: '棍猴',    origin: '刀', role: '近战单体·收割', baseAtk: 3, baseFrq: BASE_FRQ, rge: 1,   targets: 1 },

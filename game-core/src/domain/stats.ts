@@ -7,7 +7,7 @@ export function getUnitStat(type: UnitType, tier: number): UnitStat {
     throw new RangeError(`阶数 ${tier} 超出范围 1-${MAX_TIER}`);
   }
   const cfg = UNITS[type];
-  const coeff = TIER_COEFFICIENTS[tier - 1];
+  const coeff = TIER_COEFFICIENTS[tier - 1]!;
   return {
     atk: cfg.baseAtk * coeff,
     frq: cfg.baseFrq * coeff,
