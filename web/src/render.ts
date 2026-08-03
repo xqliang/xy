@@ -172,6 +172,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPath(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
+  drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
@@ -438,6 +439,53 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fill();
     ctx.globalAlpha = 1;
   }
+}
+
+// 伪竞技 AI 对手（上半场，对角唐僧）
+function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(110,90,120,0.28)';
+  ctx.lineWidth = CELL * 0.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  b.aiPath.forEach((p, i) => {
+    const { x, y } = cellCenterPx(p.c, p.r);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.restore();
+  for (const m of b.aiMonsters) {
+    const p = b.aiMonsterPos(m);
+    const { x, y } = cellCenterPx(p.c, p.r);
+    const rad = m.isBoss ? CELL * 0.3 : CELL * 0.2;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = m.isBoss ? '#a24a6a' : '#8a5a5a';
+    ctx.fill();
+  }
+  const tp = b.aiTangsengRenderPos();
+  const { x, y } = cellCenterPx(tp.c, tp.r);
+  const rad = CELL * 0.4;
+  ctx.beginPath();
+  ctx.arc(x, y, rad, 0, Math.PI * 2);
+  const g = ctx.createRadialGradient(x, y - 6, 3, x, y, rad);
+  g.addColorStop(0, '#d2d0f0');
+  g.addColorStop(1, '#8a86c0');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#5a5a8a';
+  ctx.stroke();
+  ctx.fillStyle = '#3a3a6a';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('斗', x, y);
+  ctx.fillStyle = b.aiDefeated ? '#9a9a9a' : '#7a5aa0';
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText(b.aiDefeated ? '对手已败' : `对手 ❤${b.aiTangsengHP}`, x, y - rad - 12);
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {

@@ -22,6 +22,10 @@ import {
   ROWS,
   pathTotalLen,
   posAtDistance,
+  posAlong,
+  lenOf,
+  mirrorPath,
+  mirrorCell,
   slotUnlockOrder,
   isPathCell,
   MAPS,
@@ -46,6 +50,8 @@ export const TUNING = {
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   winWave: 8, // 通关波次（切片演示）
+  aiDpsBase: 8, // AI 对手拦截 DPS 基数
+  aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
 };
 
 // 候选区令牌：兵种（带阶数，可在候选区内合并）或 铲子
@@ -140,6 +146,14 @@ export class Battle {
   introDone = false;
   static readonly INTRO_DUR = 6; // 秒
 
+  // —— 伪竞技 AI 对手（上半场，对角唐僧）——
+  readonly aiPath: Cell[];
+  readonly aiTangseng: Cell;
+  private aiPathLen: number;
+  aiTangsengHP = TANGSENG_INITIAL_HP;
+  aiMonsters: Monster[] = [];
+  aiDefeated = false;
+
   // 候选区（征兵产出）与铲子（开格资源）
   tray: TrayToken[] = [];
   shovels = TUNING.initialShovels;
@@ -167,11 +181,26 @@ export class Battle {
     this.map = map;
     this.pathLen = pathTotalLen(map);
     this.slotOrder = slotUnlockOrder(map);
+    // AI 对手：点对称镜像路径与唐僧（上半场）
+    this.aiPath = mirrorPath(map.path);
+    this.aiPathLen = lenOf(this.aiPath);
+    this.aiTangseng = mirrorCell(map.tangseng);
     // 初始解锁：地图的初始 6 格
     for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
       const s = this.slotOrder[i]!;
       this.unlocked.add(cellKey(s.c, s.r));
     }
+  }
+
+  // AI 唐僧当前渲染位置（同玩家入场节奏沿镜像路走向归位）
+  aiTangsengRenderPos(): { c: number; r: number } {
+    if (this.introDone) return posAlong(this.aiPath, this.aiPathLen);
+    const p = Math.min(1, this.introT / Battle.INTRO_DUR);
+    return posAlong(this.aiPath, p * this.aiPathLen);
+  }
+
+  aiMonsterPos(m: Monster): { c: number; r: number } {
+    return posAlong(this.aiPath, m.dist);
   }
 
   // 该格是否已解锁
@@ -421,6 +450,42 @@ export class Battle {
       isBoss,
       hitFlash: 0,
     });
+    // AI 对手同波同步出怪（镜像路）
+    this.aiMonsters.push({
+      id: this.nextMonsterId++,
+      dist: 0,
+      hp,
+      maxHp: hp,
+      spd: TUNING.monsterSpd * (1 + 0.1 * (this.difficultyMul - 1)),
+      isBoss,
+      hitFlash: 0,
+    });
+  }
+
+  // AI 对手拦截：抽象 DPS 打最靠前的 AI 怪；漏怪扣 AI 唐僧血
+  private updateAi(dt: number): void {
+    if (this.aiMonsters.length > 0) {
+      const aiDps = (TUNING.aiDpsBase + TUNING.aiDpsPerWave * this.wave) * dt;
+      // 打进度最靠前的一只
+      let front = this.aiMonsters[0]!;
+      for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+      front.hp -= aiDps;
+    }
+    const survivors: Monster[] = [];
+    for (const m of this.aiMonsters) {
+      if (m.hp <= 0) continue;
+      m.dist += m.spd * dt;
+      if (m.dist >= this.aiPathLen) {
+        this.aiTangsengHP -= 1;
+        if (this.aiTangsengHP <= 0) {
+          this.aiTangsengHP = 0;
+          this.aiDefeated = true;
+        }
+        continue;
+      }
+      survivors.push(m);
+    }
+    this.aiMonsters = survivors;
   }
 
   private unitColor(type: UnitType): string {
@@ -530,6 +595,7 @@ export class Battle {
     }
     this.updateUnits(dt);
     this.updateMonsters(dt);
+    this.updateAi(dt);
     this.updateFx(dt);
 
     // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
@@ -599,6 +665,8 @@ export class Battle {
       monsters: this.monsters.length,
       dangerPct: Math.round((maxDist / this.pathLen) * 100), // 最靠前妖怪的推进百分比
       palmReady: this.palmAvailable(),
+      aiHp: this.aiTangsengHP,
+      aiDefeated: this.aiDefeated,
       itemsPicked: this.pickedItems.length,
       shopOpen: this.pendingShop !== null,
       message: this.message,

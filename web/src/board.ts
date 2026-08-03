@@ -33,31 +33,53 @@ export function isPathCell(map: GameMap, c: number, r: number): boolean {
 }
 
 export function pathSegments(map: GameMap): { from: Cell; to: Cell; len: number }[] {
+  return segmentsOf(map.path);
+}
+
+function segmentsOf(path: Cell[]): { from: Cell; to: Cell; len: number }[] {
   const segs: { from: Cell; to: Cell; len: number }[] = [];
-  for (let i = 0; i < map.path.length - 1; i++) {
-    const a = map.path[i]!;
-    const b = map.path[i + 1]!;
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i]!;
+    const b = path[i + 1]!;
     segs.push({ from: a, to: b, len: Math.hypot(b.c - a.c, b.r - a.r) });
   }
   return segs;
 }
 
-export function pathTotalLen(map: GameMap): number {
-  return pathSegments(map).reduce((s, x) => s + x.len, 0);
+export function lenOf(path: Cell[]): number {
+  return segmentsOf(path).reduce((s, x) => s + x.len, 0);
 }
 
-// 沿路进度 dist（格）→ 连续网格坐标
-export function posAtDistance(map: GameMap, dist: number): { c: number; r: number } {
-  if (dist <= 0) return { c: map.path[0]!.c, r: map.path[0]!.r };
+// 沿任意路径 path 的进度 dist（格）→ 连续网格坐标
+export function posAlong(path: Cell[], dist: number): { c: number; r: number } {
+  if (dist <= 0) return { c: path[0]!.c, r: path[0]!.r };
   let remain = dist;
-  for (const seg of pathSegments(map)) {
+  for (const seg of segmentsOf(path)) {
     if (remain <= seg.len) {
       const t = seg.len === 0 ? 0 : remain / seg.len;
       return { c: seg.from.c + (seg.to.c - seg.from.c) * t, r: seg.from.r + (seg.to.r - seg.from.r) * t };
     }
     remain -= seg.len;
   }
-  return { c: map.tangseng.c, r: map.tangseng.r };
+  const last = path[path.length - 1]!;
+  return { c: last.c, r: last.r };
+}
+
+// 点对称镜像（用于生成 AI 对手的上半场：绕棋盘中心 180°）
+export function mirrorCell(cell: Cell): Cell {
+  return { c: COLS - 1 - cell.c, r: ROWS - 1 - cell.r };
+}
+export function mirrorPath(path: Cell[]): Cell[] {
+  return path.map(mirrorCell);
+}
+
+export function pathTotalLen(map: GameMap): number {
+  return lenOf(map.path);
+}
+
+// 沿路进度 dist（格）→ 连续网格坐标
+export function posAtDistance(map: GameMap, dist: number): { c: number; r: number } {
+  return posAlong(map.path, dist);
 }
 
 export function placeableCells(map: GameMap): Cell[] {
