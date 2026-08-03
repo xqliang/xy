@@ -69,6 +69,35 @@ export interface HitFx {
   color: string;
 }
 
+// —— 日重置道具（胜利后 3 选 1，肉鸽 Build）——
+export type ItemKind = '主动' | '被动';
+export interface ItemDef {
+  id: string;
+  name: string;
+  kind: ItemKind;
+  desc: string;
+}
+export const ITEMS: ItemDef[] = [
+  { id: 'xiandan', name: '仙丹', kind: '主动', desc: '全体攻击 +15%' },
+  { id: 'fenghuolun', name: '风火轮符', kind: '主动', desc: '全体攻速 +20%' },
+  { id: 'xianyuan', name: '仙缘幡', kind: '被动', desc: '召唤成本 -1' },
+  { id: 'jubaopen', name: '聚宝盆', kind: '被动', desc: '击杀额外 +1 蟠桃' },
+  { id: 'hushen', name: '护身金光', kind: '被动', desc: '唐僧 +1 血' },
+  { id: 'zhuwang', name: '绊妖蛛网', kind: '被动', desc: '妖怪移速 -12%' },
+  { id: 'dinghai', name: '自动定海针', kind: '被动', desc: '立即开辟 1 阵位' },
+];
+export function itemById(id: string): ItemDef | undefined {
+  return ITEMS.find((x) => x.id === id);
+}
+
+interface Modifiers {
+  atkMul: number;
+  frqMul: number;
+  killBonus: number;
+  monsterSpdMul: number;
+  summonCostDelta: number;
+}
+
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
 export class Battle {
@@ -83,6 +112,11 @@ export class Battle {
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   palmUsedThisWave = false; // 如来神掌每波限用一次
+
+  // 道具与修正器
+  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0 };
+  pickedItems: string[] = [];
+  pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
   private rng: RNG;
   private slotOrder: Cell[] = placeableCellsByPathProximity();
@@ -120,7 +154,8 @@ export class Battle {
   // 召唤：消耗蟠桃，随机产出一个 1 阶兵种放入首个空阵位。成本递增。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
-    if (this.peach < this.summonCost) {
+    const cost = this.effectiveSummonCost();
+    if (this.peach < cost) {
       this.message = '蟠桃不足，无法召唤';
       return false;
     }
@@ -129,13 +164,18 @@ export class Battle {
       this.message = '没有空阵位，先合成或开辟阵位';
       return false;
     }
-    this.peach -= this.summonCost;
+    this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
     const type = this.rng.pick(types);
     this.units.set(cellKey(cell.c, cell.r), { type, tier: 1, cell, cooldown: 0 });
     this.message = `召唤了 ${UNITS[type].name}`;
     return true;
+  }
+
+  // 计入道具修正后的当前召唤成本
+  effectiveSummonCost(): number {
+    return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
 
   // 开辟一个新阵位（消耗蟠桃）
@@ -184,6 +224,10 @@ export class Battle {
   startNextWave(): boolean {
     if (this.waveActive) return false;
     if (this.status === 'won' || this.status === 'lost') return false;
+    if (this.pendingShop) {
+      this.message = '请先选择一件道具';
+      return false;
+    }
     this.wave += 1;
     this.status = 'playing';
     this.waveActive = true;
@@ -208,6 +252,42 @@ export class Battle {
     return true;
   }
 
+  // 从当前商店 3 选 1（index 0..2）
+  chooseItem(index: number): boolean {
+    if (!this.pendingShop) return false;
+    const id = this.pendingShop[index];
+    if (!id) return false;
+    this.applyItem(id);
+    this.pickedItems.push(id);
+    this.pendingShop = null;
+    const def = itemById(id);
+    this.message = `获得道具：${def?.name ?? id}`;
+    return true;
+  }
+
+  private applyItem(id: string): void {
+    switch (id) {
+      case 'xiandan': this.mods.atkMul += 0.15; break;
+      case 'fenghuolun': this.mods.frqMul += 0.2; break;
+      case 'xianyuan': this.mods.summonCostDelta -= 1; break;
+      case 'jubaopen': this.mods.killBonus += 1; break;
+      case 'hushen': this.tangsengHP += 1; break;
+      case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
+      case 'dinghai': if (this.openSlots < this.slotOrder.length) this.openSlots += 1; break;
+    }
+  }
+
+  // 胜利后随机开出 3 件道具供选择
+  private rollShop(): void {
+    const pool = [...ITEMS];
+    const picks: string[] = [];
+    for (let i = 0; i < 3 && pool.length > 0; i++) {
+      const idx = this.rng.int(pool.length);
+      picks.push(pool.splice(idx, 1)[0]!.id);
+    }
+    this.pendingShop = picks;
+  }
+
   private spawnMonster(): void {
     const isBoss =
       this.wave % TUNING.bossEveryWave === 0 && this.spawnRemaining === 1; // 每波最后一只为 BOSS
@@ -218,7 +298,7 @@ export class Battle {
       dist: 0,
       hp,
       maxHp: hp,
-      spd: TUNING.monsterSpd,
+      spd: TUNING.monsterSpd * this.mods.monsterSpdMul, // 道具可降妖怪移速
       isBoss,
     });
   }
@@ -252,7 +332,7 @@ export class Battle {
         .filter((x) => x.d <= stat.rge)
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
-      const dmg = damage(stat.atk);
+      const dmg = damage(stat.atk * this.mods.atkMul); // 道具增伤
       let hitCount = 0;
       for (const target of inRange) {
         if (hitCount >= maxTargets) break;
@@ -274,7 +354,7 @@ export class Battle {
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
       if (m.hp <= 0) {
-        this.peach += m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL; // 击杀产蟠桃
+        this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
         continue;
       }
       m.dist += m.spd * dt;
@@ -326,7 +406,8 @@ export class Battle {
         this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
       } else {
         this.status = 'ready';
-        this.message = `第 ${this.wave} 波已清，点「下一波」继续`;
+        this.rollShop(); // 胜利后开出 3 选 1 道具商店
+        this.message = `第 ${this.wave} 波已清，选择一件道具`;
       }
     }
   }
@@ -351,6 +432,8 @@ export class Battle {
       monsters: this.monsters.length,
       dangerPct: Math.round((maxDist / PATH_TOTAL_LEN) * 100), // 最靠前妖怪的推进百分比
       palmReady: this.palmAvailable(),
+      itemsPicked: this.pickedItems.length,
+      shopOpen: this.pendingShop !== null,
       message: this.message,
     };
   }

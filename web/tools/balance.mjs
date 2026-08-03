@@ -43,6 +43,7 @@ const trace = await page.evaluate(() => {
   for (let w = 0; w < 15; w++) {
     const st = g.battle.status;
     if (st === 'won' || st === 'lost') break;
+    if (g.battle.pendingShop) g.chooseItem(0); // 有商店先选一件
     manage();               // 备战
     const before = g.snapshot();
     g.wave();               // 开波

@@ -55,6 +55,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'open') battle.openNewSlot();
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
+      else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
       else if (btn.id === 'restart') battle = new Battle(seed);
       return true;
     }
@@ -105,6 +106,7 @@ interface GameHook {
   open: () => boolean;
   wave: () => boolean;
   palm: () => boolean;
+  chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   restart: (s?: number) => void;
   step: (dt: number) => void;
@@ -122,6 +124,7 @@ const hook: GameHook = {
   open: () => battle.openNewSlot(),
   wave: () => battle.startNextWave(),
   palm: () => battle.usePalm(),
+  chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   restart: (s?: number) => {
     battle = new Battle(s ?? seed);
