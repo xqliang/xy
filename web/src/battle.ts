@@ -20,10 +20,12 @@ import { RNG } from './rng';
 import {
   COLS,
   ROWS,
-  PATH_TOTAL_LEN,
+  pathTotalLen,
   posAtDistance,
   slotUnlockOrder,
   isPathCell,
+  MAPS,
+  type GameMap,
   type Cell,
 } from './board';
 
@@ -149,7 +151,9 @@ export class Battle {
   pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
   private rng: RNG;
-  private slotOrder: Cell[] = slotUnlockOrder();
+  readonly map: GameMap;
+  readonly pathLen: number;
+  private slotOrder: Cell[];
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private nextMonsterId = 1;
@@ -157,10 +161,13 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!) {
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
-    // 初始解锁：贴路的前 N 个可摆放格
+    this.map = map;
+    this.pathLen = pathTotalLen(map);
+    this.slotOrder = slotUnlockOrder(map);
+    // 初始解锁：地图的初始 6 格
     for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
       const s = this.slotOrder[i]!;
       this.unlocked.add(cellKey(s.c, s.r));
@@ -174,7 +181,7 @@ export class Battle {
 
   // 该格是否为可摆放格（非路径、在网格内且解锁）
   private isPlaceable(c: number, r: number): boolean {
-    return !isPathCell(c, r) && c >= 0 && c < COLS && r >= 0 && r < ROWS;
+    return !isPathCell(this.map, c, r) && c >= 0 && c < COLS && r >= 0 && r < ROWS;
   }
 
   unlockedCells(): Cell[] {
@@ -344,9 +351,9 @@ export class Battle {
 
   // 唐僧当前渲染位置（入场时沿路走向归位；归位后固定在终点格）
   tangsengRenderPos(): { c: number; r: number } {
-    if (this.introDone) return posAtDistance(PATH_TOTAL_LEN);
+    if (this.introDone) return posAtDistance(this.map, this.pathLen);
     const p = Math.min(1, this.introT / Battle.INTRO_DUR);
-    return posAtDistance(p * PATH_TOTAL_LEN);
+    return posAtDistance(this.map, p * this.pathLen);
   }
 
   // 如来神掌是否可用（对战中且本波未用过）
@@ -437,7 +444,7 @@ export class Battle {
       const maxTargets = Math.max(1, base + extra);
       const inRange = this.monsters
         .map((m) => {
-          const p = posAtDistance(m.dist);
+          const p = posAtDistance(this.map, m.dist);
           const d = Math.hypot(p.c - u.cell.c, p.r - u.cell.r);
           return { m, d, p };
         })
@@ -466,12 +473,12 @@ export class Battle {
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
-        const dp = posAtDistance(m.dist);
+        const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
         continue;
       }
       m.dist += m.spd * dt;
-      if (m.dist >= PATH_TOTAL_LEN) {
+      if (m.dist >= this.pathLen) {
         // 撞到唐僧：扣血 + 舍身饲魔补偿蟠桃
         this.tangsengHP -= 1;
         this.peach += PEACH_PER_BLEED;
@@ -590,7 +597,7 @@ export class Battle {
       shovels: this.shovels,
       units: this.units.size,
       monsters: this.monsters.length,
-      dangerPct: Math.round((maxDist / PATH_TOTAL_LEN) * 100), // 最靠前妖怪的推进百分比
+      dangerPct: Math.round((maxDist / this.pathLen) * 100), // 最靠前妖怪的推进百分比
       palmReady: this.palmAvailable(),
       itemsPicked: this.pickedItems.length,
       shopOpen: this.pendingShop !== null,

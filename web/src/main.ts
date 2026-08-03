@@ -11,6 +11,7 @@ import {
   type UiState,
 } from './render';
 import type { Cell } from './board';
+import { pickDailyMap, mapById } from './board';
 import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState } from './rank';
 
@@ -24,12 +25,13 @@ const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') ?? '1') || 1;
 
 let rank: RankState = loadRank();
-let battle = new Battle(seed, rank.difficulty);
+let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
+let battle = new Battle(seed, rank.difficulty, currentMap);
 let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null };
 
 function newGame() {
-  battle = new Battle(seed, rank.difficulty);
+  battle = new Battle(seed, rank.difficulty, currentMap);
   endHandled = false;
 }
 
@@ -144,7 +146,7 @@ interface GameHook {
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   autoPlace: () => void;
-  restart: (s?: number, diff?: number) => void;
+  restart: (s?: number, diff?: number, mapId?: string) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
   grantPeach: (n: number) => void;
@@ -161,8 +163,8 @@ const hook: GameHook = {
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   autoPlace: () => battle.autoPlaceTray(),
-  restart: (s?: number, diff?: number) => {
-    battle = new Battle(s ?? seed, diff ?? 1);
+  restart: (s?: number, diff?: number, mapId?: string) => {
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap);
     endHandled = false;
   },
   step: (dt: number) => battle.step(dt),

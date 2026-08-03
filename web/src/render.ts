@@ -2,8 +2,6 @@
 import {
   COLS,
   ROWS,
-  PATH,
-  TANGSENG_CELL,
   isPathCell,
   posAtDistance,
   type Cell,
@@ -163,15 +161,15 @@ function shade(hex: string, amt: number): string {
 }
 
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
-  // 背景：宣纸浅色（参考原作）
+  // 背景：地图主题色
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-  bg.addColorStop(0, '#efe6cf');
-  bg.addColorStop(1, '#e2d5b8');
+  bg.addColorStop(0, b.map.theme.bg0);
+  bg.addColorStop(1, b.map.theme.bg1);
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   drawBoard(ctx, b, ui);
-  drawPath(ctx);
+  drawPath(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawUnits(ctx, b, ui);
@@ -240,17 +238,18 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const unlocked = new Set(b.unlockedCells().map((c) => `${c.c},${c.r}`));
+  const th = b.map.theme;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const x = BOARD_X + c * CELL;
       const y = BOARD_Y + r * CELL;
-      if (isPathCell(c, r)) continue;
+      if (isPathCell(b.map, c, r)) continue;
       const isUnlocked = unlocked.has(`${c},${r}`);
       roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 6);
-      ctx.fillStyle = isUnlocked ? '#9cc084' : '#c7cdb0'; // 已解锁=鲜绿，未解锁=灰绿
+      ctx.fillStyle = isUnlocked ? th.cellUnlocked : th.cellLocked;
       ctx.fill();
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = isUnlocked ? '#6f9a5a' : 'rgba(90,80,60,0.35)';
+      ctx.strokeStyle = isUnlocked ? 'rgba(70,90,50,0.5)' : 'rgba(90,80,60,0.3)';
       ctx.stroke();
       if (!isUnlocked) {
         ctx.fillStyle = 'rgba(70,60,40,0.4)';
@@ -263,21 +262,21 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
-function drawPath(ctx: CanvasRenderingContext2D) {
+function drawPath(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.save();
-  ctx.strokeStyle = '#cbab74'; // 土黄路面
+  ctx.strokeStyle = b.map.theme.path;
   ctx.lineWidth = CELL * 0.72;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
-  PATH.forEach((p, i) => {
+  b.map.path.forEach((p, i) => {
     const { x, y } = cellCenterPx(p.c, p.r);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
   // 路面中线（虚线）
-  ctx.strokeStyle = 'rgba(120,90,50,0.35)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = 3;
   ctx.setLineDash([10, 12]);
   ctx.stroke();
@@ -324,7 +323,7 @@ function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
 
 function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.monsters) {
-    const p = posAtDistance(m.dist);
+    const p = posAtDistance(b.map, m.dist);
     const { x, y } = cellCenterPx(p.c, p.r);
     const rad = m.isBoss ? CELL * 0.42 : CELL * 0.28;
     const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
@@ -442,8 +441,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
-  // 浅木色 HUD 条
-  ctx.fillStyle = '#d8c49a';
+  // 主题色 HUD 条
+  ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
   ctx.fillStyle = 'rgba(90,70,40,0.3)';
   ctx.fillRect(0, HUD_H - 2, VIEW_W, 2);
@@ -455,7 +454,7 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
-  ctx.fillText(`第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2 - 12);
+  ctx.fillText(`${b.map.name} · 第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2 - 12);
   if (hudRankLabel) {
     ctx.font = '14px "PingFang SC", sans-serif';
     ctx.fillStyle = '#8a5a2b';
