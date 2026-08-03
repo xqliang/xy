@@ -4,6 +4,7 @@ import {
   draw,
   getButtons,
   pxToCell,
+  trayIndexAt,
   VIEW_W,
   VIEW_H,
   type UiState,
@@ -21,7 +22,7 @@ const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') ?? '1') || 1;
 
 let battle = new Battle(seed);
-const ui: UiState = { dragFrom: null, dragPos: null };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null };
 
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
@@ -52,7 +53,7 @@ function handleButton(x: number, y: number): boolean {
     if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
       if (!btn.enabled) return true;
       if (btn.id === 'summon') battle.summon();
-      else if (btn.id === 'open') battle.openNewSlot();
+      else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
       else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
@@ -67,6 +68,15 @@ canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (handleButton(x, y)) return;
+  // 候选区令牌拖拽
+  const ti = trayIndexAt(x, y);
+  if (ti !== null && battle.tray[ti]) {
+    ui.dragTrayIndex = ti;
+    ui.dragPos = { x, y };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  // 棋盘单位拖拽（重新布阵/合成）
   const cell = pxToCell(x, y);
   if (cell && battle.units.has(`${cell.c},${cell.r}`)) {
     ui.dragFrom = cell;
@@ -75,15 +85,19 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (!ui.dragFrom) return;
+  if (!ui.dragFrom && ui.dragTrayIndex === null) return;
   ui.dragPos = toLogical(e.clientX, e.clientY);
 });
-canvas.addEventListener('pointerup', (e) => {
-  if (ui.dragFrom && ui.dragPos) {
+canvas.addEventListener('pointerup', () => {
+  if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
-    if (target) battle.dragUnit(ui.dragFrom, target);
+    if (target) {
+      if (ui.dragTrayIndex !== null) battle.placeFromTray(ui.dragTrayIndex, target);
+      else if (ui.dragFrom) battle.dragUnit(ui.dragFrom, target);
+    }
   }
   ui.dragFrom = null;
+  ui.dragTrayIndex = null;
   ui.dragPos = null;
 });
 
@@ -103,17 +117,16 @@ requestAnimationFrame(frame);
 interface GameHook {
   battle: Battle;
   summon: () => boolean;
-  open: () => boolean;
   wave: () => boolean;
   palm: () => boolean;
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
-  restart: (s?: number) => void;
+  autoPlace: () => void;
+  restart: (s?: number, diff?: number) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
-  autoSetup: (summons?: number, slots?: number) => void;
   grantPeach: (n: number) => void;
-  buildDefense: (slots?: number, peach?: number) => void;
+  buildDefense: (peach?: number) => void;
   snapshot: () => ReturnType<Battle['snapshot']>;
 }
 const hook: GameHook = {
@@ -121,13 +134,13 @@ const hook: GameHook = {
     return battle;
   },
   summon: () => battle.summon(),
-  open: () => battle.openNewSlot(),
   wave: () => battle.startNextWave(),
   palm: () => battle.usePalm(),
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
-  restart: (s?: number) => {
-    battle = new Battle(s ?? seed);
+  autoPlace: () => battle.autoPlaceTray(),
+  restart: (s?: number, diff?: number) => {
+    battle = new Battle(s ?? seed, diff ?? 1);
   },
   step: (dt: number) => battle.step(dt),
   fastForward: (seconds: number, dt = 1 / 60) => {
@@ -138,41 +151,20 @@ const hook: GameHook = {
     }
     draw(ctx, battle, ui);
   },
-  autoSetup: (summons = 8, slots = 2) => {
-    for (let i = 0; i < slots; i++) battle.openNewSlot();
-    for (let i = 0; i < summons; i++) battle.summon();
-    draw(ctx, battle, ui);
-  },
   grantPeach: (n: number) => battle.grantPeach(n),
-  // 建立一条真实防线：给足蟠桃、开阵位、填满、反复合成，供自测验证击杀→产桃→胜负
-  buildDefense: (slots = 8, peach = 1000) => {
+  // 建立防线：给足蟠桃，反复「征兵→一键布阵」直到无法再征兵/无空位，供自测验证击杀→产桃→胜负
+  buildDefense: (peach = 2000) => {
     battle.grantPeach(peach);
-    for (let i = 0; i < slots; i++) battle.openNewSlot();
-    // 填满所有已解锁空阵位
-    for (let guard = 0; guard < 200; guard++) {
-      if (!battle.summon()) break;
-    }
-    // 反复合成同型同级，直到没有可合成的对子
-    for (let pass = 0; pass < 20; pass++) {
-      const arr = [...battle.units.values()];
-      let merged = false;
-      for (let i = 0; i < arr.length && !merged; i++) {
-        for (let j = i + 1; j < arr.length; j++) {
-          const a = arr[i]!;
-          const b = arr[j]!;
-          if (a.type === b.type && a.tier === b.tier) {
-            if (battle.dragUnit(a.cell, b.cell)) {
-              merged = true;
-              break;
-            }
-          }
-        }
-      }
-      // 合成腾出空位后继续补召唤
-      for (let guard = 0; guard < 50; guard++) {
+    for (let round = 0; round < 40; round++) {
+      const before = battle.units.size;
+      if (!battle.summon()) {
+        // 候选区可能有残留，先布阵
+        battle.autoPlaceTray();
         if (!battle.summon()) break;
       }
-      if (!merged) break;
+      battle.autoPlaceTray();
+      // 若单位数不再增长（无空位可放），停止
+      if (battle.units.size === before && battle.tray.length === 0 && battle.lockedCells().length === 0) break;
     }
     draw(ctx, battle, ui);
   },

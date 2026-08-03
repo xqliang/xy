@@ -14,13 +14,16 @@ import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
 
 export const VIEW_W = 560;
-export const VIEW_H = 920;
 export const HUD_H = 72;
 export const CELL = 74;
+export const COLS_V = COLS;
 export const BOARD_X = Math.round((VIEW_W - CELL * COLS) / 2);
 export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
-export const CTRL_Y = BOARD_Y + BOARD_H + 10;
+export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
+export const TRAY_H = 66;
+export const CTRL_Y = TRAY_Y + TRAY_H + 8; // 控制按钮行
+export const VIEW_H = CTRL_Y + 64 + 34;
 
 const UNIT_LABEL: Record<UnitType, string> = {
   monkey: '棍',
@@ -71,21 +74,22 @@ export function getButtons(b: Battle): Button[] {
       enabled: true,
     }));
   }
-  const canSummon = b.peach >= b.summonCost;
-  const canOpen = b.peach >= TUNING.openSlotCost;
+  const trayEmpty = b.tray.length === 0;
+  const canSummon = trayEmpty && b.peach >= b.summonCost;
   const third =
     b.status === 'playing'
       ? { id: 'palm', label: '如来神掌 🖐', enabled: b.palmAvailable() }
       : { id: 'wave', label: '下一波 ▶', enabled: b.status === 'ready' };
   return [
-    { id: 'summon', label: `召唤 (${b.summonCost}桃)`, x: 20, y, w: 168, h, enabled: canSummon },
-    { id: 'open', label: `开辟阵位 (${TUNING.openSlotCost}桃)`, x: 196, y, w: 168, h, enabled: canOpen },
+    { id: 'summon', label: `征兵 (${b.effectiveSummonCost()}🍑)`, x: 20, y, w: 168, h, enabled: canSummon },
+    { id: 'autoplace', label: '一键布阵', x: 196, y, w: 168, h, enabled: !trayEmpty },
     { id: third.id, label: third.label, x: 372, y, w: 168, h, enabled: third.enabled },
   ];
 }
 
 export interface UiState {
-  dragFrom: Cell | null;
+  dragFrom: Cell | null; // 从棋盘拖动的单位源格
+  dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
 }
 
@@ -164,9 +168,64 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawUnits(ctx, b, ui);
   drawFx(ctx, b);
   drawHud(ctx, b);
+  drawTray(ctx, b, ui);
   drawButtons(ctx, b);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
+}
+
+// —— 候选区（征兵产出，手工拖到棋盘）——
+const TRAY_LEFT = 64; // 左侧留给"营"标
+const TRAY_SLOT = 66;
+export function trayIndexAt(x: number, y: number): number | null {
+  if (y < TRAY_Y || y > TRAY_Y + TRAY_H) return null;
+  const i = Math.floor((x - TRAY_LEFT) / TRAY_SLOT);
+  if (i < 0 || i >= TUNING.traySize) return null;
+  return i;
+}
+function traySlotCenter(i: number): { x: number; y: number } {
+  return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
+}
+function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; type: UnitType } | { kind: 'shovel' }, x: number, y: number, s: number) {
+  if (token.kind === 'shovel') {
+    roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
+    ctx.fillStyle = '#e0b24a';
+    ctx.fill();
+    ctx.fillStyle = '#5a3a08';
+    ctx.font = `${Math.round(s * 0.5)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🪏', x, y);
+  } else {
+    drawUnit(ctx, token.type, 1, x, y, s);
+  }
+}
+function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  // 底板
+  ctx.fillStyle = '#efe6d2';
+  roundRect(ctx, 8, TRAY_Y, VIEW_W - 16, TRAY_H, 10);
+  ctx.fill();
+  // "营" 标
+  ctx.fillStyle = '#8a5a2b';
+  roundRect(ctx, 12, TRAY_Y + 6, 44, TRAY_H - 12, 8);
+  ctx.fill();
+  ctx.fillStyle = '#fff2d8';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
+  // 5 个候选槽
+  for (let i = 0; i < TUNING.traySize; i++) {
+    const cx = TRAY_LEFT + i * TRAY_SLOT;
+    roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
+    ctx.fillStyle = '#dcccae';
+    ctx.fill();
+    const token = b.tray[i];
+    if (token && ui.dragTrayIndex !== i) {
+      const c = traySlotCenter(i);
+      drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
+    }
+  }
 }
 
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
@@ -386,21 +445,49 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  if (!ui.dragFrom || !ui.dragPos) return;
-  const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
-  if (!u) return;
-  // 高亮目标格
+  if (!ui.dragPos) return;
+  // 拖拽源中心（棋盘单位 或 候选区令牌）
+  let src: { x: number; y: number } | null = null;
+  let ghost: (() => void) | null = null;
+  if (ui.dragFrom) {
+    const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+    if (u) {
+      src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
+      ghost = () => drawUnit(ctx, u.type, u.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.72);
+    }
+  } else if (ui.dragTrayIndex !== null) {
+    const token = b.tray[ui.dragTrayIndex];
+    if (token) {
+      src = traySlotCenter(ui.dragTrayIndex);
+      ghost = () => drawTrayToken(ctx, token, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.7);
+    }
+  }
+  if (!ghost) return;
+  // 目标格高亮
   const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
   if (target) {
     const x = BOARD_X + target.c * CELL;
     const y = BOARD_Y + target.r * CELL;
     roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 8);
-    ctx.strokeStyle = '#ffe08a';
+    ctx.strokeStyle = '#e8a13c';
     ctx.lineWidth = 3;
     ctx.stroke();
   }
-  ctx.globalAlpha = 0.85;
-  drawUnit(ctx, u.type, u.tier, ui.dragPos.x, ui.dragPos.y, CELL * 0.72);
+  // 源→当前的虚线连接（参考原作）
+  if (src) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,90,40,0.8)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    ctx.lineTo(ui.dragPos.x, ui.dragPos.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 0.9;
+  ghost();
   ctx.globalAlpha = 1;
 }
 
