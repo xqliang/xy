@@ -59,6 +59,7 @@ const progress = await page.evaluate(() => {
   const waves = [];
   for (let w = 0; w < 12; w++) {
     if (g.battle.status === 'won' || g.battle.status === 'lost') break;
+    if (g.battle.pendingShop) g.chooseItem(0); // 波间商店 3 选 1
     g.wave();
     g.grantPeach(300);
     g.buildDefense(2, 0);
@@ -80,6 +81,18 @@ await page.evaluate(() => {
 });
 await shot(page, '05-lose.png');
 console.log('05 lose   :', JSON.stringify(await snap(page)));
+
+// 6) 波间道具商店（3 选 1）
+await page.evaluate(() => {
+  const g = window.__game;
+  g.restart(7);
+  g.grantPeach(500);
+  g.buildDefense(6, 200);
+  g.wave();
+  g.fastForward(60); // 清完第 1 波 → 弹出商店
+});
+await shot(page, '06-shop.png');
+console.log('06 shop   :', JSON.stringify(await snap(page)));
 
 console.log('\n--- page logs ---\n' + (logs.join('\n') || '(none)'));
 await browser.close();

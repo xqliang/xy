@@ -8,7 +8,7 @@ import {
   posAtDistance,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING } from './battle';
+import { Battle, unitColorOf, TUNING, itemById } from './battle';
 import { UNITS, getUnitStat } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
@@ -55,6 +55,21 @@ export function getButtons(b: Battle): Button[] {
   const h = 64;
   if (b.status === 'won' || b.status === 'lost') {
     return [{ id: 'restart', label: '重新开始', x: 24, y, w: VIEW_W - 48, h, enabled: true }];
+  }
+  // 胜利后 3 选 1 道具商店
+  if (b.pendingShop) {
+    const cardW = 168;
+    const cardH = 96;
+    const cy = CTRL_Y - 24;
+    return b.pendingShop.map((id, i) => ({
+      id: `item${i}`,
+      label: itemById(id)?.name ?? id,
+      x: 20 + i * 176,
+      y: cy,
+      w: cardW,
+      h: cardH,
+      enabled: true,
+    }));
   }
   const canSummon = b.peach >= b.summonCost;
   const canOpen = b.peach >= TUNING.openSlotCost;
@@ -325,20 +340,48 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
-  for (const btn of getButtons(b)) {
-    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    ctx.fillStyle = btn.enabled ? '#c8792b' : '#3a3128';
-    ctx.fill();
-    ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+  // 商店标题
+  if (b.pendingShop) {
+    ctx.fillStyle = '#ffe08a';
     ctx.font = 'bold 20px "PingFang SC", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+    ctx.fillText('胜利！选择一件道具（每日重置）', VIEW_W / 2, CTRL_Y - 44);
+  }
+  for (const btn of getButtons(b)) {
+    const isItem = btn.id.startsWith('item');
+    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
+    ctx.fillStyle = btn.enabled ? (isItem ? '#3a2c53' : '#c8792b') : '#3a3128';
+    ctx.fill();
+    if (isItem) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#a98bff';
+      ctx.stroke();
+      const def = itemById(b.pendingShop![Number(btn.id.slice(4))]!);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff6e6';
+      ctx.font = 'bold 18px "PingFang SC", sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText(def?.name ?? btn.label, btn.x + btn.w / 2, btn.y + 12);
+      ctx.fillStyle = def?.kind === '主动' ? '#ffb86c' : '#9bffb0';
+      ctx.font = '12px "PingFang SC", sans-serif';
+      ctx.fillText(`[${def?.kind ?? ''}]`, btn.x + btn.w / 2, btn.y + 38);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = '13px "PingFang SC", sans-serif';
+      ctx.fillText(def?.desc ?? '', btn.x + btn.w / 2, btn.y + 60);
+    } else {
+      ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+      ctx.font = 'bold 20px "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+    }
   }
   // 提示信息
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
   ctx.font = '14px "PingFang SC", sans-serif';
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillText(b.message, VIEW_W / 2, CTRL_Y + 64 + 20);
 }
 
