@@ -11,7 +11,7 @@ import {
   type UiState,
 } from './render';
 import type { Cell } from './board';
-import { pickDailyMap, mapById } from './board';
+import { pickDailyMap, mapById, MAPS } from './board';
 import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState } from './rank';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
@@ -41,7 +41,7 @@ let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
 
 function newGame() {
-  currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
+  // 使用当前(可在首页切换的)地图；不再每次重置为每日轮换
   battle = new Battle(seed, rank.difficulty, currentMap, metaBonuses(merit));
   endHandled = false;
 }
@@ -67,6 +67,12 @@ function handleMenu(x: number, y: number) {
   } else if (id === 'shop') {
     shopToast = '';
     screen = 'shop';
+  } else if (id === 'mapPrev' || id === 'mapNext') {
+    const idx = MAPS.findIndex((m) => m.id === currentMap.id);
+    const n = MAPS.length;
+    const next = id === 'mapNext' ? (idx + 1) % n : (idx - 1 + n) % n;
+    currentMap = MAPS[next]!;
+    menuToast = `地图：${currentMap.name}`;
   } else {
     menuToast = '该功能开发中…';
   }

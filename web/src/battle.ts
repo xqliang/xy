@@ -113,6 +113,7 @@ export interface Monster {
   skill: MonsterSkill | null; // 精英/BOSS 携带的减益技能（普通妖为 null）
   skillCd: number; // 距下次施法的秒数
   castFlash: number; // 施法闪光(1→0)，用于渲染
+  spawnT: number; // 出生后经过秒数（用于"由小变大崩出"入场缩放）
 }
 
 export interface HitFx {
@@ -198,6 +199,8 @@ export class Battle {
   ultCount = 0; // 本局绝招释放次数
   ultChargeMul = 1; // 绝招蓄力时间倍率（功德商店可降低）
   aiHeroEnergy = 0; // AI 英雄绝招能量（对称：AI 也有英雄定期清场，维持伪竞技公平）
+  spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
+  aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -302,10 +305,6 @@ export class Battle {
   // 候选区非空时：若棋盘仍有空位则须先布阵；若无空位则本次征兵覆盖候选区剩余。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
-    if (this.tray.length > 0 && this.hasEmptyUnlocked()) {
-      this.message = '先把候选区的兵拖到绿格';
-      return false;
-    }
     const cost = this.effectiveSummonCost();
     if (this.peach < cost) {
       this.message = '蟠桃不足，无法征兵';
@@ -325,10 +324,6 @@ export class Battle {
     }
     this.message = '把候选区的兵拖到绿格，铲子拖到锁定格开挖';
     return true;
-  }
-
-  private hasEmptyUnlocked(): boolean {
-    return this.unlockedCells().some((c) => !this.units.has(cellKey(c.c, c.r)));
   }
 
   // 计入道具修正后的当前征兵成本
@@ -530,6 +525,7 @@ export class Battle {
       skill,
       skillCd: TUNING.skillFirstDelay,
       castFlash: 0,
+      spawnT: 0,
     });
     // AI 对手同波同步出怪（镜像路）
     this.aiMonsters.push({
@@ -543,7 +539,10 @@ export class Battle {
       skill,
       skillCd: TUNING.skillFirstDelay,
       castFlash: 0,
+      spawnT: 0,
     });
+    this.spawnGateT = 0.5; // 触发出怪口"开合"动画
+    this.aiSpawnGateT = 0.5;
   }
 
   // 决定怪物携带的技能：BOSS 必带（随机一种），精英按概率带，普通妖无
@@ -640,6 +639,7 @@ export class Battle {
     }
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
+      m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) continue;
       m.dist += m.spd * dt;
@@ -802,6 +802,7 @@ export class Battle {
   private updateMonsters(dt: number): void {
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
+      m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
@@ -833,6 +834,8 @@ export class Battle {
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
+    if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
+    if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
   }
 
   // 推进 dt 秒

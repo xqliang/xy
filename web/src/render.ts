@@ -75,7 +75,7 @@ export function getButtons(b: Battle): Button[] {
     }));
   }
   const trayEmpty = b.tray.length === 0;
-  const canSummon = trayEmpty && b.peach >= b.summonCost;
+  const canSummon = b.peach >= b.summonCost; // 桃够即可征兵(不看候选槽；点后清空残余)
   // 对战中：4 键（征兵/布阵/绝招/神掌）；备战中：3 键（征兵/布阵/立即开战）
   if (b.status === 'playing') {
     const w4 = 124;
@@ -179,7 +179,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
     const dw = bgImg.width * scale;
     const dh = bgImg.height * scale;
     ctx.drawImage(bgImg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
-    ctx.fillStyle = 'rgba(20,16,12,0.18)'; // 轻微压暗，提升前景对比
+    ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 淡宣纸薄纱：把写实场景压成柔和氛围底，突出扁平格子
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   } else {
     const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
@@ -190,6 +190,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   }
 
   drawBoard(ctx, b, ui);
+  drawSpawnGate(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawAiSide(ctx, b);
@@ -273,16 +274,149 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
       const onPath = isPathCell(b.map, src.c, src.r);
       const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : aiUnlocked.has(`${c},${r}`);
-      // 双方半场同色系协调：路径=道路色，可放置=近白(cellUnlocked)，不可放置=深色(cellLocked)；不加锁
-      roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
-      ctx.fillStyle = onPath ? th.path : cellOpen ? th.cellUnlocked : th.cellLocked;
-      ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(40,36,30,0.32)';
-      ctx.stroke();
+      const ix = x + 1.5, iy = y + 1.5, iw = CELL - 3, ih = CELL - 3;
+      if (onPath) {
+        // 路径格：道路色 + 黑色描边与其他块分隔（水墨勾线）
+        roundRect(ctx, ix, iy, iw, ih, 4);
+        ctx.fillStyle = th.path;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(30,26,20,0.7)';
+        ctx.stroke();
+      } else if (cellOpen) {
+        // 可放置格：米白 + 内斜角高光 + 柔和投影
+        ctx.save();
+        ctx.shadowColor = 'rgba(60,50,35,0.28)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetY = 2;
+        roundRect(ctx, ix, iy, iw, ih, 5);
+        ctx.fillStyle = th.cellUnlocked;
+        ctx.fill();
+        ctx.restore();
+        // 顶部高光 + 底部内阴影（斜角立体感）
+        ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(ix + 4, iy + 2); ctx.lineTo(ix + iw - 4, iy + 2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(120,105,80,0.35)';
+        ctx.beginPath(); ctx.moveTo(ix + 4, iy + ih - 1.5); ctx.lineTo(ix + iw - 4, iy + ih - 1.5); ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(70,60,45,0.35)';
+        roundRect(ctx, ix, iy, iw, ih, 5); ctx.stroke();
+      } else {
+        // 不可放置格：同色系中间调 + 细点纹理 + 内边阴影
+        roundRect(ctx, ix, iy, iw, ih, 4);
+        ctx.fillStyle = th.cellLocked;
+        ctx.fill();
+        // 内边阴影
+        ctx.save();
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(40,45,35,0.28)';
+        ctx.lineWidth = 3;
+        roundRect(ctx, ix + 1, iy + 1, iw - 2, ih - 2, 4); ctx.stroke();
+        // 细点纹理（确定性散点，随格坐标变化）
+        ctx.fillStyle = 'rgba(50,55,42,0.28)';
+        for (let k = 0; k < 5; k++) {
+          const px = ix + 8 + ((c * 37 + r * 53 + k * 29) % (iw - 16));
+          const py = iy + 8 + ((c * 17 + r * 71 + k * 41) % (ih - 16));
+          ctx.beginPath(); ctx.arc(px, py, 1.3, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(40,36,30,0.3)';
+        roundRect(ctx, ix, iy, iw, ih, 4); ctx.stroke();
+      }
     }
   }
+  drawBorderMotif(ctx, b);
   drawFence(ctx, b);
+}
+
+// 棋盘四周的地图专属边界装饰（不同地图不同风格）
+function drawBorderMotif(ctx: CanvasRenderingContext2D, b: Battle) {
+  const left = BOARD_X, right = BOARD_X + CELL * COLS, top = BOARD_Y, bot = BOARD_Y + CELL * ROWS;
+  ctx.save();
+  const id = b.map.id;
+  // 单元装饰：在 (cx,cy) 处按边法线方向 nx,ny 画一枚地图专属图元
+  const motif = (cx: number, cy: number, nx: number, ny: number) => {
+    const s = CELL * 0.34;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.atan2(ny, nx) + Math.PI / 2);
+    if (id === 'huoyanshan') {
+      // 火焰尖
+      ctx.fillStyle = 'rgba(150,54,30,0.6)';
+      ctx.beginPath(); ctx.moveTo(-s * 0.6, 0); ctx.quadraticCurveTo(-s * 0.1, -s, 0, -s * 1.3); ctx.quadraticCurveTo(s * 0.1, -s, s * 0.6, 0); ctx.closePath(); ctx.fill();
+    } else if (id === 'liushahe') {
+      // 沙丘
+      ctx.fillStyle = 'rgba(150,120,60,0.5)';
+      ctx.beginPath(); ctx.moveTo(-s, 0); ctx.quadraticCurveTo(-s * 0.3, -s * 0.8, s * 0.2, -s * 0.4); ctx.quadraticCurveTo(s * 0.6, -s * 0.1, s, 0); ctx.closePath(); ctx.fill();
+    } else if (id === 'baiguling') {
+      // 枯骨尖刺
+      ctx.fillStyle = 'rgba(90,96,80,0.6)';
+      ctx.beginPath(); ctx.moveTo(-s * 0.4, 0); ctx.lineTo(0, -s * 1.2); ctx.lineTo(s * 0.4, 0); ctx.closePath(); ctx.fill();
+    } else {
+      // 盘丝洞：云/蛛丝弧
+      ctx.strokeStyle = 'rgba(150,90,130,0.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.7, Math.PI, 0); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, -s * 0.2, s * 0.4, Math.PI, 0); ctx.stroke();
+    }
+    ctx.restore();
+  };
+  for (let c = 0; c < COLS; c++) {
+    const x = BOARD_X + c * CELL + CELL / 2;
+    motif(x, top - 2, 0, -1);
+    motif(x, bot + 2, 0, 1);
+  }
+  for (let r = 0; r < ROWS; r++) {
+    const y = BOARD_Y + r * CELL + CELL / 2;
+    motif(left - 2, y, -1, 0);
+    motif(right + 2, y, 1, 0);
+  }
+  ctx.restore();
+}
+
+// 出怪口：地图专属"闸门/云朵"随出怪开合。gateT 0.5→0 期间做 开→合 动画。
+function drawSpawnGate(ctx: CanvasRenderingContext2D, b: Battle) {
+  const entrance = (path: { c: number; r: number }[]) => {
+    for (const p of path) if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) return p;
+    return path[0]!;
+  };
+  drawGateAt(ctx, entrance(b.map.path), b.spawnGateT, b.map.id);
+  if (!b.aiDefeated) drawGateAt(ctx, entrance(b.aiPath), b.aiSpawnGateT, b.map.id);
+}
+
+function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number }, gateT: number, id: string) {
+  const { x, y } = cellCenterPx(cell.c, cell.r);
+  const open = gateT > 0 ? Math.sin(Math.PI * (1 - gateT / 0.5)) : 0; // 0→1→0
+  const off = open * CELL * 0.34;
+  ctx.save();
+  if (id === 'pansidong') {
+    // 盘丝洞：两团云/丝絮分开又合拢
+    const puff = (px: number) => {
+      ctx.beginPath();
+      ctx.arc(px, y - 6, CELL * 0.16, 0, Math.PI * 2);
+      ctx.arc(px + (px < x ? 6 : -6), y + 4, CELL * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    ctx.fillStyle = 'rgba(150,110,150,0.75)';
+    puff(x - off - CELL * 0.14);
+    puff(x + off + CELL * 0.14);
+  } else {
+    // 火焰山/流沙河/白骨岭：两扇闸门开合
+    const w = CELL * 0.4, h = CELL * 0.52;
+    const leaf = (lx: number) => {
+      roundRect(ctx, lx, y - h / 2, w, h, 5);
+      ctx.fillStyle = id === 'baiguling' ? 'rgba(110,116,98,0.85)' : id === 'liushahe' ? 'rgba(150,124,70,0.85)' : 'rgba(120,60,40,0.85)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(30,26,20,0.7)';
+      ctx.stroke();
+    };
+    leaf(x - off - w);
+    leaf(x + off);
+  }
+  ctx.restore();
 }
 
 // 中间栅栏：每张地图开口不同（fenceGaps）
@@ -364,8 +498,19 @@ function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 单个怪物渲染（图标/圆形兜底 + 血条 + 受击闪白 + 技能环）——玩家侧与 AI 侧共用
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad: number, m: { hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number }) {
+// 入场缩放：由小变大略带回弹(easeOutBack)，营造"崩出来"感
+function emergeScale(t: number): number {
+  const d = 0.38;
+  if (t >= d) return 1;
+  const p = t / d;
+  const c1 = 1.70158, c3 = c1 + 1;
+  const ease = 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+  return 0.2 + 0.8 * ease;
+}
+
+// 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放）——玩家侧与 AI 侧共用
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }) {
+  const rad = rad0 * emergeScale(m.spawnT);
   const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
   if (spr) {
     const box = rad * 2.3;
@@ -377,13 +522,21 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad:
     ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
     ctx.fill();
   }
-  // 血条
-  const bw = rad * 2;
+  // 墨风血条：深墨底条(略带毛糙) + 朱红填充
+  const bw = rad0 * 2;
   const hpPct = Math.max(0, m.hp / m.maxHp);
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(x - bw / 2, y - rad - 9, bw, 5);
-  ctx.fillStyle = hpPct > 0.4 ? '#7dff8a' : '#ff6a6a';
-  ctx.fillRect(x - bw / 2, y - rad - 9, bw * hpPct, 5);
+  const by = y - rad0 - 10;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(28,24,20,0.85)';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(x - bw / 2, by); ctx.lineTo(x + bw / 2, by); ctx.stroke(); // 墨底
+  if (hpPct > 0) {
+    ctx.strokeStyle = hpPct > 0.4 ? '#c8402e' : '#8a2418'; // 朱红→暗红
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x - bw / 2 + 1, by); ctx.lineTo(x - bw / 2 + 1 + (bw - 2) * hpPct, by); ctx.stroke();
+  }
+  ctx.restore();
   // 受击闪白
   if (m.hitFlash > 0) {
     ctx.globalAlpha = Math.min(0.8, m.hitFlash / 0.12);

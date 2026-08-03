@@ -36,6 +36,8 @@ export function menuButtons(): MenuButton[] {
     { id: 'ad', x: cx - 150, y: 700, w: 145, h: 50 },
     { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
     { id: 'shop', x: cx - 150, y: 762, w: 300, h: 50 },
+    { id: 'mapPrev', x: cx - 150, y: 566, w: 44, h: 38 },
+    { id: 'mapNext', x: cx + 106, y: 566, w: 44, h: 38 },
     { id: 'codex', x: 40, y: 880, w: 140, h: 78 },
     { id: 'rank', x: VIEW_W / 2 - 70, y: 880, w: 140, h: 78 },
     { id: 'bag', x: VIEW_W - 180, y: 880, w: 140, h: 78 },
@@ -92,6 +94,18 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
 
   // 按钮
   for (const b of menuButtons()) {
+    if (b.id === 'mapPrev' || b.id === 'mapNext') {
+      // 地图切换箭头（调试用）
+      roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+      ctx.fillStyle = '#8a6a3a';
+      ctx.fill();
+      ctx.fillStyle = '#fff4e0';
+      ctx.font = 'bold 22px "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(b.id === 'mapPrev' ? '‹' : '›', b.x + b.w / 2, b.y + b.h / 2);
+      continue;
+    }
     const isStart = b.id === 'start';
     roundRect(ctx, b.x, b.y, b.w, b.h, 12);
     ctx.fillStyle =
@@ -113,6 +127,13 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.font = isStart ? 'bold 26px "PingFang SC", sans-serif' : '16px "PingFang SC", sans-serif';
     ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
   }
+
+  // 当前地图名（夹在切换箭头之间，调试用）
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = 'bold 20px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(info.mapName, VIEW_W / 2, 585);
 
   // 提示
   if (info.toast) {
