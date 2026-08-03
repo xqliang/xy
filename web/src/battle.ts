@@ -54,6 +54,25 @@ export const TUNING = {
   winWave: 8, // 通关波次（切片演示）
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
+  // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
+  eliteFromWave: 3, // 第 3 波起可能刷出精英妖
+  eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
+  skillRadius: 2.2, // 技能作用半径（格）
+  skillInterval: 4.5, // 两次施法间隔（秒）
+  skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
+  stunDur: 1.4, // 眩晕：武将暂停攻击（秒）
+  slowDur: 3, // 减速：攻击间隔拉长（秒）
+  slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
+  weakenDur: 3, // 降攻：攻击力削弱（秒）
+  weakenAtkMul: 0.65, // 降攻期间攻击倍率
+};
+
+// 怪物技能：对附近武将施加的减益类型
+export type MonsterSkill = 'stun' | 'slow' | 'weaken';
+export const SKILL_META: Record<MonsterSkill, { name: string; color: string; icon: string }> = {
+  stun: { name: '定身', color: '#ffd34d', icon: '💫' },
+  slow: { name: '迟滞', color: '#5bd1ff', icon: '🐌' },
+  weaken: { name: '弱身', color: '#c77dff', icon: '⬇' },
 };
 
 // 候选区令牌：兵种（带阶数，可在候选区内合并）或 铲子
@@ -67,6 +86,9 @@ export interface PlacedUnit {
   cell: Cell;
   cooldown: number; // 距下次攻击的秒数
   firePulse: number; // 开火脉冲(1→0)，用于渲染缩放
+  stunT: number; // 眩晕剩余(秒)：>0 时无法攻击
+  slowT: number; // 减速剩余(秒)：>0 时冷却拉长
+  weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
 }
 
 export interface Monster {
@@ -77,6 +99,9 @@ export interface Monster {
   spd: number;
   isBoss: boolean;
   hitFlash: number; // 受击闪白(秒)
+  skill: MonsterSkill | null; // 精英/BOSS 携带的减益技能（普通妖为 null）
+  skillCd: number; // 距下次施法的秒数
+  castFlash: number; // 施法闪光(1→0)，用于渲染
 }
 
 export interface HitFx {
@@ -313,12 +338,12 @@ export class Battle {
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
       this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     return true;
@@ -448,6 +473,7 @@ export class Battle {
     let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
     hp *= this.difficultyMul; // 境界越高妖怪越强
     if (isBoss) hp *= TUNING.bossHpMul;
+    const skill = this.rollMonsterSkill(isBoss);
     this.monsters.push({
       id: this.nextMonsterId++,
       dist: 0,
@@ -456,6 +482,9 @@ export class Battle {
       spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.1 * (this.difficultyMul - 1)), // 高境界妖怪更快
       isBoss,
       hitFlash: 0,
+      skill,
+      skillCd: TUNING.skillFirstDelay,
+      castFlash: 0,
     });
     // AI 对手同波同步出怪（镜像路）
     this.aiMonsters.push({
@@ -466,7 +495,20 @@ export class Battle {
       spd: TUNING.monsterSpd * (1 + 0.1 * (this.difficultyMul - 1)),
       isBoss,
       hitFlash: 0,
+      skill,
+      skillCd: TUNING.skillFirstDelay,
+      castFlash: 0,
     });
+  }
+
+  // 决定怪物携带的技能：BOSS 必带（随机一种），精英按概率带，普通妖无
+  private rollMonsterSkill(isBoss: boolean): MonsterSkill | null {
+    const pool: MonsterSkill[] = ['stun', 'slow', 'weaken'];
+    if (isBoss) return this.rng.pick(pool);
+    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) {
+      return this.rng.pick(pool);
+    }
+    return null;
   }
 
   // AI 自动部署：每波在上半场镜像格补兵并合成升阶（模拟一名对手玩家）
@@ -477,7 +519,7 @@ export class Battle {
     for (const cell of this.aiCells) {
       if (added >= 2) break;
       if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
-      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0 });
+      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
       added++;
     }
     // 合成：同型同级两两合并升阶
@@ -565,6 +607,11 @@ export class Battle {
   private updateUnits(dt: number): void {
     for (const u of this.units.values()) {
       u.firePulse = Math.max(0, u.firePulse - dt * 6); // 开火脉冲衰减
+      // 减益计时衰减
+      if (u.stunT > 0) u.stunT = Math.max(0, u.stunT - dt);
+      if (u.slowT > 0) u.slowT = Math.max(0, u.slowT - dt);
+      if (u.weakenT > 0) u.weakenT = Math.max(0, u.weakenT - dt);
+      if (u.stunT > 0) continue; // 眩晕：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier); // atk/frq/rge/targets（来自 game-core）
@@ -580,7 +627,9 @@ export class Battle {
         .filter((x) => x.d <= stat.rge)
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
-      const dmg = damage(stat.atk * this.mods.atkMul); // 道具增伤
+      // 降攻减益：仅临时削弱伤害，不改动基础数值
+      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1);
+      const dmg = damage(stat.atk * atkMul); // 道具增伤 + 减益
       const color = this.unitColor(u.type);
       let hitCount = 0;
       for (const target of inRange) {
@@ -592,8 +641,39 @@ export class Battle {
         hitCount++;
       }
       if (hitCount > 0) u.firePulse = 1; // 开火脉冲
-      u.cooldown = 1 / stat.frq; // 攻速（次/秒）
+      // 减速减益：拉长攻击间隔（等效攻速下降）
+      u.cooldown = (1 / stat.frq) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }
+  }
+
+  // 怪物施法：精英/BOSS 进场后定期对半径内武将施加减益（不改动基础数值，仅施加计时器）
+  private updateMonsterSkills(dt: number): void {
+    for (const m of this.monsters) {
+      if (!m.skill || m.hp <= 0) continue;
+      m.castFlash = Math.max(0, m.castFlash - dt * 4);
+      m.skillCd -= dt;
+      if (m.skillCd > 0) continue;
+      m.skillCd = TUNING.skillInterval;
+      const mp = posAtDistance(this.map, m.dist);
+      let affected = 0;
+      for (const u of this.units.values()) {
+        const d = Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r);
+        if (d > TUNING.skillRadius) continue;
+        this.applyDebuff(u, m.skill);
+        affected++;
+      }
+      if (affected > 0) {
+        m.castFlash = 1;
+        this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.4, maxTtl: 0.4, big: true, color: SKILL_META[m.skill].color });
+        this.message = `${m.isBoss ? 'BOSS' : '精英妖'}施展「${SKILL_META[m.skill].name}」`;
+      }
+    }
+  }
+
+  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): void {
+    if (skill === 'stun') u.stunT = Math.max(u.stunT, TUNING.stunDur);
+    else if (skill === 'slow') u.slowT = Math.max(u.slowT, TUNING.slowDur);
+    else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
   }
 
   private updateMonsters(dt: number): void {
@@ -667,6 +747,7 @@ export class Battle {
       }
     }
     this.updateUnits(dt);
+    this.updateMonsterSkills(dt);
     this.updateMonsters(dt);
     this.updateAi(dt);
     this.updateFx(dt);
@@ -726,6 +807,10 @@ export class Battle {
   snapshot() {
     let maxDist = 0;
     for (const m of this.monsters) if (m.dist > maxDist) maxDist = m.dist;
+    let skillMonsters = 0;
+    for (const m of this.monsters) if (m.skill) skillMonsters++;
+    let debuffed = 0;
+    for (const u of this.units.values()) if (u.stunT > 0 || u.slowT > 0 || u.weakenT > 0) debuffed++;
     return {
       peach: this.peach,
       tangsengHP: this.tangsengHP,
@@ -741,6 +826,8 @@ export class Battle {
       palmReady: this.palmAvailable(),
       aiHp: this.aiTangsengHP,
       aiDefeated: this.aiDefeated,
+      skillMonsters,
+      debuffed,
       itemsPicked: this.pickedItems.length,
       shopOpen: this.pendingShop !== null,
       message: this.message,

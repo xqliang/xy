@@ -9,7 +9,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById } from './battle';
+import { Battle, unitColorOf, TUNING, itemById, SKILL_META } from './battle';
 import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
@@ -389,6 +389,29 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+    // 精英/BOSS 技能标识：彩色环 + 图标；施法瞬间脉冲光圈
+    if (m.skill) {
+      const meta = SKILL_META[m.skill];
+      ctx.save();
+      ctx.strokeStyle = meta.color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, rad + 3, 0, Math.PI * 2);
+      ctx.stroke();
+      if (m.castFlash > 0) {
+        ctx.globalAlpha = m.castFlash;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, rad + 3 + (1 - m.castFlash) * 20, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.font = `${Math.round(rad)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(meta.icon, x, y - rad - 12);
+      ctx.restore();
+    }
   }
 }
 
@@ -440,6 +463,24 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     // 开火脉冲：放大 + 上跳
     const pulse = u.firePulse;
     drawUnit(ctx, u.type, u.tier, x, y - pulse * 4, CELL * 0.72 * (1 + pulse * 0.16));
+    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身）
+    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : null;
+    if (debuff) {
+      ctx.save();
+      if (u.stunT > 0) {
+        // 眩晕：整格泛黄闪烁
+        ctx.globalAlpha = 0.3 + 0.2 * Math.sin(u.stunT * 12);
+        roundRect(ctx, x - CELL * 0.36, y - CELL * 0.36, CELL * 0.72, CELL * 0.72, 8);
+        ctx.fillStyle = SKILL_META.stun.color;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(debuff, x + CELL * 0.28, y - CELL * 0.3);
+      ctx.restore();
+    }
   }
 }
 
