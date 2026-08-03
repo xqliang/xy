@@ -392,7 +392,7 @@ export class Battle {
       dist: 0,
       hp,
       maxHp: hp,
-      spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.06 * (this.difficultyMul - 1)), // 高境界妖怪更快
+      spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.1 * (this.difficultyMul - 1)), // 高境界妖怪更快
       isBoss,
     });
   }

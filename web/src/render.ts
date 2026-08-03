@@ -93,6 +93,12 @@ export interface UiState {
   dragPos: { x: number; y: number } | null;
 }
 
+// HUD 显示的境界名（由 main 设置）
+let hudRankLabel = '';
+export function setHudRank(label: string): void {
+  hudRankLabel = label;
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -393,9 +399,16 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(`🍑 ${b.peach}`, 20, HUD_H / 2);
+  // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
-  ctx.fillText(`第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2);
+  ctx.fillText(`第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2 - 12);
+  if (hudRankLabel) {
+    ctx.font = '14px "PingFang SC", sans-serif';
+    ctx.fillStyle = '#8a5a2b';
+    ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
+  }
+  ctx.font = 'bold 24px "PingFang SC", sans-serif';
   ctx.textAlign = 'right';
   ctx.fillStyle = '#c23b3b';
   ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);

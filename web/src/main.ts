@@ -5,12 +5,14 @@ import {
   getButtons,
   pxToCell,
   trayIndexAt,
+  setHudRank,
   VIEW_W,
   VIEW_H,
   type UiState,
 } from './render';
 import type { Cell } from './board';
 import { loadAssets } from './assets';
+import { loadRank, recordWin, recordLose, rankName, type RankState } from './rank';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -21,8 +23,15 @@ void loadAssets();
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') ?? '1') || 1;
 
-let battle = new Battle(seed);
+let rank: RankState = loadRank();
+let battle = new Battle(seed, rank.difficulty);
+let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null };
+
+function newGame() {
+  battle = new Battle(seed, rank.difficulty);
+  endHandled = false;
+}
 
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
@@ -57,7 +66,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
       else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
-      else if (btn.id === 'restart') battle = new Battle(seed);
+      else if (btn.id === 'restart') newGame();
       return true;
     }
   }
@@ -115,6 +124,12 @@ function frame(now: number) {
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
   battle.step(dt);
+  // 胜负结算入境界（仅一次）
+  if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
+    endHandled = true;
+    rank = battle.status === 'won' ? recordWin(rank) : recordLose(rank);
+  }
+  setHudRank(rankName(rank.level));
   draw(ctx, battle, ui);
   requestAnimationFrame(frame);
 }
@@ -148,6 +163,7 @@ const hook: GameHook = {
   autoPlace: () => battle.autoPlaceTray(),
   restart: (s?: number, diff?: number) => {
     battle = new Battle(s ?? seed, diff ?? 1);
+    endHandled = false;
   },
   step: (dt: number) => battle.step(dt),
   fastForward: (seconds: number, dt = 1 / 60) => {
