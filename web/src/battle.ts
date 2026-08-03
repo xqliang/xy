@@ -44,7 +44,7 @@ export const TUNING = {
   monsterHpStep: 16,
   bossEveryWave: 5, // 每 5 波出一个 BOSS
   bossHpMul: 7,
-  spawnInterval: 1.0, // 秒/只（出怪节奏；较宽松，避免同屏怪潮过密）
+  spawnInterval: 1.25, // 秒/只（出怪节奏；更舒缓）
   summonCostStart: 12, // 首次征兵成本（对齐原作"征兵"量级）
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
