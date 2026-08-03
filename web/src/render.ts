@@ -252,6 +252,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
   const unlocked = new Set(b.unlockedCells().map((c) => `${c.c},${c.r}`));
+  const aiUnlocked = b.aiUnlocked;
   const th = b.map.theme;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -260,39 +261,19 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       const inPlayer = r >= FENCE_ROW;
       const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
       const onPath = isPathCell(b.map, src.c, src.r);
+      const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : aiUnlocked.has(`${c},${r}`);
+      // 双方半场使用完全相同的主题配色：路径/已开放/未开放一致，仅靠栅栏与单位区分敌我
       roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
-      if (inPlayer) {
-        if (onPath) {
-          ctx.fillStyle = th.path; // 路径也是格子，仅背景色不同
-        } else {
-          ctx.fillStyle = unlocked.has(`${c},${r}`) ? th.cellUnlocked : th.cellLocked;
-        }
+      if (onPath) {
+        ctx.fillStyle = th.path;
       } else {
-        // AI 半场：路径格用较深紫；非路径格=AI 可布武器阵位，用明亮紫填充+浅内框，清晰标出
-        if (onPath) {
-          ctx.fillStyle = 'rgba(150,120,160,0.42)';
-          ctx.fill();
-        } else {
-          ctx.fillStyle = 'rgba(196,168,224,0.5)';
-          ctx.fill();
-          ctx.save();
-          ctx.strokeStyle = 'rgba(150,110,180,0.55)';
-          ctx.lineWidth = 1.5;
-          roundRect(ctx, x + 5, y + 5, CELL - 10, CELL - 10, 4);
-          ctx.stroke();
-          ctx.restore();
-        }
-        roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(80,70,55,0.28)';
-        ctx.stroke();
-        continue;
+        ctx.fillStyle = cellOpen ? th.cellUnlocked : th.cellLocked;
       }
       ctx.fill();
       ctx.lineWidth = 1;
       ctx.strokeStyle = 'rgba(80,70,55,0.28)';
       ctx.stroke();
-      if (inPlayer && !onPath && !unlocked.has(`${c},${r}`)) {
+      if (!onPath && !cellOpen) {
         ctx.fillStyle = 'rgba(70,60,40,0.4)';
         ctx.font = '18px sans-serif';
         ctx.textAlign = 'center';

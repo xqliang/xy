@@ -208,6 +208,7 @@ export class Battle {
   readonly aiPath: Cell[];
   readonly aiTangseng: Cell;
   readonly aiCells: Cell[]; // AI 可部署格 = 玩家可摆放格的镜像
+  readonly aiUnlocked = new Set<string>(); // AI 已开放阵位(初始6格 + 已部署格)，用于渲染其可放置区域
   private aiPathLen: number;
   aiTangsengHP = TANGSENG_INITIAL_HP;
   aiMonsters: Monster[] = [];
@@ -259,6 +260,11 @@ export class Battle {
     for (let i = 0; i < openSlots && i < this.slotOrder.length; i++) {
       const s = this.slotOrder[i]!;
       this.unlocked.add(cellKey(s.c, s.r));
+    }
+    // AI 初始可放置区域：镜像玩家初始 6 格（与玩家对称展示，后续随部署扩展）
+    for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
+      const m = mirrorCell(this.slotOrder[i]!);
+      this.aiUnlocked.add(cellKey(m.c, m.r));
     }
   }
 
@@ -560,6 +566,7 @@ export class Battle {
       if (added >= target) break;
       if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
       this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入AI可放置区域
       added++;
     }
     // 合成：同型同级两两合并升阶
