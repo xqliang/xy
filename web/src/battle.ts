@@ -69,6 +69,9 @@ export const TUNING = {
   ultChargeTime: 12, // 从空到满的蓄力秒数
   ultRadius: 2.5, // 绝招作用半径（格）
   ultDmgMul: 2.6, // 绝招伤害 = 当前波基础怪血 × 该系数（清扫一片小怪）
+  // 命中判定宽容量：基础 rge 为欧氏距离，斜向相邻格中心≈1.414，若不放宽则 rge=1 的
+  // 近战(棍猴)几乎无法命中相邻怪。加 0.5 格宽容使近战可覆盖相邻格(含斜角)。基础 rge 展示不变。
+  rangeTolerance: 0.5,
 };
 
 // 怪物技能：对附近武将施加的减益类型
@@ -588,7 +591,7 @@ export class Battle {
           const p = posAlong(this.aiPath, m.dist);
           return { m, d: Math.hypot(p.c - u.cell.c, p.r - u.cell.r) };
         })
-        .filter((x) => x.d <= stat.rge)
+        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
         .sort((a, b) => b.m.dist - a.m.dist);
       if (inRange.length === 0) continue;
       const dmg = damage(stat.atk);
@@ -655,7 +658,7 @@ export class Battle {
           const d = Math.hypot(p.c - u.cell.c, p.r - u.cell.r);
           return { m, d, p };
         })
-        .filter((x) => x.d <= stat.rge)
+        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值
