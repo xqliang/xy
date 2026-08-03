@@ -1,6 +1,7 @@
 // 棋盘与多地图。7×10 网格；每张地图有不同的取经路、色系、唐僧位置。
-export const COLS = 7;
+export const COLS = 8;
 export const ROWS = 10;
+export const FENCE_ROW = 5; // 玩家半场 = 行 5..9；AI 半场 = 行 0..4；两者间栅栏
 
 export interface Cell {
   c: number;
@@ -21,12 +22,11 @@ export interface GameMap {
   id: string;
   name: string;
   theme: MapTheme;
-  path: Cell[]; // 首点为入场(可在网格外)，末点为唐僧格
+  path: Cell[]; // 首点为入场(可在网格外)，末点为唐僧格；须位于玩家半场(行>=FENCE_ROW)
   tangseng: Cell;
   initialBlock?: Cell[]; // 开局解锁的 6 格；缺省则用贴路最近的 6 格
+  fenceGaps: number[]; // 中间栅栏的开口列（每张地图不同）
 }
-
-const key = (c: number, r: number) => `${c},${r}`;
 
 export function isPathCell(map: GameMap, c: number, r: number): boolean {
   return map.path.some((p) => p.c === c && p.r === r);
@@ -84,7 +84,7 @@ export function posAtDistance(map: GameMap, dist: number): { c: number; r: numbe
 
 export function placeableCells(map: GameMap): Cell[] {
   const cells: Cell[] = [];
-  for (let r = 0; r < ROWS; r++) {
+  for (let r = FENCE_ROW; r < ROWS; r++) { // 仅玩家半场（下 5 行）
     for (let c = 0; c < COLS; c++) {
       if (!isPathCell(map, c, r)) cells.push({ c, r });
     }
@@ -122,61 +122,52 @@ export const MAPS: GameMap[] = [
   {
     id: 'huoyanshan',
     name: '火焰山',
-    theme: { bg0: '#f2dcc0', bg1: '#e8c49a', cellUnlocked: '#f0c88a', cellLocked: '#d9c4a6', path: '#b5623a', hud: '#e6bd86' },
+    theme: { bg0: '#f2dcc0', bg1: '#e8c49a', cellUnlocked: '#f0c88a', cellLocked: '#d9c4a6', path: '#c98a5a', hud: '#e6bd86' },
     path: [
-      { c: 1, r: -1 }, { c: 1, r: 0 }, { c: 1, r: 1 }, { c: 1, r: 2 },
-      { c: 2, r: 2 }, { c: 3, r: 2 }, { c: 4, r: 2 }, { c: 5, r: 2 },
-      { c: 5, r: 3 }, { c: 5, r: 4 }, { c: 4, r: 4 }, { c: 3, r: 4 }, { c: 2, r: 4 }, { c: 1, r: 4 },
-      { c: 1, r: 5 }, { c: 1, r: 6 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }, { c: 5, r: 6 },
-      { c: 5, r: 7 }, { c: 5, r: 8 }, { c: 6, r: 8 }, { c: 6, r: 9 },
+      { c: -1, r: 5 }, { c: 0, r: 5 }, { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 6, r: 5 }, { c: 7, r: 5 },
+      { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 },
+      { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
     ],
-    tangseng: { c: 6, r: 9 },
-    initialBlock: [
-      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
-      { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
-    ],
+    tangseng: { c: 0, r: 9 },
+    initialBlock: [{ c: 1, r: 6 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }],
+    fenceGaps: [3, 4],
   },
   {
     id: 'liushahe',
     name: '流沙河',
-    theme: { bg0: '#e9e2cc', bg1: '#dcd2b2', cellUnlocked: '#e4dca0', cellLocked: '#d2ceb4', path: '#c2a86a', hud: '#ddd2a8' },
+    theme: { bg0: '#e9e2cc', bg1: '#dcd2b2', cellUnlocked: '#e4dca0', cellLocked: '#d2ceb4', path: '#cbb47a', hud: '#ddd2a8' },
     path: [
-      { c: 5, r: -1 }, { c: 5, r: 0 }, { c: 5, r: 1 }, { c: 5, r: 2 },
-      { c: 4, r: 2 }, { c: 3, r: 2 }, { c: 2, r: 2 }, { c: 1, r: 2 },
-      { c: 1, r: 3 }, { c: 1, r: 4 }, { c: 2, r: 4 }, { c: 3, r: 4 }, { c: 4, r: 4 }, { c: 5, r: 4 },
-      { c: 5, r: 5 }, { c: 5, r: 6 }, { c: 4, r: 6 }, { c: 3, r: 6 }, { c: 2, r: 6 }, { c: 1, r: 6 },
-      { c: 1, r: 7 }, { c: 1, r: 8 }, { c: 0, r: 8 }, { c: 0, r: 9 },
+      { c: 8, r: 5 }, { c: 7, r: 5 }, { c: 6, r: 5 }, { c: 5, r: 5 }, { c: 4, r: 5 }, { c: 3, r: 5 }, { c: 2, r: 5 }, { c: 1, r: 5 }, { c: 0, r: 5 },
+      { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 0, r: 8 }, { c: 0, r: 9 },
+      { c: 1, r: 9 }, { c: 2, r: 9 }, { c: 3, r: 9 }, { c: 4, r: 9 }, { c: 5, r: 9 }, { c: 6, r: 9 }, { c: 7, r: 9 },
     ],
-    tangseng: { c: 0, r: 9 },
-    initialBlock: [
-      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
-      { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
-    ],
+    tangseng: { c: 7, r: 9 },
+    initialBlock: [{ c: 4, r: 6 }, { c: 5, r: 6 }, { c: 6, r: 6 }, { c: 4, r: 7 }, { c: 5, r: 7 }, { c: 6, r: 7 }],
+    fenceGaps: [3, 4],
   },
   {
     id: 'baiguling',
     name: '白骨岭',
-    theme: { bg0: '#e7e7e0', bg1: '#d2d3c8', cellUnlocked: '#cdd6c2', cellLocked: '#cfd0c8', path: '#9f9c8e', hud: '#d2d2c6' },
+    theme: { bg0: '#e7e7e0', bg1: '#d2d3c8', cellUnlocked: '#cdd6c2', cellLocked: '#cfd0c8', path: '#b3b0a2', hud: '#d2d2c6' },
     path: [
-      { c: 0, r: -1 }, { c: 0, r: 0 }, { c: 0, r: 1 }, { c: 0, r: 2 },
-      { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 }, { c: 3, r: 3 }, { c: 3, r: 4 },
-      { c: 2, r: 4 }, { c: 1, r: 4 }, { c: 1, r: 5 }, { c: 1, r: 6 },
-      { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }, { c: 5, r: 6 }, { c: 5, r: 7 }, { c: 5, r: 8 },
-      { c: 4, r: 8 }, { c: 3, r: 8 }, { c: 3, r: 9 },
+      { c: -1, r: 6 }, { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 }, { c: 5, r: 7 }, { c: 6, r: 7 }, { c: 7, r: 7 },
+      { c: 7, r: 8 }, { c: 7, r: 9 }, { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
     ],
-    tangseng: { c: 3, r: 9 },
+    tangseng: { c: 0, r: 9 },
+    initialBlock: [{ c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }],
+    fenceGaps: [0, 1],
   },
   {
     id: 'pansidong',
     name: '盘丝洞',
-    theme: { bg0: '#e8dae0', bg1: '#d8c2cf', cellUnlocked: '#dcb7cb', cellLocked: '#d3c2cc', path: '#a06a84', hud: '#d8bece' },
+    theme: { bg0: '#e8dae0', bg1: '#d8c2cf', cellUnlocked: '#dcb7cb', cellLocked: '#d3c2cc', path: '#b892a6', hud: '#d8bece' },
     path: [
-      { c: 3, r: -1 }, { c: 3, r: 0 }, { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 5, r: 1 }, { c: 5, r: 2 },
-      { c: 4, r: 2 }, { c: 3, r: 2 }, { c: 2, r: 2 }, { c: 2, r: 3 }, { c: 2, r: 4 }, { c: 3, r: 4 }, { c: 4, r: 4 }, { c: 5, r: 4 },
-      { c: 5, r: 5 }, { c: 5, r: 6 }, { c: 4, r: 6 }, { c: 3, r: 6 }, { c: 2, r: 6 }, { c: 1, r: 6 },
-      { c: 1, r: 7 }, { c: 1, r: 8 }, { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 3, r: 9 },
+      { c: 8, r: 6 }, { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 6, r: 7 }, { c: 5, r: 7 }, { c: 4, r: 7 }, { c: 3, r: 7 }, { c: 2, r: 7 }, { c: 1, r: 7 }, { c: 0, r: 7 },
+      { c: 0, r: 8 }, { c: 0, r: 9 }, { c: 1, r: 9 }, { c: 2, r: 9 }, { c: 3, r: 9 }, { c: 4, r: 9 }, { c: 5, r: 9 }, { c: 6, r: 9 }, { c: 7, r: 9 },
     ],
-    tangseng: { c: 3, r: 9 },
+    tangseng: { c: 7, r: 9 },
+    initialBlock: [{ c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 3, r: 6 }, { c: 4, r: 6 }, { c: 5, r: 6 }],
+    fenceGaps: [6, 7],
   },
 ];
 

@@ -2,8 +2,11 @@
 import {
   COLS,
   ROWS,
+  FENCE_ROW,
   isPathCell,
   posAtDistance,
+  mirrorCell,
+  placeableCells,
   type Cell,
 } from './board';
 import { Battle, unitColorOf, TUNING, itemById } from './battle';
@@ -13,8 +16,7 @@ import { sprite, unitAsset } from './assets';
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
-export const CELL = 74;
-export const COLS_V = COLS;
+export const CELL = Math.floor((VIEW_W - 16) / COLS); // 8 列自适应 → 68
 export const BOARD_X = Math.round((VIEW_W - CELL * COLS) / 2);
 export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
@@ -169,7 +171,6 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   drawBoard(ctx, b, ui);
-  drawPath(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawAiSide(ctx, b);
@@ -237,30 +238,60 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
-function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
   const unlocked = new Set(b.unlockedCells().map((c) => `${c.c},${c.r}`));
   const th = b.map.theme;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const x = BOARD_X + c * CELL;
       const y = BOARD_Y + r * CELL;
-      if (isPathCell(b.map, c, r)) continue;
-      const isUnlocked = unlocked.has(`${c},${r}`);
-      roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 6);
-      ctx.fillStyle = isUnlocked ? th.cellUnlocked : th.cellLocked;
+      const inPlayer = r >= FENCE_ROW;
+      const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
+      const onPath = isPathCell(b.map, src.c, src.r);
+      roundRect(ctx, x + 1.5, y + 1.5, CELL - 3, CELL - 3, 5);
+      if (inPlayer) {
+        if (onPath) {
+          ctx.fillStyle = th.path; // 路径也是格子，仅背景色不同
+        } else {
+          ctx.fillStyle = unlocked.has(`${c},${r}`) ? th.cellUnlocked : th.cellLocked;
+        }
+      } else {
+        ctx.fillStyle = onPath ? 'rgba(150,120,160,0.35)' : 'rgba(150,130,170,0.2)'; // AI 半场淡紫
+      }
       ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = isUnlocked ? 'rgba(70,90,50,0.5)' : 'rgba(90,80,60,0.3)';
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(80,70,55,0.28)';
       ctx.stroke();
-      if (!isUnlocked) {
+      if (inPlayer && !onPath && !unlocked.has(`${c},${r}`)) {
         ctx.fillStyle = 'rgba(70,60,40,0.4)';
-        ctx.font = '20px sans-serif';
+        ctx.font = '18px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('🔒', x + CELL / 2, y + CELL / 2);
       }
     }
   }
+  drawFence(ctx, b);
+}
+
+// 中间栅栏：每张地图开口不同（fenceGaps）
+function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
+  const gaps = new Set(b.map.fenceGaps);
+  ctx.save();
+  for (let c = 0; c < COLS; c++) {
+    if (gaps.has(c)) continue; // 开口
+    const x = BOARD_X + c * CELL;
+    // 木栅栏段
+    ctx.fillStyle = '#8a6a3a';
+    ctx.fillRect(x + 3, y - 5, CELL - 6, 10);
+    ctx.fillStyle = '#6f5228';
+    ctx.fillRect(x + 3, y - 5, CELL - 6, 3);
+    // 立柱
+    ctx.fillStyle = '#5f4520';
+    ctx.fillRect(x + CELL / 2 - 3, y - 12, 6, 24);
+  }
+  ctx.restore();
 }
 
 function drawPath(ctx: CanvasRenderingContext2D, b: Battle) {

@@ -20,6 +20,7 @@ import { RNG } from './rng';
 import {
   COLS,
   ROWS,
+  FENCE_ROW,
   pathTotalLen,
   posAtDistance,
   posAlong,
@@ -208,9 +209,9 @@ export class Battle {
     return this.unlocked.has(cellKey(c, r));
   }
 
-  // 该格是否为可摆放格（非路径、在网格内且解锁）
+  // 该格是否为可摆放格（玩家半场、非路径、在网格内且解锁）
   private isPlaceable(c: number, r: number): boolean {
-    return !isPathCell(this.map, c, r) && c >= 0 && c < COLS && r >= 0 && r < ROWS;
+    return !isPathCell(this.map, c, r) && c >= 0 && c < COLS && r >= FENCE_ROW && r < ROWS;
   }
 
   unlockedCells(): Cell[] {
