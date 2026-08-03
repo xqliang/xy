@@ -36,12 +36,18 @@ export const TUNING = {
   bossEveryWave: 5, // 每 5 波出一个 BOSS
   bossHpMul: 6,
   spawnInterval: 0.8, // 秒/只
-  summonCostStart: 3, // 首次召唤成本
-  summonCostStep: 1, // 每次召唤后 +1（抽卡成本递增）
-  openSlotCost: 12, // 开辟一个阵位消耗蟠桃（对应原作"铲子/定海符"）
+  summonCostStart: 12, // 首次征兵成本（对齐原作"征兵"量级）
+  summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
+  summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
+  shovelDrawChance: 0.16, // 候选中出现铲子的概率
+  traySize: 5, // 候选区容量
+  initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   winWave: 8, // 通关波次（切片演示）
 };
+
+// 候选区令牌：兵种 或 铲子
+export type TrayToken = { kind: 'unit'; type: UnitType } | { kind: 'shovel' };
 
 export type Status = 'ready' | 'playing' | 'won' | 'lost';
 
@@ -106,12 +112,16 @@ export class Battle {
   wave = 0;
   status: Status = 'ready';
   summonCost = TUNING.summonCostStart;
-  openSlots = TUNING.initialOpenSlots;
 
   units = new Map<string, PlacedUnit>();
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   palmUsedThisWave = false; // 如来神掌每波限用一次
+
+  // 候选区（征兵产出）与铲子（开格资源）
+  tray: TrayToken[] = [];
+  shovels = TUNING.initialShovels;
+  unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // 道具与修正器
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0 };
@@ -124,73 +134,115 @@ export class Battle {
   private spawnTimer = 0;
   private nextMonsterId = 1;
   private waveActive = false;
-  message = '点击「召唤」布阵，然后「下一波」开始';
+  readonly difficultyMul: number; // 由境界决定的怪物强度系数
+  message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1) {
+  constructor(seed = 1, difficultyMul = 1) {
     this.rng = new RNG(seed);
+    this.difficultyMul = difficultyMul;
+    // 初始解锁：贴路的前 N 个可摆放格
+    for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
+      const s = this.slotOrder[i]!;
+      this.unlocked.add(cellKey(s.c, s.r));
+    }
   }
 
-  // 已解锁的阵位集合（前 openSlots 个可摆放格）
+  // 该格是否已解锁
   private isUnlocked(c: number, r: number): boolean {
-    for (let i = 0; i < this.openSlots && i < this.slotOrder.length; i++) {
-      const s = this.slotOrder[i]!;
-      if (s.c === c && s.r === r) return true;
-    }
-    return false;
+    return this.unlocked.has(cellKey(c, r));
+  }
+
+  // 该格是否为可摆放格（非路径、在网格内且解锁）
+  private isPlaceable(c: number, r: number): boolean {
+    return !isPathCell(c, r) && c >= 0 && c < COLS && r >= 0 && r < ROWS;
   }
 
   unlockedCells(): Cell[] {
-    return this.slotOrder.slice(0, this.openSlots);
+    return this.slotOrder.filter((s) => this.unlocked.has(cellKey(s.c, s.r)));
   }
 
-  private firstEmptyUnlocked(): Cell | null {
-    for (let i = 0; i < this.openSlots && i < this.slotOrder.length; i++) {
-      const s = this.slotOrder[i]!;
-      if (!this.units.has(cellKey(s.c, s.r))) return s;
-    }
-    return null;
+  // 尚未解锁的可摆放格（供铲子开挖，按贴路顺序）
+  lockedCells(): Cell[] {
+    return this.slotOrder.filter((s) => !this.unlocked.has(cellKey(s.c, s.r)));
   }
 
-  // 召唤：消耗蟠桃，随机产出一个 1 阶兵种放入首个空阵位。成本递增。
+  // 征兵：消耗蟠桃，随机产出 5 个候选（兵种/铲子）放入候选区。成本递增。候选区非空时不可再征兵。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
-    const cost = this.effectiveSummonCost();
-    if (this.peach < cost) {
-      this.message = '蟠桃不足，无法召唤';
+    if (this.tray.length > 0) {
+      this.message = '先把候选区的兵/铲子拖到棋盘';
       return false;
     }
-    const cell = this.firstEmptyUnlocked();
-    if (!cell) {
-      this.message = '没有空阵位，先合成或开辟阵位';
+    const cost = this.effectiveSummonCost();
+    if (this.peach < cost) {
+      this.message = '蟠桃不足，无法征兵';
       return false;
     }
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
-    const type = this.rng.pick(types);
-    this.units.set(cellKey(cell.c, cell.r), { type, tier: 1, cell, cooldown: 0 });
-    this.message = `召唤了 ${UNITS[type].name}`;
+    for (let i = 0; i < TUNING.summonDraws; i++) {
+      if (this.rng.next() < TUNING.shovelDrawChance) {
+        this.tray.push({ kind: 'shovel' });
+      } else {
+        this.tray.push({ kind: 'unit', type: this.rng.pick(types) });
+      }
+    }
+    this.message = '把候选区的兵拖到绿格，铲子拖到锁定格开挖';
     return true;
   }
 
-  // 计入道具修正后的当前召唤成本
+  // 计入道具修正后的当前征兵成本
   effectiveSummonCost(): number {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
 
-  // 开辟一个新阵位（消耗蟠桃）
-  openNewSlot(): boolean {
-    if (this.openSlots >= this.slotOrder.length) {
-      this.message = '阵位已全部开辟';
+  // 从候选区把第 index 个令牌落到目标格：
+  // - 兵种 → 空的已解锁格放置；同型同级则合成升阶
+  // - 铲子 → 锁定的可摆放格 → 开挖解锁
+  placeFromTray(index: number, to: Cell): boolean {
+    const token = this.tray[index];
+    if (!token) return false;
+    if (token.kind === 'shovel') {
+      if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) {
+        this.message = '铲子只能挖开锁定的绿格';
+        return false;
+      }
+      this.unlocked.add(cellKey(to.c, to.r));
+      this.tray.splice(index, 1);
+      this.message = '铲子挖开了新阵位';
+      return true;
+    }
+    // 兵种令牌
+    if (!this.isUnlocked(to.c, to.r)) {
+      this.message = '只能放到已解锁的绿格';
       return false;
     }
-    if (this.peach < TUNING.openSlotCost) {
-      this.message = '蟠桃不足，无法开辟阵位';
+    const exist = this.units.get(cellKey(to.c, to.r));
+    if (exist) {
+      if (canMerge({ type: exist.type, tier: exist.tier }, { type: token.type, tier: 1 })) {
+        const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: 1 });
+        this.units.set(cellKey(to.c, to.r), { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.tray.splice(index, 1);
+        this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
+        return true;
+      }
+      this.message = '该格已有其它单位';
       return false;
     }
-    this.peach -= TUNING.openSlotCost;
-    this.openSlots += 1;
-    this.message = '开辟了新阵位';
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: 1, cell: { c: to.c, r: to.r }, cooldown: 0 });
+    this.tray.splice(index, 1);
+    this.message = `布置了 ${UNITS[token.type].name}`;
+    return true;
+  }
+
+  // 直接用铲子（不经候选区，供 UI 便捷开挖最靠前锁定格）
+  useShovelOn(to: Cell): boolean {
+    if (this.shovels <= 0) return false;
+    if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) return false;
+    this.shovels -= 1;
+    this.unlocked.add(cellKey(to.c, to.r));
+    this.message = '铲子挖开了新阵位';
     return true;
   }
 
@@ -273,7 +325,7 @@ export class Battle {
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengHP += 1; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
-      case 'dinghai': if (this.openSlots < this.slotOrder.length) this.openSlots += 1; break;
+      case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
   }
 
@@ -292,13 +344,14 @@ export class Battle {
     const isBoss =
       this.wave % TUNING.bossEveryWave === 0 && this.spawnRemaining === 1; // 每波最后一只为 BOSS
     let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
+    hp *= this.difficultyMul; // 境界越高妖怪越强
     if (isBoss) hp *= TUNING.bossHpMul;
     this.monsters.push({
       id: this.nextMonsterId++,
       dist: 0,
       hp,
       maxHp: hp,
-      spd: TUNING.monsterSpd * this.mods.monsterSpdMul, // 道具可降妖怪移速
+      spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.06 * (this.difficultyMul - 1)), // 高境界妖怪更快
       isBoss,
     });
   }
@@ -391,7 +444,8 @@ export class Battle {
       if (this.spawnTimer <= 0) {
         this.spawnMonster();
         this.spawnRemaining -= 1;
-        this.spawnTimer = TUNING.spawnInterval;
+        // 高境界出怪更密集
+        this.spawnTimer = Math.max(0.3, TUNING.spawnInterval / (1 + 0.07 * (this.difficultyMul - 1)));
       }
     }
     this.updateUnits(dt);
@@ -417,6 +471,38 @@ export class Battle {
     this.peach += n;
   }
 
+  // 一键布阵：把候选区令牌自动落位（铲子挖最靠前锁定格；兵种优先合成同型同级，否则放空格）。
+  // 供"一键布阵"便捷按钮与自动化自测使用。
+  autoPlaceTray(): void {
+    let guard = 0;
+    while (this.tray.length > 0 && guard++ < 200) {
+      const idx = this.tray.findIndex((t) => t.kind === 'shovel');
+      if (idx >= 0) {
+        const locked = this.lockedCells();
+        if (locked.length > 0) {
+          this.placeFromTray(idx, locked[0]!);
+          continue;
+        }
+        this.tray.splice(idx, 1); // 无处可挖则弃置
+        continue;
+      }
+      const token = this.tray[0]!;
+      if (token.kind !== 'unit') { this.tray.splice(0, 1); continue; }
+      // 优先合成：找同型 1 阶单位
+      const mergeTarget = [...this.units.values()].find((u) => u.type === token.type && u.tier === 1);
+      if (mergeTarget) {
+        if (this.placeFromTray(0, mergeTarget.cell)) continue;
+      }
+      // 否则放到首个空的已解锁格
+      const empty = this.unlockedCells().find((c) => !this.units.has(cellKey(c.c, c.r)));
+      if (empty) {
+        this.placeFromTray(0, empty);
+      } else {
+        this.tray.splice(0, 1); // 无空位，弃置该兵
+      }
+    }
+  }
+
   // 便于自测/渲染读取的快照
   snapshot() {
     let maxDist = 0;
@@ -426,8 +512,10 @@ export class Battle {
       tangsengHP: this.tangsengHP,
       wave: this.wave,
       status: this.status,
-      summonCost: this.summonCost,
-      openSlots: this.openSlots,
+      summonCost: this.effectiveSummonCost(),
+      unlocked: this.unlocked.size,
+      tray: this.tray.length,
+      shovels: this.shovels,
       units: this.units.size,
       monsters: this.monsters.length,
       dangerPct: Math.round((maxDist / PATH_TOTAL_LEN) * 100), // 最靠前妖怪的推进百分比
