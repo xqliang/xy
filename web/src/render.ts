@@ -58,11 +58,14 @@ export function getButtons(b: Battle): Button[] {
   }
   const canSummon = b.peach >= b.summonCost;
   const canOpen = b.peach >= TUNING.openSlotCost;
-  const canWave = b.status === 'ready';
+  const third =
+    b.status === 'playing'
+      ? { id: 'palm', label: '如来神掌 🖐', enabled: b.palmAvailable() }
+      : { id: 'wave', label: '下一波 ▶', enabled: b.status === 'ready' };
   return [
     { id: 'summon', label: `召唤 (${b.summonCost}桃)`, x: 20, y, w: 168, h, enabled: canSummon },
     { id: 'open', label: `开辟阵位 (${TUNING.openSlotCost}桃)`, x: 196, y, w: 168, h, enabled: canOpen },
-    { id: 'wave', label: canWave ? '下一波 ▶' : '战斗中…', x: 372, y, w: 168, h, enabled: canWave },
+    { id: third.id, label: third.label, x: 372, y, w: 168, h, enabled: third.enabled },
   ];
 }
 
@@ -284,13 +287,23 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const f of b.fx) {
     const a = cellCenterPx(f.from.c, f.from.r);
     const t = cellCenterPx(f.to.c, f.to.r);
+    const prog = 1 - Math.max(0, Math.min(1, f.ttl / f.maxTtl)); // 0→1 飞行进度
+    const x = a.x + (t.x - a.x) * prog;
+    const y = a.y + (t.y - a.y) * prog;
+    // 拖尾
     ctx.strokeStyle = f.color;
-    ctx.globalAlpha = Math.max(0, Math.min(1, f.ttl / 0.12));
-    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.35 * (f.ttl / f.maxTtl);
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
-    ctx.lineTo(t.x, t.y);
+    ctx.lineTo(x, y);
     ctx.stroke();
+    // 弹丸光点
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = f.color;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.globalAlpha = 1;
   }
 }

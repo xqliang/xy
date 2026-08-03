@@ -65,6 +65,7 @@ export interface HitFx {
   from: { c: number; r: number };
   to: { c: number; r: number };
   ttl: number;
+  maxTtl: number;
   color: string;
 }
 
@@ -81,6 +82,7 @@ export class Battle {
   units = new Map<string, PlacedUnit>();
   monsters: Monster[] = [];
   fx: HitFx[] = [];
+  palmUsedThisWave = false; // 如来神掌每波限用一次
 
   private rng: RNG;
   private slotOrder: Cell[] = placeableCellsByPathProximity();
@@ -185,9 +187,24 @@ export class Battle {
     this.wave += 1;
     this.status = 'playing';
     this.waveActive = true;
+    this.palmUsedThisWave = false;
     this.spawnRemaining = monstersInWave(this.wave); // 9 + n
     this.spawnTimer = 0;
     this.message = `第 ${this.wave} 波来袭`;
+    return true;
+  }
+
+  // 如来神掌是否可用（对战中且本波未用过）
+  palmAvailable(): boolean {
+    return this.status === 'playing' && !this.palmUsedThisWave && this.monsters.length > 0;
+  }
+
+  // 如来神掌：把场上所有妖怪推回起点（原作"退兵盾牌兵"广告点，绝境救命）。每波限一次。
+  usePalm(): boolean {
+    if (this.status !== 'playing' || this.palmUsedThisWave) return false;
+    for (const m of this.monsters) m.dist = 0;
+    this.palmUsedThisWave = true;
+    this.message = '如来神掌！妖怪被推回起点';
     return true;
   }
 
@@ -243,7 +260,8 @@ export class Battle {
         this.fx.push({
           from: { c: u.cell.c, r: u.cell.r },
           to: target.p,
-          ttl: 0.12,
+          ttl: 0.16,
+          maxTtl: 0.16,
           color: this.unitColor(u.type),
         });
         hitCount++;
