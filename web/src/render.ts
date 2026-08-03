@@ -79,7 +79,7 @@ export function getButtons(b: Battle): Button[] {
   const third =
     b.status === 'playing'
       ? { id: 'palm', label: '如来神掌 🖐', enabled: b.palmAvailable() }
-      : { id: 'wave', label: '下一波 ▶', enabled: b.status === 'ready' };
+      : { id: 'wave', label: '立即开战 ▶', enabled: b.status === 'ready' };
   return [
     { id: 'summon', label: `征兵 (${b.effectiveSummonCost()}🍑)`, x: 20, y, w: 168, h, enabled: canSummon },
     { id: 'autoplace', label: '一键布阵', x: 196, y, w: 168, h, enabled: !trayEmpty },
@@ -495,6 +495,11 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.arc(x, y, rad, 0, Math.PI * 2);
     ctx.fillStyle = m.isBoss ? '#a24a6a' : '#8a5a5a';
     ctx.fill();
+  }
+  // AI 单位（上半场自动部署）
+  for (const u of b.aiUnits) {
+    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    drawUnit(ctx, u.type, u.tier, x, y - u.firePulse * 3, CELL * 0.66 * (1 + u.firePulse * 0.14));
   }
   const tp = b.aiTangsengRenderPos();
   const { x, y } = cellCenterPx(tp.c, tp.r);

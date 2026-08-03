@@ -28,6 +28,7 @@ import {
   mirrorPath,
   mirrorCell,
   slotUnlockOrder,
+  placeableCells,
   isPathCell,
   MAPS,
   type GameMap,
@@ -150,10 +151,13 @@ export class Battle {
   // —— 伪竞技 AI 对手（上半场，对角唐僧）——
   readonly aiPath: Cell[];
   readonly aiTangseng: Cell;
+  readonly aiCells: Cell[]; // AI 可部署格 = 玩家可摆放格的镜像
   private aiPathLen: number;
   aiTangsengHP = TANGSENG_INITIAL_HP;
   aiMonsters: Monster[] = [];
+  aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
+  private nextWaveTimer = 0; // 波间自动切换倒计时
 
   // 候选区（征兵产出）与铲子（开格资源）
   tray: TrayToken[] = [];
@@ -186,6 +190,7 @@ export class Battle {
     this.aiPath = mirrorPath(map.path);
     this.aiPathLen = lenOf(this.aiPath);
     this.aiTangseng = mirrorCell(map.tangseng);
+    this.aiCells = placeableCells(map).map(mirrorCell);
     // 初始解锁：地图的初始 6 格
     for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
       const s = this.slotOrder[i]!;
@@ -370,6 +375,7 @@ export class Battle {
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
+    this.aiDeploy(); // AI 同步部署本波防御
     this.status = 'playing';
     this.waveActive = true;
     this.palmUsedThisWave = false;
@@ -463,17 +469,74 @@ export class Battle {
     });
   }
 
-  // AI 对手拦截：抽象 DPS 打最靠前的 AI 怪；漏怪扣 AI 唐僧血
-  private updateAi(dt: number): void {
-    if (this.aiMonsters.length > 0) {
-      const aiDps = (TUNING.aiDpsBase + TUNING.aiDpsPerWave * this.wave) * dt;
-      // 打进度最靠前的一只
-      let front = this.aiMonsters[0]!;
-      for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
-      front.hp -= aiDps;
+  // AI 自动部署：每波在上半场镜像格补兵并合成升阶（模拟一名对手玩家）
+  private aiDeploy(): void {
+    const types = Object.keys(UNITS) as UnitType[];
+    // 本波补 2 个 1 阶到空的 AI 格
+    let added = 0;
+    for (const cell of this.aiCells) {
+      if (added >= 2) break;
+      if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
+      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0 });
+      added++;
     }
+    // 合成：同型同级两两合并升阶
+    for (let pass = 0; pass < 10; pass++) {
+      let merged = false;
+      for (let i = 0; i < this.aiUnits.length && !merged; i++) {
+        for (let j = i + 1; j < this.aiUnits.length; j++) {
+          const a = this.aiUnits[i]!;
+          const b = this.aiUnits[j]!;
+          if (a.type === b.type && a.tier === b.tier && a.tier < MAX_TIER) {
+            b.tier += 1;
+            b.cooldown = 0;
+            this.aiUnits.splice(i, 1);
+            merged = true;
+            break;
+          }
+        }
+      }
+      if (!merged) break;
+    }
+  }
+
+  // AI 单位攻击 AI 怪（与玩家同一套战斗数值，无道具加成、不产特效）
+  private updateAiUnits(dt: number): void {
+    for (const u of this.aiUnits) {
+      u.firePulse = Math.max(0, u.firePulse - dt * 6);
+      u.cooldown -= dt;
+      if (u.cooldown > 0) continue;
+      const stat = getUnitStat(u.type, u.tier);
+      const base = Math.floor(stat.targets);
+      const extra = this.rng.next() < stat.targets - base ? 1 : 0;
+      const maxTargets = Math.max(1, base + extra);
+      const inRange = this.aiMonsters
+        .map((m) => {
+          const p = posAlong(this.aiPath, m.dist);
+          return { m, d: Math.hypot(p.c - u.cell.c, p.r - u.cell.r) };
+        })
+        .filter((x) => x.d <= stat.rge)
+        .sort((a, b) => b.m.dist - a.m.dist);
+      if (inRange.length === 0) continue;
+      const dmg = damage(stat.atk);
+      let hit = 0;
+      for (const t of inRange) {
+        if (hit >= maxTargets) break;
+        t.m.hp -= dmg;
+        t.m.hitFlash = 0.1;
+        hit++;
+      }
+      if (hit > 0) u.firePulse = 1;
+      u.cooldown = 1 / stat.frq;
+    }
+  }
+
+  // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
+  private updateAi(dt: number): void {
+    this.updateAiUnits(dt);
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
+      if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) continue;
       m.dist += m.spd * dt;
       if (m.dist >= this.aiPathLen) {
@@ -580,6 +643,15 @@ export class Battle {
       this.updateFx(dt);
       return;
     }
+    // 波间自动切换：清波后倒计时自动开下一波（期间玩家仍可征兵布阵）
+    if (this.introDone && this.status === 'ready' && this.wave > 0) {
+      this.nextWaveTimer -= dt;
+      this.message = `第 ${this.wave + 1} 波准备中…${Math.max(0, Math.ceil(this.nextWaveTimer))}s（可继续布阵）`;
+      this.updateAi(dt); // AI 侧继续清理残余怪
+      this.updateFx(dt);
+      if (this.nextWaveTimer <= 0) this.startNextWave();
+      return;
+    }
     if (this.status !== 'playing') {
       this.updateFx(dt);
       return;
@@ -607,7 +679,8 @@ export class Battle {
         this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
       } else {
         this.status = 'ready';
-        this.message = `第 ${this.wave} 波已清，继续征兵布阵，点「下一波」`;
+        this.nextWaveTimer = 5; // 5秒后自动开下一波
+        this.message = `第 ${this.wave} 波已清！`;
       }
     }
   }
