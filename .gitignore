@@ -12,6 +12,10 @@ npm-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# Web 构建产物与截图
+web/dist/
+web/shots/
+
 # seeddream 素材生成缓存（大文件另行管理/CDN）
 tools/seeddream/.cache/
 tools/seeddream/output_raw/
