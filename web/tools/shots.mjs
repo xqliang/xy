@@ -27,6 +27,9 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 
 await page.goto(GAME_URL, { waitUntil: 'networkidle0' });
 await page.waitForFunction('window.__game && window.__game.snapshot');
+// 等 Seedream 立绘抠图加载完成
+await page.waitForFunction('window.__assetsReady === true', { timeout: 15000 }).catch(() => {});
+await new Promise((r) => setTimeout(r, 300));
 
 // 1) 初始界面
 await shot(page, '01-initial.png');
@@ -37,31 +40,39 @@ await page.evaluate(() => window.__game.buildDefense(10, 2000));
 await shot(page, '02-defense.png');
 console.log('02 defense:', JSON.stringify(await snap(page)));
 
-// 3) 第 1 波战斗中（推进 4 秒）：应看到攻击连线 + 击杀产桃
-await page.evaluate(() => { window.__game.wave(); window.__game.fastForward(4); });
+// 3) 弱防线战斗中：让妖怪可见于路上（展示妖怪立绘 + 攻击）
+await page.evaluate(() => {
+  const g = window.__game;
+  g.restart(7);
+  g.grantPeach(40);
+  g.summon(); g.summon(); g.summon(); // 少量单位
+  g.wave();
+  g.fastForward(3);
+});
 await shot(page, '03-combat.png');
 console.log('03 combat :', JSON.stringify(await snap(page)));
 
-// 4) 连打多波：每波清完自动进下一波，直到通关或阵亡
+// 4) 连打多波直到通关（补桃续召唤模拟运营）
 const progress = await page.evaluate(() => {
   const g = window.__game;
-  const log = [];
+  g.restart(7);
+  const waves = [];
   for (let w = 0; w < 12; w++) {
     if (g.battle.status === 'won' || g.battle.status === 'lost') break;
     g.wave();
-    // 补桃续召唤，模拟玩家运营
     g.grantPeach(300);
     g.buildDefense(2, 0);
     g.fastForward(40);
-    log.push(g.snapshot());
+    const s = g.snapshot();
+    waves.push({ wave: s.wave, peach: s.peach, hp: s.tangsengHP, status: s.status });
   }
-  return { final: g.snapshot(), waves: log.map((s) => ({ wave: s.wave, peach: s.peach, hp: s.tangsengHP, status: s.status })) };
+  return { final: g.snapshot(), waves };
 });
 await shot(page, '04-multiwave.png');
 console.log('04 multi  :', JSON.stringify(progress.final));
 console.log('   波次轨迹:', JSON.stringify(progress.waves));
 
-// 5) 失败横幅：新开一局、不布阵、直接开波推进直到唐僧血尽
+// 5) 失败横幅
 await page.evaluate(() => {
   const g = window.__game;
   g.restart(7);

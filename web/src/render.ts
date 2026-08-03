@@ -11,6 +11,7 @@ import {
 import { Battle, unitColorOf, TUNING } from './battle';
 import { UNITS, getUnitStat } from '@core';
 import type { UnitType } from '@core';
+import { sprite, unitAsset } from './assets';
 
 export const VIEW_W = 560;
 export const VIEW_H = 920;
@@ -83,29 +84,42 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number) {
   const s = size;
   const color = unitColorOf(type);
+  // 底座：类型色圆角背景 + 描边，保证辨识度
   roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
   const grad = ctx.createLinearGradient(x, y - s / 2, x, y + s / 2);
-  grad.addColorStop(0, color);
-  grad.addColorStop(1, shade(color, -0.35));
+  grad.addColorStop(0, shade(color, 0.05));
+  grad.addColorStop(1, shade(color, -0.5));
   ctx.fillStyle = grad;
   ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = shade(color, 0.2);
   ctx.stroke();
-  // 文字标识
-  ctx.fillStyle = '#1a1208';
-  ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(UNIT_LABEL[type], x, y - s * 0.06);
-  // 阶数星点
+
+  const spr = sprite(unitAsset(type));
+  if (spr) {
+    // 立绘按 contain 缩放居中
+    const pad = s * 0.05;
+    const box = s - pad * 2;
+    const scale = Math.min(box / spr.width, box / spr.height);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+  } else {
+    ctx.fillStyle = '#1a1208';
+    ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(UNIT_LABEL[type], x, y - s * 0.06);
+  }
+
+  // 阶数星点（底部）
   ctx.fillStyle = '#fff4d6';
   const pipR = 3;
   const gap = 9;
   const startX = x - ((tier - 1) * gap) / 2;
   for (let i = 0; i < tier; i++) {
     ctx.beginPath();
-    ctx.arc(startX + i * gap, y + s * 0.32, pipR, 0, Math.PI * 2);
+    ctx.arc(startX + i * gap, y + s * 0.4, pipR, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -190,9 +204,11 @@ function drawPath(ctx: CanvasRenderingContext2D) {
 
 function drawTangseng(ctx: CanvasRenderingContext2D, _b: Battle) {
   const { x, y } = cellCenterPx(TANGSENG_CELL.c, TANGSENG_CELL.r);
+  const rad = CELL * 0.46;
+  // 金色光晕底座
   ctx.beginPath();
-  ctx.arc(x, y, CELL * 0.42, 0, Math.PI * 2);
-  const g = ctx.createRadialGradient(x, y - 8, 4, x, y, CELL * 0.42);
+  ctx.arc(x, y, rad, 0, Math.PI * 2);
+  const g = ctx.createRadialGradient(x, y - 8, 4, x, y, rad);
   g.addColorStop(0, '#ffe9a8');
   g.addColorStop(1, '#d99a2b');
   ctx.fillStyle = g;
@@ -200,37 +216,53 @@ function drawTangseng(ctx: CanvasRenderingContext2D, _b: Battle) {
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#8a5a12';
   ctx.stroke();
-  ctx.fillStyle = '#5a3a08';
-  ctx.font = 'bold 26px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('唐', x, y);
+
+  const spr = sprite('tangseng');
+  if (spr) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, rad - 2, 0, Math.PI * 2);
+    ctx.clip();
+    // cover 缩放填满圆
+    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    ctx.drawImage(spr, x - dw / 2, y - dh / 2 - rad * 0.1, dw, dh);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#5a3a08';
+    ctx.font = 'bold 26px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('唐', x, y);
+  }
 }
 
 function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.monsters) {
     const p = posAtDistance(m.dist);
     const { x, y } = cellCenterPx(p.c, p.r);
-    const rad = m.isBoss ? CELL * 0.4 : CELL * 0.26;
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
-    ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = m.isBoss ? '#ff7ab0' : '#c25a5a';
-    ctx.stroke();
-    ctx.fillStyle = '#ffd9d9';
-    ctx.font = `${m.isBoss ? 20 : 14}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(m.isBoss ? '妖' : '卒', x, y);
+    const rad = m.isBoss ? CELL * 0.42 : CELL * 0.28;
+    const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
+    if (spr) {
+      const box = rad * 2.3;
+      const scale = Math.min(box / spr.width, box / spr.height);
+      const dw = spr.width * scale;
+      const dh = spr.height * scale;
+      ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
+      ctx.fill();
+    }
     // 血条
     const bw = rad * 2;
     const hpPct = Math.max(0, m.hp / m.maxHp);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(x - bw / 2, y - rad - 8, bw, 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x - bw / 2, y - rad - 9, bw, 5);
     ctx.fillStyle = hpPct > 0.4 ? '#7dff8a' : '#ff6a6a';
-    ctx.fillRect(x - bw / 2, y - rad - 8, bw * hpPct, 4);
+    ctx.fillRect(x - bw / 2, y - rad - 9, bw * hpPct, 5);
   }
 }
 

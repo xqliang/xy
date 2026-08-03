@@ -9,9 +9,13 @@ import {
   type UiState,
 } from './render';
 import type { Cell } from './board';
+import { loadAssets } from './assets';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
+
+// 异步加载 Seedream 立绘（加载完成后游戏循环自动用上，未完成时用色块底座兜底）
+void loadAssets();
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') ?? '1') || 1;
