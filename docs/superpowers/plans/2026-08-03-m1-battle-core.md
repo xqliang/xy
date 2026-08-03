@@ -701,3 +701,20 @@ git commit -m "feat(core): 统一导出入口，M1 数值内核完成"
 - **M3** 系统层：道具日重置、境界、法宝、体力、结算。
 - **M4** 伪竞技 + 美术：AI 对手、四地图、seeddream 立绘替换占位。
 - **M5** IAA + 上线：广告触发点、微信登录/存档/分享/排行榜、包体优化、提审。
+
+---
+
+## 执行修订记录（实现与两段式审查后回填）
+
+M1 已按本计划实现并通过 spec 合规审查 + 代码质量审查。执行期有两处对计划的合理偏离，记录于此以保持计划与最终代码一致：
+
+1. **tsconfig `noUncheckedIndexedAccess` 与数组下标**：计划 Task 0 开启了该严格选项，导致计划 Task 1/2 中三处下标访问（`units.ts` 的 `coeffs[coeffs.length-1]`、`TIER_COEFFICIENTS[4]`；`stats.ts` 的 `TIER_COEFFICIENTS[tier-1]`）类型为 `number | undefined` 而报错。实现时在这三处加了非空断言 `!`（纯编译期、运行时擦除、零数值/行为影响）。
+
+2. **Task 5 经济模块两序列解耦**（代码质量审查 Issue #1 修复，commit `dfc96c5`）：计划原稿让 `costInWave` 从「剩余曲线」反解，会把初始 20 的落差全塞进第 1 波，产生 `costInWave(1)=20` 的非单调尖刺，与「抽卡成本递增」意图相悖。最终实现改为**两条序列各自忠实保留、互不反解**：
+   - `costInWave(n) = 8 + 2n`（原文「消耗」列，单调递增，wave1..6 = 10,12,14,16,18,20），新增单调递增测试用例。
+   - `peachAfterWave` 重命名为 `remainingPeach(n) = 11 − n(n+1)/2`（原文「剩余」列闭式，wave1..6 = 10,8,5,1,-4,-10，wave10 = -44）。
+   - 魔数 `9/11/8/2` 提取到 `src/config/economy.ts` 常量（`MONSTER_BASE/REMAINING_INTERCEPT/PEACH_COST_BASE/PEACH_COST_STEP`）。
+   - `stats.test.ts` 的 import 归拢到文件顶部。
+   - 设计关键不变量不变：蟠桃第 5 波转负 → 广告触发点自然浮现。
+
+**最终状态**：`npm test` 26/26 通过、`npm run typecheck` 退出码 0。
