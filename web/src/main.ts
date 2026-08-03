@@ -18,6 +18,7 @@ import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import { drawShop, shopHitAt } from './shop';
+import { drawCodex, codexHitBack } from './codex';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -33,7 +34,7 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'menu' | 'battle' | 'shop';
+type Screen = 'menu' | 'battle' | 'shop' | 'codex';
 let screen: Screen = 'menu';
 let rank: RankState = loadRank();
 let stamina: Stamina = loadStamina();
@@ -72,6 +73,8 @@ function handleMenu(x: number, y: number) {
   } else if (id === 'shop') {
     shopToast = '';
     screen = 'shop';
+  } else if (id === 'codex') {
+    screen = 'codex';
   } else if (id === 'mapPrev' || id === 'mapNext') {
     const idx = MAPS.findIndex((m) => m.id === currentMap.id);
     const n = MAPS.length;
@@ -149,6 +152,10 @@ canvas.addEventListener('pointerdown', (e) => {
     handleShop(x, y);
     return;
   }
+  if (screen === 'codex') {
+    if (codexHitBack(x, y)) screen = 'menu';
+    return;
+  }
   if (handleButton(x, y)) { ui.selected = null; return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -222,6 +229,11 @@ function frame(now: number) {
     requestAnimationFrame(frame);
     return;
   }
+  if (screen === 'codex') {
+    drawCodex(ctx);
+    requestAnimationFrame(frame);
+    return;
+  }
   battle.step(dt);
   // 胜负结算入境界 + 功德（仅一次）
   if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
@@ -251,6 +263,7 @@ interface GameHook {
   select: (cell: Cell | null) => void;
   enterBattle: () => void;
   openShop: () => void;
+  openCodex: () => void;
   grantMerit: (n: number) => void;
   tuning: typeof TUNING;
   restart: (s?: number, diff?: number, mapId?: string) => void;
@@ -274,6 +287,7 @@ const hook: GameHook = {
   select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
   enterBattle: () => { screen = 'battle'; },
   openShop: () => { screen = 'shop'; },
+  openCodex: () => { screen = 'codex'; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string) => {
