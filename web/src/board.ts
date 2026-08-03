@@ -51,6 +51,20 @@ export function lenOf(path: Cell[]): number {
   return segmentsOf(path).reduce((s, x) => s + x.len, 0);
 }
 
+// 沿路到达"首个在网格内的路径点"的累计距离（怪物从这里—出怪口—冒出，而非从网格外平移进来）
+export function entranceDistance(path: Cell[]): number {
+  let d = 0;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
+    if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) return d;
+    if (i < path.length - 1) {
+      const n = path[i + 1]!;
+      d += Math.hypot(n.c - p.c, n.r - p.r);
+    }
+  }
+  return 0;
+}
+
 // 沿任意路径 path 的进度 dist（格）→ 连续网格坐标
 export function posAlong(path: Cell[], dist: number): { c: number; r: number } {
   if (dist <= 0) return { c: path[0]!.c, r: path[0]!.r };
@@ -123,7 +137,7 @@ export const MAPS: GameMap[] = [
   {
     id: 'huoyanshan',
     name: '火焰山',
-    theme: { bg0: '#f2e0cc', bg1: '#e6c39a', cellUnlocked: '#fdf6ec', cellLocked: '#7e5138', path: '#cf8a55', hud: '#e8c39a', accent: '#c8792b' },
+    theme: { bg0: '#f2e0cc', bg1: '#e6c39a', cellUnlocked: '#f7f1e6', cellLocked: '#bda284', path: '#cf8a55', hud: '#e8c39a', accent: '#c8792b' },
     path: [
       { c: -1, r: 5 }, { c: 0, r: 5 }, { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 6, r: 5 }, { c: 7, r: 5 },
       { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 },
@@ -136,7 +150,7 @@ export const MAPS: GameMap[] = [
   {
     id: 'liushahe',
     name: '流沙河',
-    theme: { bg0: '#efe8cf', bg1: '#dccf9e', cellUnlocked: '#fdfaee', cellLocked: '#726234', path: '#c9b06a', hud: '#ddcf9e', accent: '#bb9c38' },
+    theme: { bg0: '#efe8cf', bg1: '#dccf9e', cellUnlocked: '#f8f4e8', cellLocked: '#c2b184', path: '#c9b06a', hud: '#ddcf9e', accent: '#bb9c38' },
     path: [
       { c: 8, r: 5 }, { c: 7, r: 5 }, { c: 6, r: 5 }, { c: 5, r: 5 }, { c: 4, r: 5 }, { c: 3, r: 5 }, { c: 2, r: 5 }, { c: 1, r: 5 }, { c: 0, r: 5 },
       { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 0, r: 8 }, { c: 0, r: 9 },
@@ -149,7 +163,7 @@ export const MAPS: GameMap[] = [
   {
     id: 'baiguling',
     name: '白骨岭',
-    theme: { bg0: '#e2e5dc', bg1: '#c6cabd', cellUnlocked: '#f6f8f2', cellLocked: '#525749', path: '#98a08a', hud: '#c8ccbf', accent: '#6d7c5b' },
+    theme: { bg0: '#e2e5dc', bg1: '#c6cabd', cellUnlocked: '#f4f6ee', cellLocked: '#a6b199', path: '#98a08a', hud: '#c8ccbf', accent: '#6d7c5b' },
     path: [
       { c: -1, r: 6 }, { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 }, { c: 5, r: 7 }, { c: 6, r: 7 }, { c: 7, r: 7 },
       { c: 7, r: 8 }, { c: 7, r: 9 }, { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
@@ -161,7 +175,7 @@ export const MAPS: GameMap[] = [
   {
     id: 'pansidong',
     name: '盘丝洞',
-    theme: { bg0: '#ecd8e2', bg1: '#d3b0c4', cellUnlocked: '#fbf3f7', cellLocked: '#6a4658', path: '#bd8ca6', hud: '#d6b3c6', accent: '#a85a86' },
+    theme: { bg0: '#ecd8e2', bg1: '#d3b0c4', cellUnlocked: '#f8f0f4', cellLocked: '#c2a2b4', path: '#bd8ca6', hud: '#d6b3c6', accent: '#a85a86' },
     path: [
       { c: 8, r: 6 }, { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 6, r: 7 }, { c: 5, r: 7 }, { c: 4, r: 7 }, { c: 3, r: 7 }, { c: 2, r: 7 }, { c: 1, r: 7 }, { c: 0, r: 7 },
       { c: 0, r: 8 }, { c: 0, r: 9 }, { c: 1, r: 9 }, { c: 2, r: 9 }, { c: 3, r: 9 }, { c: 4, r: 9 }, { c: 5, r: 9 }, { c: 6, r: 9 }, { c: 7, r: 9 },

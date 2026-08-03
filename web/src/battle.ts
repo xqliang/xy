@@ -25,6 +25,7 @@ import {
   posAtDistance,
   posAlong,
   lenOf,
+  entranceDistance,
   mirrorPath,
   mirrorCell,
   slotUnlockOrder,
@@ -213,6 +214,8 @@ export class Battle {
   readonly aiCells: Cell[]; // AI 可部署格 = 玩家可摆放格的镜像
   readonly aiUnlocked = new Set<string>(); // AI 已开放阵位(初始6格 + 已部署格)，用于渲染其可放置区域
   private aiPathLen: number;
+  private entranceDist = 0; // 玩家出怪口沿路距离
+  private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = TANGSENG_INITIAL_HP;
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
@@ -249,6 +252,8 @@ export class Battle {
     // AI 对手：点对称镜像路径与唐僧（上半场）
     this.aiPath = mirrorPath(map.path);
     this.aiPathLen = lenOf(this.aiPath);
+    this.entranceDist = entranceDistance(map.path);
+    this.aiEntranceDist = entranceDistance(this.aiPath);
     this.aiTangseng = mirrorCell(map.tangseng);
     this.aiCells = placeableByProximity(map).map(mirrorCell); // 按贴路远近排序，AI 优先占贴路格
     // 局外功德加成注入
@@ -516,7 +521,7 @@ export class Battle {
     const skill = this.rollMonsterSkill(isBoss);
     this.monsters.push({
       id: this.nextMonsterId++,
-      dist: 0,
+      dist: this.entranceDist, // 从出怪口冒出（而非网格外平移）
       hp,
       maxHp: hp,
       spd: TUNING.monsterSpd * this.mods.monsterSpdMul * (1 + 0.1 * (this.difficultyMul - 1)), // 高境界妖怪更快
@@ -530,7 +535,7 @@ export class Battle {
     // AI 对手同波同步出怪（镜像路）
     this.aiMonsters.push({
       id: this.nextMonsterId++,
-      dist: 0,
+      dist: this.aiEntranceDist, // 从 AI 出怪口冒出
       hp,
       maxHp: hp,
       spd: TUNING.monsterSpd * (1 + 0.1 * (this.difficultyMul - 1)),

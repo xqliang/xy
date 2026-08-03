@@ -26,7 +26,12 @@ const ctx = canvas.getContext('2d')!;
 void loadAssets();
 
 const params = new URLSearchParams(location.search);
-const seed = Number(params.get('seed') ?? '1') || 1;
+// ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
+const fixedSeed = params.get('seed');
+const seed = Number(fixedSeed ?? '1') || 1;
+function nextSeed(): number {
+  return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
+}
 
 type Screen = 'menu' | 'battle' | 'shop';
 let screen: Screen = 'menu';
@@ -36,13 +41,13 @@ let merit: MeritState = loadMerit();
 let menuToast = '';
 let shopToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
-let battle = new Battle(seed, rank.difficulty, currentMap, metaBonuses(merit));
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit));
 let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
 
 function newGame() {
-  // 使用当前(可在首页切换的)地图；不再每次重置为每日轮换
-  battle = new Battle(seed, rank.difficulty, currentMap, metaBonuses(merit));
+  // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit));
   endHandled = false;
 }
 
