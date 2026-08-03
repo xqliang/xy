@@ -44,4 +44,7 @@ for (const job of jobs) {
     console.error(`❌ ${job.id}: ${e.message}`);
   }
 }
-console.log('done.');
+console.log('生成完成，开始抠背景转透明 PNG…');
+// 链式抠图：把刚下载的白底 jpg 转成透明 png（满足"素材须为透明PNG"的要求）
+await import('./bg-remove.mjs');
+

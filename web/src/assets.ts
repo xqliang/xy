@@ -11,53 +11,26 @@ export type AssetKey =
   | 'monster-boss';
 
 const FILES: Record<AssetKey, string> = {
-  tangseng: '/assets/tangseng.jpg',
-  'unit-monkey': '/assets/unit-monkey.jpg',
-  'unit-spear': '/assets/unit-spear.jpg',
-  'unit-cavalry': '/assets/unit-cavalry.jpg',
-  'unit-archer': '/assets/unit-archer.jpg',
-  'monster-minion': '/assets/monster-minion.jpg',
-  'monster-boss': '/assets/monster-boss.jpg',
+  tangseng: '/assets/tangseng.png',
+  'unit-monkey': '/assets/unit-monkey.png',
+  'unit-spear': '/assets/unit-spear.png',
+  'unit-cavalry': '/assets/unit-cavalry.png',
+  'unit-archer': '/assets/unit-archer.png',
+  'monster-minion': '/assets/monster-minion.png',
+  'monster-boss': '/assets/monster-boss.png',
 };
 
-const cache: Partial<Record<AssetKey, HTMLCanvasElement>> = {};
+const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;
 export function assetsReady(): boolean {
   return ready;
-}
-
-// 纯白背景抠透明：near-white 且低饱和的像素 → alpha 0，边缘做一档羽化。
-function keyWhite(img: HTMLImageElement): HTMLCanvasElement {
-  const cv = document.createElement('canvas');
-  cv.width = img.naturalWidth;
-  cv.height = img.naturalHeight;
-  const c = cv.getContext('2d', { willReadFrequently: true })!;
-  c.drawImage(img, 0, 0);
-  const data = c.getImageData(0, 0, cv.width, cv.height);
-  const p = data.data;
-  for (let i = 0; i < p.length; i += 4) {
-    const r = p[i]!, g = p[i + 1]!, b = p[i + 2]!;
-    const mn = Math.min(r, g, b);
-    const mx = Math.max(r, g, b);
-    if (mn >= 244 && mx - mn <= 12) {
-      p[i + 3] = 0; // 纯白 → 透明
-    } else if (mn >= 232 && mx - mn <= 18) {
-      p[i + 3] = Math.round(p[i + 3]! * 0.35); // 近白边缘羽化
-    }
-  }
-  c.putImageData(data, 0, 0);
-  return cv;
 }
 
 function loadOne(key: AssetKey): Promise<void> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      try {
-        cache[key] = keyWhite(img);
-      } catch {
-        /* 忽略单张失败 */
-      }
+      cache[key] = img; // 素材已是离线抠好的透明 PNG，直接使用
       resolve();
     };
     img.onerror = () => resolve();
@@ -71,7 +44,7 @@ export async function loadAssets(): Promise<void> {
   (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
 }
 
-export function sprite(key: AssetKey): HTMLCanvasElement | undefined {
+export function sprite(key: AssetKey): HTMLImageElement | undefined {
   return cache[key];
 }
 
