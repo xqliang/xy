@@ -954,35 +954,44 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：金箍棒飞旋成"风扇残影盘"——发光渐变圆盘(边缘亮) + 两段沿边扫动的亮弧(棒两端)
+        // 棍猴：金箍棒 起转(清晰)→加速(化为残影盘)→减速(重现清晰) 的一次挥舞
         const turns = 2 + tier;
-        const spin = prog * Math.PI * 2 * turns;
+        const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2; // ease-in-out：两端慢中间快
+        const spin = turns * Math.PI * 2 * eio;
+        const blur = Math.sin(Math.PI * prog); // 0→1→0：中段最模糊
         const len = CELL * (0.4 + tier * 0.07);
         const baseA = Math.min(1, 1.4 - prog);
         const lw = 5 + tier;
         ctx.translate(t.x, t.y);
-        // 1) 发光残影盘：中心透明→边缘金亮（棒尖扫出的环最亮）
-        const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
-        grad.addColorStop(0, 'rgba(232,161,28,0.04)');
-        grad.addColorStop(0.65, 'rgba(232,161,28,0.16)');
-        grad.addColorStop(1, 'rgba(255,226,122,0.42)');
-        ctx.globalAlpha = baseA;
-        ctx.fillStyle = grad;
-        ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
-        // 2) 两段沿盘边扫动的亮弧（棒的两端，形成旋转叶片的视觉）
-        ctx.strokeStyle = '#fff3c4';
-        ctx.lineWidth = lw;
         ctx.lineCap = 'round';
-        ctx.globalAlpha = baseA * 0.9;
-        ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
-        ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
-        // 3) 半透明主棒（弱化，避免"单根棒在转"的生硬感）
-        ctx.globalAlpha = baseA * 0.45;
+        // 高速段的残影盘（发光渐变 + 两段扫动亮弧），随 blur 淡入淡出
+        if (blur > 0.05) {
+          const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
+          grad.addColorStop(0, 'rgba(232,161,28,0.03)');
+          grad.addColorStop(0.65, `rgba(232,161,28,${0.14 * blur})`);
+          grad.addColorStop(1, `rgba(255,226,122,${0.4 * blur})`);
+          ctx.globalAlpha = baseA;
+          ctx.fillStyle = grad;
+          ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = baseA * blur * 0.85;
+          ctx.strokeStyle = '#fff3c4';
+          ctx.lineWidth = lw;
+          ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
+          ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
+        }
+        // 实心棒：两端慢时清晰(alpha 高)，高速中段淡出让位给残影盘
+        ctx.globalAlpha = baseA * (1 - 0.75 * blur);
         ctx.save();
         ctx.rotate(spin);
         ctx.strokeStyle = '#e8a11c';
         ctx.lineWidth = lw;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+        ctx.strokeStyle = '#fff3c4';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+        ctx.fillStyle = '#ffe27a';
+        ctx.beginPath(); ctx.arc(len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
         break;
       }
