@@ -18,6 +18,7 @@ export interface MenuInfo {
   mapName: string;
   toast: string;
   muted: boolean;
+  musicOn: boolean;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -38,6 +39,7 @@ export function menuButtons(): MenuButton[] {
     { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
     { id: 'shop', x: cx - 150, y: 762, w: 300, h: 50 },
     { id: 'mute', x: VIEW_W - 52, y: 16, w: 36, h: 36 },
+    { id: 'music', x: VIEW_W - 96, y: 16, w: 36, h: 36 },
     { id: 'mapPrev', x: cx - 150, y: 566, w: 44, h: 38 },
     { id: 'mapNext', x: cx + 106, y: 566, w: 44, h: 38 },
     { id: 'codex', x: 40, y: 880, w: 140, h: 78 },
@@ -101,6 +103,25 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(info.muted ? '🔇' : '🔊', b.x + b.w / 2, b.y + b.h / 2);
+      continue;
+    }
+    if (b.id === 'music') {
+      // 背景音乐开关：开=音符，关=半透明音符+红色斜杠
+      const mx = b.x + b.w / 2, my = b.y + b.h / 2;
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = info.musicOn ? 1 : 0.35;
+      ctx.fillText('🎵', mx, my);
+      ctx.globalAlpha = 1;
+      if (!info.musicOn) {
+        ctx.strokeStyle = '#c8392b';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(mx - 13, my + 13);
+        ctx.lineTo(mx + 13, my - 13);
+        ctx.stroke();
+      }
       continue;
     }
     if (b.id === 'mapPrev' || b.id === 'mapNext') {

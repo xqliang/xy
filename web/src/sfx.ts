@@ -3,10 +3,13 @@
 // 静音状态持久化到 localStorage。
 
 const MUTE_KEY = 'dasheng.mute';
+const MUSIC_KEY = 'dasheng.music';
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
-let muted = false;
+let muted = false; // 总静音（音效+音乐），默认关（即有声）
+let musicOn = false; // 背景音乐默认关闭；攻击等音效不受此开关影响
 try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch { /* ignore */ }
+try { musicOn = localStorage.getItem(MUSIC_KEY) === '1'; } catch { /* ignore */ }
 
 // 首个用户手势后调用：创建/恢复 AudioContext（浏览器自动播放策略要求）
 export function initAudio(): void {
@@ -30,6 +33,17 @@ export function toggleMute(): boolean {
   try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
   if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.05);
   return muted;
+}
+
+// 背景音乐（地图氛围音）开关，独立于音效；默认关闭
+export function isMusicOn(): boolean {
+  return musicOn;
+}
+export function toggleMusic(): boolean {
+  musicOn = !musicOn;
+  try { localStorage.setItem(MUSIC_KEY, musicOn ? '1' : '0'); } catch { /* ignore */ }
+  if (!musicOn) stopAmbient(); // 关闭立即停；开启由对战循环里的 startAmbient 幂等拉起
+  return musicOn;
 }
 
 type Wave = 'sine' | 'square' | 'triangle' | 'sawtooth';
@@ -236,7 +250,7 @@ export function stopAmbient(): void {
 
 // 启动某地图的氛围音（幂等：同图不重启）
 export function startAmbient(mapId: string): void {
-  if (!ctx || !master) return;
+  if (!ctx || !master || !musicOn) return; // 背景音乐关闭时不播放（音效仍正常）
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;

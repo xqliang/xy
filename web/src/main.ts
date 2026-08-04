@@ -22,7 +22,7 @@ import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
-import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute } from './sfx';
+import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -64,7 +64,12 @@ function handleMenu(x: number, y: number) {
   playSfx('click');
   if (id === 'mute') {
     const m = toggleMute();
-    menuToast = m ? '已静音' : '已开启声音';
+    menuToast = m ? '已静音（全部）' : '已开启声音';
+    return;
+  }
+  if (id === 'music') {
+    const on = toggleMusic();
+    menuToast = on ? '背景音乐：开' : '背景音乐：关';
     return;
   }
   if (id === 'start') {
@@ -255,6 +260,7 @@ function frame(now: number) {
       mapName: currentMap.name,
       toast: menuToast,
       muted: isMuted(),
+      musicOn: isMusicOn(),
     });
     requestAnimationFrame(frame);
     return;
