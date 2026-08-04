@@ -951,67 +951,70 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.strokeStyle = f.color;
     ctx.fillStyle = f.color;
     ctx.lineCap = 'round';
+    const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：金箍棒在怪头顶旋转数圈（金光棒体 + 两端高光）
-        const spin = prog * Math.PI * 6; // 3 圈
-        const len = CELL * 0.5;
+        // 棍猴：金箍棒在怪头顶旋转（阶数越高圈数越多、棒越长越粗）
+        const turns = 2 + tier; // 3~7 圈
+        const spin = prog * Math.PI * 2 * turns;
+        const len = CELL * (0.4 + tier * 0.07);
         ctx.globalAlpha = Math.min(1, 1.4 - prog);
         ctx.translate(t.x, t.y);
         ctx.rotate(spin);
         ctx.strokeStyle = '#e8a11c';
-        ctx.lineWidth = 6;
+        ctx.lineWidth = 5 + tier;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
         ctx.strokeStyle = '#fff3c4';
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
         ctx.fillStyle = '#ffe27a';
-        ctx.beginPath(); ctx.arc(len, 0, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(-len, 0, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
         break;
       }
       case 'spear': {
-        // 枪：从兵沿方向来回刺出两次（枪杆 + 枪尖），退回时短、刺出时长
+        // 枪：来回突刺（阶数越高刺得越多、越长越粗）
         const dist = Math.hypot(t.x - a.x, t.y - a.y);
-        const jab = Math.abs(Math.sin(prog * Math.PI * 2)); // 0→1→0→1→0，两次突刺
+        const jab = Math.abs(Math.sin(prog * Math.PI * (tier + 1))); // 阶越高刺次越多
         const tipD = dist * (0.5 + 0.5 * jab);
-        const shaft = Math.min(dist * 0.6, CELL * 0.8);
+        const shaft = Math.min(dist * 0.6, CELL * (0.6 + tier * 0.08));
         ctx.globalAlpha = 1;
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
-        // 枪杆
         ctx.strokeStyle = '#b98a4a';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3 + tier * 0.6;
         ctx.beginPath(); ctx.moveTo(tipD - shaft, 0); ctx.lineTo(tipD - 6, 0); ctx.stroke();
-        // 枪尖（细长三角，用兵种色描边高光）
         ctx.fillStyle = f.color;
+        const hl = 10 + tier * 2;
         ctx.beginPath();
         ctx.moveTo(tipD, 0);
-        ctx.lineTo(tipD - 12, -4);
-        ctx.lineTo(tipD - 12, 4);
+        ctx.lineTo(tipD - hl, -(3 + tier));
+        ctx.lineTo(tipD - hl, 3 + tier);
         ctx.closePath();
         ctx.fill();
         break;
       }
       case 'cavalry': {
-        // 骑：弹丸 + 命中处冲击环（AOE 感，更大更亮）
+        // 骑：弹丸 + 命中处冲击环（阶数越高环越大）
         ctx.globalAlpha = 0.4 * (f.ttl / f.maxTtl);
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 5 + tier, 0, Math.PI * 2); ctx.fill();
         if (prog > 0.55) {
           ctx.globalAlpha = (1 - prog) / 0.45;
-          ctx.lineWidth = 4;
-          ctx.beginPath(); ctx.arc(t.x, t.y, 8 + (prog - 0.55) * 90, 0, Math.PI * 2); ctx.stroke();
+          ctx.lineWidth = 3 + tier * 0.5;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 8 + (prog - 0.55) * (60 + tier * 22), 0, Math.PI * 2); ctx.stroke();
         }
         break;
       }
       default: {
-        // 弓：一支箭（箭杆 + 三角箭头 + 尾羽），沿飞行方向
+        // 弓：一支箭（阶数越高箭越大），沿飞行方向
+        const sc = 1 + (tier - 1) * 0.22;
         ctx.globalAlpha = 1;
         ctx.translate(x, y);
         ctx.rotate(ang);
+        ctx.scale(sc, sc);
         ctx.strokeStyle = f.color;
         ctx.fillStyle = f.color;
         ctx.lineWidth = 2.5;

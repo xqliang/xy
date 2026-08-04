@@ -158,6 +158,7 @@ export interface HitFx {
   maxTtl: number;
   color: string;
   wtype?: UnitType; // 攻击来源兵种，用于区分弹道动画（棍/枪/骑/弓）
+  tier?: number; // 攻击者阶数，用于让特效随等级加大(圈数/范围/时长)
 }
 
 // 爆发型特效（命中/击杀/合成），渲染于格坐标
@@ -926,7 +927,7 @@ export class Battle {
         t.m.hp -= dmg;
         t.m.hitFlash = 0.1;
         const p = posAlong(this.aiPath, t.m.dist);
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: 0.3, maxTtl: 0.3, color, wtype: u.type }); // AI 侧也播放攻击特效
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: 0.3 + (u.tier - 1) * 0.04, maxTtl: 0.3 + (u.tier - 1) * 0.04, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
         hit++;
       }
       if (hit > 0) u.firePulse = 1;
@@ -1035,7 +1036,7 @@ export class Battle {
         if (hitCount >= maxTargets) break;
         target.m.hp -= dmg;
         target.m.hitFlash = 0.12; // 受击闪白
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.3, maxTtl: 0.3, color, wtype: u.type });
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.3 + (u.tier - 1) * 0.04, maxTtl: 0.3 + (u.tier - 1) * 0.04, color, wtype: u.type, tier: u.tier });
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
