@@ -996,13 +996,13 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'spear': {
-        // 枪：一次迅捷的短促突刺（快出快回，枪身偏小）
+        // 枪：一次迅捷短促突刺（快出快回，收回后平滑淡出，避免静止停顿/突然消失）
         const dist = Math.hypot(t.x - a.x, t.y - a.y);
-        const p2 = Math.min(1, prog / 0.5); // 前半程内完成整次突刺 → 更迅速
-        const ext = Math.sin(p2 * Math.PI); // 0→1→0 一次刺出收回
-        const tipD = dist * (0.42 + 0.58 * ext);
+        const jabP = Math.min(1, prog / 0.55); // 前 55% 内完成整次突刺
+        const ext = Math.sin(jabP * Math.PI);  // 0→1→0
+        const tipD = dist * (0.18 + 0.82 * ext); // 收回到贴近兵身
         const shaftLen = CELL * (0.7 + tier * 0.08);
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = prog < 0.55 ? 1 : Math.max(0, 1 - (prog - 0.55) / 0.45); // 收回后淡出
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
         // 枪杆
