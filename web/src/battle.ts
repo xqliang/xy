@@ -169,7 +169,10 @@ export interface Burst {
   color: string;
 }
 
-// —— 日重置道具（胜利后 3 选 1，肉鸽 Build）——
+// —— 日重置道具（波间 3 选 1，肉鸽 Build）——
+// 携带上限对齐竞品：主动最多 2 个、被动最多 6 个。
+export const MAX_ACTIVE_ITEMS = 2;
+export const MAX_PASSIVE_ITEMS = 6;
 export type ItemKind = '主动' | '被动';
 export interface ItemDef {
   id: string;
@@ -178,8 +181,17 @@ export interface ItemDef {
   desc: string;
 }
 export const ITEMS: ItemDef[] = [
+  // 主动（最多 2）
   { id: 'xiandan', name: '仙丹', kind: '主动', desc: '全体攻击 +15%' },
-  { id: 'fenghuolun', name: '风火轮符', kind: '主动', desc: '全体攻速 +20%' },
+  { id: 'fenghuolun', name: '风火轮符', kind: '主动', desc: '全体攻速 +20%（对应攻速符）' },
+  { id: 'fabaofu', name: '法宝符', kind: '主动', desc: '所有武将等级 +1（对应神兵符）' },
+  // 被动（最多 6）
+  { id: 'pantaoyuan', name: '蟠桃园', kind: '被动', desc: '每 8 秒自动产 1 蟠桃（对应农民）' },
+  { id: 'zhaoxian', name: '招贤榜', kind: '被动', desc: '武将字牌掉率 +10%' },
+  { id: 'mojin', name: '摸金校尉', kind: '被动', desc: '每次用铲子额外 +6 蟠桃' },
+  { id: 'luoyangchan', name: '洛阳铲', kind: '被动', desc: '每 45 秒自动获得 1 把铲子' },
+  { id: 'yunshi', name: '陨石', kind: '被动', desc: '每波开始砸向最前妖怪（容错保险）' },
+  { id: 'yuni', name: '淤泥', kind: '被动', desc: '出怪口附近妖怪移速 -18%' },
   { id: 'xianyuan', name: '仙缘幡', kind: '被动', desc: '召唤成本 -1' },
   { id: 'jubaopen', name: '聚宝盆', kind: '被动', desc: '击杀额外 +1 蟠桃' },
   { id: 'hushen', name: '护身金光', kind: '被动', desc: '唐僧 +1 血' },
@@ -196,6 +208,12 @@ interface Modifiers {
   killBonus: number;
   monsterSpdMul: number;
   summonCostDelta: number;
+  wordRateBonus: number; // 招贤榜：字牌掉率加成
+  shovelPeach: number; // 摸金校尉：每次开挖额外蟠桃
+  peachFarm: boolean; // 蟠桃园：定期产桃
+  autoShovel: boolean; // 洛阳铲：定期产铲
+  meteor: boolean; // 陨石：每波开始砸最前妖怪
+  mud: boolean; // 淤泥：出怪口附近减速
 }
 
 // 局外「功德商店」买断的永久加成，开局注入本局（数值温和有上限，避免破坏塔 DPS 平衡）
@@ -265,7 +283,10 @@ export class Battle {
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // 道具与修正器
-  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0 };
+  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, peachFarm: false, autoShovel: false, meteor: false, mud: false };
+  private farmTimer = 0; // 蟠桃园产桃计时
+  private shovelTimer = 0; // 洛阳铲产铲计时
+  private meteorPending = false; // 本波陨石是否待触发
   pickedItems: string[] = [];
   pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
@@ -367,7 +388,7 @@ export class Battle {
       const roll = this.rng.next();
       if (roll < TUNING.shovelDrawChance) {
         this.tray.push({ kind: 'shovel' });
-      } else if (roll < TUNING.shovelDrawChance + TUNING.wordDrawChance) {
+      } else if (roll < TUNING.shovelDrawChance + TUNING.wordDrawChance + this.mods.wordRateBonus) {
         const w = this.rng.pick(WORD_POOL); // 武将字牌
         this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: 1 });
       } else {
@@ -469,7 +490,8 @@ export class Battle {
       }
       this.unlocked.add(cellKey(to.c, to.r));
       this.tray.splice(index, 1);
-      this.message = '铲子挖开了新阵位';
+      this.peach += this.mods.shovelPeach; // 摸金校尉
+      this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}🍑）` : '铲子挖开了新阵位';
       return true;
     }
     if (!this.isUnlocked(to.c, to.r)) {
@@ -536,6 +558,7 @@ export class Battle {
     if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) return false;
     this.shovels -= 1;
     this.unlocked.add(cellKey(to.c, to.r));
+    this.peach += this.mods.shovelPeach; // 摸金校尉
     this.message = '铲子挖开了新阵位';
     return true;
   }
@@ -650,6 +673,7 @@ export class Battle {
     this.healUsedThisWave = false;
     this.spawnRemaining = monstersInWave(this.wave); // 9 + n
     this.spawnTimer = 0;
+    this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     this.message = `第 ${this.wave} 波来袭`;
     return true;
   }
@@ -675,15 +699,31 @@ export class Battle {
     return true;
   }
 
+  // 已携带的主动/被动道具数
+  itemCount(kind: ItemKind): number {
+    return this.pickedItems.filter((id) => itemById(id)?.kind === kind).length;
+  }
+  // 是否还能再携带该道具（受主动2/被动6上限限制）
+  canCarry(id: string): boolean {
+    const def = itemById(id);
+    if (!def) return false;
+    const cap = def.kind === '主动' ? MAX_ACTIVE_ITEMS : MAX_PASSIVE_ITEMS;
+    return this.itemCount(def.kind) < cap;
+  }
+
   // 从当前商店 3 选 1（index 0..2）
   chooseItem(index: number): boolean {
     if (!this.pendingShop) return false;
     const id = this.pendingShop[index];
     if (!id) return false;
+    const def = itemById(id);
+    if (!this.canCarry(id)) {
+      this.message = `${def?.kind}道具已满（主动${MAX_ACTIVE_ITEMS}/被动${MAX_PASSIVE_ITEMS}），请换一件`;
+      return false;
+    }
     this.applyItem(id);
     this.pickedItems.push(id);
     this.pendingShop = null;
-    const def = itemById(id);
     this.message = `获得道具：${def?.name ?? id}`;
     return true;
   }
@@ -692,6 +732,19 @@ export class Battle {
     switch (id) {
       case 'xiandan': this.mods.atkMul += 0.15; break;
       case 'fenghuolun': this.mods.frqMul += 0.2; break;
+      // 法宝符：所有武将等级 +1（对应神兵符）
+      case 'fabaofu': {
+        for (const g of this.activeGenerals()) {
+          g.state.level = Math.min(Battle.GENERAL_MAX_LEVEL, g.state.level + 1);
+        }
+        break;
+      }
+      case 'pantaoyuan': this.mods.peachFarm = true; break;
+      case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
+      case 'mojin': this.mods.shovelPeach += 6; break;
+      case 'luoyangchan': this.mods.autoShovel = true; break;
+      case 'yunshi': this.mods.meteor = true; break;
+      case 'yuni': this.mods.mud = true; break;
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
@@ -700,15 +753,41 @@ export class Battle {
     }
   }
 
-  // 胜利后随机开出 3 件道具供选择
+  // 被动道具的持续效果：蟠桃园产桃 / 洛阳铲产铲
+  private updateItemEffects(dt: number): void {
+    if (this.mods.peachFarm) {
+      this.farmTimer += dt;
+      if (this.farmTimer >= 8) { this.farmTimer = 0; this.peach += 1; }
+    }
+    if (this.mods.autoShovel) {
+      this.shovelTimer += dt;
+      if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; }
+    }
+  }
+
+  // 陨石：每波开始时砸向最前妖怪（容错保险）
+  private castMeteor(): void {
+    if (!this.mods.meteor || this.monsters.length === 0) return;
+    let front = this.monsters[0]!;
+    for (const m of this.monsters) if (m.dist > front.dist) front = m;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * 3;
+    const p = posAtDistance(this.map, front.dist);
+    for (const m of this.monsters) {
+      const q = posAtDistance(this.map, m.dist);
+      if (Math.hypot(q.c - p.c, q.r - p.r) <= 1.6) { m.hp -= dmg; m.hitFlash = 0.2; }
+    }
+    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+  }
+
+  // 胜利后随机开出 3 件道具供选择（只开还能携带的）
   private rollShop(): void {
-    const pool = [...ITEMS];
+    const pool = ITEMS.filter((it) => this.canCarry(it.id));
     const picks: string[] = [];
     for (let i = 0; i < 3 && pool.length > 0; i++) {
       const idx = this.rng.int(pool.length);
       picks.push(pool.splice(idx, 1)[0]!.id);
     }
-    this.pendingShop = picks;
+    this.pendingShop = picks.length > 0 ? picks : null;
   }
 
   private spawnMonster(): void {
@@ -1140,7 +1219,8 @@ export class Battle {
       if (m.stunT > 0) {
         m.stunT = Math.max(0, m.stunT - dt);
       } else {
-        m.dist += m.spd * (m.slowT > 0 ? 0.5 : 1) * dt;
+        const mudMul = this.mods.mud && m.dist - this.entranceDist < 3 ? 0.82 : 1; // 淤泥：出怪口附近减速
+        m.dist += m.spd * (m.slowT > 0 ? 0.5 : 1) * mudMul * dt;
       }
       if (m.slowT > 0) m.slowT = Math.max(0, m.slowT - dt);
       if (m.dist >= this.pathLen) {
@@ -1168,6 +1248,7 @@ export class Battle {
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
+    this.updateItemEffects(dt); // 被动道具收益（蟠桃园/洛阳铲）在所有状态下持续
   }
 
   // 推进 dt 秒
@@ -1207,6 +1288,7 @@ export class Battle {
       }
     }
     this.updateUnits(dt);
+    if (this.meteorPending && this.monsters.length >= 3) { this.meteorPending = false; this.castMeteor(); }
     this.updateMonsterSkills(dt);
     this.updateGenerals(dt);
     this.updateHero(dt);
