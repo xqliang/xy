@@ -973,25 +973,35 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'spear': {
-        // 枪：来回突刺（阶数越高刺得越多、越长越粗）
+        // 枪：一次沉稳的突刺——刺出→停顿→收回（梯形节奏，不再高频抖动）
         const dist = Math.hypot(t.x - a.x, t.y - a.y);
-        const jab = Math.abs(Math.sin(prog * Math.PI * (tier + 1))); // 阶越高刺次越多
-        const tipD = dist * (0.5 + 0.5 * jab);
-        const shaft = Math.min(dist * 0.6, CELL * (0.6 + tier * 0.08));
+        const ext = prog < 0.35 ? prog / 0.35 : prog < 0.62 ? 1 : 1 - (prog - 0.62) / 0.38; // 0→1→(保持)→0
+        const tipD = dist * (0.3 + 0.7 * ext);
+        const shaftLen = CELL * (0.95 + tier * 0.12);
         ctx.globalAlpha = 1;
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
-        ctx.strokeStyle = '#b98a4a';
-        ctx.lineWidth = 3 + tier * 0.6;
-        ctx.beginPath(); ctx.moveTo(tipD - shaft, 0); ctx.lineTo(tipD - 6, 0); ctx.stroke();
-        ctx.fillStyle = f.color;
-        const hl = 10 + tier * 2;
+        // 枪杆（细长木杆）
+        ctx.strokeStyle = '#9a6f3a';
+        ctx.lineWidth = 3 + tier * 0.4;
+        ctx.beginPath(); ctx.moveTo(tipD - shaftLen, 0); ctx.lineTo(tipD - 10, 0); ctx.stroke();
+        // 红缨（枪尖后的一簇）
+        ctx.fillStyle = '#c0392b';
+        ctx.beginPath(); ctx.arc(tipD - 11, 0, 3 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
+        // 枪尖（菱形/叶形枪头）
+        const hl = 12 + tier * 2.2;
+        const hw = 3.2 + tier * 0.7;
+        ctx.fillStyle = '#dfe6ee';
+        ctx.strokeStyle = '#8a97a6';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(tipD, 0);
-        ctx.lineTo(tipD - hl, -(3 + tier));
-        ctx.lineTo(tipD - hl, 3 + tier);
+        ctx.moveTo(tipD, 0);            // 尖端
+        ctx.lineTo(tipD - hl * 0.55, -hw); // 左肩
+        ctx.lineTo(tipD - hl, 0);       // 后端
+        ctx.lineTo(tipD - hl * 0.55, hw);  // 右肩
         ctx.closePath();
         ctx.fill();
+        ctx.stroke();
         break;
       }
       case 'cavalry': {
