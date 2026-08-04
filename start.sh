@@ -32,10 +32,9 @@ ensure_deps() {
 
 # 释放 5180 端口上的残留监听（避免"port in use"漂移到 5181）
 free_port() {
-  local pids
-  pids="$(lsof -ti tcp:5180 2>/dev/null || true)"
-  if [ -n "$pids" ]; then
-    echo "🧹 释放端口 5180（结束残留进程：$pids）"
+  local pids="$(lsof -ti tcp:5180 2>/dev/null || true)"
+  if [ -n "${pids:-}" ]; then
+    echo "🧹 释放端口 5180（结束残留进程 ${pids}）"
     kill $pids 2>/dev/null || true
     sleep 1
   fi
@@ -67,7 +66,7 @@ case "$CMD" in
     fi
     # 兜底：结束仍占用 5180 的进程
     pids="$(lsof -ti tcp:5180 2>/dev/null || true)"
-    [ -n "$pids" ] && { kill $pids 2>/dev/null || true; stopped=1; }
+    [ -n "${pids:-}" ] && { kill $pids 2>/dev/null || true; stopped=1; }
     [ "$stopped" = 1 ] && echo "🛑 已停止开发服务器" || echo "（没有正在运行的服务器）"
     ;;
   logs)
