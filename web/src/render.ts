@@ -1073,30 +1073,30 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       default: {
-        // 弓：一支箭——木杆 + 钢制箭头 + 尾羽(用兵种色作点缀)，沿飞行方向。阶数越高越大。
-        const sc = 1 + (tier - 1) * 0.22;
+        // 弓：一支箭——木杆 + 钢制箭头 + 尾羽(用兵种色作点缀)，沿飞行方向。偏细小，阶数略放大。
+        const sc = 0.8 + (tier - 1) * 0.14;
         ctx.globalAlpha = 1;
         ctx.translate(x, y);
         ctx.rotate(ang);
         ctx.scale(sc, sc);
         ctx.lineCap = 'round';
-        // 木质箭杆
+        // 木质箭杆（细）
         ctx.strokeStyle = '#a5773f';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(8, 0); ctx.stroke();
-        // 钢制箭头（银灰 + 深色描边）
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(7, 0); ctx.stroke();
+        // 钢制箭头（小）
         ctx.fillStyle = '#d7dde4';
         ctx.strokeStyle = '#6b7480';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(4, -4.5); ctx.lineTo(4, 4.5); ctx.closePath(); ctx.fill(); ctx.stroke();
-        // 尾羽（兵种色点缀，保留身份识别）
+        ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(4, -3); ctx.lineTo(4, 3); ctx.closePath(); ctx.fill(); ctx.stroke();
+        // 尾羽（兵种色点缀）
         ctx.strokeStyle = f.color;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.4;
         ctx.beginPath();
-        ctx.moveTo(-16, 0); ctx.lineTo(-21, -4);
-        ctx.moveTo(-16, 0); ctx.lineTo(-21, 4);
-        ctx.moveTo(-13, 0); ctx.lineTo(-18, -4);
-        ctx.moveTo(-13, 0); ctx.lineTo(-18, 4);
+        ctx.moveTo(-14, 0); ctx.lineTo(-18, -3);
+        ctx.moveTo(-14, 0); ctx.lineTo(-18, 3);
+        ctx.moveTo(-11, 0); ctx.lineTo(-15, -3);
+        ctx.moveTo(-11, 0); ctx.lineTo(-15, 3);
         ctx.stroke();
         break;
       }
