@@ -22,6 +22,7 @@ import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
+import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute } from './sfx';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -60,6 +61,12 @@ function newGame() {
 function handleMenu(x: number, y: number) {
   const id = menuButtonAt(x, y);
   if (!id) return;
+  playSfx('click');
+  if (id === 'mute') {
+    const m = toggleMute();
+    menuToast = m ? '已静音' : '已开启声音';
+    return;
+  }
   if (id === 'start') {
     const r = spendStamina(stamina);
     if (!r.ok) {
@@ -153,6 +160,7 @@ function handleButton(x: number, y: number): boolean {
 
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  initAudio(); // 首个用户手势后启用音频（浏览器自动播放策略）
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
     handleMenu(x, y);
@@ -237,6 +245,8 @@ function frame(now: number) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
+  // 非对战界面停掉地图氛围音
+  if (screen !== 'battle') stopAmbient();
   if (screen === 'menu') {
     drawMenu(ctx, {
       rankLevel: rank.level,
@@ -244,6 +254,7 @@ function frame(now: number) {
       stamina: stamina.value,
       mapName: currentMap.name,
       toast: menuToast,
+      muted: isMuted(),
     });
     requestAnimationFrame(frame);
     return;
@@ -269,6 +280,12 @@ function frame(now: number) {
     return;
   }
   battle.step(dt);
+  startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
+  // 播放引擎发出的音效事件
+  if (battle.sfxEvents.length) {
+    for (const ev of battle.sfxEvents) playSfx(ev);
+    battle.sfxEvents.length = 0;
+  }
   // 胜负结算入境界 + 功德（仅一次）
   if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
     endHandled = true;

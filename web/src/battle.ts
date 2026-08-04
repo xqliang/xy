@@ -246,6 +246,8 @@ export class Battle {
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
+  sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
+  private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
   palmUsedThisWave = false; // 如来神掌每波限用一次
   healUsedThisWave = false; // 观音甘露每波限回一次
   tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
@@ -389,6 +391,7 @@ export class Battle {
     this.summonCost += TUNING.summonCostStep;
     this.summonFlash = 1; // 征兵闪光
     this.summonAnimT = 0; // 触发候选令牌逐个飞入动画
+    this.emit('summon');
     this.tray = keep; // 保留字牌/武将，清掉残余兵与铲
     const types = Object.keys(UNITS) as UnitType[];
     for (let i = 0; i < TUNING.summonDraws; i++) {
@@ -435,6 +438,7 @@ export class Battle {
       this.tray[to] = { kind: 'word', char: b.char, general: b.general, tier: b.tier + 1 };
       this.tray.splice(from, 1);
       this.message = `字牌「${b.char}」升为 ${b.tier + 1} 阶`;
+      this.emit('merge');
       return true;
     }
     if (a.kind !== 'unit' || b.kind !== 'unit') return false;
@@ -445,6 +449,7 @@ export class Battle {
     this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
     this.tray.splice(from, 1);
     this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
+    this.emit('merge');
     return true;
   }
 
@@ -498,6 +503,7 @@ export class Battle {
       this.unlocked.add(cellKey(to.c, to.r));
       this.tray.splice(index, 1);
       this.peach += this.mods.shovelPeach; // 摸金校尉
+      this.emit('shovel');
       this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}🍑）` : '铲子挖开了新阵位';
       return true;
     }
@@ -529,6 +535,7 @@ export class Battle {
       this.tray.splice(index, 1);
       const def = generalById(token.general);
       const active = this.activeGenerals().some((g) => g.def.id === token.general);
+      this.emit(active ? 'general' : 'place');
       this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，与「${def?.chars.find((c) => c !== token.char)}」左右相邻可激活`;
       return true;
     }
@@ -545,6 +552,7 @@ export class Battle {
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.tray.splice(index, 1);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
+        this.emit('merge');
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
@@ -556,6 +564,7 @@ export class Battle {
     this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
+    this.emit('place');
     return true;
   }
 
@@ -616,7 +625,7 @@ export class Battle {
     // 反馈：是否因移动而激活/拆分
     const nowActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === to.c && cc.r === to.r));
     const def = generalById(w.general);
-    if (nowActive) this.message = `${def?.name ?? ''} 已激活！(金框生效)`;
+    if (nowActive) { this.emit('general'); this.message = `${def?.name ?? ''} 已激活！(金框生效)`; }
     else if (wasActive) this.message = `${def?.name ?? ''} 已拆分，失去输出`;
     return true;
   }
@@ -647,6 +656,7 @@ export class Battle {
         this.units.delete(cellKey(from.c, from.r));
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
+        this.emit('merge');
         return true;
       }
       // 非同型同级 → 两格交换位置
@@ -682,6 +692,7 @@ export class Battle {
     this.spawnTimer = 0;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     this.message = `第 ${this.wave} 波来袭`;
+    this.emit('wave');
     return true;
   }
 
@@ -702,6 +713,7 @@ export class Battle {
     if (this.status !== 'playing' || this.palmUsedThisWave) return false;
     for (const m of this.monsters) m.dist = 0;
     this.palmUsedThisWave = true;
+    this.emit('palm');
     this.message = '如来神掌！妖怪被推回起点';
     return true;
   }
@@ -732,6 +744,7 @@ export class Battle {
     this.pickedItems.push(id);
     this.pendingShop = null;
     this.message = `获得道具：${def?.name ?? id}`;
+    this.emit('item');
     return true;
   }
 
@@ -960,6 +973,7 @@ export class Battle {
     if (this.aiDefeated && this.status !== 'won' && this.status !== 'lost') {
       this.status = 'won';
       this.waveActive = false;
+      this.emit('win');
       this.message = '对方唐僧被妖怪吃了，我方获胜！';
       return true;
     }
@@ -1022,7 +1036,7 @@ export class Battle {
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
-      if (hitCount > 0) u.firePulse = 1; // 开火脉冲
+      if (hitCount > 0) { u.firePulse = 1; this.emit('attack'); } // 开火脉冲
       // 攻速修正(道具/功德 frqMul) + 减速减益(拉长间隔)
       u.cooldown = (1 / (stat.frq * this.mods.frqMul)) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }
@@ -1228,6 +1242,7 @@ export class Battle {
     this.ultCount++;
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
     this.message = '齐天大圣·绝招！金箍棒横扫';
+    this.emit('ult');
     return true;
   }
 
@@ -1240,6 +1255,7 @@ export class Battle {
         this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
+        this.emit(m.isBoss ? 'bosskill' : 'kill');
         continue;
       }
       // 武将控制：定身期间不前进，减速期间移速减半
@@ -1254,9 +1270,11 @@ export class Battle {
         // 撞到唐僧：扣血 + 舍身饲魔补偿蟠桃
         this.tangsengHP -= 1;
         this.peach += PEACH_PER_BLEED;
+        this.emit('hurt');
         if (this.tangsengHP <= 0) {
           this.tangsengHP = 0;
           this.status = 'lost';
+          this.emit('lose');
           this.message = '唐僧被妖怪吃了…取经失败';
         }
         continue;
@@ -1331,6 +1349,7 @@ export class Battle {
       if (this.wave >= TUNING.winWave) {
         this.rollWeaponDropOnClear();
         this.status = 'won';
+        this.emit('win');
         this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
       } else {
         this.rollWeaponDropOnClear();
