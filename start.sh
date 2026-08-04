@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # 《大圣与唐僧》启动脚本
 # 用法：
-#   ./start.sh            # 启动开发服务器（默认，http://127.0.0.1:5180）
+#   ./start.sh            # 启动开发服务器（前台，http://127.0.0.1:5180）
 #   ./start.sh dev        # 同上
+#   ./start.sh bg         # 后台启动开发服务器（日志 web/vite.log）
+#   ./start.sh stop       # 停止后台/占用 5180 的服务器
+#   ./start.sh logs       # 查看后台服务器日志（tail -f）
 #   ./start.sh build      # 生产构建（输出 web/dist）
 #   ./start.sh preview    # 预览已构建产物（http://127.0.0.1:5180）
 #   ./start.sh test       # 运行 game-core 数值单元测试
@@ -11,6 +14,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CMD="${1:-dev}"
+PIDFILE="$ROOT/.vite.pid"
+LOGFILE="$ROOT/web/vite.log"
 
 need_node() {
   command -v node >/dev/null 2>&1 || { echo "❌ 未找到 node，请先安装 Node.js (>=18)"; exit 1; }
@@ -46,6 +51,28 @@ case "$CMD" in
     # exec 让 Ctrl+C(SIGINT) 直接送达 vite；--strictPort 固定端口不漂移
     cd "$ROOT/web" && exec npx vite --strictPort
     ;;
+  bg)
+    ensure_deps "$ROOT/web"
+    free_port
+    (cd "$ROOT/web" && nohup npx vite --strictPort > "$LOGFILE" 2>&1 & echo $! > "$PIDFILE")
+    sleep 1
+    echo "🚀 后台运行：http://127.0.0.1:5180  (PID $(cat "$PIDFILE"))"
+    echo "   日志：./start.sh logs   停止：./start.sh stop"
+    ;;
+  stop)
+    stopped=0
+    if [ -f "$PIDFILE" ]; then
+      kill "$(cat "$PIDFILE")" 2>/dev/null && stopped=1
+      rm -f "$PIDFILE"
+    fi
+    # 兜底：结束仍占用 5180 的进程
+    pids="$(lsof -ti tcp:5180 2>/dev/null || true)"
+    [ -n "$pids" ] && { kill $pids 2>/dev/null || true; stopped=1; }
+    [ "$stopped" = 1 ] && echo "🛑 已停止开发服务器" || echo "（没有正在运行的服务器）"
+    ;;
+  logs)
+    [ -f "$LOGFILE" ] && tail -f "$LOGFILE" || echo "无日志（先 ./start.sh bg 启动）"
+    ;;
   build)
     ensure_deps "$ROOT/web"
     (cd "$ROOT/web" && npm run build)
@@ -70,7 +97,7 @@ case "$CMD" in
     ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | build | preview | test | check"
+    echo "可用：dev | bg | stop | logs | build | preview | test | check"
     exit 1
     ;;
 esac

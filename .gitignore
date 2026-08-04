@@ -29,3 +29,7 @@ tools/seeddream/output_raw/
 .vscode/
 .idea/
 *.swp
+
+# 本地运行时
+.vite.pid
+web/vite.log

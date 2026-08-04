@@ -8,6 +8,9 @@
 
 ```bash
 ./start.sh            # 启动开发服务器 → http://127.0.0.1:5180
+./start.sh bg         # 后台启动（日志 web/vite.log）
+./start.sh stop       # 停止后台/占用 5180 的服务器
+./start.sh logs       # 查看后台日志（tail -f）
 ./start.sh build      # 生产构建（输出 web/dist）
 ./start.sh preview    # 预览构建产物
 ./start.sh test       # 运行数值单元测试（game-core）
