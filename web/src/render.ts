@@ -274,7 +274,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textBaseline = 'middle';
   ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
   // 5 个候选槽
-  const SLOT_STAGGER = 0.09, SLOT_DUR = 0.24;
+  const SLOT_STAGGER = 0.12, SLOT_DUR = 0.34;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
@@ -283,23 +283,34 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      // 征兵入场：令牌从「营」标处逐个飞入槽位，带拖尾+回弹；字牌(收集品)不重播
+      // 征兵入场：令牌从「营」标处沿抛物线弧一个个"重重砸入"槽位；字牌(收集品)不重播
       const p = token.kind === 'word' ? 1 : Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
       if (p < 1) {
-        const srcX = 34, srcY = TRAY_Y + TRAY_H / 2; // 「营」标中心
-        const ease = 1 - Math.pow(1 - p, 3);
-        const tx = srcX + (c.x - srcX) * ease;
-        const ty = srcY + (c.y - srcY) * ease;
-        // 拖尾
+        const srcX = 34, srcY = TRAY_Y - 40; // 从「营」标上方抛出
+        const tx = srcX + (c.x - srcX) * p; // 水平匀速
+        const arc = 4 * p * (1 - p); // 抛物线：0→1→0
+        const ty = srcY + (c.y - srcY) * p - arc * 70; // 先上抛再下落到槽位
+        // 抛物弧拖尾（采样前几段位置连线）
         ctx.save();
-        ctx.strokeStyle = 'rgba(255,220,140,0.5)';
+        ctx.strokeStyle = 'rgba(255,220,140,0.45)';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(srcX + (c.x - srcX) * Math.max(0, ease - 0.25), srcY + (c.y - srcY) * Math.max(0, ease - 0.25));
-        ctx.lineTo(tx, ty);
+        for (let k = 0; k <= 6; k++) {
+          const pk = Math.max(0, p - k * 0.05);
+          const kx = srcX + (c.x - srcX) * pk;
+          const ky = srcY + (c.y - srcY) * pk - 4 * pk * (1 - pk) * 70;
+          if (k === 0) ctx.moveTo(kx, ky); else ctx.lineTo(kx, ky);
+        }
         ctx.stroke();
         ctx.restore();
-        drawTrayToken(ctx, token, tx, ty, (TRAY_H - 16) * (0.5 + 0.5 * p));
+        // 临近落地时轻微竖向压扁，强化"砸落"
+        const land = p > 0.82 ? (p - 0.82) / 0.18 : 0;
+        const sq = 1 - land * 0.18;
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.scale(1 + land * 0.12, sq);
+        drawTrayToken(ctx, token, 0, 0, (TRAY_H - 16) * (0.7 + 0.3 * p));
+        ctx.restore();
       } else {
         drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
       }
@@ -573,13 +584,7 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   if (spr) {
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
-    // 踏步左右轻微摆动(基于相位镜像)，强化"走"的感觉
-    const flip = Math.sin(phase) < 0 ? -1 : 1;
-    ctx.save();
-    ctx.translate(x, cy);
-    ctx.scale(flip, 1);
-    ctx.drawImage(spr, -(spr.width * scale) / 2, -(spr.height * scale) / 2, spr.width * scale, spr.height * scale);
-    ctx.restore();
+    ctx.drawImage(spr, x - (spr.width * scale) / 2, cy - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
   } else {
     ctx.beginPath();
     ctx.arc(x, cy, rad, 0, Math.PI * 2);
@@ -944,18 +949,21 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.lineCap = 'round';
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：近战挥棒弧线（在目标处扫一道亮弧 + 金光）
-        ctx.globalAlpha = 1 - prog;
-        ctx.lineWidth = 7;
-        const a0 = ang - 1.3 + prog * 2.6;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, CELL * 0.5, a0, a0 + 0.7);
-        ctx.stroke();
+        // 棍猴：金箍棒在怪头顶旋转数圈（金光棒体 + 两端高光）
+        const spin = prog * Math.PI * 6; // 3 圈
+        const len = CELL * 0.5;
+        ctx.globalAlpha = Math.min(1, 1.4 - prog);
+        ctx.translate(t.x, t.y);
+        ctx.rotate(spin);
+        ctx.strokeStyle = '#e8a11c';
+        ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
         ctx.strokeStyle = '#fff3c4';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, CELL * 0.5, a0, a0 + 0.7);
-        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+        ctx.fillStyle = '#ffe27a';
+        ctx.beginPath(); ctx.arc(len, 0, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-len, 0, 4, 0, Math.PI * 2); ctx.fill();
         break;
       }
       case 'spear': {
@@ -983,17 +991,18 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       default: {
-        // 弓/默认：箭矢（拖尾 + 大箭头）
-        ctx.globalAlpha = 0.4 * (f.ttl / f.maxTtl);
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
+        // 弓：一支箭（箭杆 + 三角箭头 + 尾羽），沿飞行方向
         ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.moveTo(x + Math.cos(ang) * 6, y + Math.sin(ang) * 6);
-        ctx.lineTo(x - Math.cos(ang - 0.45) * 12, y - Math.sin(ang - 0.45) * 12);
-        ctx.lineTo(x - Math.cos(ang + 0.45) * 12, y - Math.sin(ang + 0.45) * 12);
-        ctx.closePath();
-        ctx.fill();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.strokeStyle = f.color;
+        ctx.fillStyle = f.color;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(6, 0); ctx.stroke(); // 箭杆
+        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(2, -5); ctx.lineTo(2, 5); ctx.closePath(); ctx.fill(); // 箭头
+        ctx.lineWidth = 2; // 尾羽
+        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(-20, -4); ctx.moveTo(-16, 0); ctx.lineTo(-20, 4); ctx.stroke();
+        break;
       }
     }
     ctx.restore();

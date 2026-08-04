@@ -919,11 +919,14 @@ export class Battle {
         .sort((a, b) => b.m.dist - a.m.dist);
       if (inRange.length === 0) continue;
       const dmg = damage(stat.atk);
+      const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.1;
+        const p = posAlong(this.aiPath, t.m.dist);
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: 0.3, maxTtl: 0.3, color, wtype: u.type }); // AI 侧也播放攻击特效
         hit++;
       }
       if (hit > 0) u.firePulse = 1;
