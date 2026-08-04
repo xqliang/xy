@@ -971,13 +971,26 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'spear': {
-        // 枪：细长突刺（粗亮的拉长弹体 + 枪尖）
+        // 枪：从兵沿方向来回刺出两次（枪杆 + 枪尖），退回时短、刺出时长
+        const dist = Math.hypot(t.x - a.x, t.y - a.y);
+        const jab = Math.abs(Math.sin(prog * Math.PI * 2)); // 0→1→0→1→0，两次突刺
+        const tipD = dist * (0.5 + 0.5 * jab);
+        const shaft = Math.min(dist * 0.6, CELL * 0.8);
         ctx.globalAlpha = 1;
-        ctx.lineWidth = 6;
+        ctx.translate(a.x, a.y);
+        ctx.rotate(ang);
+        // 枪杆
+        ctx.strokeStyle = '#b98a4a';
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(tipD - shaft, 0); ctx.lineTo(tipD - 6, 0); ctx.stroke();
+        // 枪尖（细长三角，用兵种色描边高光）
+        ctx.fillStyle = f.color;
         ctx.beginPath();
-        ctx.moveTo(x - Math.cos(ang) * 22, y - Math.sin(ang) * 22);
-        ctx.lineTo(x + Math.cos(ang) * 12, y + Math.sin(ang) * 12);
-        ctx.stroke();
+        ctx.moveTo(tipD, 0);
+        ctx.lineTo(tipD - 12, -4);
+        ctx.lineTo(tipD - 12, 4);
+        ctx.closePath();
+        ctx.fill();
         break;
       }
       case 'cavalry': {
