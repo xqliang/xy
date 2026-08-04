@@ -958,7 +958,7 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         const turns = 2 + tier;
         const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2; // ease-in-out：两端慢中间快
         const spin = turns * Math.PI * 2 * eio;
-        const blur = Math.sin(Math.PI * prog); // 0→1→0：中段最模糊
+        const blur = Math.pow(Math.sin(Math.PI * prog), 3); // 残影只在中段短暂出现，两端留足清晰加/减速
         const len = CELL * (0.4 + tier * 0.07);
         const baseA = Math.min(1, 1.4 - prog);
         const lw = 5 + tier;
