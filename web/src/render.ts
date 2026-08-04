@@ -274,7 +274,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textBaseline = 'middle';
   ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
   // 5 个候选槽
-  const SLOT_STAGGER = 0.12, SLOT_DUR = 0.34;
+  const SLOT_STAGGER = 0.11, SLOT_DUR = 0.28;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
@@ -287,18 +287,22 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       const p = token.kind === 'word' ? 1 : Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
       if (p < 1) {
         const srcX = 34, srcY = TRAY_Y - 40; // 从「营」标上方抛出
+        // 非对称时间轴：上升较缓、下落加速(重力砸落感)。apex 之后压缩时间→落得更快
+        const apex = 0.6;
+        const phase = p < apex ? (p / apex) * 0.5 : 0.5 + ((p - apex) / (1 - apex)) * 0.5;
         const tx = srcX + (c.x - srcX) * p; // 水平匀速
-        const arc = 4 * p * (1 - p); // 抛物线：0→1→0
-        const ty = srcY + (c.y - srcY) * p - arc * 70; // 先上抛再下落到槽位
+        const arc = 4 * phase * (1 - phase); // 抛物线：0→1→0
+        const ty = srcY + (c.y - srcY) * phase - arc * 70;
         // 抛物弧拖尾（采样前几段位置连线）
         ctx.save();
         ctx.strokeStyle = 'rgba(255,220,140,0.45)';
         ctx.lineWidth = 3;
         ctx.beginPath();
         for (let k = 0; k <= 6; k++) {
-          const pk = Math.max(0, p - k * 0.05);
+          const pk = Math.max(0, p - k * 0.045);
+          const phk = pk < apex ? (pk / apex) * 0.5 : 0.5 + ((pk - apex) / (1 - apex)) * 0.5;
           const kx = srcX + (c.x - srcX) * pk;
-          const ky = srcY + (c.y - srcY) * pk - 4 * pk * (1 - pk) * 70;
+          const ky = srcY + (c.y - srcY) * phk - 4 * phk * (1 - phk) * 70;
           if (k === 0) ctx.moveTo(kx, ky); else ctx.lineTo(kx, ky);
         }
         ctx.stroke();
