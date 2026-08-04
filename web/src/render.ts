@@ -954,15 +954,41 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：金箍棒在怪头顶旋转（阶数越高圈数越多、棒越长越粗）
-        const turns = 2 + tier; // 3~7 圈
+        // 棍猴：金箍棒飞旋成"风扇残影盘"——半透明扫掠盘 + 一圈淡辐条 + 拖尾 + 最亮主棒
+        const turns = 2 + tier;
         const spin = prog * Math.PI * 2 * turns;
         const len = CELL * (0.4 + tier * 0.07);
-        ctx.globalAlpha = Math.min(1, 1.4 - prog);
+        const baseA = Math.min(1, 1.4 - prog);
+        const lw = 5 + tier;
         ctx.translate(t.x, t.y);
+        // 1) 扫掠圆盘（残影连成一片）
+        ctx.globalAlpha = baseA * 0.14;
+        ctx.fillStyle = '#e8a11c';
+        ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
+        // 2) 一圈均布淡辐条（模糊盘的"叶片"感）
+        ctx.strokeStyle = '#e8a11c';
+        ctx.lineWidth = lw * 0.7;
+        const spokes = 14;
+        for (let i = 0; i < spokes; i++) {
+          ctx.globalAlpha = baseA * 0.06;
+          ctx.save(); ctx.rotate(spin + (i / spokes) * Math.PI); // 半圈即可(棒对称)
+          ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+          ctx.restore();
+        }
+        // 3) 当前角度附近更亮的拖尾（前缘运动模糊）
+        for (let i = 1; i <= 6; i++) {
+          ctx.globalAlpha = baseA * Math.max(0, 0.26 - i * 0.04);
+          ctx.lineWidth = lw;
+          ctx.save(); ctx.rotate(spin - i * 0.18);
+          ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+          ctx.restore();
+        }
+        // 4) 主棒（最亮）+ 中线高光 + 两端金点
+        ctx.globalAlpha = baseA;
+        ctx.save();
         ctx.rotate(spin);
         ctx.strokeStyle = '#e8a11c';
-        ctx.lineWidth = 5 + tier;
+        ctx.lineWidth = lw;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
         ctx.strokeStyle = '#fff3c4';
         ctx.lineWidth = 2;
@@ -970,6 +996,7 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.fillStyle = '#ffe27a';
         ctx.beginPath(); ctx.arc(len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
         ctx.beginPath(); ctx.arc(-len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
         break;
       }
       case 'spear': {
