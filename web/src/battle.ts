@@ -190,6 +190,7 @@ export const ITEMS: ItemDef[] = [
   { id: 'xiandan', name: '仙丹', kind: '主动', desc: '全体攻击 +15%' },
   { id: 'fenghuolun', name: '风火轮符', kind: '主动', desc: '全体攻速 +20%（对应攻速符）' },
   { id: 'fabaofu', name: '法宝符', kind: '主动', desc: '所有武将等级 +1（对应神兵符）' },
+  { id: 'jifeng', name: '疾风咒', kind: '主动', desc: '敌我双方全体攻速 +25%（双刃道具）' },
   // 被动（最多 6）
   { id: 'pantaoyuan', name: '蟠桃园', kind: '被动', desc: '每 8 秒自动产 1 蟠桃（对应农民）' },
   { id: 'zhaoxian', name: '招贤榜', kind: '被动', desc: '武将字牌掉率 +10%' },
@@ -197,6 +198,7 @@ export const ITEMS: ItemDef[] = [
   { id: 'luoyangchan', name: '洛阳铲', kind: '被动', desc: '每 45 秒自动获得 1 把铲子' },
   { id: 'yunshi', name: '陨石', kind: '被动', desc: '每波开始砸向最前妖怪（容错保险）' },
   { id: 'yuni', name: '淤泥', kind: '被动', desc: '出怪口附近妖怪移速 -18%' },
+  { id: 'tongxin', name: '同心咒', kind: '被动', desc: '敌我双方唐僧生命各 +1（双刃道具）' },
   { id: 'xianyuan', name: '仙缘幡', kind: '被动', desc: '召唤成本 -1' },
   { id: 'jubaopen', name: '聚宝盆', kind: '被动', desc: '击杀额外 +1 蟠桃' },
   { id: 'hushen', name: '护身金光', kind: '被动', desc: '唐僧 +1 血' },
@@ -280,6 +282,7 @@ export class Battle {
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = TANGSENG_INITIAL_HP;
+  aiFrqMul = 1; // AI 侧全体攻速倍率（双刃道具「疾风咒」会同时抬高敌我两侧）
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
@@ -771,6 +774,9 @@ export class Battle {
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
+      // 双刃道具：同时作用于敌我双方（照搬原作「双向影响」设计）
+      case 'jifeng': this.mods.frqMul += 0.25; this.aiFrqMul += 0.25; break;
+      case 'tongxin': this.tangsengMaxHP += 1; this.tangsengHP += 1; this.aiTangsengHP += 1; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
@@ -937,7 +943,7 @@ export class Battle {
         const tp = posAlong(this.aiPath, inRange[0]!.m.dist);
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
-      u.cooldown = 1 / stat.frq;
+      u.cooldown = 1 / (stat.frq * this.aiFrqMul);
     }
   }
 
