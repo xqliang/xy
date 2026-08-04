@@ -17,6 +17,7 @@ import {
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
+import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, type GeneralDef } from './generals';
 import {
   COLS,
   ROWS,
@@ -50,6 +51,7 @@ export const TUNING = {
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
+  wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
@@ -87,8 +89,11 @@ export const SKILL_META: Record<MonsterSkill, { name: string; color: string; ico
   weaken: { name: '弱身', color: '#c77dff', icon: '⬇' },
 };
 
-// 候选区令牌：兵种（带阶数，可在候选区内合并）或 铲子
-export type TrayToken = { kind: 'unit'; type: UnitType; tier: number } | { kind: 'shovel' };
+// 候选区令牌：兵种 / 铲子 / 武将字牌（字牌带阶数，可同字同阶合并升阶）
+export type TrayToken =
+  | { kind: 'unit'; type: UnitType; tier: number }
+  | { kind: 'shovel' }
+  | { kind: 'word'; char: string; general: string; tier: number };
 
 export type Status = 'ready' | 'playing' | 'won' | 'lost';
 
@@ -103,6 +108,32 @@ export interface PlacedUnit {
   weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
 }
 
+// 棋盘上的单个武将字牌（占一格，带阶数；同字同阶可合并升阶）
+export interface PlacedWord {
+  char: string;
+  general: string; // 所属武将 id
+  tier: number;
+  cell: Cell;
+}
+
+// 武将的持续状态（按武将 id 记录，拆分再重组可延续等级/经验）
+export interface GeneralState {
+  level: number;
+  exp: number;
+  cooldown: number;
+  skillCd: number;
+  firePulse: number;
+  skillFlash: number;
+}
+
+// 由「左右紧邻的两个同将字牌」激活的武将（占两格，带金框）
+export interface ActiveGeneral {
+  def: GeneralDef;
+  tier: number; // 取两字阶数的较小值
+  cells: [Cell, Cell];
+  state: GeneralState;
+}
+
 export interface Monster {
   id: number;
   dist: number; // 沿路进度（格）
@@ -115,6 +146,8 @@ export interface Monster {
   skillCd: number; // 距下次施法的秒数
   castFlash: number; // 施法闪光(1→0)，用于渲染
   spawnT: number; // 出生后经过秒数（用于"由小变大崩出"入场缩放）
+  stunT: number; // 被武将定身剩余(秒)：>0 时不前进
+  slowT: number; // 被武将减速剩余(秒)：>0 时移速降低
 }
 
 export interface HitFx {
@@ -186,11 +219,15 @@ export class Battle {
   summonCost = TUNING.summonCostStart;
 
   units = new Map<string, PlacedUnit>();
+  words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
+  generalStates = new Map<string, GeneralState>(); // 各武将的等级/经验/冷却（按 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   summonFlash = 0; // 征兵闪光(1→0)
   palmUsedThisWave = false; // 如来神掌每波限用一次
+  healUsedThisWave = false; // 观音甘露每波限回一次
+  tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
 
   // —— 英雄绝招 ——
   heroKey = 'hero-wukong'; // 出战英雄（默认齐天大圣，后续可从菜单选择）
@@ -259,6 +296,7 @@ export class Battle {
     // 局外功德加成注入
     this.peach += meta.bonusPeach;
     this.tangsengHP += meta.bonusHp;
+    this.tangsengMaxHP += meta.bonusHp;
     this.aiTangsengHP += meta.bonusHp; // 对手同享，维持对称
     this.mods.atkMul += meta.atkPct;
     this.mods.frqMul += meta.frqPct;
@@ -306,10 +344,15 @@ export class Battle {
     return this.slotOrder.filter((s) => !this.unlocked.has(cellKey(s.c, s.r)));
   }
 
-  // 征兵：消耗蟠桃，随机产出 5 个候选（兵种/铲子）放入候选区。成本递增。
-  // 候选区非空时：若棋盘仍有空位则须先布阵；若无空位则本次征兵覆盖候选区剩余。
+  // 征兵：消耗蟠桃随机产出候选（兵种/铲子/武将字牌）。成本递增。
+  // 残余的「兵/铲」会被本次征兵清掉；但「字牌/已凑齐武将」属收集品，会保留累积。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
+    const keep = this.tray.filter((t) => t.kind === 'word');
+    if (keep.length >= TUNING.traySize) {
+      this.message = '字牌已满：请先凑成武将或让武将上场';
+      return false;
+    }
     const cost = this.effectiveSummonCost();
     if (this.peach < cost) {
       this.message = '蟠桃不足，无法征兵';
@@ -318,17 +361,31 @@ export class Battle {
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
     this.summonFlash = 1; // 征兵闪光
-    this.tray = []; // 覆盖剩余候选
+    this.tray = keep; // 保留字牌/武将，清掉残余兵与铲
     const types = Object.keys(UNITS) as UnitType[];
     for (let i = 0; i < TUNING.summonDraws; i++) {
-      if (this.rng.next() < TUNING.shovelDrawChance) {
+      const roll = this.rng.next();
+      if (roll < TUNING.shovelDrawChance) {
         this.tray.push({ kind: 'shovel' });
+      } else if (roll < TUNING.shovelDrawChance + TUNING.wordDrawChance) {
+        const w = this.rng.pick(WORD_POOL); // 武将字牌
+        this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: 1 });
       } else {
         this.tray.push({ kind: 'unit', type: this.rng.pick(types), tier: 1 });
       }
     }
-    this.message = '把候选区的兵拖到绿格，铲子拖到锁定格开挖';
+    this.message = '把兵拖到绿格；两个同将字牌可凑成武将（占两格）';
     return true;
+  }
+
+  // 某格是否有字牌
+  private wordAt(c: number, r: number): PlacedWord | undefined {
+    return this.words.get(cellKey(c, r));
+  }
+
+  // 该格是否空闲（无兵、无字牌）
+  private cellFree(c: number, r: number): boolean {
+    return !this.units.has(cellKey(c, r)) && !this.words.has(cellKey(c, r));
   }
 
   // 计入道具修正后的当前征兵成本
@@ -336,12 +393,23 @@ export class Battle {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
 
-  // 候选区内合并：把第 from 个令牌拖到第 to 个上，同型同级则合并升阶。
+  // 候选区内合并：兵种同型同级升阶；字牌同字同阶升阶。
   mergeTrayTokens(from: number, to: number): boolean {
     if (from === to) return false;
     const a = this.tray[from];
     const b = this.tray[to];
-    if (!a || !b || a.kind !== 'unit' || b.kind !== 'unit') return false;
+    if (!a || !b) return false;
+    if (a.kind === 'word' && b.kind === 'word') {
+      if (a.char !== b.char || a.tier !== b.tier || b.tier >= MAX_TIER) {
+        this.message = '字牌需同字同阶才能升阶';
+        return false;
+      }
+      this.tray[to] = { kind: 'word', char: b.char, general: b.general, tier: b.tier + 1 };
+      this.tray.splice(from, 1);
+      this.message = `字牌「${b.char}」升为 ${b.tier + 1} 阶`;
+      return true;
+    }
+    if (a.kind !== 'unit' || b.kind !== 'unit') return false;
     if (a.type !== b.type || a.tier !== b.tier || b.tier >= MAX_TIER) {
       this.message = '候选区只有同型同级可合并';
       return false;
@@ -350,6 +418,42 @@ export class Battle {
     this.tray.splice(from, 1);
     this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
     return true;
+  }
+
+  // 取某武将的持续状态（不存在则初始化）
+  private stateOf(id: string): GeneralState {
+    let s = this.generalStates.get(id);
+    if (!s) {
+      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
+      this.generalStates.set(id, s);
+    }
+    return s;
+  }
+
+  // 扫描棋盘：左右紧邻且同将的两个不同字 → 激活武将（中间有空格/别的兵则不生效）
+  activeGenerals(): ActiveGeneral[] {
+    const out: ActiveGeneral[] = [];
+    const used = new Set<string>();
+    for (const w of this.words.values()) {
+      const kL = cellKey(w.cell.c, w.cell.r);
+      if (used.has(kL)) continue;
+      const right = this.words.get(cellKey(w.cell.c + 1, w.cell.r));
+      if (!right) continue;
+      const kR = cellKey(right.cell.c, right.cell.r);
+      if (used.has(kR)) continue;
+      if (right.general !== w.general || right.char === w.char) continue;
+      const def = generalById(w.general);
+      if (!def) continue;
+      used.add(kL);
+      used.add(kR);
+      out.push({
+        def,
+        tier: Math.min(w.tier, right.tier), // 以较弱的字为准
+        cells: [w.cell, right.cell],
+        state: this.stateOf(def.id),
+      });
+    }
+    return out;
   }
 
   // 从候选区把第 index 个令牌落到目标格：
@@ -370,6 +474,38 @@ export class Battle {
     }
     if (!this.isUnlocked(to.c, to.r)) {
       this.message = '只能放到已解锁的绿格';
+      return false;
+    }
+    // 字牌：占一格落在棋盘上；同字同阶则升阶。与同将另一个字左右紧邻即自动激活武将。
+    if (token.kind === 'word') {
+      const exist = this.wordAt(to.c, to.r);
+      if (exist) {
+        if (exist.char === token.char && exist.tier === token.tier && exist.tier < MAX_TIER) {
+          exist.tier += 1;
+          this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(exist.tier) });
+          this.tray.splice(index, 1);
+          this.message = `字牌「${exist.char}」升为 ${exist.tier} 阶`;
+          return true;
+        }
+        // 不同字 → 与该格字牌交换
+        this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+        this.tray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
+        return true;
+      }
+      if (this.units.has(cellKey(to.c, to.r))) {
+        this.message = '该格已有兵，请放到空格';
+        return false;
+      }
+      this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+      this.tray.splice(index, 1);
+      const def = generalById(token.general);
+      const active = this.activeGenerals().some((g) => g.def.id === token.general);
+      this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，与「${def?.chars.find((c) => c !== token.char)}」左右相邻可激活`;
+      return true;
+    }
+    // 该格被字牌占用则不可放兵
+    if (this.words.has(cellKey(to.c, to.r))) {
+      this.message = '该格已有武将字牌';
       return false;
     }
     const exist = this.units.get(cellKey(to.c, to.r));
@@ -449,6 +585,7 @@ export class Battle {
     this.status = 'playing';
     this.waveActive = true;
     this.palmUsedThisWave = false;
+    this.healUsedThisWave = false;
     this.spawnRemaining = monstersInWave(this.wave); // 9 + n
     this.spawnTimer = 0;
     this.message = `第 ${this.wave} 波来袭`;
@@ -495,7 +632,7 @@ export class Battle {
       case 'fenghuolun': this.mods.frqMul += 0.2; break;
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
-      case 'hushen': this.tangsengHP += 1; break;
+      case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
@@ -530,7 +667,7 @@ export class Battle {
       skill,
       skillCd: TUNING.skillFirstDelay,
       castFlash: 0,
-      spawnT: 0,
+      spawnT: 0, stunT: 0, slowT: 0,
     });
     // AI 对手同波同步出怪（镜像路）
     this.aiMonsters.push({
@@ -544,7 +681,7 @@ export class Battle {
       skill,
       skillCd: TUNING.skillFirstDelay,
       castFlash: 0,
-      spawnT: 0,
+      spawnT: 0, stunT: 0, slowT: 0,
     });
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
@@ -734,6 +871,128 @@ export class Battle {
     }
   }
 
+  // 羁绊：悟空激活 → 全队攻击加成（对应竞品 赵云+阿斗 羁绊）
+  bondActive(): boolean {
+    return this.activeGenerals().some((g) => g.def.id === BOND_GENERAL);
+  }
+  private bondAtkMul(): number {
+    return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
+  }
+
+  // 武将局内升级：每级所需经验 = 10 × 当前等级；每级 +8% 攻击（上限 10 级）
+  static readonly GENERAL_MAX_LEVEL = 10;
+  static expToNext(level: number): number {
+    return 10 * level;
+  }
+  private gainGeneralExp(g: ActiveGeneral, amount: number): void {
+    const s = g.state;
+    if (s.level >= Battle.GENERAL_MAX_LEVEL) return;
+    s.exp += amount;
+    while (s.level < Battle.GENERAL_MAX_LEVEL && s.exp >= Battle.expToNext(s.level)) {
+      s.exp -= Battle.expToNext(s.level);
+      s.level += 1;
+      this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
+    }
+  }
+  // 含品质阶与局内等级的武将实际攻击力
+  generalAtk(g: ActiveGeneral): number {
+    const base = generalStat(g.def, g.tier).atk;
+    return base * (1 + 0.08 * (g.state.level - 1)) * this.mods.atkMul * this.bondAtkMul();
+  }
+
+  // 已激活武将的攻击 + 定期技能（未相邻的字牌不产生任何输出）
+  private updateGenerals(dt: number): void {
+    for (const g of this.activeGenerals()) {
+      const stat = generalStat(g.def, g.tier);
+      const s = g.state;
+      s.firePulse = Math.max(0, s.firePulse - dt * 6);
+      s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
+      const ax = (g.cells[0].c + g.cells[1].c) / 2;
+      const ay = (g.cells[0].r + g.cells[1].r) / 2;
+      const inRange = this.monsters
+        .map((m) => {
+          const p = posAtDistance(this.map, m.dist);
+          return { m, d: Math.hypot(p.c - ax, p.r - ay), p };
+        })
+        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .sort((a, b) => b.m.dist - a.m.dist);
+
+      if (g.def.skill !== 'none' && g.def.skillCd > 0) {
+        s.skillCd -= dt;
+        if (s.skillCd <= 0 && inRange.length > 0) {
+          this.castGeneralSkill(g, inRange);
+          s.skillCd = g.def.skillCd;
+        }
+      }
+
+      s.cooldown -= dt;
+      if (s.cooldown > 0) continue;
+      if (inRange.length === 0) continue;
+      const base = Math.floor(stat.targets);
+      const extra = this.rng.next() < stat.targets - base ? 1 : 0;
+      const maxTargets = Math.max(1, base + extra);
+      const dmg = damage(this.generalAtk(g));
+      let hit = 0;
+      for (const t of inRange) {
+        if (hit >= maxTargets) break;
+        t.m.hp -= dmg;
+        t.m.hitFlash = 0.12;
+        this.fx.push({ from: { c: ax, r: ay }, to: t.p, ttl: 0.16, maxTtl: 0.16, color: qualityColor(g.tier) });
+        hit++;
+      }
+      if (hit > 0) {
+        s.firePulse = 1;
+        this.gainGeneralExp(g, dmg * hit * 0.05); // 输出转经验
+      }
+      s.cooldown = 1 / (stat.frq * this.mods.frqMul);
+    }
+  }
+
+  private castGeneralSkill(g: ActiveGeneral, inRange: { m: Monster; d: number; p: { c: number; r: number } }[]): void {
+    const atk = this.generalAtk(g);
+    g.state.skillFlash = 1;
+    const center = inRange[0]!.p;
+    switch (g.def.skill) {
+      case 'burst': {
+        for (const t of inRange) { t.m.hp -= damage(atk * 3); t.m.hitFlash = 0.15; }
+        this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.45, maxTtl: 0.45, big: true, color: '#ffb03c' });
+        break;
+      }
+      case 'ranged': {
+        const t = inRange[0]!;
+        t.m.hp -= damage(atk * 5);
+        t.m.hitFlash = 0.18;
+        this.bursts.push({ kind: 'hit', c: t.p.c, r: t.p.r, ttl: 0.4, maxTtl: 0.4, big: true, color: '#ff6a4a' });
+        break;
+      }
+      case 'stun': {
+        for (const t of inRange) t.m.stunT = Math.max(t.m.stunT, 1.8);
+        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.45, maxTtl: 0.45, big: true, color: '#ffd34d' });
+        break;
+      }
+      case 'knock': {
+        for (const t of inRange) t.m.dist = Math.max(this.entranceDist, t.m.dist - 2);
+        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.4, maxTtl: 0.4, big: true, color: '#9ad0ff' });
+        break;
+      }
+      case 'slow': {
+        for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, 3);
+        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#8ad8ff' });
+        break;
+      }
+      case 'heal': {
+        for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, 2.5);
+        if (!this.healUsedThisWave && this.tangsengHP < this.tangsengMaxHP) {
+          this.tangsengHP += 1;
+          this.healUsedThisWave = true;
+          this.message = '观音甘露：唐僧回复 1 血';
+        }
+        break;
+      }
+    }
+    this.gainGeneralExp(g, 4);
+  }
+
   // 怪物施法：精英/BOSS 进场后定期对半径内武将施加减益（不改动基础数值，仅施加计时器）
   private updateMonsterSkills(dt: number): void {
     for (const m of this.monsters) {
@@ -815,7 +1074,13 @@ export class Battle {
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
         continue;
       }
-      m.dist += m.spd * dt;
+      // 武将控制：定身期间不前进，减速期间移速减半
+      if (m.stunT > 0) {
+        m.stunT = Math.max(0, m.stunT - dt);
+      } else {
+        m.dist += m.spd * (m.slowT > 0 ? 0.5 : 1) * dt;
+      }
+      if (m.slowT > 0) m.slowT = Math.max(0, m.slowT - dt);
       if (m.dist >= this.pathLen) {
         // 撞到唐僧：扣血 + 舍身饲魔补偿蟠桃
         this.tangsengHP -= 1;
@@ -881,6 +1146,7 @@ export class Battle {
     }
     this.updateUnits(dt);
     this.updateMonsterSkills(dt);
+    this.updateGenerals(dt);
     this.updateHero(dt);
     this.updateMonsters(dt);
     this.updateAi(dt);
@@ -922,6 +1188,18 @@ export class Battle {
         continue;
       }
       const token = this.tray[0]!;
+      // 字牌：优先放到能与同将另一个字左右相邻的格（直接激活武将）；否则放任意空格
+      if (token.kind === 'word') {
+        const mate = [...this.words.values()].find((w) => w.general === token.general && w.char !== token.char);
+        const cells = this.unlockedCells().filter((c) => this.cellFree(c.c, c.r));
+        let target = mate
+          ? cells.find((c) => c.r === mate.cell.r && (c.c === mate.cell.c + 1 || c.c === mate.cell.c - 1))
+          : undefined;
+        target ??= cells[0];
+        if (target && this.placeFromTray(0, target)) continue;
+        this.tray.splice(0, 1); // 无空格可放则弃置
+        continue;
+      }
       if (token.kind !== 'unit') { this.tray.splice(0, 1); continue; }
       // 优先合成：找同型同级单位
       const mergeTarget = [...this.units.values()].find((u) => u.type === token.type && u.tier === token.tier);
@@ -929,7 +1207,7 @@ export class Battle {
         if (this.placeFromTray(0, mergeTarget.cell)) continue;
       }
       // 否则放到首个空的已解锁格
-      const empty = this.unlockedCells().find((c) => !this.units.has(cellKey(c.c, c.r)));
+      const empty = this.unlockedCells().find((c) => this.cellFree(c.c, c.r));
       if (empty) {
         this.placeFromTray(0, empty);
       } else {
@@ -973,6 +1251,9 @@ export class Battle {
       heroEnergy: Math.round(this.heroEnergy * 100),
       ultCount: this.ultCount,
       towerPow: Math.round(towerPowTotal),
+      generals: this.activeGenerals().length,
+      words: this.words.size,
+      bond: this.bondActive(),
       aiPow: Math.round(aiPowTotal),
       monsterPow: Math.round(monsterPowTotal),
       itemsPicked: this.pickedItems.length,

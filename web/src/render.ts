@@ -9,7 +9,8 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById, SKILL_META } from './battle';
+import { Battle, unitColorOf, TUNING, itemById, SKILL_META, type TrayToken } from './battle';
+import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
@@ -195,6 +196,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawMonsters(ctx, b);
   drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
+  drawGenerals(ctx, b);
   drawFx(ctx, b);
   drawBursts(ctx, b);
   drawHeroUlt(ctx, b);
@@ -220,7 +222,7 @@ export function trayIndexAt(x: number, y: number): number | null {
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
 }
-function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; type: UnitType; tier: number } | { kind: 'shovel' }, x: number, y: number, s: number) {
+function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: number, y: number, s: number) {
   if (token.kind === 'shovel') {
     roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
     ctx.fillStyle = '#e0b24a';
@@ -230,9 +232,32 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: { kind: 'unit'; typ
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('🪏', x, y);
+  } else if (token.kind === 'word') {
+    drawWordTile(ctx, token.char, token.tier, x, y, s);
   } else {
     drawUnit(ctx, token.type, token.tier, x, y, s);
   }
+}
+
+// 武将字牌：宣纸底 + 墨字 + 右上角阶数上标
+function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number, x: number, y: number, s: number) {
+  roundRect(ctx, x - s / 2, y - s / 2, s, s, 7);
+  ctx.fillStyle = '#f8f4e6';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = qualityColor(tier);
+  ctx.stroke();
+  ctx.fillStyle = '#241d14';
+  ctx.font = `bold ${Math.round(s * 0.58)}px "PingFang SC", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(char, x, y + s * 0.02);
+  // 阶数上标
+  ctx.fillStyle = qualityColor(tier);
+  ctx.font = `bold ${Math.round(s * 0.24)}px "PingFang SC", sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(String(tier), x + s / 2 - 3, y - s / 2 + 2);
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 底板
@@ -720,6 +745,47 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ry += 16;
   }
   ctx.restore();
+}
+
+// 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
+function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
+  // 先画所有字牌
+  for (const w of b.words.values()) {
+    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78);
+  }
+  // 再给「左右紧邻同将」的激活武将套金框
+  for (const g of b.activeGenerals()) {
+    const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
+    const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
+    const x = Math.min(a.x, z.x) - CELL / 2 + 2;
+    const y = Math.min(a.y, z.y) - CELL / 2 + 2;
+    const w = Math.abs(z.x - a.x) + CELL - 4;
+    const h = CELL - 4;
+    ctx.save();
+    // 金框（激活标识）+ 释放技能时更亮
+    const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
+    ctx.globalAlpha = Math.min(1, glow);
+    ctx.strokeStyle = '#f0b93c';
+    ctx.lineWidth = 3.5;
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // 名号 + 等级（框上方小标）
+    ctx.fillStyle = '#7a4a10';
+    ctx.font = `bold 11px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`${g.def.name}·Lv${g.state.level}`, x + w / 2, y - 1);
+    // 经验条
+    const need = 10 * g.state.level;
+    const pct = Math.max(0, Math.min(1, g.state.exp / need));
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(x + 4, y + h - 4, w - 8, 3);
+    ctx.fillStyle = '#7ec46a';
+    ctx.fillRect(x + 4, y + h - 4, (w - 8) * pct, 3);
+    ctx.restore();
+  }
 }
 
 function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
