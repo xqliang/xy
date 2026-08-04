@@ -954,78 +954,66 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：金箍棒飞旋成"风扇残影盘"——半透明扫掠盘 + 一圈淡辐条 + 拖尾 + 最亮主棒
+        // 棍猴：金箍棒飞旋成"风扇残影盘"——发光渐变圆盘(边缘亮) + 两段沿边扫动的亮弧(棒两端)
         const turns = 2 + tier;
         const spin = prog * Math.PI * 2 * turns;
         const len = CELL * (0.4 + tier * 0.07);
         const baseA = Math.min(1, 1.4 - prog);
         const lw = 5 + tier;
         ctx.translate(t.x, t.y);
-        // 1) 扫掠圆盘（残影连成一片）
-        ctx.globalAlpha = baseA * 0.14;
-        ctx.fillStyle = '#e8a11c';
-        ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
-        // 2) 一圈均布淡辐条（模糊盘的"叶片"感）
-        ctx.strokeStyle = '#e8a11c';
-        ctx.lineWidth = lw * 0.7;
-        const spokes = 14;
-        for (let i = 0; i < spokes; i++) {
-          ctx.globalAlpha = baseA * 0.06;
-          ctx.save(); ctx.rotate(spin + (i / spokes) * Math.PI); // 半圈即可(棒对称)
-          ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-          ctx.restore();
-        }
-        // 3) 当前角度附近更亮的拖尾（前缘运动模糊）
-        for (let i = 1; i <= 6; i++) {
-          ctx.globalAlpha = baseA * Math.max(0, 0.26 - i * 0.04);
-          ctx.lineWidth = lw;
-          ctx.save(); ctx.rotate(spin - i * 0.18);
-          ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-          ctx.restore();
-        }
-        // 4) 主棒（最亮）+ 中线高光 + 两端金点
+        // 1) 发光残影盘：中心透明→边缘金亮（棒尖扫出的环最亮）
+        const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
+        grad.addColorStop(0, 'rgba(232,161,28,0.04)');
+        grad.addColorStop(0.65, 'rgba(232,161,28,0.16)');
+        grad.addColorStop(1, 'rgba(255,226,122,0.42)');
         ctx.globalAlpha = baseA;
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
+        // 2) 两段沿盘边扫动的亮弧（棒的两端，形成旋转叶片的视觉）
+        ctx.strokeStyle = '#fff3c4';
+        ctx.lineWidth = lw;
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = baseA * 0.9;
+        ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
+        // 3) 半透明主棒（弱化，避免"单根棒在转"的生硬感）
+        ctx.globalAlpha = baseA * 0.45;
         ctx.save();
         ctx.rotate(spin);
         ctx.strokeStyle = '#e8a11c';
         ctx.lineWidth = lw;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-        ctx.strokeStyle = '#fff3c4';
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-        ctx.fillStyle = '#ffe27a';
-        ctx.beginPath(); ctx.arc(len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(-len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
         break;
       }
       case 'spear': {
-        // 枪：一次沉稳的突刺——刺出→停顿→收回（梯形节奏，不再高频抖动）
+        // 枪：一次迅捷的短促突刺（快出快回，枪身偏小）
         const dist = Math.hypot(t.x - a.x, t.y - a.y);
-        const ext = prog < 0.35 ? prog / 0.35 : prog < 0.62 ? 1 : 1 - (prog - 0.62) / 0.38; // 0→1→(保持)→0
-        const tipD = dist * (0.3 + 0.7 * ext);
-        const shaftLen = CELL * (0.95 + tier * 0.12);
+        const p2 = Math.min(1, prog / 0.5); // 前半程内完成整次突刺 → 更迅速
+        const ext = Math.sin(p2 * Math.PI); // 0→1→0 一次刺出收回
+        const tipD = dist * (0.42 + 0.58 * ext);
+        const shaftLen = CELL * (0.7 + tier * 0.08);
         ctx.globalAlpha = 1;
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
-        // 枪杆（细长木杆）
+        // 枪杆
         ctx.strokeStyle = '#9a6f3a';
-        ctx.lineWidth = 3 + tier * 0.4;
-        ctx.beginPath(); ctx.moveTo(tipD - shaftLen, 0); ctx.lineTo(tipD - 10, 0); ctx.stroke();
-        // 红缨（枪尖后的一簇）
+        ctx.lineWidth = 2.5 + tier * 0.3;
+        ctx.beginPath(); ctx.moveTo(tipD - shaftLen, 0); ctx.lineTo(tipD - 8, 0); ctx.stroke();
+        // 红缨
         ctx.fillStyle = '#c0392b';
-        ctx.beginPath(); ctx.arc(tipD - 11, 0, 3 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
-        // 枪尖（菱形/叶形枪头）
-        const hl = 12 + tier * 2.2;
-        const hw = 3.2 + tier * 0.7;
+        ctx.beginPath(); ctx.arc(tipD - 9, 0, 2.5 + tier * 0.4, 0, Math.PI * 2); ctx.fill();
+        // 叶形枪头（偏小）
+        const hl = 9 + tier * 1.4;
+        const hw = 2.4 + tier * 0.5;
         ctx.fillStyle = '#dfe6ee';
         ctx.strokeStyle = '#8a97a6';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(tipD, 0);            // 尖端
-        ctx.lineTo(tipD - hl * 0.55, -hw); // 左肩
-        ctx.lineTo(tipD - hl, 0);       // 后端
-        ctx.lineTo(tipD - hl * 0.55, hw);  // 右肩
+        ctx.moveTo(tipD, 0);
+        ctx.lineTo(tipD - hl * 0.55, -hw);
+        ctx.lineTo(tipD - hl, 0);
+        ctx.lineTo(tipD - hl * 0.55, hw);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
