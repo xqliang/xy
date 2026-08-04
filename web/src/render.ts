@@ -274,6 +274,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textBaseline = 'middle';
   ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
   // 5 个候选槽
+  const SLOT_STAGGER = 0.09, SLOT_DUR = 0.24;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
@@ -282,7 +283,26 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
+      // 征兵入场：令牌从「营」标处逐个飞入槽位，带拖尾+回弹；字牌(收集品)不重播
+      const p = token.kind === 'word' ? 1 : Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
+      if (p < 1) {
+        const srcX = 34, srcY = TRAY_Y + TRAY_H / 2; // 「营」标中心
+        const ease = 1 - Math.pow(1 - p, 3);
+        const tx = srcX + (c.x - srcX) * ease;
+        const ty = srcY + (c.y - srcY) * ease;
+        // 拖尾
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,220,140,0.5)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(srcX + (c.x - srcX) * Math.max(0, ease - 0.25), srcY + (c.y - srcY) * Math.max(0, ease - 0.25));
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.restore();
+        drawTrayToken(ctx, token, tx, ty, (TRAY_H - 16) * (0.5 + 0.5 * p));
+      } else {
+        drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
+      }
     }
   }
 }
@@ -674,8 +694,110 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 }
 
 // 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
+// 点击字牌：高亮该字牌，若已激活则连同搭档格与攻击范围，并弹出武将信息面板
+function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: string; general: string; tier: number; cell: { c: number; r: number } }) {
+  const def = generalById(w.general);
+  if (!def) return;
+  const active = b.activeGenerals().find((g) => g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r));
+  const gx = BOARD_X + w.cell.c * CELL;
+  const gy = BOARD_Y + w.cell.r * CELL;
+  ctx.save();
+  // 选中格金边
+  roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffe08a';
+  ctx.stroke();
+  // 激活则画范围环 + 搭档格
+  if (active) {
+    const ax = (active.cells[0].c + active.cells[1].c) / 2;
+    const ay = (active.cells[0].r + active.cells[1].r) / 2;
+    const { x, y } = cellCenterPx(ax, ay);
+    ctx.beginPath();
+    ctx.arc(x, y, b.generalRge(active) * CELL, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(240,185,60,0.12)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(240,185,60,0.8)';
+    ctx.setLineDash([7, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+
+  // 信息面板
+  const pw = 194;
+  const ph = active ? 150 : 118;
+  let px = gx + CELL / 2 - pw / 2;
+  let py = gy - ph - 8;
+  if (py < BOARD_Y) py = gy + CELL + 8;
+  px = Math.max(8, Math.min(VIEW_W - pw - 8, px));
+  ctx.save();
+  roundRect(ctx, px, py, pw, ph, 10);
+  ctx.fillStyle = 'rgba(28,22,14,0.94)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = active ? '#f0b93c' : qualityColor(w.tier);
+  ctx.stroke();
+  // 标题：武将名 + 品质阶
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText(def.name, px + 12, py + 18);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = qualityColor(w.tier);
+  ctx.font = 'bold 13px "PingFang SC", sans-serif';
+  ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
+  // 技能
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#9ad8ff';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
+  ctx.fillStyle = 'rgba(255,240,210,0.7)';
+  ctx.fillText(def.skillDesc, px + 12, py + 56);
+  // 属性（激活时计入等级/神兵）
+  const rows: [string, string][] = active
+    ? [
+        ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
+        ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
+        ['范围', b.generalRge(active).toFixed(1)],
+        ['等级', `Lv.${active.state.level}`],
+      ]
+    : [
+        ['基础攻击', def.atk.toFixed(1)],
+        ['攻速', `${def.frq.toFixed(1)}/s`],
+        ['范围', def.rge.toFixed(1)],
+      ];
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ry = py + 78;
+  for (const [k, v] of rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillText(k, px + 12, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff6e6';
+    ctx.fillText(v, px + pw - 12, ry);
+    ry += 16;
+  }
+  // 底部状态提示
+  ctx.textAlign = 'left';
+  if (active) {
+    ctx.fillStyle = '#7ec46a';
+    ctx.font = 'bold 12px "PingFang SC", sans-serif';
+    ctx.fillText('✓ 已激活（金框生效）', px + 12, py + ph - 12);
+  } else {
+    const other = def.chars.find((c) => c !== w.char) ?? '';
+    ctx.fillStyle = '#ff9a6a';
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(`未激活：需「${other}」左右紧邻`, px + 12, py + ph - 12);
+  }
+  ctx.restore();
+}
+
 function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.selected) return;
+  const w = b.words.get(`${ui.selected.c},${ui.selected.r}`);
+  if (w) { drawWordSelection(ctx, b, w); return; }
   const u = b.units.get(`${ui.selected.c},${ui.selected.r}`);
   if (!u) return;
   const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
@@ -796,21 +918,59 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     const prog = 1 - Math.max(0, Math.min(1, f.ttl / f.maxTtl)); // 0→1 飞行进度
     const x = a.x + (t.x - a.x) * prog;
     const y = a.y + (t.y - a.y) * prog;
-    // 拖尾
+    const ang = Math.atan2(t.y - a.y, t.x - a.x);
+    ctx.save();
     ctx.strokeStyle = f.color;
-    ctx.globalAlpha = 0.35 * (f.ttl / f.maxTtl);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    // 弹丸光点
-    ctx.globalAlpha = 1;
     ctx.fillStyle = f.color;
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    switch (f.wtype) {
+      case 'monkey': {
+        // 棍猴：近战挥棒弧线（在目标处扫一道弧）
+        ctx.globalAlpha = 1 - prog;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, CELL * 0.42, ang - 1.1 + prog * 2.2, ang - 1.1 + prog * 2.2 + 0.5);
+        ctx.stroke();
+        break;
+      }
+      case 'spear': {
+        // 枪：细长突刺（拉长的弹体）
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x - Math.cos(ang) * 14, y - Math.sin(ang) * 14);
+        ctx.lineTo(x + Math.cos(ang) * 8, y + Math.sin(ang) * 8);
+        ctx.stroke();
+        break;
+      }
+      case 'cavalry': {
+        // 骑：弹丸 + 命中处冲击环（AOE 感）
+        ctx.globalAlpha = 0.3 * (f.ttl / f.maxTtl);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+        if (prog > 0.7) {
+          ctx.globalAlpha = (1 - prog) / 0.3;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 6 + (prog - 0.7) * 60, 0, Math.PI * 2); ctx.stroke();
+        }
+        break;
+      }
+      default: {
+        // 弓/默认：箭矢（拖尾 + 箭头）
+        ctx.globalAlpha = 0.35 * (f.ttl / f.maxTtl);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - Math.cos(ang - 0.4) * 8, y - Math.sin(ang - 0.4) * 8);
+        ctx.lineTo(x - Math.cos(ang + 0.4) * 8, y - Math.sin(ang + 0.4) * 8);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 }
 

@@ -157,6 +157,7 @@ export interface HitFx {
   ttl: number;
   maxTtl: number;
   color: string;
+  wtype?: UnitType; // 攻击来源兵种，用于区分弹道动画（棍/枪/骑/弓）
 }
 
 // 爆发型特效（命中/击杀/合成），渲染于格坐标
@@ -244,6 +245,7 @@ export class Battle {
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   summonFlash = 0; // 征兵闪光(1→0)
+  summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   palmUsedThisWave = false; // 如来神掌每波限用一次
   healUsedThisWave = false; // 观音甘露每波限回一次
   tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
@@ -386,6 +388,7 @@ export class Battle {
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
     this.summonFlash = 1; // 征兵闪光
+    this.summonAnimT = 0; // 触发候选令牌逐个飞入动画
     this.tray = keep; // 保留字牌/武将，清掉残余兵与铲
     const types = Object.keys(UNITS) as UnitType[];
     for (let i = 0; i < TUNING.summonDraws; i++) {
@@ -1015,7 +1018,7 @@ export class Battle {
         if (hitCount >= maxTargets) break;
         target.m.hp -= dmg;
         target.m.hitFlash = 0.12; // 受击闪白
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.16, maxTtl: 0.16, color });
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.16, maxTtl: 0.16, color, wtype: u.type });
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
@@ -1269,6 +1272,7 @@ export class Battle {
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
+    if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
