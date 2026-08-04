@@ -104,6 +104,7 @@ export interface PlacedUnit {
   cell: Cell;
   cooldown: number; // 距下次攻击的秒数
   firePulse: number; // 开火脉冲(1→0)，用于渲染缩放
+  fireDir?: number; // 上次开火朝向(弧度，格坐标系)，用于兵器形变动画朝向目标
   stunT: number; // 眩晕剩余(秒)：>0 时无法攻击
   slowT: number; // 减速剩余(秒)：>0 时冷却拉长
   weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
@@ -930,7 +931,11 @@ export class Battle {
         this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: 0.3 + (u.tier - 1) * 0.04, maxTtl: 0.3 + (u.tier - 1) * 0.04, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
         hit++;
       }
-      if (hit > 0) u.firePulse = 1;
+      if (hit > 0) {
+        u.firePulse = 1;
+        const tp = posAlong(this.aiPath, inRange[0]!.m.dist);
+        u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
+      }
       u.cooldown = 1 / stat.frq;
     }
   }
@@ -1040,7 +1045,11 @@ export class Battle {
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
-      if (hitCount > 0) { u.firePulse = 1; this.emit('attack'); } // 开火脉冲
+      if (hitCount > 0) {
+        u.firePulse = 1;
+        u.fireDir = Math.atan2(inRange[0]!.p.r - u.cell.r, inRange[0]!.p.c - u.cell.c); // 朝最靠前目标形变出招
+        this.emit('attack');
+      }
       // 攻速修正(道具/功德 frqMul) + 减速减益(拉长间隔)
       u.cooldown = (1 / (stat.frq * this.mods.frqMul)) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }

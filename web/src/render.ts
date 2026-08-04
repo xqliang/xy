@@ -161,6 +161,107 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
   }
 }
 
+// 「攻击瞬间形变为兵器」叠加层：在单位格上，沿 dir 朝目标出招，pulse(1→0) 驱动幅度/透明度/旋转。
+// 参考竞品——棋盘上的字在开火时实时化为刀/枪/骑/弓兵器，并显示朝向箭头。
+function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, dir: number, pulse: number) {
+  if (pulse <= 0.02) return;
+  const s = CELL * 0.52 * (1 + tier * 0.05);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(dir); // 旋转后 +x 轴指向目标
+  ctx.globalAlpha = Math.min(1, pulse * 1.25);
+  ctx.lineJoin = 'round';
+  drawWeaponGlyph(ctx, type, s, pulse);
+  // 朝向箭头（出招时格上显示方向，呼应截图里的 →）
+  if (type !== 'monkey') {
+    ctx.globalAlpha = Math.min(0.85, pulse * 1.1);
+    ctx.strokeStyle = '#2a2018';
+    ctx.lineWidth = 2;
+    const ax = s * 0.74;
+    ctx.beginPath();
+    ctx.moveTo(ax - 6, -5); ctx.lineTo(ax, 0); ctx.lineTo(ax - 6, 5);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// 在已 translate 到单位中心、rotate 到 dir 的坐标系里，绘制单个兵器（沿 +x 出招）
+function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: number, pulse: number) {
+  ctx.lineCap = 'round';
+  switch (type) {
+    case 'spear': { // 枪：向前突刺（杆+红缨+枪头）
+      const reach = s * (0.25 + 0.6 * pulse);
+      ctx.strokeStyle = '#8a5a2b';
+      ctx.lineWidth = Math.max(2, s * 0.07);
+      ctx.beginPath(); ctx.moveTo(-s * 0.18, 0); ctx.lineTo(reach, 0); ctx.stroke();
+      ctx.strokeStyle = '#c8392b'; // 红缨
+      ctx.lineWidth = Math.max(2, s * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(reach * 0.6, 0); ctx.lineTo(reach * 0.42, -s * 0.1);
+      ctx.moveTo(reach * 0.6, 0); ctx.lineTo(reach * 0.42, s * 0.1);
+      ctx.stroke();
+      ctx.fillStyle = '#d9dde3'; // 枪头
+      ctx.beginPath();
+      ctx.moveTo(reach + s * 0.12, 0); ctx.lineTo(reach - s * 0.06, -s * 0.08); ctx.lineTo(reach - s * 0.06, s * 0.08);
+      ctx.closePath(); ctx.fill();
+      break;
+    }
+    case 'cavalry': { // 骑：向前冲锋（双箭头 + 速度线 + 尘）
+      ctx.strokeStyle = '#2c6a34';
+      ctx.lineWidth = Math.max(2, s * 0.06);
+      for (let i = 0; i < 2; i++) {
+        const cx = s * (0.12 + i * 0.22 + pulse * 0.16);
+        ctx.beginPath();
+        ctx.moveTo(cx, -s * 0.14); ctx.lineTo(cx + s * 0.14, 0); ctx.lineTo(cx, s * 0.14);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(70,100,60,0.5)';
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        const yy = (i - 1) * s * 0.13;
+        ctx.beginPath(); ctx.moveTo(-s * 0.24, yy); ctx.lineTo(-s * 0.02, yy); ctx.stroke();
+      }
+      break;
+    }
+    case 'archer': { // 弓：拉弓放箭
+      const pull = s * (0.12 + 0.12 * pulse);
+      ctx.strokeStyle = '#6a3d1f';
+      ctx.lineWidth = Math.max(2, s * 0.055);
+      ctx.beginPath(); ctx.arc(-s * 0.06, 0, s * 0.3, -Math.PI * 0.6, Math.PI * 0.6); ctx.stroke();
+      const ex = -s * 0.06 + Math.cos(Math.PI * 0.6) * s * 0.3;
+      const ey = Math.sin(Math.PI * 0.6) * s * 0.3;
+      ctx.strokeStyle = '#e8e0c8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(ex, -ey); ctx.lineTo(-pull, 0); ctx.lineTo(ex, ey); ctx.stroke();
+      const ax = s * (0.2 + 0.5 * pulse); // 箭随 pulse 向前
+      ctx.strokeStyle = '#a5773f';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-pull, 0); ctx.lineTo(ax, 0); ctx.stroke();
+      ctx.fillStyle = '#d9dde3';
+      ctx.beginPath(); ctx.moveTo(ax + s * 0.06, 0); ctx.lineTo(ax - s * 0.04, -s * 0.05); ctx.lineTo(ax - s * 0.04, s * 0.05); ctx.closePath(); ctx.fill();
+      break;
+    }
+    default: { // knife=棍猴：金箍棒旋转
+      ctx.save();
+      ctx.rotate((1 - pulse) * Math.PI * 1.6); // pulse 1→0 期间转约 3/4 圈
+      const len = s * 0.78;
+      const w = Math.max(3, s * 0.1);
+      const grad = ctx.createLinearGradient(-len / 2, 0, len / 2, 0);
+      grad.addColorStop(0, '#8a6a1e'); grad.addColorStop(0.5, '#f4d466'); grad.addColorStop(1, '#8a6a1e');
+      ctx.strokeStyle = grad; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(-len / 2, 0); ctx.lineTo(len / 2, 0); ctx.stroke();
+      ctx.strokeStyle = '#5a3a10'; ctx.lineWidth = w * 0.42; // 两端金箍
+      ctx.beginPath();
+      ctx.moveTo(len * 0.34, 0); ctx.lineTo(len * 0.46, 0);
+      ctx.moveTo(-len * 0.34, 0); ctx.lineTo(-len * 0.46, 0);
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
+  }
+}
+
 function shade(hex: string, amt: number): string {
   const h = hex.replace('#', '');
   const n = parseInt(h, 16);
@@ -694,12 +795,18 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  const t = performance.now() / 1000;
   for (const u of b.units.values()) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来
+    const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     // 开火脉冲：放大 + 上跳
     const pulse = u.firePulse;
-    drawUnit(ctx, u.type, u.tier, x, y - pulse * 4, CELL * 0.72 * (1 + pulse * 0.16));
+    const uy = y - pulse * 4 + bob;
+    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16));
+    // 攻击瞬间：字→兵器形变，朝目标出招
+    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse);
     // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身）
     const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : null;
     if (debuff) {
@@ -1114,9 +1221,13 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m);
   }
   // AI 单位（上半场自动部署）
+  const t = performance.now() / 1000;
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    drawUnit(ctx, u.type, u.tier, x, y - u.firePulse * 3, CELL * 0.66 * (1 + u.firePulse * 0.14));
+    const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.1;
+    const uy = y - u.firePulse * 3 + bob;
+    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14));
+    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, u.firePulse);
   }
   // 对手终点：唐僧立绘（不再用「斗」字）
   const tp = b.aiTangsengRenderPos();
