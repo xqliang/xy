@@ -11,6 +11,7 @@ import {
   PEACH_PER_KILL,
   PEACH_PER_BLEED,
   PEACH_PER_BOSS,
+  PEACH_PER_ELITE,
   TANGSENG_INITIAL_HP,
   monstersInWave,
   monsterPOW,
@@ -1265,7 +1266,8 @@ export class Battle {
       m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
-        this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + this.mods.killBonus; // 击杀产蟠桃(+道具)
+        const isElite = !m.isBoss && m.skill !== null; // 精英=非BOSS但带词条(技能)
+        this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0) + this.mods.killBonus; // 击杀产蟠桃(精英额外+10, +道具)
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
         this.emit(m.isBoss ? 'bosskill' : 'kill');
