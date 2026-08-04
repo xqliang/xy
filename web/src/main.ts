@@ -20,6 +20,8 @@ import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritSt
 import { drawShop, shopHitAt } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
+import { drawBag, bagHitAt } from './bag';
+import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -35,21 +37,23 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank';
+type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag';
 let screen: Screen = 'menu';
 let rank: RankState = loadRank();
 let stamina: Stamina = loadStamina();
 let merit: MeritState = loadMerit();
+let bag: BagState = loadBag();
+let bagToast = '';
 let menuToast = '';
 let shopToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit));
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag));
 let endHandled = false; // 本局胜负是否已结算入境界
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit));
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag));
   endHandled = false;
 }
 
@@ -78,6 +82,9 @@ function handleMenu(x: number, y: number) {
     screen = 'codex';
   } else if (id === 'rank') {
     screen = 'rank';
+  } else if (id === 'bag') {
+    bagToast = '';
+    screen = 'bag';
   } else if (id === 'mapPrev' || id === 'mapNext') {
     const idx = MAPS.findIndex((m) => m.id === currentMap.id);
     const n = MAPS.length;
@@ -163,6 +170,16 @@ canvas.addEventListener('pointerdown', (e) => {
     if (leaderboardHitBack(x, y)) screen = 'menu';
     return;
   }
+  if (screen === 'bag') {
+    const hit = bagHitAt(x, y);
+    if (hit?.kind === 'back') screen = 'menu';
+    else if (hit?.kind === 'toggle') {
+      const r = toggleEquip(bag, hit.id);
+      bag = r.state;
+      bagToast = r.ok ? '' : r.reason ?? '';
+    }
+    return;
+  }
   if (handleButton(x, y)) { ui.selected = null; return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -246,6 +263,11 @@ function frame(now: number) {
     requestAnimationFrame(frame);
     return;
   }
+  if (screen === 'bag') {
+    drawBag(ctx, bag, bagToast);
+    requestAnimationFrame(frame);
+    return;
+  }
   battle.step(dt);
   // 胜负结算入境界 + 功德（仅一次）
   if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
@@ -254,7 +276,16 @@ function frame(now: number) {
     rank = won ? recordWin(rank) : recordLose(rank);
     const gain = meritReward(won, battle.wave);
     merit = addMerit(merit, gain);
-    battle.message = `${battle.message}（功德 +${gain}）`;
+    // 本局掉落的神兵入背包（重复则升品质）
+    const names: string[] = [];
+    for (const wid of battle.droppedWeapons) {
+      const r = addWeapon(bag, wid);
+      bag = r.state;
+      names.push(`${weaponById(wid)?.name ?? wid}${r.upgraded ? '↑' : ''}`);
+    }
+    battle.droppedWeapons = [];
+    const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
+    battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
   }
   setHudRank(rankName(rank.level));
   draw(ctx, battle, ui);
@@ -277,6 +308,8 @@ interface GameHook {
   openShop: () => void;
   openCodex: () => void;
   openRank: () => void;
+  openBag: () => void;
+  grantWeapon: (id: string) => void;
   grantMerit: (n: number) => void;
   tuning: typeof TUNING;
   restart: (s?: number, diff?: number, mapId?: string) => void;
@@ -302,10 +335,12 @@ const hook: GameHook = {
   openShop: () => { screen = 'shop'; },
   openCodex: () => { screen = 'codex'; },
   openRank: () => { screen = 'rank'; },
+  openBag: () => { screen = 'bag'; },
+  grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap);
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag));
     endHandled = false;
     screen = 'battle';
   },

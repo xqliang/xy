@@ -18,6 +18,7 @@ import {
 import type { UnitType } from '@core';
 import { RNG } from './rng';
 import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, type GeneralDef } from './generals';
+import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import {
   COLS,
   ROWS,
@@ -287,6 +288,8 @@ export class Battle {
   private farmTimer = 0; // 蟠桃园产桃计时
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
+  weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
+  droppedWeapons: string[] = []; // 本局掉落的神兵（结算时入背包）
   pickedItems: string[] = [];
   pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
@@ -301,7 +304,8 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}) {
+    this.weaponBonuses = weapons;
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
     this.map = map;
@@ -779,6 +783,15 @@ export class Battle {
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
 
+  // 清波掉落神兵：基础 35%，BOSS 波必掉（对应竞品"对局随机掉落"）
+  private rollWeaponDropOnClear(): void {
+    const isBossWave = this.wave % TUNING.bossEveryWave === 0;
+    if (!isBossWave && this.rng.next() > 0.35) return;
+    const id = rollWeaponDrop(this.rng.next());
+    this.droppedWeapons.push(id);
+    this.message = `第 ${this.wave} 波已清！掉落神兵`;
+  }
+
   // 胜利后随机开出 3 件道具供选择（只开还能携带的）
   private rollShop(): void {
     const pool = ITEMS.filter((it) => this.canCarry(it.id));
@@ -1038,7 +1051,18 @@ export class Battle {
   // 含品质阶与局内等级的武将实际攻击力
   generalAtk(g: ActiveGeneral): number {
     const base = generalStat(g.def, g.tier).atk;
-    return base * (1 + 0.08 * (g.state.level - 1)) * this.mods.atkMul * this.bondAtkMul();
+    const wb = this.weaponBonuses[g.def.id];
+    return base * (1 + 0.08 * (g.state.level - 1)) * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * this.bondAtkMul();
+  }
+
+  // 计入神兵加成的武将攻速/范围
+  generalFrq(g: ActiveGeneral): number {
+    const wb = this.weaponBonuses[g.def.id];
+    return generalStat(g.def, g.tier).frq * (1 + (wb?.frq ?? 0)) * this.mods.frqMul;
+  }
+  generalRge(g: ActiveGeneral): number {
+    const wb = this.weaponBonuses[g.def.id];
+    return generalStat(g.def, g.tier).rge * (1 + (wb?.rge ?? 0));
   }
 
   // 已激活武将的攻击 + 定期技能（未相邻的字牌不产生任何输出）
@@ -1055,7 +1079,7 @@ export class Battle {
           const p = posAtDistance(this.map, m.dist);
           return { m, d: Math.hypot(p.c - ax, p.r - ay), p };
         })
-        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .filter((x) => x.d <= this.generalRge(g) + TUNING.rangeTolerance)
         .sort((a, b) => b.m.dist - a.m.dist);
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
@@ -1085,7 +1109,7 @@ export class Battle {
         s.firePulse = 1;
         this.gainGeneralExp(g, dmg * hit * 0.05); // 输出转经验
       }
-      s.cooldown = 1 / (stat.frq * this.mods.frqMul);
+      s.cooldown = 1 / this.generalFrq(g);
     }
   }
 
@@ -1301,9 +1325,11 @@ export class Battle {
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
       if (this.wave >= TUNING.winWave) {
+        this.rollWeaponDropOnClear();
         this.status = 'won';
         this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
       } else {
+        this.rollWeaponDropOnClear();
         this.status = 'ready';
         this.nextWaveTimer = 5; // 5秒后自动开下一波
         this.message = `第 ${this.wave} 波已清！`;
@@ -1397,6 +1423,7 @@ export class Battle {
       towerPow: Math.round(towerPowTotal),
       generals: this.activeGenerals().length,
       words: this.words.size,
+      drops: this.droppedWeapons.length,
       bond: this.bondActive(),
       aiPow: Math.round(aiPowTotal),
       monsterPow: Math.round(monsterPowTotal),
