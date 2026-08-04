@@ -196,7 +196,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawMonsters(ctx, b);
   drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
-  drawGenerals(ctx, b);
+  drawGenerals(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
   drawHeroUlt(ctx, b);
@@ -748,9 +748,10 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 }
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
-function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
-  // 先画所有字牌
+function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  // 先画所有字牌（拖拽中的源格隐藏）
   for (const w of b.words.values()) {
+    if (ui.dragFrom && ui.dragFrom.c === w.cell.c && ui.dragFrom.r === w.cell.r) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
     drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78);
   }
@@ -1085,6 +1086,12 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     if (u) {
       src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
       ghost = () => drawUnit(ctx, u.type, u.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.72);
+    } else {
+      const w = b.words.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+      if (w) {
+        src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
+        ghost = () => drawWordTile(ctx, w.char, w.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.74);
+      }
     }
   } else if (ui.dragTrayIndex !== null) {
     const token = b.tray[ui.dragTrayIndex];

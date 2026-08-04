@@ -540,12 +540,74 @@ export class Battle {
     return true;
   }
 
+  // 棋盘内拖拽总入口：源格是字牌走 dragWord，否则走 dragUnit
+  dragBoard(from: Cell, to: Cell): boolean {
+    if (this.words.has(cellKey(from.c, from.r))) return this.dragWord(from, to);
+    return this.dragUnit(from, to);
+  }
+
+  // 拖拽字牌：移动到空格 / 同字同阶升阶 / 与目标(字牌或兵)交换。
+  // 拖走已激活武将的一个字即自动拆分（激活由相邻关系实时推导）。
+  dragWord(from: Cell, to: Cell): boolean {
+    const kFrom = cellKey(from.c, from.r);
+    const w = this.words.get(kFrom);
+    if (!w) return false;
+    if (from.c === to.c && from.r === to.r) return false;
+    if (!this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) {
+      this.message = '只能放到已解锁的空位';
+      return false;
+    }
+    const kTo = cellKey(to.c, to.r);
+    const wasActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === from.c && cc.r === from.r));
+    const tw = this.words.get(kTo);
+    const tu = this.units.get(kTo);
+    if (tw) {
+      if (tw.char === w.char && tw.tier === w.tier && tw.tier < MAX_TIER) {
+        tw.tier += 1; // 同字同阶 → 升阶
+        this.words.delete(kFrom);
+        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(tw.tier) });
+        this.message = `字牌「${tw.char}」升为 ${tw.tier} 阶`;
+        return true;
+      }
+      // 两张字牌互换位置
+      this.words.set(kFrom, { ...tw, cell: { c: from.c, r: from.r } });
+      this.words.set(kTo, { ...w, cell: { c: to.c, r: to.r } });
+    } else if (tu) {
+      // 字牌与兵互换位置
+      this.units.delete(kTo);
+      this.units.set(kFrom, { ...tu, cell: { c: from.c, r: from.r }, cooldown: 0 });
+      this.words.delete(kFrom);
+      this.words.set(kTo, { ...w, cell: { c: to.c, r: to.r } });
+    } else {
+      // 移到空格
+      this.words.delete(kFrom);
+      this.words.set(kTo, { ...w, cell: { c: to.c, r: to.r } });
+    }
+    // 反馈：是否因移动而激活/拆分
+    const nowActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === to.c && cc.r === to.r));
+    const def = generalById(w.general);
+    if (nowActive) this.message = `${def?.name ?? ''} 已激活！(金框生效)`;
+    else if (wasActive) this.message = `${def?.name ?? ''} 已拆分，失去输出`;
+    return true;
+  }
+
   // 拖拽：把 from 格的单位移动到 to 格。同型同级则合成；空的已解锁格则移动。
   dragUnit(from: Cell, to: Cell): boolean {
     const a = this.units.get(cellKey(from.c, from.r));
     if (!a) return false;
     if (from.c === to.c && from.r === to.r) return false;
     if (!this.isUnlocked(to.c, to.r)) return false;
+
+    // 目标是字牌 → 兵与字牌互换位置
+    const tw = this.words.get(cellKey(to.c, to.r));
+    if (tw) {
+      this.words.delete(cellKey(to.c, to.r));
+      this.words.set(cellKey(from.c, from.r), { ...tw, cell: { c: from.c, r: from.r } });
+      this.units.delete(cellKey(from.c, from.r));
+      this.units.set(cellKey(to.c, to.r), { ...a, cell: { c: to.c, r: to.r }, cooldown: 0 });
+      this.message = '兵与字牌交换位置';
+      return true;
+    }
 
     const b = this.units.get(cellKey(to.c, to.r));
     if (b) {

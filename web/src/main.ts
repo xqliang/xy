@@ -173,9 +173,9 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  // 棋盘单位拖拽（重新布阵/合成）或点击选中查看信息
+  // 棋盘拖拽（兵或武将字牌：重新布阵/合成/拆分）或点击选中查看信息
   const cell = pxToCell(x, y);
-  if (cell && battle.units.has(`${cell.c},${cell.r}`)) {
+  if (cell && (battle.units.has(`${cell.c},${cell.r}`) || battle.words.has(`${cell.c},${cell.r}`))) {
     ui.dragFrom = cell;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
@@ -204,7 +204,7 @@ canvas.addEventListener('pointerup', () => {
         const same = ui.selected && ui.selected.c === target.c && ui.selected.r === target.r;
         ui.selected = same ? null : { c: target.c, r: target.r };
       } else {
-        battle.dragUnit(ui.dragFrom, target);
+        battle.dragBoard(ui.dragFrom, target);
         ui.selected = null;
       }
     }
