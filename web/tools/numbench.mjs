@@ -26,7 +26,7 @@ const rows = await page.evaluate((seeds) => {
       let t=0;
       while (b.status==='playing' && t<80) {
         g.step(0.1); t+=0.1;
-        if (Math.round(t*10)%5===0){ const s=g.snapshot(); if(s.dangerPct>=88 && s.palmReady) g.palm(); g.summon(); g.autoPlace(); }
+        if (Math.round(t*10)%5===0){ const s=g.snapshot(); if(s.dangerPct>=88 && s.palmReady) g.palm(); if(g.battle.ultReady()) g.ult(); g.summon(); g.autoPlace(); }
       }
       const s = g.snapshot();
       perWave.push({ w:s.wave, leak: beforeHp - s.tangsengHP, aiLeak: beforeAi - s.aiHp, danger:s.dangerPct });

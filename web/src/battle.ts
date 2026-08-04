@@ -41,7 +41,7 @@ import {
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 export const TUNING = {
   monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
-  monsterHpBase: 24, // 第 n 波 HP = base + step*n（按基准实测校准：波5起形成压力，波1-4仍轻松）
+  monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
   bossEveryWave: 5, // 每 5 波出一个 BOSS
   bossHpMul: 7,
