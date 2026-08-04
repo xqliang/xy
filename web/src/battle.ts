@@ -1032,7 +1032,7 @@ export class Battle {
         if (hitCount >= maxTargets) break;
         target.m.hp -= dmg;
         target.m.hitFlash = 0.12; // 受击闪白
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.16, maxTtl: 0.16, color, wtype: u.type });
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.3, maxTtl: 0.3, color, wtype: u.type });
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }

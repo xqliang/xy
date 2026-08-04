@@ -553,21 +553,40 @@ function emergeScale(t: number): number {
   return 0.2 + 0.8 * ease;
 }
 
-// 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放）——玩家侧与 AI 侧共用
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }) {
+// 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }) {
   const rad = rad0 * emergeScale(m.spawnT);
+  // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
+  const phase = m.dist * 5.2;
+  const bob = Math.abs(Math.sin(phase)) * rad0 * 0.16;
+  const cy = y - bob; // 身体上抬
+  // 地面阴影（跳起时变小变淡）
+  const shW = Math.max(1, rad0 * 1.3 * (1 - bob / (rad0 * 0.5) * 0.35));
+  const shA = 0.3 * (1 - bob / (rad0 * 0.5) * 0.5);
+  ctx.save();
+  ctx.fillStyle = `rgba(20,16,12,${Math.max(0.08, shA)})`;
+  ctx.beginPath();
+  ctx.ellipse(x, y + rad0 * 0.82, shW, rad0 * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
   const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
   if (spr) {
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
-    ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+    // 踏步左右轻微摆动(基于相位镜像)，强化"走"的感觉
+    const flip = Math.sin(phase) < 0 ? -1 : 1;
+    ctx.save();
+    ctx.translate(x, cy);
+    ctx.scale(flip, 1);
+    ctx.drawImage(spr, -(spr.width * scale) / 2, -(spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+    ctx.restore();
   } else {
     ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.arc(x, cy, rad, 0, Math.PI * 2);
     ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
     ctx.fill();
   }
-  // 墨风血条：深墨底条(略带毛糙) + 朱红填充
+  // 墨风血条：深墨底条 + 朱红填充
   const bw = rad0 * 2;
   const hpPct = Math.max(0, m.hp / m.maxHp);
   const by = y - rad0 - 10;
@@ -587,7 +606,7 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
     ctx.globalAlpha = Math.min(0.8, m.hitFlash / 0.12);
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.arc(x, cy, rad, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
@@ -598,13 +617,13 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
     ctx.strokeStyle = meta.color;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(x, y, rad + 3, 0, Math.PI * 2);
+    ctx.arc(x, cy, rad + 3, 0, Math.PI * 2);
     ctx.stroke();
     if (m.castFlash > 0) {
       ctx.globalAlpha = m.castFlash;
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x, y, rad + 3 + (1 - m.castFlash) * 20, 0, Math.PI * 2);
+      ctx.arc(x, cy, rad + 3 + (1 - m.castFlash) * 20, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -922,50 +941,57 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.save();
     ctx.strokeStyle = f.color;
     ctx.fillStyle = f.color;
+    ctx.lineCap = 'round';
     switch (f.wtype) {
       case 'monkey': {
-        // 棍猴：近战挥棒弧线（在目标处扫一道弧）
+        // 棍猴：近战挥棒弧线（在目标处扫一道亮弧 + 金光）
         ctx.globalAlpha = 1 - prog;
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 7;
+        const a0 = ang - 1.3 + prog * 2.6;
         ctx.beginPath();
-        ctx.arc(t.x, t.y, CELL * 0.42, ang - 1.1 + prog * 2.2, ang - 1.1 + prog * 2.2 + 0.5);
+        ctx.arc(t.x, t.y, CELL * 0.5, a0, a0 + 0.7);
+        ctx.stroke();
+        ctx.strokeStyle = '#fff3c4';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, CELL * 0.5, a0, a0 + 0.7);
         ctx.stroke();
         break;
       }
       case 'spear': {
-        // 枪：细长突刺（拉长的弹体）
+        // 枪：细长突刺（粗亮的拉长弹体 + 枪尖）
         ctx.globalAlpha = 1;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 6;
         ctx.beginPath();
-        ctx.moveTo(x - Math.cos(ang) * 14, y - Math.sin(ang) * 14);
-        ctx.lineTo(x + Math.cos(ang) * 8, y + Math.sin(ang) * 8);
+        ctx.moveTo(x - Math.cos(ang) * 22, y - Math.sin(ang) * 22);
+        ctx.lineTo(x + Math.cos(ang) * 12, y + Math.sin(ang) * 12);
         ctx.stroke();
         break;
       }
       case 'cavalry': {
-        // 骑：弹丸 + 命中处冲击环（AOE 感）
-        ctx.globalAlpha = 0.3 * (f.ttl / f.maxTtl);
-        ctx.lineWidth = 2;
+        // 骑：弹丸 + 命中处冲击环（AOE 感，更大更亮）
+        ctx.globalAlpha = 0.4 * (f.ttl / f.maxTtl);
+        ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
-        if (prog > 0.7) {
-          ctx.globalAlpha = (1 - prog) / 0.3;
-          ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(t.x, t.y, 6 + (prog - 0.7) * 60, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+        if (prog > 0.55) {
+          ctx.globalAlpha = (1 - prog) / 0.45;
+          ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 8 + (prog - 0.55) * 90, 0, Math.PI * 2); ctx.stroke();
         }
         break;
       }
       default: {
-        // 弓/默认：箭矢（拖尾 + 箭头）
-        ctx.globalAlpha = 0.35 * (f.ttl / f.maxTtl);
-        ctx.lineWidth = 2;
+        // 弓/默认：箭矢（拖尾 + 大箭头）
+        ctx.globalAlpha = 0.4 * (f.ttl / f.maxTtl);
+        ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
         ctx.globalAlpha = 1;
         ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - Math.cos(ang - 0.4) * 8, y - Math.sin(ang - 0.4) * 8);
-        ctx.lineTo(x - Math.cos(ang + 0.4) * 8, y - Math.sin(ang + 0.4) * 8);
+        ctx.moveTo(x + Math.cos(ang) * 6, y + Math.sin(ang) * 6);
+        ctx.lineTo(x - Math.cos(ang - 0.45) * 12, y - Math.sin(ang - 0.45) * 12);
+        ctx.lineTo(x - Math.cos(ang + 0.45) * 12, y - Math.sin(ang + 0.45) * 12);
         ctx.closePath();
         ctx.fill();
       }
@@ -980,7 +1006,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.aiMonsters) {
     const p = b.aiMonsterPos(m);
     const { x, y } = cellCenterPx(p.c, p.r);
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.34 : CELL * 0.24, m);
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m);
   }
   // AI 单位（上半场自动部署）
   for (const u of b.aiUnits) {
