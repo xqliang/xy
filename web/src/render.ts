@@ -1005,33 +1005,75 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'cavalry': {
-        // 骑：弹丸 + 命中处冲击环（阶数越高环越大）
-        ctx.globalAlpha = 0.4 * (f.ttl / f.maxTtl);
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x, y); ctx.stroke();
+        // 骑：疾冲速度线 + 冲锋楔形头 + 命中处新月扫击 & 尘土冲击环(AOE 感)
+        const dirX = Math.cos(ang), dirY = Math.sin(ang);
+        const perpX = -Math.sin(ang), perpY = Math.cos(ang);
+        // 速度线（几条平行拖尾，表现冲刺）
+        ctx.globalAlpha = 0.55 * (f.ttl / f.maxTtl);
+        ctx.strokeStyle = f.color;
+        ctx.lineWidth = 2;
+        const trail = 16 + tier * 3;
+        for (const k of [-1, 0, 1]) {
+          const off = k * (4 + tier);
+          ctx.beginPath();
+          ctx.moveTo(x - dirX * trail + perpX * off, y - dirY * trail + perpY * off);
+          ctx.lineTo(x + perpX * off, y + perpY * off);
+          ctx.stroke();
+        }
+        // 冲锋楔形头 ">"
         ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.arc(x, y, 5 + tier, 0, Math.PI * 2); ctx.fill();
-        if (prog > 0.55) {
-          ctx.globalAlpha = (1 - prog) / 0.45;
-          ctx.lineWidth = 3 + tier * 0.5;
-          ctx.beginPath(); ctx.arc(t.x, t.y, 8 + (prog - 0.55) * (60 + tier * 22), 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 3 + tier * 0.5;
+        const hs = 6 + tier;
+        ctx.beginPath();
+        ctx.moveTo(x - dirX * hs + perpX * hs, y - dirY * hs + perpY * hs);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x - dirX * hs - perpX * hs, y - dirY * hs - perpY * hs);
+        ctx.stroke();
+        // 命中：新月扫击 + 尘土冲击环
+        if (prog > 0.5) {
+          const k = (prog - 0.5) / 0.5;
+          ctx.globalAlpha = 1 - k;
+          // 新月扫击弧
+          ctx.strokeStyle = '#fff3d0';
+          ctx.lineWidth = 4 + tier;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, CELL * (0.34 + tier * 0.05), ang - 1.2, ang + 1.2);
+          ctx.stroke();
+          // 尘土冲击环
+          ctx.strokeStyle = 'rgba(180,150,110,0.8)';
+          ctx.lineWidth = 3 + tier * 0.4;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, 8 + k * (46 + tier * 20), 0, Math.PI * 2);
+          ctx.stroke();
         }
         break;
       }
       default: {
-        // 弓：一支箭（阶数越高箭越大），沿飞行方向
+        // 弓：一支箭——木杆 + 钢制箭头 + 尾羽(用兵种色作点缀)，沿飞行方向。阶数越高越大。
         const sc = 1 + (tier - 1) * 0.22;
         ctx.globalAlpha = 1;
         ctx.translate(x, y);
         ctx.rotate(ang);
         ctx.scale(sc, sc);
-        ctx.strokeStyle = f.color;
-        ctx.fillStyle = f.color;
+        ctx.lineCap = 'round';
+        // 木质箭杆
+        ctx.strokeStyle = '#a5773f';
         ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(6, 0); ctx.stroke(); // 箭杆
-        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(2, -5); ctx.lineTo(2, 5); ctx.closePath(); ctx.fill(); // 箭头
-        ctx.lineWidth = 2; // 尾羽
-        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(-20, -4); ctx.moveTo(-16, 0); ctx.lineTo(-20, 4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(8, 0); ctx.stroke();
+        // 钢制箭头（银灰 + 深色描边）
+        ctx.fillStyle = '#d7dde4';
+        ctx.strokeStyle = '#6b7480';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(4, -4.5); ctx.lineTo(4, 4.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+        // 尾羽（兵种色点缀，保留身份识别）
+        ctx.strokeStyle = f.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-16, 0); ctx.lineTo(-21, -4);
+        ctx.moveTo(-16, 0); ctx.lineTo(-21, 4);
+        ctx.moveTo(-13, 0); ctx.lineTo(-18, -4);
+        ctx.moveTo(-13, 0); ctx.lineTo(-18, 4);
+        ctx.stroke();
         break;
       }
     }
