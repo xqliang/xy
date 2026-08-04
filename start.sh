@@ -25,13 +25,26 @@ ensure_deps() {
   fi
 }
 
+# 释放 5180 端口上的残留监听（避免"port in use"漂移到 5181）
+free_port() {
+  local pids
+  pids="$(lsof -ti tcp:5180 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "🧹 释放端口 5180（结束残留进程：$pids）"
+    kill $pids 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 need_node
 
 case "$CMD" in
   dev)
     ensure_deps "$ROOT/web"
-    echo "🚀 开发服务器：http://127.0.0.1:5180"
-    (cd "$ROOT/web" && npm run dev)
+    free_port
+    echo "🚀 开发服务器：http://127.0.0.1:5180  （Ctrl+C 退出）"
+    # exec 让 Ctrl+C(SIGINT) 直接送达 vite；--strictPort 固定端口不漂移
+    cd "$ROOT/web" && exec npx vite --strictPort
     ;;
   build)
     ensure_deps "$ROOT/web"
@@ -41,8 +54,9 @@ case "$CMD" in
   preview)
     ensure_deps "$ROOT/web"
     if [ ! -d "$ROOT/web/dist" ]; then (cd "$ROOT/web" && npm run build); fi
-    echo "👀 预览：http://127.0.0.1:5180"
-    (cd "$ROOT/web" && npm run preview)
+    free_port
+    echo "👀 预览：http://127.0.0.1:5180  （Ctrl+C 退出）"
+    cd "$ROOT/web" && exec npx vite preview --strictPort
     ;;
   test)
     ensure_deps "$ROOT/game-core"
