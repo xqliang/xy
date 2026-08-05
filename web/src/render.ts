@@ -859,13 +859,11 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   }
   ctx.restore();
 
-  // 信息面板
+  // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
   const pw = 194;
   const ph = active ? 150 : 118;
-  let px = gx + CELL / 2 - pw / 2;
-  let py = gy - ph - 8;
-  if (py < BOARD_Y) py = gy + CELL + 8;
-  px = Math.max(8, Math.min(VIEW_W - pw - 8, px));
+  const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
+  const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
   roundRect(ctx, px, py, pw, ph, 10);
   ctx.fillStyle = 'rgba(28,22,14,0.94)';
@@ -961,10 +959,9 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const cfg = UNITS[u.type];
   const pw = 176;
   const ph = 120;
-  let px = x - pw / 2;
-  let py = gy - ph - 8; // 默认显示在单位上方
-  if (py < BOARD_Y) py = gy + CELL + 8; // 顶部空间不足则显示在下方
-  px = Math.max(8, Math.min(VIEW_W - pw - 8, px));
+  // 固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住玩家半场部署单位的攻击范围环
+  const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
+  const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
   roundRect(ctx, px, py, pw, ph, 10);
   ctx.fillStyle = 'rgba(28,22,14,0.92)';
