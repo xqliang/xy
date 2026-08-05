@@ -19,6 +19,7 @@ export interface MenuInfo {
   toast: string;
   muted: boolean;
   musicOn: boolean;
+  endlessOn: boolean;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

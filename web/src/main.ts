@@ -15,6 +15,8 @@ import { pickDailyMap, mapById, MAPS } from './board';
 import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS } from './settle';
+import { drawEndlessSettle, type EndlessResult } from './settle';
+import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
@@ -62,11 +64,13 @@ let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(mer
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
+let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
+let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn);
   endHandled = false;
 }
 
@@ -82,6 +86,12 @@ function handleMenu(x: number, y: number) {
   if (id === 'music') {
     const on = toggleMusic();
     menuToast = on ? '背景音乐：开' : '背景音乐：关';
+    return;
+  }
+  if (id === 'endless') {
+    endlessOn = !endlessOn;
+    setEndlessEnabled(endlessOn);
+    menuToast = endlessOn ? '无尽模式：开（波数不限，难度渐增）' : '无尽模式：关';
     return;
   }
   if (id === 'start') {
@@ -234,11 +244,12 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'settle') {
-    if (isSettleAnimDone(performance.now() - settleStart)) {
+    if (endlessResult || isSettleAnimDone(performance.now() - settleStart)) {
       settleChange = null;
-      screen = 'menu'; // 结算看完回主菜单（刷新段位/体力展示）
+      endlessResult = null;
+      screen = 'menu'; // 无尽结算为静态屏，点击即回；星级结算需动画放完
     } else {
-      settleStart = performance.now() - SETTLE_ANIM_MS; // 点击跳过：直接到终态
+      settleStart = performance.now() - SETTLE_ANIM_MS;
     }
     return;
   }
@@ -339,6 +350,7 @@ function frame(now: number): void {
       toast: menuToast,
       muted: isMuted(),
       musicOn: isMusicOn(),
+      endlessOn,
     });
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast);
@@ -349,7 +361,8 @@ function frame(now: number): void {
   } else if (screen === 'bag') {
     drawBag(ctx, bag, bagToast);
   } else if (screen === 'settle') {
-    if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
+    if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
+    else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
   } else {
     // —— 战斗 —— //
     battle.step(dt);
@@ -362,12 +375,7 @@ function frame(now: number): void {
     // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
       endHandled = true;
-      const won = battle.status === 'won';
-      const change = won ? recordWin(rank) : recordLose(rank);
-      rank = change.state;
-      const gain = meritReward(won, battle.wave);
-      merit = addMerit(merit, gain);
-      // 本局掉落的神兵入背包（重复则升品质）
+      // 神兵掉落入背包（两种模式通用）
       const names: string[] = [];
       for (const wid of battle.droppedWeapons) {
         const r = addWeapon(bag, wid);
@@ -376,11 +384,29 @@ function frame(now: number): void {
       }
       battle.droppedWeapons = [];
       const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
-      battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
-      // 切到结算页，播放加/减星动画
-      settleChange = change;
-      settleStart = performance.now();
-      screen = 'settle';
+
+      if (battle.endless) {
+        // 无尽：不涨降境界，只记录最高波数；仍发放功德（软奖励，与星级解耦）
+        const gain = meritReward(false, battle.wave);
+        merit = addMerit(merit, gain);
+        const isRecord = recordBestWave(battle.wave);
+        endlessResult = { wave: battle.wave, best: getBestWave(), isNewRecord: isRecord, merit: gain };
+        settleChange = null;
+        battle.message = `抵达第 ${battle.wave} 波（功德 +${gain}${dropMsg}）`;
+        settleStart = performance.now();
+        screen = 'settle';
+      } else {
+        const won = battle.status === 'won';
+        const change = won ? recordWin(rank) : recordLose(rank);
+        rank = change.state;
+        const gain = meritReward(won, battle.wave);
+        merit = addMerit(merit, gain);
+        battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
+        endlessResult = null;
+        settleChange = change;
+        settleStart = performance.now();
+        screen = 'settle';
+      }
     }
     setHudRank(rankName(rank.level));
     draw(ctx, battle, ui);
@@ -430,7 +456,7 @@ interface GameHook {
   grantWeapon: (id: string) => void;
   grantMerit: (n: number) => void;
   tuning: typeof TUNING;
-  restart: (s?: number, diff?: number, mapId?: string) => void;
+  restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
   grantPeach: (n: number) => void;
@@ -461,9 +487,10 @@ const hook: GameHook = {
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
-  restart: (s?: number, diff?: number, mapId?: string) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
+  restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false);
     endHandled = false;
+    endlessResult = null;
     screen = 'battle';
     scheduleFrame();
   },
