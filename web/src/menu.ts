@@ -70,7 +70,8 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.textBaseline = 'middle';
   ctx.fillText(`⚡ 体力 ${info.stamina}/${STAMINA_MAX}`, 24, 34);
   ctx.textAlign = 'right';
-  ctx.fillText(`今日·${info.mapName}`, VIEW_W - 24, 34);
+  // 右对齐到音效/音乐按钮左侧（按钮在 VIEW_W-96 起），留 12px 间距，避免与图标重叠
+  ctx.fillText(`今日·${info.mapName}`, VIEW_W - 108, 34);
 
   // 标题
   ctx.textAlign = 'center';
