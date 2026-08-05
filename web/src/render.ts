@@ -1222,9 +1222,9 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2; // ease-in-out：两端慢中间快
         const spin = turns * Math.PI * 2 * eio;
         const blur = Math.pow(Math.sin(Math.PI * prog), 3); // 残影只在中段短暂出现，两端留足清晰加/减速
-        const len = CELL * (0.4 + tier * 0.07);
+        const len = CELL * (0.24 + tier * 0.10); // 初级更短小，随阶明显变长（1阶≈0.34 / 5阶≈0.74）
         const baseA = Math.min(1, 1.4 - prog);
-        const lw = 5 + tier;
+        const lw = 4 + tier * 1.1;
         ctx.translate(t.x, t.y);
         ctx.lineCap = 'round';
         // 高速段的残影盘（发光渐变 + 两段扫动亮弧），随 blur 淡入淡出
@@ -1253,8 +1253,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
         ctx.fillStyle = '#ffe27a';
-        ctx.beginPath(); ctx.arc(len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(-len, 0, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(len, 0, 2 + tier * 0.8, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-len, 0, 2 + tier * 0.8, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
         break;
       }
@@ -1264,20 +1264,20 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         const jabP = Math.min(1, prog / 0.55); // 前 55% 内完成整次突刺
         const ext = Math.sin(jabP * Math.PI);  // 0→1→0
         const tipD = dist * (0.18 + 0.82 * ext); // 收回到贴近兵身
-        const shaftLen = CELL * (0.7 + tier * 0.08);
+        const shaftLen = CELL * (0.5 + tier * 0.12); // 初级更短，随阶明显变长
         ctx.globalAlpha = prog < 0.55 ? 1 : Math.max(0, 1 - (prog - 0.55) / 0.45); // 收回后淡出
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
         // 枪杆
         ctx.strokeStyle = '#9a6f3a';
-        ctx.lineWidth = 2.5 + tier * 0.3;
+        ctx.lineWidth = 2 + tier * 0.5;
         ctx.beginPath(); ctx.moveTo(tipD - shaftLen, 0); ctx.lineTo(tipD - 8, 0); ctx.stroke();
         // 红缨
         ctx.fillStyle = '#c0392b';
-        ctx.beginPath(); ctx.arc(tipD - 9, 0, 2.5 + tier * 0.4, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tipD - 9, 0, 2 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
         // 叶形枪头（偏小）
-        const hl = 9 + tier * 1.4;
-        const hw = 2.4 + tier * 0.5;
+        const hl = 7 + tier * 1.8;
+        const hw = 2 + tier * 0.6;
         ctx.fillStyle = '#dfe6ee';
         ctx.strokeStyle = '#8a97a6';
         ctx.lineWidth = 1;
@@ -1295,13 +1295,13 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         // 骑：疾冲速度线 + 冲锋楔形头 + 命中处新月扫击 & 尘土冲击环(AOE 感)
         const dirX = Math.cos(ang), dirY = Math.sin(ang);
         const perpX = -Math.sin(ang), perpY = Math.cos(ang);
-        // 速度线（几条平行拖尾，表现冲刺）
+        // 速度线（几条平行拖尾，表现冲刺）；初级拖尾更短，随阶明显拉长
         ctx.globalAlpha = 0.55 * (f.ttl / f.maxTtl);
         ctx.strokeStyle = f.color;
         ctx.lineWidth = 2;
-        const trail = 16 + tier * 3;
+        const trail = 9 + tier * 4.5;
         for (const k of [-1, 0, 1]) {
-          const off = k * (4 + tier);
+          const off = k * (3 + tier * 1.2);
           ctx.beginPath();
           ctx.moveTo(x - dirX * trail + perpX * off, y - dirY * trail + perpY * off);
           ctx.lineTo(x + perpX * off, y + perpY * off);
@@ -1309,8 +1309,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         }
         // 冲锋楔形头 ">"
         ctx.globalAlpha = 1;
-        ctx.lineWidth = 3 + tier * 0.5;
-        const hs = 6 + tier;
+        ctx.lineWidth = 2.5 + tier * 0.6;
+        const hs = 5 + tier * 1.2;
         ctx.beginPath();
         ctx.moveTo(x - dirX * hs + perpX * hs, y - dirY * hs + perpY * hs);
         ctx.lineTo(x, y);
@@ -1322,22 +1322,22 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
           ctx.globalAlpha = 1 - k;
           // 新月扫击弧
           ctx.strokeStyle = '#fff3d0';
-          ctx.lineWidth = 4 + tier;
+          ctx.lineWidth = 3 + tier * 1.1;
           ctx.beginPath();
-          ctx.arc(t.x, t.y, CELL * (0.34 + tier * 0.05), ang - 1.2, ang + 1.2);
+          ctx.arc(t.x, t.y, CELL * (0.24 + tier * 0.075), ang - 1.2, ang + 1.2);
           ctx.stroke();
           // 尘土冲击环
           ctx.strokeStyle = 'rgba(180,150,110,0.8)';
-          ctx.lineWidth = 3 + tier * 0.4;
+          ctx.lineWidth = 2.5 + tier * 0.5;
           ctx.beginPath();
-          ctx.arc(t.x, t.y, 8 + k * (46 + tier * 20), 0, Math.PI * 2);
+          ctx.arc(t.x, t.y, 6 + k * (24 + tier * 24), 0, Math.PI * 2);
           ctx.stroke();
         }
         break;
       }
       default: {
-        // 弓：一支箭——木杆 + 钢制箭头 + 尾羽(用兵种色作点缀)，沿飞行方向。偏细小，阶数略放大。
-        const sc = 0.8 + (tier - 1) * 0.14;
+        // 弓：一支箭——木杆 + 钢制箭头 + 尾羽(用兵种色作点缀)，沿飞行方向。初级更细小，随阶明显放大。
+        const sc = 0.6 + (tier - 1) * 0.2;
         ctx.globalAlpha = 1;
         ctx.translate(x, y);
         ctx.rotate(ang);
