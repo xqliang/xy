@@ -24,8 +24,8 @@ export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
 export const TRAY_H = 66;
-export const CTRL_Y = TRAY_Y + TRAY_H + 8; // 控制按钮行
-export const CTRL_H = 64;
+export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「营」拖令牌部署时误点征兵）
+export const CTRL_H = 80; // 行高预留：容纳更大的征兵按钮，下方 PAS 行据此下移不重叠
 export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
 export const PAS_H = 46;
 export const MSG_Y = PAS_Y + PAS_H + 16; // 提示文字行
@@ -86,7 +86,8 @@ export function getButtons(b: Battle): Button[] {
   // 下方一排被动/强化图标。取消「立即开战」（靠倒计时自动开波），保证开波前后 UI 不位移。
   const btns: Button[] = [
     { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
-    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
+    // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
+    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 180, y, w: 200, h: 78, enabled: canSummon },
     { id: 'palm', label: '神掌', x: 492, y, w: 56, h, enabled: b.palmAvailable() },
   ];
   // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
