@@ -14,8 +14,7 @@ import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS } from './board';
 import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
-import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS } from './settle';
-import { drawEndlessSettle, type EndlessResult } from './settle';
+import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
@@ -72,6 +71,7 @@ function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
   battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn);
   endHandled = false;
+  endlessResult = null;
 }
 
 function handleMenu(x: number, y: number) {
@@ -244,7 +244,7 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'settle') {
-    if (endlessResult || isSettleAnimDone(performance.now() - settleStart)) {
+    if ((battle.endless && endlessResult) || isSettleAnimDone(performance.now() - settleStart)) {
       settleChange = null;
       endlessResult = null;
       screen = 'menu'; // 无尽结算为静态屏，点击即回；星级结算需动画放完
