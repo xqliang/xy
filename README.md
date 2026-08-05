@@ -15,7 +15,13 @@
 ./start.sh preview    # 预览构建产物
 ./start.sh test       # 运行数值单元测试（game-core）
 ./start.sh check      # 类型检查（game-core + web）
+./start.sh deploy     # 一键部署到 ECS（零停机，见 memory/部署说明）
+./start.sh rollback   # 回滚线上到上一个/指定发布
+./start.sh wx         # 构建微信小游戏 bundle 到 wechat/（IAA；见 docs/wechat-adaptation.md）
 ```
+
+> **微信小游戏（IAA）**：安装 `brew install --cask wechatwebdevtools`，`./start.sh wx` 构建后用
+> 微信开发者工具打开 `wechat/` 联调与上传。完整安装/适配/部署发布见 **`docs/wechat-adaptation.md`** 与 **`wechat/README.md`**。
 
 首次运行会自动 `npm install`（需 Node.js ≥ 18）。也可手动：
 

@@ -12,6 +12,15 @@
 - `assets/` — 由 `./start.sh wx` 从 `web/public/assets` 同步而来
 - `weapp-adapter.js` — **需自行放置**（见下）
 
+## 安装微信开发者工具（macOS）
+
+```bash
+brew install --cask wechatwebdevtools     # 安装
+open -a wechatwebdevtools                  # 启动，微信扫码登录
+```
+
+> 官网下载：https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html
+
 ## 构建
 
 ```bash

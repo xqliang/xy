@@ -3,6 +3,21 @@
 > 原则（硬约束）：**不影响本地调试（vite@5180）与服务器部署（ecs:8082）**。
 > Web 构建始终是「真源」，微信适配全部以**新增、可开关**的方式叠加，Web 运行路径零改动。
 
+## 〇、环境安装（macOS）
+
+**微信开发者工具**（小游戏联调/上传的唯一官方工具）：
+
+```bash
+brew install --cask wechatwebdevtools     # 安装（本机已装：/Applications/wechatwebdevtools.app）
+open -a wechatwebdevtools                  # 启动；首次需用微信扫码登录
+```
+
+> 也可从官网下载：https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html
+
+**账号 / AppID**：在 https://mp.weixin.qq.com 注册「小游戏」账号，拿到 **AppID**，填入
+`wechat/project.config.json` 的 `appid`。IAA 广告位在 mp 后台「流量主」申请（激励视频/插屏），
+拿到 `adUnitId` 填入 `web/src/ads.ts` 的 `AD_UNITS`。
+
 ## 一、总体策略
 
 保持一套 `game-core`（纯 TS 数值）+ `web`（Vite+Canvas）代码，微信小游戏通过「**运行时适配层 + 独立构建产物**」复用同一套源码：
@@ -62,3 +77,27 @@
 - 本仓库/CI 无法自动跑微信真机，第 5 步需人工在微信开发者工具验证。
 - 音频：微信对 WebAudio 支持随版本差异，若合成音频异常，退化为「预渲染短音效 buffer」。
 - 包体：立绘/地图 PNG 较大，超 4MB 主包需用**分包加载**。
+
+## 七、部署与发布（IAA 上线）
+
+微信小游戏**不走服务器部署**（与 ecs:8082 的 Web 部署无关），而是「构建产物 → 微信开发者工具上传 →
+mp 后台提交审核 → 发布」。
+
+**步骤：**
+
+1. **构建**：
+   ```bash
+   ./start.sh wx          # 生成 wechat/game.bundle.js 并同步 wechat/assets/
+   ```
+2. **放置 adapter（一次性）**：把 `weapp-adapter.js` 放到 `wechat/`（见 `wechat/README.md`）。
+3. **填 AppID / 广告位**：`wechat/project.config.json` 的 `appid`；`web/src/ads.ts` 的 `AD_UNITS`。
+4. **打开工具联调**：微信开发者工具 → 导入「小游戏」项目，目录选 `wechat/` → 编译运行（模拟器/真机预览）。
+5. **上传**：工具栏右上「上传」→ 填版本号 + 项目备注 → 上传为「开发版」。
+6. **提交审核 / 发布**：https://mp.weixin.qq.com →「版本管理」把开发版设为体验版自测，无误后**提交审核**；
+   审核通过点**发布**上线。IAA 需先在 mp 后台「流量主」开通并绑定广告位。
+
+**版本管理建议**：`project.config.json` 的 `projectname` 固定；每次上传用递增版本号（如 `1.0.0`、`1.0.1`），
+备注写清改动，便于在 mp 后台回滚到历史版本（微信侧有版本回退）。
+
+> 提示：Web 版（ecs:8082）与微信版是**两条独立发布线**，共享同一套 `web/src` 源码。改逻辑后
+> 分别 `./start.sh deploy`（Web）与 `./start.sh wx`+工具上传（微信）即可，互不影响。
