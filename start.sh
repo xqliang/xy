@@ -105,10 +105,21 @@ case "$CMD" in
     ECS_URL="${ECS_URL:-http://124.221.105.4:8082/}" # 健康检查地址
     echo "🔨 构建生产产物（web/dist）…"
     (cd "$ROOT/web" && npm run build)
-    echo "📤 上传 dist → ${ECS_SSH}:${ECS_DIR}"
-    # COPYFILE_DISABLE=1 抑制 macOS 附加属性；remote 先清空目录再解包（原子性足够，站点为纯静态）
-    COPYFILE_DISABLE=1 tar czf - -C "$ROOT/web/dist" . 2>/dev/null \
-      | ssh "$ECS_SSH" "mkdir -p '${ECS_DIR}' && rm -rf '${ECS_DIR}'/* && tar xzf - -C '${ECS_DIR}' 2>/dev/null"
+    echo "📤 上传 dist → ${ECS_SSH}:${ECS_DIR}（解压到新发布目录后原子切换，零停机）"
+    # 零停机：远程把 tar 流解压到全新的 releases/rel-<ts> 目录，再用 ln -sfn 原子切换 symlink，
+    # 保证任何时刻 ECS_DIR 都指向一份完整产物（绝不先删后解压）。首次若 ECS_DIR 是真实目录则迁移为 symlink。
+    # 该远程脚本的 stdin 即 tar 流（由 `tar xzf -` 消费）；${ECS_DIR} 在本地展开，其余 \$ 变量在远程求值。
+    remote_cmd="set -e
+DIR='${ECS_DIR}'
+RELROOT=\"\$(dirname \"\$DIR\")/releases\"
+REL=\"\$RELROOT/rel-\$(date +%s)-\$\$\"
+mkdir -p \"\$REL\"
+tar xzf - -C \"\$REL\" 2>/dev/null
+if [ -d \"\$DIR\" ] && [ ! -L \"\$DIR\" ]; then rm -rf \"\$DIR\"; fi   # 首次：真实目录→迁移为 symlink（仅一次）
+ln -sfn \"\$REL\" \"\$DIR\"                                            # 原子切换
+ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null | tail -n +6 | xargs -r rm -rf # 仅保留最近 5 个发布(可回滚)
+echo \"✅ 已原子切换：\$DIR → \$REL\""
+    COPYFILE_DISABLE=1 tar czf - -C "$ROOT/web/dist" . 2>/dev/null | ssh "$ECS_SSH" "$remote_cmd"
     echo "🔎 健康检查：${ECS_URL}"
     code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$ECS_URL" || echo 000)"
     if [ "$code" = "200" ]; then
