@@ -154,7 +154,8 @@ function handleShop(x: number, y: number) {
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // DPR 上限 2：3 倍屏按 3×3=9 倍像素填充，手游里 2 倍肉眼几乎无差别，却能砍掉最费电的像素填充量。
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const fit = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
   cssScale = fit;
   canvas.width = Math.round(VIEW_W * dpr);
