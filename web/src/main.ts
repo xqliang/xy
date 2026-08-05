@@ -31,9 +31,10 @@ import { getGameCanvas, onAppHide, onAppShow } from './platform';
 const canvas = getGameCanvas();
 const ctx = canvas.getContext('2d')!;
 
-// 切后台暂停背景音（对齐"看广告/切后台暂停"；Web 下 onAppHide 为 no-op，行为不变）
-onAppHide(() => { try { stopAmbient(); } catch { /* ignore */ } });
-onAppShow(() => { /* 恢复由游戏循环自然继续 */ });
+// 切后台暂停：停 rAF 循环与背景音，回前台再唤醒（pauseLoop/resumeLoop 见游戏循环处，函数声明已提升）。
+// 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
+onAppHide(() => pauseLoop());
+onAppShow(() => resumeLoop());
 
 // 异步加载 Seedream 立绘（加载完成后重绘一帧用上新立绘；静态界面此时循环可能已停，需主动唤醒）
 void loadAssets().then(() => scheduleFrame());
@@ -373,6 +374,23 @@ function frame(now: number): void {
   if (needsContinuousLoop()) scheduleFrame();
 }
 scheduleFrame();
+
+// —— 切后台/锁屏暂停 —— //
+// 页面不可见时停掉 rAF 与音频，回前台再唤醒；避免后台白白空耗电量与音频。
+function pauseLoop(): void {
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  try { stopAmbient(); } catch { /* ignore */ }
+}
+function resumeLoop(): void {
+  last = performance.now(); // 重置计时，避免回前台瞬间 dt 过大导致跳步
+  scheduleFrame();
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseLoop();
+    else resumeLoop();
+  });
+}
 
 // —— 自测钩子：供 headless Chrome 确定性驱动与快照 —— //
 interface GameHook {
