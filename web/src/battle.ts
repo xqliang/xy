@@ -266,7 +266,6 @@ export class Battle {
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
   private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
-  palmUsedThisWave = false; // 如来神掌每波限用一次
   healUsedThisWave = false; // 观音甘露每波限回一次
   tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
 
@@ -772,7 +771,6 @@ export class Battle {
     this.aiDeploy(); // AI 同步部署本波防御
     this.status = 'playing';
     this.waveActive = true;
-    this.palmUsedThisWave = false;
     this.healUsedThisWave = false;
     this.spawnRemaining = this.waveSpawnCount(this.wave); // 经济基准(9+n) + 后期堆量
     this.waveMonsterCount = this.spawnRemaining; // 记录总数用于骑兵半数判定
@@ -791,21 +789,6 @@ export class Battle {
     if (this.introDone) return posAtDistance(this.map, this.pathLen);
     const p = Math.min(1, this.introT / Battle.INTRO_DUR);
     return posAtDistance(this.map, p * this.pathLen);
-  }
-
-  // 如来神掌是否可用（对战中且本波未用过）
-  palmAvailable(): boolean {
-    return this.status === 'playing' && !this.palmUsedThisWave && this.monsters.length > 0;
-  }
-
-  // 如来神掌：把场上所有妖怪推回起点（原作"退兵盾牌兵"广告点，绝境救命）。每波限一次。
-  usePalm(): boolean {
-    if (this.status !== 'playing' || this.palmUsedThisWave) return false;
-    this.pushMonstersToStart();
-    this.palmUsedThisWave = true;
-    this.emit('palm');
-    this.message = '如来神掌！妖怪被推回起点';
-    return true;
   }
 
   // 把玩家场上所有妖怪推回起点（神掌按钮与「如来神掌」主动技能共用）
@@ -1681,7 +1664,6 @@ export class Battle {
       units: this.units.size,
       monsters: this.monsters.length,
       dangerPct: Math.round((maxDist / this.pathLen) * 100), // 最靠前妖怪的推进百分比
-      palmReady: this.palmAvailable(),
       aiHp: this.aiTangsengHP,
       aiDefeated: this.aiDefeated,
       skillMonsters,

@@ -184,7 +184,6 @@ function handleButton(x: number, y: number): boolean {
       if (!btn.enabled) return true;
       if (btn.id === 'summon') battle.summon();
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
-      else if (btn.id === 'palm') battle.usePalm();
       else if (btn.id === 'act0') battle.triggerActive(0);
       else if (btn.id === 'act1') battle.triggerActive(1);
       else if (btn.id.startsWith('pas')) ui.passivePopup = Number(btn.id.slice(3)); // 点击被动图标看详情
@@ -399,7 +398,6 @@ interface GameHook {
   battle: Battle;
   summon: () => boolean;
   wave: () => boolean;
-  palm: () => boolean;
   ult: () => boolean; // 兼容垫片：绝招已移除，恒返回 false（旧工具不报错）
   triggerActive: (i: number) => boolean;
   equipActives: (ids: string[]) => void;
@@ -429,7 +427,6 @@ const hook: GameHook = {
   },
   summon: () => battle.summon(),
   wave: () => battle.startNextWave(),
-  palm: () => battle.usePalm(),
   ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
   triggerActive: (i: number) => battle.triggerActive(i),
   equipActives: (ids: string[]) => { loadout = { ...loadout, equipped: ids.slice(0, 2) }; newGame(); },

@@ -73,7 +73,6 @@ export function getButtons(b: Battle): Button[] {
   const btns: Button[] = [
     { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
-    { id: 'palm', label: '神掌', x: 492, y, w: 56, h, enabled: b.palmAvailable() },
   ];
   // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
   const actX = [90, 410];
