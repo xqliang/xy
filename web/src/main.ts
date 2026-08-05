@@ -178,11 +178,11 @@ canvas.addEventListener('pointerup', () => {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
     const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
     if (ui.dragTrayIndex !== null) {
-      // 候选区令牌：拖到另一候选槽→合并；拖到棋盘→落位
-      if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
-        battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
-      } else if (target) {
+      // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
+      if (target) {
         battle.placeFromTray(ui.dragTrayIndex, target);
+      } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
+        battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
       }
     } else if (ui.dragFrom && target) {
       if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
@@ -247,6 +247,7 @@ interface GameHook {
   ult: () => boolean;
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
+  placeFromTray: (index: number, to: Cell) => boolean;
   autoPlace: () => void;
   select: (cell: Cell | null) => void;
   enterBattle: () => void;
@@ -270,6 +271,7 @@ const hook: GameHook = {
   ult: () => battle.castUltimate(),
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
+  placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),
   select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
   enterBattle: () => { screen = 'battle'; },

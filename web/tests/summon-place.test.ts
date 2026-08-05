@@ -27,3 +27,31 @@ describe('Battle.summon tray rules', () => {
     expect(b.tray.filter((t) => t.kind === 'unit').length).toBeGreaterThanOrEqual(4);
   });
 });
+
+describe('Battle.placeFromTray', () => {
+  it('swaps with a different unit on an unlocked cell', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, {
+      type: 'monkey', tier: 1, cell: { c: cell.c, r: cell.r },
+      cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0,
+    });
+    b.tray = [{ kind: 'unit', type: 'spear', tier: 1 }];
+    expect(b.placeFromTray(0, cell)).toBe(true);
+    expect(b.units.get(`${cell.c},${cell.r}`)?.type).toBe('spear');
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'monkey', tier: 1 });
+  });
+
+  it('merges same type and tier', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, {
+      type: 'monkey', tier: 1, cell: { c: cell.c, r: cell.r },
+      cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0,
+    });
+    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    expect(b.placeFromTray(0, cell)).toBe(true);
+    expect(b.units.get(`${cell.c},${cell.r}`)?.tier).toBe(2);
+    expect(b.tray).toHaveLength(0);
+  });
+});
