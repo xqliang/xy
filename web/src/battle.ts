@@ -811,7 +811,7 @@ export class Battle {
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
-    this.queueAiDeploy(); // 排入本波 AI 部署量，随后在 updateAi 里按人类节奏逐个落子（不再瞬间铺满）
+    if (!this.endless) this.queueAiDeploy(); // 排入本波 AI 部署量，随后在 updateAi 里按人类节奏逐个落子；无尽模式无 AI 对手
     this.status = 'playing';
     this.waveActive = true;
     this.palmUsedThisWave = false;
@@ -1091,21 +1091,23 @@ export class Battle {
       castFlash: 0,
       spawnT: 0, stunT: 0, slowT: 0,
     });
-    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）
-    this.aiMonsters.push({
-      id: this.nextMonsterId++,
-      dist: this.aiEntranceDist, // 从 AI 出怪口冒出
-      hp,
-      maxHp: hp,
-      spd: TUNING.monsterSpd * diffSpd * spdMul,
-      isBoss,
-      isCavalry,
-      hitFlash: 0,
-      skill,
-      skillCd: TUNING.skillFirstDelay,
-      castFlash: 0,
-      spawnT: 0, stunT: 0, slowT: 0,
-    });
+    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）。无尽模式无对手，跳过。
+    if (!this.endless) {
+      this.aiMonsters.push({
+        id: this.nextMonsterId++,
+        dist: this.aiEntranceDist, // 从 AI 出怪口冒出
+        hp,
+        maxHp: hp,
+        spd: TUNING.monsterSpd * diffSpd * spdMul,
+        isBoss,
+        isCavalry,
+        hitFlash: 0,
+        skill,
+        skillCd: TUNING.skillFirstDelay,
+        castFlash: 0,
+        spawnT: 0, stunT: 0, slowT: 0,
+      });
+    }
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
   }
@@ -1209,6 +1211,7 @@ export class Battle {
 
   // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
   private updateAi(dt: number): void {
+    if (this.endless) return; // 无尽模式无 AI 对手，跳过其部署/清场/推进
     this.tickAiDeploy(dt); // AI 逐个慢速部署（模拟人手动落子，不再开波瞬间铺满）
     this.updateAiUnits(dt);
     // AI 定期清场：随境界增强以跟上高难度怪物(维持对手不被单方碾压)。就绪后带随机时机。
@@ -1247,6 +1250,7 @@ export class Battle {
 
   // 对手唐僧阵亡 → 我方获胜（伪竞技对局的胜利条件之一）
   private checkOpponentDefeated(): boolean {
+    if (this.endless) return false; // 无尽模式禁用「击败对手=胜」
     if (this.aiDefeated && this.status !== 'won' && this.status !== 'lost') {
       this.status = 'won';
       this.waveActive = false;
@@ -1704,7 +1708,7 @@ export class Battle {
     // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
-      if (this.wave >= TUNING.winWave) {
+      if (!this.endless && this.wave >= TUNING.winWave) {
         this.rollWeaponDropOnClear();
         this.status = 'won';
         this.emit('win');
@@ -1721,6 +1725,13 @@ export class Battle {
   // 调试/自测用：直接增蟠桃（正式玩法不暴露）
   grantPeach(n: number): void {
     this.peach += n;
+  }
+
+  // 测试辅助：立即清空当前波（清怪 + 触发清波判定）。仅供单测确定性驱动。
+  forceClearWaveForTest(): void {
+    this.monsters = [];
+    this.spawnRemaining = 0;
+    this.step(1 / 60); // 触发清波判定分支
   }
 
   // 一键布阵：把候选区令牌自动落位（铲子挖最靠前锁定格；兵种优先合成同型同级，否则放空格）。

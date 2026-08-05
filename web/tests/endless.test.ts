@@ -56,3 +56,32 @@ describe('endless difficulty curve', () => {
     expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5, 5);
   });
 });
+
+describe('endless disables opponent and win-cap', () => {
+  it('无尽模式不生成 AI 对手怪、不触发击败对手=胜', () => {
+    const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
+    b.startNextWave();
+    for (let i = 0; i < 120; i++) b.step(1 / 60);
+    expect(b.aiMonsters.length).toBe(0);
+    expect(b.status).not.toBe('won');
+  });
+
+  it('无尽模式清空第 10 波后继续（进入 ready），不判通关', () => {
+    const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
+    for (let w = 0; w < 10; w++) {
+      b.startNextWave();
+      b.forceClearWaveForTest();
+    }
+    expect(b.wave).toBe(10);
+    expect(b.status).not.toBe('won');
+  });
+
+  it('正常模式清空第 10 波判通关（回归保护）', () => {
+    const b = new Battle(1, 1, undefined, undefined, {}, [], [], false);
+    for (let w = 0; w < 10; w++) {
+      b.startNextWave();
+      b.forceClearWaveForTest();
+    }
+    expect(b.status).toBe('won');
+  });
+});
