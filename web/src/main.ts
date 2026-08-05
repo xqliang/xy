@@ -23,6 +23,7 @@ import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
+import { showRewardedAd } from './ads';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -82,8 +83,12 @@ function handleMenu(x: number, y: number) {
     newGame();
     screen = 'battle';
   } else if (id === 'ad') {
-    stamina = addStamina(stamina, 10);
-    menuToast = '体力 +10';
+    // 通过 IAA 广告抽象层：微信下拉激励视频、看完才发奖；Web/未配置广告位下即时模拟发奖（体验不变）
+    menuToast = '正在加载广告…';
+    void showRewardedAd('stamina').then((ok) => {
+      if (ok) { stamina = addStamina(stamina, 10); menuToast = '体力 +10'; }
+      else menuToast = '未看完广告，未发放体力';
+    });
   } else if (id === 'share') {
     stamina = addStamina(stamina, 5);
     menuToast = '体力 +5';
