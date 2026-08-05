@@ -35,8 +35,8 @@ const ctx = canvas.getContext('2d')!;
 onAppHide(() => { try { stopAmbient(); } catch { /* ignore */ } });
 onAppShow(() => { /* 恢复由游戏循环自然继续 */ });
 
-// 异步加载 Seedream 立绘（加载完成后游戏循环自动用上，未完成时用色块底座兜底）
-void loadAssets();
+// 异步加载 Seedream 立绘（加载完成后重绘一帧用上新立绘；静态界面此时循环可能已停，需主动唤醒）
+void loadAssets().then(() => scheduleFrame());
 
 const params = new URLSearchParams(location.search);
 // ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
@@ -98,6 +98,7 @@ function handleMenu(x: number, y: number) {
     void showRewardedAd('stamina').then((ok) => {
       if (ok) { stamina = addStamina(stamina, 10); menuToast = '体力 +10'; }
       else menuToast = '未看完广告，未发放体力';
+      scheduleFrame(); // 广告异步返回后菜单循环可能已停，主动重绘更新提示/体力
     });
   } else if (id === 'share') {
     stamina = addStamina(stamina, 5);
@@ -160,6 +161,7 @@ function resize() {
   canvas.style.width = `${Math.round(VIEW_W * fit)}px`;
   canvas.style.height = `${Math.round(VIEW_H * fit)}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  scheduleFrame(); // 重置画布会清空内容，静态界面需重绘一帧
 }
 window.addEventListener('resize', resize);
 resize();
@@ -191,7 +193,7 @@ function handleButton(x: number, y: number): boolean {
   return false;
 }
 
-canvas.addEventListener('pointerdown', (e) => {
+function onPointerDown(e: PointerEvent) {
   e.preventDefault();
   initAudio(); // 首个用户手势后启用音频（浏览器自动播放策略）
   const { x, y } = toLogical(e.clientX, e.clientY);
@@ -251,12 +253,16 @@ canvas.addEventListener('pointerdown', (e) => {
   } else {
     ui.selected = null; // 点击空白处取消选中
   }
-});
-canvas.addEventListener('pointermove', (e) => {
+}
+canvas.addEventListener('pointerdown', (e) => { onPointerDown(e); scheduleFrame(); });
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerup', () => { onPointerUp(); scheduleFrame(); });
+function onPointerMove(e: PointerEvent) {
   if (!ui.dragFrom && ui.dragTrayIndex === null) return;
   ui.dragPos = toLogical(e.clientX, e.clientY);
-});
-canvas.addEventListener('pointerup', () => {
+  scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
+}
+function onPointerUp() {
   if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
     const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
@@ -281,11 +287,28 @@ canvas.addEventListener('pointerup', () => {
   ui.dragFrom = null;
   ui.dragTrayIndex = null;
   ui.dragPos = null;
-});
+}
 
-// —— 游戏循环 —— //
+// —— 游戏循环（按需重绘） —— //
+// 静态界面（菜单/商店/图鉴/排行/背包，以及结算星级动画播完后）只在状态变化时画一帧，画完即停掉
+// rAF，不再持续满帧空转；只有战斗、结算动画进行中才连续循环。待机时 CPU/GPU 几乎不工作，显著降功耗。
 let last = performance.now();
-function frame(now: number) {
+let rafId: number | null = null; // 当前排队中的 rAF id；null 表示循环已停
+
+// 请求下一帧：若已有帧在排队则合并为一次（幂等），避免输入风暴导致重复调度。
+function scheduleFrame(): void {
+  if (rafId === null) rafId = requestAnimationFrame(frame);
+}
+
+// 当前界面是否需要连续动画：战斗一直跑；结算仅在星级动画播放期间跑；其余静态界面画完即停。
+function needsContinuousLoop(): boolean {
+  if (screen === 'battle') return true;
+  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart);
+  return false;
+}
+
+function frame(now: number): void {
+  rafId = null;
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
@@ -301,69 +324,55 @@ function frame(now: number) {
       muted: isMuted(),
       musicOn: isMusicOn(),
     });
-    requestAnimationFrame(frame);
-    return;
-  }
-  if (screen === 'shop') {
+  } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast);
-    requestAnimationFrame(frame);
-    return;
-  }
-  if (screen === 'codex') {
+  } else if (screen === 'codex') {
     drawCodex(ctx);
-    requestAnimationFrame(frame);
-    return;
-  }
-  if (screen === 'rank') {
+  } else if (screen === 'rank') {
     drawLeaderboard(ctx, rank.level);
-    requestAnimationFrame(frame);
-    return;
-  }
-  if (screen === 'bag') {
+  } else if (screen === 'bag') {
     drawBag(ctx, bag, bagToast);
-    requestAnimationFrame(frame);
-    return;
-  }
-  if (screen === 'settle') {
+  } else if (screen === 'settle') {
     if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
-    requestAnimationFrame(frame);
-    return;
-  }
-  battle.step(dt);
-  startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
-  // 播放引擎发出的音效事件
-  if (battle.sfxEvents.length) {
-    for (const ev of battle.sfxEvents) playSfx(ev);
-    battle.sfxEvents.length = 0;
-  }
-  // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
-  if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
-    endHandled = true;
-    const won = battle.status === 'won';
-    const change = won ? recordWin(rank) : recordLose(rank);
-    rank = change.state;
-    const gain = meritReward(won, battle.wave);
-    merit = addMerit(merit, gain);
-    // 本局掉落的神兵入背包（重复则升品质）
-    const names: string[] = [];
-    for (const wid of battle.droppedWeapons) {
-      const r = addWeapon(bag, wid);
-      bag = r.state;
-      names.push(`${weaponById(wid)?.name ?? wid}${r.upgraded ? '↑' : ''}`);
+  } else {
+    // —— 战斗 —— //
+    battle.step(dt);
+    startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
+    // 播放引擎发出的音效事件
+    if (battle.sfxEvents.length) {
+      for (const ev of battle.sfxEvents) playSfx(ev);
+      battle.sfxEvents.length = 0;
     }
-    battle.droppedWeapons = [];
-    const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
-    battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
-    // 切到结算页，播放加/减星动画
-    settleChange = change;
-    settleStart = performance.now();
-    screen = 'settle';
+    // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
+    if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
+      endHandled = true;
+      const won = battle.status === 'won';
+      const change = won ? recordWin(rank) : recordLose(rank);
+      rank = change.state;
+      const gain = meritReward(won, battle.wave);
+      merit = addMerit(merit, gain);
+      // 本局掉落的神兵入背包（重复则升品质）
+      const names: string[] = [];
+      for (const wid of battle.droppedWeapons) {
+        const r = addWeapon(bag, wid);
+        bag = r.state;
+        names.push(`${weaponById(wid)?.name ?? wid}${r.upgraded ? '↑' : ''}`);
+      }
+      battle.droppedWeapons = [];
+      const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
+      battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
+      // 切到结算页，播放加/减星动画
+      settleChange = change;
+      settleStart = performance.now();
+      screen = 'settle';
+    }
+    setHudRank(rankName(rank.level));
+    draw(ctx, battle, ui);
   }
-  setHudRank(rankName(rank.level));
-  draw(ctx, battle, ui);
-  requestAnimationFrame(frame);
+  // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
+  if (needsContinuousLoop()) scheduleFrame();
 }
-requestAnimationFrame(frame);
+scheduleFrame();
 
 // —— 自测钩子：供 headless Chrome 确定性驱动与快照 —— //
 interface GameHook {
@@ -411,11 +420,11 @@ const hook: GameHook = {
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),
   select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
-  enterBattle: () => { screen = 'battle'; },
-  openShop: () => { screen = 'shop'; },
-  openCodex: () => { screen = 'codex'; },
-  openRank: () => { screen = 'rank'; },
-  openBag: () => { screen = 'bag'; },
+  enterBattle: () => { screen = 'battle'; scheduleFrame(); },
+  openShop: () => { screen = 'shop'; scheduleFrame(); },
+  openCodex: () => { screen = 'codex'; scheduleFrame(); },
+  openRank: () => { screen = 'rank'; scheduleFrame(); },
+  openBag: () => { screen = 'bag'; scheduleFrame(); },
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
@@ -423,6 +432,7 @@ const hook: GameHook = {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
     endHandled = false;
     screen = 'battle';
+    scheduleFrame();
   },
   step: (dt: number) => battle.step(dt),
   fastForward: (seconds: number, dt = 1 / 60) => {
