@@ -217,42 +217,6 @@ export interface HeroUltFx {
   critDmg?: number;      // 暴击伤害数字(crit 时飘字)
 }
 
-// —— 日重置道具（波间 3 选 1，肉鸽 Build）——
-// 携带上限：强化(拾取即永久生效)最多 2 个、被动最多 6 个。
-// 注意：这些道具都是「拾取即生效」，没有手动触发；真正手动触发的是主动技能(actives.ts)。
-export const MAX_ENHANCE_ITEMS = 2;
-export const MAX_PASSIVE_ITEMS = 6;
-export type ItemKind = '强化' | '被动';
-export interface ItemDef {
-  id: string;
-  name: string;
-  kind: ItemKind;
-  desc: string;
-  icon?: string; // 被动技能条图标（缺省时用 name[0]）
-}
-export const ITEMS: ItemDef[] = [
-  // 强化（拾取即永久生效，最多 2）
-  { id: 'xiandan', name: '仙丹', kind: '强化', desc: '全体攻击 +15%', icon: '💊' },
-  { id: 'fenghuolun', name: '风火轮符', kind: '强化', desc: '全体攻速 +20%（对应攻速符）', icon: '🌀' },
-  { id: 'fabaofu', name: '法宝符', kind: '强化', desc: '所有武将等级 +1（对应神兵符）', icon: '📜' },
-  { id: 'jifeng', name: '疾风咒', kind: '强化', desc: '敌我双方全体攻速 +25%（双刃道具）', icon: '💨' },
-  // 被动（最多 6）
-  { id: 'zhaoxian', name: '招贤榜', kind: '被动', desc: '武将字牌掉率 +10%', icon: '📋' },
-  { id: 'mojin', name: '摸金校尉', kind: '被动', desc: '每次用铲子额外 +6 蟠桃', icon: '⛏' },
-  { id: 'luoyangchan', name: '洛阳铲', kind: '被动', desc: '每 45 秒自动获得 1 把铲子', icon: '🥄' },
-  { id: 'yunshi', name: '陨石', kind: '被动', desc: '每波开始砸向最前妖怪（容错保险）', icon: '☄' },
-  { id: 'yuni', name: '淤泥', kind: '被动', desc: '出怪口附近妖怪移速 -18%', icon: '🟤' },
-  { id: 'tongxin', name: '同心咒', kind: '被动', desc: '敌我双方唐僧生命各 +1（双刃道具）', icon: '❤' },
-  { id: 'xianyuan', name: '仙缘幡', kind: '被动', desc: '召唤成本 -1', icon: '🎏' },
-  { id: 'jubaopen', name: '聚宝盆', kind: '被动', desc: '击杀额外 +1 蟠桃', icon: '💰' },
-  { id: 'hushen', name: '护身金光', kind: '被动', desc: '唐僧 +1 血', icon: '🛡' },
-  { id: 'zhuwang', name: '绊妖蛛网', kind: '被动', desc: '妖怪移速 -12%', icon: '🕸' },
-  { id: 'dinghai', name: '自动定海针', kind: '被动', desc: '立即开辟 1 阵位', icon: '🪡' },
-];
-export function itemById(id: string): ItemDef | undefined {
-  return ITEMS.find((x) => x.id === id);
-}
-
 interface Modifiers {
   atkMul: number;
   frqMul: number;
@@ -348,7 +312,6 @@ export class Battle {
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
   droppedWeapons: string[] = []; // 本局掉落的神兵（结算时入背包）
   pickedItems: string[] = [];
-  pendingShop: string[] | null = null; // 非空时：胜利后 3 选 1，待玩家选择
 
   private rng: RNG;
   readonly map: GameMap;
@@ -802,10 +765,6 @@ export class Battle {
   startNextWave(): boolean {
     if (this.waveActive) return false;
     if (this.status === 'won' || this.status === 'lost') return false;
-    if (this.pendingShop) {
-      this.message = '请先选择一件道具';
-      return false;
-    }
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
@@ -853,40 +812,10 @@ export class Battle {
     for (const m of this.monsters) m.dist = 0;
   }
 
-  // 已携带的强化/被动道具数
-  itemCount(kind: ItemKind): number {
-    return this.pickedItems.filter((id) => itemById(id)?.kind === kind).length;
-  }
-  // 是否还能再携带该道具（受强化2/被动6上限限制）
-  canCarry(id: string): boolean {
-    const def = itemById(id);
-    if (!def) return false;
-    const cap = def.kind === '强化' ? MAX_ENHANCE_ITEMS : MAX_PASSIVE_ITEMS;
-    return this.itemCount(def.kind) < cap;
-  }
-
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
   passiveProgress(id: string): { ratio: number; text: string } | null {
     if (id === 'luoyangchan') return { ratio: this.shovelTimer / 45, text: `产铲 ${this.shovelTimer.toFixed(0)}/45s` };
     return null;
-  }
-
-  // 从当前商店 3 选 1（index 0..2）
-  chooseItem(index: number): boolean {
-    if (!this.pendingShop) return false;
-    const id = this.pendingShop[index];
-    if (!id) return false;
-    const def = itemById(id);
-    if (!this.canCarry(id)) {
-      this.message = `${def?.kind}道具已满（强化${MAX_ENHANCE_ITEMS}/被动${MAX_PASSIVE_ITEMS}），请换一件`;
-      return false;
-    }
-    this.applyItem(id);
-    this.pickedItems.push(id);
-    this.pendingShop = null;
-    this.message = `获得道具：${def?.name ?? id}`;
-    this.emit('item');
-    return true;
   }
 
   private applyItem(id: string): void {
@@ -1020,17 +949,6 @@ export class Battle {
     const id = rollWeaponDrop(this.rng.next());
     this.droppedWeapons.push(id);
     this.message = `第 ${this.wave} 波已清！掉落神兵`;
-  }
-
-  // 胜利后随机开出 3 件道具供选择（只开还能携带的）
-  private rollShop(): void {
-    const pool = ITEMS.filter((it) => this.canCarry(it.id));
-    const picks: string[] = [];
-    for (let i = 0; i < 3 && pool.length > 0; i++) {
-      const idx = this.rng.int(pool.length);
-      picks.push(pool.splice(idx, 1)[0]!.id);
-    }
-    this.pendingShop = picks.length > 0 ? picks : null;
   }
 
   // 本波出怪总数：经济基准(9+n，同时决定掉落) + 后期堆量。
@@ -1780,8 +1698,6 @@ export class Battle {
       bond: this.bondActive(),
       aiPow: Math.round(aiPowTotal),
       monsterPow: Math.round(monsterPowTotal),
-      itemsPicked: this.pickedItems.length,
-      shopOpen: this.pendingShop !== null,
       message: this.message,
     };
   }

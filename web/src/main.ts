@@ -183,7 +183,6 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'act0') battle.triggerActive(0);
       else if (btn.id === 'act1') battle.triggerActive(1);
       else if (btn.id.startsWith('pas')) ui.passivePopup = Number(btn.id.slice(3)); // 点击被动图标看详情
-      else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
     }
@@ -375,7 +374,6 @@ interface GameHook {
   triggerActive: (i: number) => boolean;
   equipActives: (ids: string[]) => void;
   equipPassives: (ids: string[]) => void;
-  chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   placeFromTray: (index: number, to: Cell) => boolean;
   autoPlace: () => void;
@@ -405,8 +403,7 @@ const hook: GameHook = {
   ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
   triggerActive: (i: number) => battle.triggerActive(i),
   equipActives: (ids: string[]) => { loadout = { ...loadout, equipped: ids.slice(0, 2) }; newGame(); },
-  equipPassives: (ids: string[]) => { loadout = { ...loadout, passives: ids.slice(0, 2) }; newGame(); },
-  chooseItem: (i: number) => battle.chooseItem(i),
+  equipPassives: (ids: string[]) => { loadout = { ...loadout, passives: ids.slice(0, 6) }; newGame(); },
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),

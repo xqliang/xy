@@ -9,7 +9,8 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, unitColorOf, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
@@ -64,21 +65,6 @@ export function getButtons(b: Battle): Button[] {
   const h = 64;
   if (b.status === 'won' || b.status === 'lost') {
     return [{ id: 'restart', label: '重新开始', x: 24, y, w: VIEW_W - 48, h, enabled: true }];
-  }
-  // 胜利后 3 选 1 道具商店
-  if (b.pendingShop) {
-    const cardW = 168;
-    const cardH = 96;
-    const cy = CTRL_Y - 24;
-    return b.pendingShop.map((id, i) => ({
-      id: `item${i}`,
-      label: itemById(id)?.name ?? id,
-      x: 20 + i * 176,
-      y: cy,
-      w: cardW,
-      h: cardH,
-      enabled: true,
-    }));
   }
   const trayEmpty = b.tray.length === 0;
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
@@ -1791,38 +1777,13 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
-  // 商店标题
-  if (b.pendingShop) {
-    ctx.fillStyle = '#ffe08a';
-    ctx.font = 'bold 20px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('胜利！选择一件道具（每日重置）', VIEW_W / 2, CTRL_Y - 44);
-  }
   for (const btn of getButtons(b)) {
     // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
     if (btn.id.startsWith('act') || btn.id.startsWith('pas')) continue;
-    const isItem = btn.id.startsWith('item');
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    ctx.fillStyle = btn.enabled ? (isItem ? '#3a2c53' : b.map.theme.accent) : '#3a3128';
+    ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#3a3128';
     ctx.fill();
-    if (isItem) {
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#a98bff';
-      ctx.stroke();
-      const def = itemById(b.pendingShop![Number(btn.id.slice(4))]!);
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#fff6e6';
-      ctx.font = 'bold 18px "PingFang SC", sans-serif';
-      ctx.textBaseline = 'top';
-      ctx.fillText(def?.name ?? btn.label, btn.x + btn.w / 2, btn.y + 12);
-      ctx.fillStyle = def?.kind === '强化' ? '#ffb86c' : '#9bffb0';
-      ctx.font = '12px "PingFang SC", sans-serif';
-      ctx.fillText(`[${def?.kind ?? ''}]`, btn.x + btn.w / 2, btn.y + 38);
-      ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.font = '13px "PingFang SC", sans-serif';
-      ctx.fillText(def?.desc ?? '', btn.x + btn.w / 2, btn.y + 60);
-    } else {
+    {
       // 征兵按钮：按当前蟠桃/成本填充进度条（参考竞品，桃攒够即满格可点）
       if (btn.id === 'summon') {
         const prog = Math.max(0, Math.min(1, b.peach / b.effectiveSummonCost()));
@@ -1924,13 +1885,13 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const btn of getButtons(b)) {
     if (!btn.id.startsWith('pas')) continue;
     const i = Number(btn.id.slice(3));
-    const def = itemById(b.pickedItems[i] ?? '');
+    const def = passiveById(b.pickedItems[i] ?? '');
     if (!def) continue;
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 8);
-    ctx.fillStyle = def.kind === '强化' ? '#5a4326' : '#2c4a30';
+    ctx.fillStyle = '#2c4a30';
     ctx.fill();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = def.kind === '强化' ? '#e0a83c' : '#6ab07a';
+    ctx.strokeStyle = '#6ab07a';
     ctx.stroke();
     ctx.fillStyle = '#fff6e6';
     ctx.font = `${Math.round(btn.w * 0.5)}px "PingFang SC", sans-serif`;
@@ -1951,7 +1912,7 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
 // 被动/强化道具详情弹窗（点击图标后显示；点任意处关闭）
 function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (ui.passivePopup === null) return;
-  const def = itemById(b.pickedItems[ui.passivePopup] ?? '');
+  const def = passiveById(b.pickedItems[ui.passivePopup] ?? '');
   if (!def) return;
   const w = 264, h = 112;
   const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
@@ -1959,7 +1920,7 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   roundRect(ctx, x, y, w, h, 12);
   ctx.fillStyle = 'rgba(30,24,18,0.94)';
   ctx.fill();
-  ctx.strokeStyle = def.kind === '强化' ? '#e0a83c' : '#6ab07a';
+  ctx.strokeStyle = '#6ab07a';
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.textAlign = 'left';
@@ -1967,10 +1928,8 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   ctx.fillStyle = '#fff6e6';
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
   ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + 16, y + 14);
-  ctx.fillStyle = def.kind === '强化' ? '#ffb86c' : '#9bffb0';
-  ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(`[${def.kind}]`, x + 16, y + 42);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
   ctx.fillText(def.desc, x + 16, y + 62);
   const prog = b.passiveProgress(def.id);
   if (prog) {
