@@ -179,6 +179,7 @@ export interface EndlessResult {
 
 // 无尽结算屏：静态展示（不做加减星动画）。点击任意处即返回主菜单（由 main.ts 处理）。
 export function drawEndlessSettle(ctx: CanvasRenderingContext2D, r: EndlessResult, _tMs: number): void {
+  ctx.save();
   // 半透明遮罩
   ctx.fillStyle = 'rgba(20,14,8,0.78)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
@@ -217,4 +218,6 @@ export function drawEndlessSettle(ctx: CanvasRenderingContext2D, r: EndlessResul
   ctx.fillStyle = '#b0a88f';
   ctx.font = '18px "PingFang SC", sans-serif';
   ctx.fillText('点击任意处返回', cx, VIEW_H * 0.72);
+
+  ctx.restore();
 }
