@@ -18,7 +18,7 @@ import {
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
-import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, type GeneralDef } from './generals';
+import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, ultTypeOf, CRIT_MULT, type GeneralDef } from './generals';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
@@ -203,6 +203,19 @@ export interface Burst {
   color: string;
 }
 
+// 武将大招专属特效（每英雄一套动画，渲染于格坐标；与主动技能的 ultFlash 无关）
+export interface HeroUltFx {
+  heroId: string;        // 分派动画用（对应 GeneralDef.id）
+  c: number;             // 爆心列（通常取最前目标 inRange[0]）
+  r: number;             // 爆心行
+  ttl: number;
+  maxTtl: number;
+  tier: number;          // 品质阶(1..5)，用于特效规模
+  rge: number;           // 英雄当前射程(格)，范围类动画铺开半径
+  crit: boolean;         // true=暴击(单体) false=群攻(范围)
+  critDmg?: number;      // 暴击伤害数字(crit 时飘字)
+}
+
 // —— 日重置道具（波间 3 选 1，肉鸽 Build）——
 // 携带上限：强化(拾取即永久生效)最多 2 个、被动最多 6 个。
 // 注意：这些道具都是「拾取即生效」，没有手动触发；真正手动触发的是主动技能(actives.ts)。
@@ -282,6 +295,7 @@ export class Battle {
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
+  heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -1369,32 +1383,32 @@ export class Battle {
     const atk = this.generalAtk(g);
     g.state.skillFlash = 1;
     const center = inRange[0]!.p;
+    const crit = ultTypeOf(g.def) === 'crit';
+    let critDmg: number | undefined;
     switch (g.def.skill) {
       case 'burst': {
         for (const t of inRange) { t.m.hp -= damage(atk * 3); t.m.hitFlash = 0.15; }
-        this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.45, maxTtl: 0.45, big: true, color: '#ffb03c' });
         break;
       }
       case 'ranged': {
+        // 暴击：单体高倍 ×(5×CRIT_MULT)
         const t = inRange[0]!;
-        t.m.hp -= damage(atk * 5);
-        t.m.hitFlash = 0.18;
-        this.bursts.push({ kind: 'hit', c: t.p.c, r: t.p.r, ttl: 0.4, maxTtl: 0.4, big: true, color: '#ff6a4a' });
+        const dmg = damage(atk * 5 * CRIT_MULT);
+        t.m.hp -= dmg;
+        t.m.hitFlash = 0.2;
+        critDmg = dmg;
         break;
       }
       case 'stun': {
         for (const t of inRange) t.m.stunT = Math.max(t.m.stunT, 1.8);
-        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.45, maxTtl: 0.45, big: true, color: '#ffd34d' });
         break;
       }
       case 'knock': {
         for (const t of inRange) t.m.dist = Math.max(this.entranceDist, t.m.dist - 2);
-        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.4, maxTtl: 0.4, big: true, color: '#9ad0ff' });
         break;
       }
       case 'slow': {
         for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, 3);
-        this.bursts.push({ kind: 'hit', c: center.c, r: center.r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#8ad8ff' });
         break;
       }
       case 'heal': {
@@ -1407,6 +1421,16 @@ export class Battle {
         break;
       }
     }
+    // 专属大招特效（替代原通用 bursts.push）
+    this.heroUltFx.push({
+      heroId: g.def.id,
+      c: center.c, r: center.r,
+      ttl: 0.6, maxTtl: 0.6,
+      tier: g.tier,
+      rge: this.generalRge(g),
+      crit,
+      critDmg,
+    });
     this.gainGeneralExp(g, 4);
   }
 
@@ -1586,6 +1610,8 @@ export class Battle {
     }
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    for (const uf of this.heroUltFx) uf.ttl -= dt;
+    this.heroUltFx = this.heroUltFx.filter((uf) => uf.ttl > 0);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)

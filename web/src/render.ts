@@ -9,7 +9,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree } from './battle';
+import { Battle, unitColorOf, TUNING, itemById, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
@@ -316,6 +316,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
+  drawHeroUlt(ctx, b);
   drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
@@ -368,7 +369,7 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
 }
 
 // 武将字牌：宣纸底 + 墨字 + 右上角阶数上标
-function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number, x: number, y: number, s: number) {
+function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number, x: number, y: number, s: number, showTier = true) {
   roundRect(ctx, x - s / 2, y - s / 2, s, s, 7);
   ctx.fillStyle = '#f8f4e6';
   ctx.fill();
@@ -380,12 +381,14 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(char, x, y + s * 0.02);
-  // 阶数上标
-  ctx.fillStyle = qualityColor(tier);
-  ctx.font = `bold ${Math.round(s * 0.24)}px "PingFang SC", sans-serif`;
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'top';
-  ctx.fillText(String(tier), x + s / 2 - 3, y - s / 2 + 2);
+  // 阶数上标（合成为激活武将时由 showTier=false 隐藏，避免与金框整体 Lv 重复）
+  if (showTier) {
+    ctx.fillStyle = qualityColor(tier);
+    ctx.font = `bold ${Math.round(s * 0.24)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(tier), x + s / 2 - 3, y - s / 2 + 2);
+  }
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 底板
@@ -843,6 +846,267 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 缓动：ease-out（两端→中段），大招动画统一手感
+function easeOut(p: number): number { return 1 - Math.pow(1 - p, 3); }
+
+// 武将大招专属动画：switch(heroId) 分派，风格对齐 drawFx
+function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const f of b.heroUltFx) {
+    const { x, y } = cellCenterPx(f.c, f.r);
+    const prog = 1 - f.ttl / f.maxTtl; // 0→1
+    const fade = 1 - prog;             // 1→0
+    const R = f.rge * CELL;            // 群攻范围半径(px)
+    ctx.save();
+    switch (f.heroId) {
+      // —— 暴击（哪吒/二郎）——
+      case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
+      case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier); break;
+      // —— 群攻 ——
+      case 'wukong': drawUltWukong(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'honghaier': drawUltHonghaier(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'bajie': drawUltBajie(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'tieshan': drawUltTieshan(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'shaseng': drawUltShaseng(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'niumowang': drawUltNiumowang(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'guanyin': drawUltGuanyin(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'baigujing': drawUltBaigujing(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'tangseng': drawUltTangseng(ctx, x, y, prog, fade, f.tier, R); break;
+    }
+    ctx.restore();
+    // 暴击飘字：红字上飘 + 放大
+    if (f.crit && f.critDmg != null) {
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = '#ff5a3c';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 3;
+      ctx.font = `bold ${Math.round(18 + prog * 10)}px "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const ty = y - 18 - prog * 26;
+      ctx.strokeText(`暴击! ${Math.round(f.critDmg)}`, x, ty);
+      ctx.fillText(`暴击! ${Math.round(f.critDmg)}`, x, ty);
+      ctx.restore();
+    }
+  }
+}
+
+// —— 暴击英雄 ——
+// 哪吒 火尖枪·万火齐发：多支火枪自上方倾泻聚点 + 落地烈焰爆点
+function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number) {
+  const n = 5 + tier;
+  const drop = easeOut(Math.min(1, p / 0.6));
+  for (let i = 0; i < n; i++) {
+    const ang = -Math.PI / 2 + (i - (n - 1) / 2) * 0.22;
+    const startD = CELL * 2.4;
+    const d = startD * (1 - drop);
+    const sx = x + Math.cos(ang) * d, sy = y + Math.sin(ang) * d - CELL * 0.4;
+    ctx.globalAlpha = fade;
+    ctx.strokeStyle = '#ffcf5a';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - Math.cos(ang) * CELL * 0.5, sy - Math.sin(ang) * CELL * 0.5); ctx.stroke();
+    ctx.fillStyle = '#ff7a2c';
+    ctx.beginPath(); ctx.arc(sx, sy, 3 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
+  }
+  if (p > 0.5) {
+    const bp = (p - 0.5) / 0.5;
+    ctx.globalAlpha = (1 - bp) * fade * 1.2;
+    const rad = CELL * (0.4 + tier * 0.12) * (0.5 + bp);
+    const grad = ctx.createRadialGradient(x, y, 2, x, y, rad);
+    grad.addColorStop(0, 'rgba(255,240,180,0.9)');
+    grad.addColorStop(0.6, 'rgba(255,120,44,0.5)');
+    grad.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 二郎 天眼诛邪：竖向贯穿光束 + 睁开的天眼
+function drawUltErlang(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number) {
+  const beamW = (6 + tier * 2) * (0.4 + easeOut(Math.min(1, p / 0.5)) * 0.6);
+  const h = CELL * 2.6;
+  ctx.globalAlpha = fade;
+  const grad = ctx.createLinearGradient(x, y - h, x, y + CELL * 0.6);
+  grad.addColorStop(0, 'rgba(180,235,255,0)');
+  grad.addColorStop(0.7, 'rgba(150,216,255,0.7)');
+  grad.addColorStop(1, 'rgba(255,255,255,0.95)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x - beamW / 2, y - h, beamW, h + CELL * 0.6);
+  const open = easeOut(Math.min(1, p / 0.4));
+  ctx.strokeStyle = '#bfe9ff';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.ellipse(x, y - CELL * 1.4, CELL * 0.32, CELL * 0.5 * open, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#3a6ea5';
+  ctx.beginPath(); ctx.arc(x, y - CELL * 1.4, CELL * 0.12 * open, 0, Math.PI * 2); ctx.fill();
+}
+
+// —— 输出群攻 ——
+// 悟空 金箍棒大范围横扫金弧
+function drawUltWukong(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const sweep = easeOut(p);
+  const a0 = -Math.PI * 0.9, a1 = a0 + Math.PI * 1.8 * sweep;
+  const rad = R * 0.9;
+  ctx.globalAlpha = fade;
+  const grad = ctx.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+  grad.addColorStop(0, 'rgba(255,243,196,0.05)');
+  grad.addColorStop(1, 'rgba(240,185,60,0.35)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, rad, a0, a1); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#e8a11c'; ctx.lineWidth = 5 + tier;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * rad, y + Math.sin(a1) * rad); ctx.stroke();
+  ctx.strokeStyle = '#fff3c4'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * rad, y + Math.sin(a1) * rad); ctx.stroke();
+}
+
+// 红孩 三昧真火扩散火花花瓣
+function drawUltHonghaier(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const rad = easeOut(p) * R * 0.85;
+  const petals = 8 + tier * 2;
+  ctx.globalAlpha = fade;
+  const grad = ctx.createRadialGradient(x, y, 2, x, y, rad);
+  grad.addColorStop(0, 'rgba(255,240,180,0.9)');
+  grad.addColorStop(0.5, 'rgba(255,120,44,0.45)');
+  grad.addColorStop(1, 'rgba(255,60,20,0)');
+  ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2 + p * 0.8;
+    const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+    ctx.fillStyle = '#ff8a3c';
+    ctx.beginPath(); ctx.arc(px, py, 3 + tier * 0.6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// —— 控制群攻 ——
+// 八戒 钉耙震地·同心裂纹冲击波
+function drawUltBajie(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  for (let k = 0; k < 3; k++) {
+    const pk = Math.max(0, Math.min(1, p - k * 0.15));
+    const rad = easeOut(pk) * R * 0.9;
+    ctx.strokeStyle = k === 0 ? '#ffd34d' : 'rgba(255,211,77,0.55)';
+    ctx.lineWidth = 5 - k * 1.2;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+  }
+  const cracks = 6 + tier;
+  ctx.strokeStyle = 'rgba(120,80,30,0.6)'; ctx.lineWidth = 2;
+  for (let i = 0; i < cracks; i++) {
+    const a = (i / cracks) * Math.PI * 2;
+    const rr = easeOut(p) * R * 0.7;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); ctx.stroke();
+  }
+}
+
+// 铁扇 芭蕉扇狂风·叶片旋涡
+function drawUltTieshan(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  const arms = 3;
+  const leaves = 5 + tier;
+  for (let arm = 0; arm < arms; arm++) {
+    for (let i = 1; i <= leaves; i++) {
+      const t = i / leaves;
+      const rad = easeOut(p) * R * 0.9 * t;
+      const a = arm * (Math.PI * 2 / arms) + p * 5 + t * 2.2;
+      const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+      ctx.save();
+      ctx.translate(px, py); ctx.rotate(a);
+      ctx.fillStyle = 'rgba(142,230,192,0.75)';
+      ctx.beginPath(); ctx.ellipse(0, 0, 6 + tier, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+// —— 击退群攻 ——
+// 沙僧 宝杖横扫 + 击退拖影
+function drawUltShaseng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  const rad = R * 0.9;
+  const sweepA = -Math.PI * 0.5 + easeOut(p) * Math.PI;
+  ctx.strokeStyle = 'rgba(154,208,255,0.5)'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(x, y, rad, -Math.PI * 0.5, sweepA); ctx.stroke();
+  ctx.strokeStyle = '#cfe6ff'; ctx.lineWidth = 4 + tier * 0.6;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(sweepA) * rad, y + Math.sin(sweepA) * rad); ctx.stroke();
+  for (let i = 0; i < 4 + tier; i++) {
+    const a = -Math.PI * 0.5 + (i / (4 + tier)) * Math.PI;
+    if (a > sweepA) continue;
+    ctx.strokeStyle = 'rgba(200,230,255,0.4)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * rad * 0.7, y + Math.sin(a) * rad * 0.7);
+    ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); ctx.stroke();
+  }
+}
+
+// 牛魔 蛮牛冲撞·直线尘土拖尾
+function drawUltNiumowang(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  const len = R * 1.1;
+  const headD = easeOut(p) * len;
+  const dirX = 0, dirY = -1;
+  const hx = x + dirX * headD, hy = y + dirY * headD;
+  ctx.strokeStyle = 'rgba(201,162,106,0.8)'; ctx.lineWidth = 8 + tier;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(hx, hy); ctx.stroke();
+  for (let i = 0; i < 8 + tier; i++) {
+    const t = i / (8 + tier);
+    const px = x + dirX * headD * t + (Math.random() - 0.5) * 6;
+    const py = y + dirY * headD * t + (Math.random() - 0.5) * 6;
+    ctx.fillStyle = `rgba(180,150,110,${0.5 * (1 - t)})`;
+    ctx.beginPath(); ctx.arc(px, py, 4 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = '#8a6a3a';
+  ctx.beginPath(); ctx.arc(hx, hy, 5 + tier, 0, Math.PI * 2); ctx.fill();
+}
+
+// —— 辅助/过渡 ——
+// 观音 净瓶甘露下落 + 光环
+function drawUltGuanyin(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  const drops = 8 + tier * 2;
+  for (let i = 0; i < drops; i++) {
+    const a = (i / drops) * Math.PI * 2;
+    const spread = R * 0.7 * (0.4 + (i % 3) * 0.2);
+    const dx = x + Math.cos(a) * spread;
+    const fall = ((p * 1.6 + i * 0.13) % 1);
+    const dy = y - CELL * 1.2 + fall * CELL * 1.6;
+    ctx.fillStyle = 'rgba(191,230,255,0.85)';
+    ctx.beginPath(); ctx.ellipse(dx, dy, 2.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = 'rgba(255,246,210,0.6)'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(x, y, easeOut(p) * R * 0.6, 0, Math.PI * 2); ctx.stroke();
+}
+
+// 白骨 骨雾灰白扩散云
+function drawUltBaigujing(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade * 0.9;
+  const rad = easeOut(p) * R * 0.8;
+  for (let i = 0; i < 6 + tier; i++) {
+    const a = (i / (6 + tier)) * Math.PI * 2 + p;
+    const rr = rad * (0.4 + (i % 3) * 0.25);
+    const cx = x + Math.cos(a) * rr * 0.6, cy = y + Math.sin(a) * rr * 0.6;
+    const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr * 0.6);
+    grad.addColorStop(0, 'rgba(230,226,216,0.5)');
+    grad.addColorStop(1, 'rgba(210,205,195,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(cx, cy, rr * 0.6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 御弟 诵经·金色经文字环逐层扩散
+function drawUltTangseng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  const chars = '唵嘛呢叭咪吽';
+  for (let ring = 0; ring < 2; ring++) {
+    const pk = Math.max(0, Math.min(1, p - ring * 0.2));
+    const rad = easeOut(pk) * R * (0.5 + ring * 0.35);
+    const n = 6 + tier;
+    ctx.fillStyle = ring === 0 ? '#ffe08a' : 'rgba(255,224,138,0.6)';
+    ctx.font = `${Math.round(CELL * 0.28)}px "PingFang SC", serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + p * (ring ? -1.2 : 1.2);
+      ctx.fillText(chars[i % chars.length]!, x + Math.cos(a) * rad, y + Math.sin(a) * rad);
+    }
+  }
+}
+
 function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const t = performance.now() / 1000;
   for (const u of b.units.values()) {
@@ -910,7 +1174,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
 
   // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
   const pw = 194;
-  const ph = active ? 150 : 118;
+  const ph = active ? 150 : 134;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
@@ -930,12 +1194,20 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.fillStyle = qualityColor(w.tier);
   ctx.font = 'bold 13px "PingFang SC", sans-serif';
   ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
-  // 技能
+  // 技能（未激活时置灰并标注不生效）
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#9ad8ff';
+  ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
-  ctx.fillStyle = 'rgba(255,240,210,0.7)';
+  if (!active) {
+    ctx.fillStyle = 'rgba(255,154,106,0.85)';
+    ctx.font = '10px "PingFang SC", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('未激活·不生效', px + pw - 12, py + 40);
+    ctx.textAlign = 'left';
+    ctx.font = '12px "PingFang SC", sans-serif';
+  }
+  ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
   // 属性（激活时计入等级/神兵）
   const rows: [string, string][] = active
@@ -1162,11 +1434,14 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
 function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  // 已激活武将占用的格 → 抹掉单字阶数上标（只保留金框上方整体 Lv）
+  const activeCells = new Set<string>();
+  for (const g of b.activeGenerals()) for (const c of g.cells) activeCells.add(`${c.c},${c.r}`);
   // 先画所有字牌（拖拽中的源格隐藏）
   for (const w of b.words.values()) {
     if (ui.dragFrom && ui.dragFrom.c === w.cell.c && ui.dragFrom.r === w.cell.r) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78);
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, !activeCells.has(`${w.cell.c},${w.cell.r}`));
   }
   // 再给「左右紧邻同将」的激活武将套金框
   for (const g of b.activeGenerals()) {

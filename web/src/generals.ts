@@ -105,3 +105,14 @@ export const BOND_ATK_BONUS = 0.12;
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>
   g.chars.flatMap((c) => Array.from({ length: g.weight }, () => ({ char: c, general: g.id }))),
 );
+
+// —— 大招（复用 skillCd 定期触发）——
+// 类型按 skill 派生：远程单点(ranged) = 暴击(单体高倍 + 飘「暴击!」)，其余 = 群攻(范围结算)。
+export type UltType = 'aoe' | 'crit';
+
+export function ultTypeOf(def: GeneralDef): UltType {
+  return def.skill === 'ranged' ? 'crit' : 'aoe';
+}
+
+// 暴击英雄大招在其单体基础倍数上再乘的倍率（初版，后续用 tools/sweep*.mjs 复核平衡）
+export const CRIT_MULT = 1.5;
