@@ -24,7 +24,7 @@ import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
-import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
+import { initAudio, playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 
@@ -327,8 +327,9 @@ function frame(now: number): void {
   let dt = elapsed / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
-  // 非对战界面停掉地图氛围音
-  if (screen !== 'battle') stopAmbient();
+  // 首页放首页 BGM；战斗放地图氛围音（在战斗分支内启动）；其余界面静音。均幂等。
+  if (screen === 'menu') startMenuMusic();
+  else if (screen !== 'battle') stopAmbient();
   if (screen === 'menu') {
     drawMenu(ctx, {
       rankLevel: rank.level,

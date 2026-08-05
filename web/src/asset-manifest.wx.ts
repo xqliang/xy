@@ -28,4 +28,6 @@ export const ASSET_URLS: Record<string, string> = {
   'map-baiguling': 'assets/map-baiguling.jpg',
   'map-pansidong': 'assets/map-pansidong.jpg',
   'bgm-pansidong': 'assets/bgm-pansidong.mp3',
+  'bgm-menu': 'assets/bgm-menu.mp3',
+  'bgm-huoyanshan': 'assets/bgm-huoyanshan.mp3',
 };

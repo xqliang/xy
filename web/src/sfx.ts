@@ -247,7 +247,10 @@ let ambientMap = '';
 
 // —— 文件 BGM（真实音频循环）——
 // 指定地图 → 资源清单里的音频 key。这些地图用真实音频循环，替代程序化氛围旋律。
-const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong' };
+// 循环平滑：各 bgm 文件已在离线裁剪时烘焙淡入/淡出（结尾数秒渐弱），循环接缝不突兀。
+const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong', huoyanshan: 'bgm-huoyanshan' };
+const MENU_BGM_KEY = 'bgm-menu'; // 首页背景音乐
+const MENU_ID = '__menu'; // ambientMap 的首页占位 id（区别于地图 id）
 const bgmBuffers: Record<string, AudioBuffer> = {}; // 已解码缓存，键为 URL
 const bgmDecoding: Record<string, Promise<AudioBuffer | null>> = {}; // 解码中的去重
 
@@ -381,4 +384,15 @@ export function startAmbient(mapId: string): void {
     }, cfg.crackleMs ?? 800);
     ambientTimers.push(crackleTimer);
   }
+}
+
+// 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。Web 端可 fetch；微信端无本地
+// fetch，首页保持静音（原本也无首页音乐）。循环音量渐变由文件烘焙的淡入/淡出保证。
+export function startMenuMusic(): void {
+  if (!ctx || !master || !musicOn) return;
+  if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return;
+  if (ambientMap === MENU_ID && ambientNodes.length) return;
+  stopAmbient();
+  ambientMap = MENU_ID;
+  startFileBgm(MENU_ID, ASSET_URLS[MENU_BGM_KEY]!);
 }
