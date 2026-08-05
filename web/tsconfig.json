@@ -10,7 +10,8 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {
-      "@core": ["../game-core/src/index.ts"]
+      "@core": ["../game-core/src/index.ts"],
+      "@asset-manifest": ["./src/asset-manifest.web.ts"]
     }
   },
   "include": ["src", "../game-core/src"]
