@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { loadEndlessEnabled, setEndlessEnabled, getBestWave, recordBestWave } from '../src/endless';
+import { Battle, TUNING } from '../src/battle';
 
 // vitest 默认 node 环境无 localStorage；storage.ts 在无 wx 时走 localStorage。
 // 注入内存版 stub（不引入 jsdom 依赖），使 storeGet/storeSet 可往返。
@@ -35,5 +36,23 @@ describe('endless persistence', () => {
     expect(getBestWave()).toBe(5);
     expect(recordBestWave(9)).toBe(true);
     expect(getBestWave()).toBe(9);
+  });
+});
+
+describe('endless difficulty curve', () => {
+  it('effectiveDifficulty 分圈阶梗：每 10 波一圈 ×STEP', () => {
+    const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
+    const S = TUNING.endlessCycleStep;
+    expect(b.effectiveDifficulty(1)).toBeCloseTo(1, 5);
+    expect(b.effectiveDifficulty(10)).toBeCloseTo(1, 5);
+    expect(b.effectiveDifficulty(11)).toBeCloseTo(S, 5);
+    expect(b.effectiveDifficulty(20)).toBeCloseTo(S, 5);
+    expect(b.effectiveDifficulty(21)).toBeCloseTo(S * S, 5);
+  });
+
+  it('正常模式 effectiveDifficulty 恒等于 difficultyMul（不受波数影响）', () => {
+    const b = new Battle(1, 1.5, undefined, undefined, {}, [], [], false);
+    expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
+    expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5, 5);
   });
 });

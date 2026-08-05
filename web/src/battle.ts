@@ -74,6 +74,9 @@ export const TUNING = {
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   winWave: 10, // 通关波次
+  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梗式 ×endlessCycleStep ——
+  endlessWavesPerCycle: 10,
+  endlessCycleStep: 1.3,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
@@ -364,13 +367,15 @@ export class Battle {
   private nextMonsterId = 1;
   private waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
+  readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = []) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false) {
     this.weaponBonuses = weapons;
     this.gardenOn = passives.includes('pas_pantao'); // 蟠桃园：装备后每局自动种桃树产桃
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
+    this.endless = endless;
     this.map = map;
     this.pathLen = pathTotalLen(map);
     this.slotOrder = slotUnlockOrder(map);
@@ -1001,7 +1006,7 @@ export class Battle {
     if (this.monsters.length === 0) return;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
-    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * 3;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * 3;
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
@@ -1030,6 +1035,14 @@ export class Battle {
     this.pendingShop = picks.length > 0 ? picks : null;
   }
 
+  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梗系数。
+  // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
+  effectiveDifficulty(wave: number = this.wave): number {
+    if (!this.endless) return this.difficultyMul;
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
+  }
+
   // 本波出怪总数：经济基准(9+n，同时决定掉落) + 后期堆量。
   // 只在 battle 层叠加，不改 game-core 的 monstersInWave，保持"第5波蟠桃转负"的经济不变量与测试。
   private waveSpawnCount(wave: number): number {
@@ -1056,12 +1069,12 @@ export class Battle {
     const isCavalry = this.cavalryWave && !isBoss && spawnedIdx % 2 === 0;
 
     let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
-    hp *= this.difficultyMul; // 境界越高妖怪越强
+    hp *= this.effectiveDifficulty(); // 境界越高妖怪越强；无尽模式再叠分圈系数
     if (isBoss) hp *= TUNING.bossHpMul; // 骑兵血量与普通妖相同，故不额外调整血量
 
     // 移速倍率：BOSS 减半、骑兵翻倍（二者互斥，BOSS 不会被判为骑兵）
     const spdMul = isBoss ? TUNING.bossSpdMul : isCavalry ? TUNING.cavalrySpdMul : 1;
-    const diffSpd = 1 + 0.1 * (this.difficultyMul - 1); // 高境界妖怪更快
+    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
 
     const skill = this.rollMonsterSkill(isBoss);
     this.monsters.push({
@@ -1675,7 +1688,7 @@ export class Battle {
         this.spawnMonster();
         this.spawnRemaining -= 1;
         // 高境界出怪更密集
-        this.spawnTimer = Math.max(0.3, TUNING.spawnInterval / (1 + 0.07 * (this.difficultyMul - 1)));
+        this.spawnTimer = Math.max(0.3, TUNING.spawnInterval / (1 + 0.07 * (this.effectiveDifficulty() - 1)));
       }
     }
     this.updateUnits(dt);
