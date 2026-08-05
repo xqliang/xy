@@ -17,6 +17,7 @@ import {
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
+import { drawSummonTray } from './summon-draw';
 import {
   COLS,
   ROWS,
@@ -50,6 +51,7 @@ export const TUNING = {
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
+  summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
@@ -184,6 +186,7 @@ export class Battle {
   wave = 0;
   status: Status = 'ready';
   summonCost = TUNING.summonCostStart;
+  summonCount = 0;
 
   units = new Map<string, PlacedUnit>();
   monsters: Monster[] = [];
@@ -307,7 +310,7 @@ export class Battle {
   }
 
   // 征兵：消耗蟠桃，随机产出 5 个候选（兵种/铲子）放入候选区。成本递增。
-  // 候选区非空时：若棋盘仍有空位则须先布阵；若无空位则本次征兵覆盖候选区剩余。
+  // 每次征兵清空候选区后写入本轮 5 个。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
     const cost = this.effectiveSummonCost();
@@ -317,16 +320,18 @@ export class Battle {
     }
     this.peach -= cost;
     this.summonCost += TUNING.summonCostStep;
-    this.summonFlash = 1; // 征兵闪光
-    this.tray = []; // 覆盖剩余候选
+    this.summonFlash = 1;
+    this.tray = []; // 必须清空残留
     const types = Object.keys(UNITS) as UnitType[];
-    for (let i = 0; i < TUNING.summonDraws; i++) {
-      if (this.rng.next() < TUNING.shovelDrawChance) {
-        this.tray.push({ kind: 'shovel' });
-      } else {
-        this.tray.push({ kind: 'unit', type: this.rng.pick(types), tier: 1 });
-      }
-    }
+    this.tray = drawSummonTray({
+      rng: this.rng,
+      unitTypes: types,
+      draws: TUNING.summonDraws,
+      shovelChance: TUNING.shovelDrawChance,
+      maxPerKey: TUNING.summonMaxPerKey,
+      firstSummon: this.summonCount === 0,
+    });
+    this.summonCount += 1;
     this.message = '把候选区的兵拖到绿格，铲子拖到锁定格开挖';
     return true;
   }
