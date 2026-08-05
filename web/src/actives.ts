@@ -13,7 +13,7 @@
 export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' | 'jinggu';
 
 export interface ActiveSkillDef {
-  id: string; // 稳定 id（与 ITEMS 的 id 刻意区分，两套系统互不查表）
+  id: string; // 稳定 id（与被动技能 id 刻意区分，两套系统互不查表）
   name: string;
   icon: string; // 图标（emoji 或 1 个汉字，Canvas fillText 渲染）
   cd: number; // 冷却秒数

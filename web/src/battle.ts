@@ -228,6 +228,7 @@ interface Modifiers {
   autoShovel: boolean; // 洛阳铲：定期产铲
   meteor: boolean; // 陨石：每波开始砸最前妖怪
   mud: boolean; // 淤泥：出怪口附近减速
+  generalLevelDelta: number; // 法宝符：所有武将初始等级 +N
 }
 
 // 局外「功德商店」买断的永久加成，开局注入本局（数值温和有上限，避免破坏塔 DPS 平衡）
@@ -306,7 +307,7 @@ export class Battle {
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // 道具与修正器
-  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false };
+  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalLevelDelta: 0 };
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
@@ -499,7 +500,7 @@ export class Battle {
   private stateOf(id: string): GeneralState {
     let s = this.generalStates.get(id);
     if (!s) {
-      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
+      s = { level: Math.min(Battle.GENERAL_MAX_LEVEL, 1 + this.mods.generalLevelDelta), exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
       this.generalStates.set(id, s);
     }
     return s;
@@ -823,12 +824,7 @@ export class Battle {
       case 'xiandan': this.mods.atkMul += 0.15; break;
       case 'fenghuolun': this.mods.frqMul += 0.2; break;
       // 法宝符：所有武将等级 +1（对应神兵符）
-      case 'fabaofu': {
-        for (const g of this.activeGenerals()) {
-          g.state.level = Math.min(Battle.GENERAL_MAX_LEVEL, g.state.level + 1);
-        }
-        break;
-      }
+      case 'fabaofu': this.mods.generalLevelDelta += 1; break; // 所有武将初始等级 +1（惰性应用于 stateOf）
       case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
       case 'mojin': this.mods.shovelPeach += 6; break;
       case 'luoyangchan': this.mods.autoShovel = true; break;

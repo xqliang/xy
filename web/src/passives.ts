@@ -2,7 +2,7 @@
 // 被动技能开局注入本局，效果实现在 battle.ts（按 id 分派）。本文件只放纯数据/类型，不 import Battle。
 
 export interface PassiveSkillDef {
-  id: string; // 稳定 id（与 actives/ITEMS 刻意区分）
+  id: string; // 稳定 id（与 actives 刻意区分）
   name: string;
   icon: string; // 图标（emoji 或 1 个汉字，Canvas fillText 渲染）
   cost: number; // 购买消耗功德

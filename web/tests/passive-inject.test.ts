@@ -39,4 +39,9 @@ describe('被动技能开局注入', () => {
     const b = make([...six, 'xiandan']);
     expect(b.mods.atkMul).toBeCloseTo(1, 5);
   });
+
+  it('法宝符：记录武将初始等级 +1（惰性）', () => {
+    expect(make(['fabaofu']).mods.generalLevelDelta).toBe(1);
+    expect(make([]).mods.generalLevelDelta).toBe(0);
+  });
 });
