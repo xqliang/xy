@@ -1,6 +1,7 @@
 // 程序化音效：用 Web Audio API 实时合成短音效（无任何外部/版权音频文件）。
 // 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器要求用户手势后才能出声。
-// 静音状态持久化到 localStorage。
+// 静音状态持久化（跨平台存储）。
+import { storeGet, storeSet } from './storage';
 
 const MUTE_KEY = 'dasheng.mute';
 const MUSIC_KEY = 'dasheng.music';
@@ -8,8 +9,8 @@ let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false; // 总静音（音效+音乐），默认关（即有声）
 let musicOn = false; // 背景音乐默认关闭；攻击等音效不受此开关影响
-try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch { /* ignore */ }
-try { musicOn = localStorage.getItem(MUSIC_KEY) === '1'; } catch { /* ignore */ }
+muted = storeGet(MUTE_KEY) === '1';
+musicOn = storeGet(MUSIC_KEY) === '1';
 
 // 首个用户手势后调用：创建/恢复 AudioContext（浏览器自动播放策略要求）
 export function initAudio(): void {
@@ -30,7 +31,7 @@ export function isMuted(): boolean {
 }
 export function toggleMute(): boolean {
   muted = !muted;
-  try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
+  try { storeSet(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
   if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.05);
   return muted;
 }
@@ -41,7 +42,7 @@ export function isMusicOn(): boolean {
 }
 export function toggleMusic(): boolean {
   musicOn = !musicOn;
-  try { localStorage.setItem(MUSIC_KEY, musicOn ? '1' : '0'); } catch { /* ignore */ }
+  try { storeSet(MUSIC_KEY, musicOn ? '1' : '0'); } catch { /* ignore */ }
   if (!musicOn) stopAmbient(); // 关闭立即停；开启由对战循环里的 startAmbient 幂等拉起
   return musicOn;
 }
