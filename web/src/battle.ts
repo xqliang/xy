@@ -559,6 +559,22 @@ export class Battle {
     }
     // 字牌：占一格落在棋盘上；同字同阶则升阶。与同将另一个字左右紧邻即自动激活武将。
     if (token.kind === 'word') {
+      // 喂 1 张同将同阶字牌给「已激活武将」→ 整对一起升阶（1级大圣 + 1级大/圣 → 2级大圣）
+      const g = this.activeGenerals().find((gg) => gg.cells.some((cc) => cc.c === to.c && cc.r === to.r));
+      if (g && token.general === g.def.id) {
+        const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
+        const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
+        if (wa && wb && wa.tier === wb.tier && token.tier === wa.tier && wa.tier < MAX_TIER) {
+          wa.tier += 1;
+          wb.tier += 1;
+          this.tray.splice(index, 1);
+          this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
+          this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
+          this.message = `${g.def.name} 升为 ${wa.tier} 阶`;
+          this.emit('merge');
+          return true;
+        }
+      }
       const exist = this.wordAt(to.c, to.r);
       if (exist) {
         if (exist.char === token.char && exist.tier === token.tier && exist.tier < MAX_TIER) {
@@ -573,9 +589,14 @@ export class Battle {
         this.tray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
         return true;
       }
-      if (this.units.has(cellKey(to.c, to.r))) {
-        this.message = '该格已有兵，请放到空格';
-        return false;
+      // 该格有兵 → 字牌与兵交换（字牌落格，兵回候选槽），与「不同型兵交换」一致
+      const uexist = this.units.get(cellKey(to.c, to.r));
+      if (uexist) {
+        this.units.delete(cellKey(to.c, to.r));
+        this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+        this.tray[index] = { kind: 'unit', type: uexist.type, tier: uexist.tier };
+        this.message = `与 ${UNITS[uexist.type].name} 交换`;
+        return true;
       }
       this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
       this.tray.splice(index, 1);
@@ -585,10 +606,14 @@ export class Battle {
       this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，与「${def?.chars.find((c) => c !== token.char)}」左右相邻可激活`;
       return true;
     }
-    // 该格被字牌占用则不可放兵
-    if (this.words.has(cellKey(to.c, to.r))) {
-      this.message = '该格已有武将字牌';
-      return false;
+    // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称
+    const wexist = this.words.get(cellKey(to.c, to.r));
+    if (wexist) {
+      this.words.delete(cellKey(to.c, to.r));
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
+      this.message = `与字牌「${wexist.char}」交换`;
+      return true;
     }
     const exist = this.units.get(cellKey(to.c, to.r));
     if (exist) {
@@ -644,6 +669,22 @@ export class Battle {
     }
     const kTo = cellKey(to.c, to.r);
     const wasActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === from.c && cc.r === from.r));
+    // 把一张同将同阶的备用字牌拖到「已激活武将」→ 整对升阶（与从候选区喂字一致）
+    const gTo = this.activeGenerals().find((gg) => gg.cells.some((cc) => cc.c === to.c && cc.r === to.r));
+    if (gTo && w.general === gTo.def.id && !gTo.cells.some((cc) => cc.c === from.c && cc.r === from.r)) {
+      const wa = this.words.get(cellKey(gTo.cells[0].c, gTo.cells[0].r));
+      const wb = this.words.get(cellKey(gTo.cells[1].c, gTo.cells[1].r));
+      if (wa && wb && wa.tier === wb.tier && w.tier === wa.tier && wa.tier < MAX_TIER) {
+        wa.tier += 1;
+        wb.tier += 1;
+        this.words.delete(kFrom); // 消耗被拖入的字牌
+        this.bursts.push({ kind: 'merge', c: gTo.cells[0].c, r: gTo.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
+        this.bursts.push({ kind: 'merge', c: gTo.cells[1].c, r: gTo.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
+        this.message = `${gTo.def.name} 升为 ${wa.tier} 阶`;
+        this.emit('merge');
+        return true;
+      }
+    }
     const tw = this.words.get(kTo);
     const tu = this.units.get(kTo);
     if (tw) {
@@ -1453,12 +1494,13 @@ export class Battle {
     for (const f of this.fx) f.ttl -= dt;
     this.fx = this.fx.filter((f) => f.ttl > 0);
     // 开火脉冲/连击衰减：在所有状态(含波间'ready')推进，避免单位兵器卡在槽位一直显示
+    // 连击(combo>0)时衰减更快(9 vs 6)，出招/收招更迅捷，视觉更密集（不改实际攻击频率/DPS）
     for (const u of this.units.values()) {
-      u.firePulse = Math.max(0, u.firePulse - dt * 6);
+      u.firePulse = Math.max(0, u.firePulse - dt * (u.combo > 0 ? 9 : 6));
       if (u.firePulse <= 0.02) u.combo = 0; // 收招完成即清连击
     }
     for (const u of this.aiUnits) {
-      u.firePulse = Math.max(0, u.firePulse - dt * 6);
+      u.firePulse = Math.max(0, u.firePulse - dt * (u.combo > 0 ? 9 : 6));
       if (u.firePulse <= 0.02) u.combo = 0;
     }
     for (const bt of this.bursts) bt.ttl -= dt;

@@ -173,7 +173,6 @@ function handleButton(x: number, y: number): boolean {
       if (!btn.enabled) return true;
       if (btn.id === 'summon') battle.summon();
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
-      else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
       else if (btn.id === 'act0') battle.triggerActive(0);
       else if (btn.id === 'act1') battle.triggerActive(1);

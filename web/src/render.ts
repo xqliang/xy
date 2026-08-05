@@ -82,29 +82,23 @@ export function getButtons(b: Battle): Button[] {
   }
   const trayEmpty = b.tray.length === 0;
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
-  // 对战中：中央「征兵」，两翼主动技能图标(带环形CD)，两端「布阵/神掌」，下方一排被动/强化图标
-  if (b.status === 'playing') {
-    const btns: Button[] = [
-      { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
-      { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
-      { id: 'palm', label: '神掌', x: 492, y, w: 56, h, enabled: b.palmAvailable() },
-    ];
-    // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
-    const actX = [90, 410];
-    for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
-      btns.push({ id: `act${i}`, label: '', x: actX[i]!, y, w: 60, h, enabled: true });
-    }
-    // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
-    for (let i = 0; i < b.pickedItems.length; i++) {
-      btns.push({ id: `pas${i}`, label: '', x: 12 + i * (PAS_H + 6), y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
-    }
-    return btns;
-  }
-  return [
-    { id: 'summon', label: `征兵 (${b.effectiveSummonCost()}🍑)`, x: 20, y, w: 168, h, enabled: canSummon },
-    { id: 'autoplace', label: '一键布阵', x: 196, y, w: 168, h, enabled: !trayEmpty },
-    { id: 'wave', label: '立即开战 ▶', x: 372, y, w: 168, h, enabled: b.status === 'ready' },
+  // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼主动技能图标，两端「布阵/神掌」，
+  // 下方一排被动/强化图标。取消「立即开战」（靠倒计时自动开波），保证开波前后 UI 不位移。
+  const btns: Button[] = [
+    { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
+    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
+    { id: 'palm', label: '神掌', x: 492, y, w: 56, h, enabled: b.palmAvailable() },
   ];
+  // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
+  const actX = [90, 410];
+  for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
+    btns.push({ id: `act${i}`, label: '', x: actX[i]!, y, w: 60, h, enabled: true });
+  }
+  // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
+  for (let i = 0; i < b.pickedItems.length; i++) {
+    btns.push({ id: `pas${i}`, label: '', x: 12 + i * (PAS_H + 6), y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
+  }
+  return btns;
 }
 
 export interface UiState {
@@ -203,10 +197,10 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
 function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: number, pulse: number, combo: number) {
   ctx.lineCap = 'round';
   switch (type) {
-    case 'spear': { // 枪：向前突刺（杆+红缨+枪头）；连击时只收回约 1/3 再刺出，更显连贯有力
+    case 'spear': { // 枪：向前突刺（杆+红缨+枪头）；连击时只收回约 1/4 再刺出，更显连贯有力
       // 普通：reach 在 0.25..0.85 间随 pulse 伸缩（每刺完整收回）
-      // 连击(combo>0)：抬高收回下限到 0.55，只回 1/3 就再刺出，营造密集连刺威力感
-      const rest = combo > 0 ? 0.55 : 0.25;
+      // 连击(combo>0)：抬高收回下限到 0.70，只回 1/4 就再刺出，配合更快衰减营造密集连刺威力感
+      const rest = combo > 0 ? 0.70 : 0.25;
       const reach = s * (rest + (0.85 - rest) * pulse);
       ctx.strokeStyle = '#8a5a2b';
       ctx.lineWidth = Math.max(2, s * 0.07);
@@ -416,8 +410,8 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      // 征兵入场：令牌从「营」标处沿抛物线弧一个个"重重砸入"槽位；字牌(收集品)不重播
-      const p = token.kind === 'word' ? 1 : Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
+      // 征兵入场：所有令牌（含武将字牌）从「营」标处沿抛物线弧一个个"重重砸入"槽位
+      const p = Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
       if (p < 1) {
         const srcX = 34, srcY = TRAY_Y - 40; // 从「营」标上方抛出
         // 非对称时间轴：上升较缓、下落加速(重力砸落感)。apex 之后压缩时间→落得更快
@@ -1443,6 +1437,20 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.font = '13px "PingFang SC", sans-serif';
       ctx.fillText(def?.desc ?? '', btn.x + btn.w / 2, btn.y + 60);
     } else {
+      // 征兵按钮：按当前蟠桃/成本填充进度条（参考竞品，桃攒够即满格可点）
+      if (btn.id === 'summon') {
+        const prog = Math.max(0, Math.min(1, b.peach / b.effectiveSummonCost()));
+        if (!btn.enabled && prog > 0) {
+          ctx.save();
+          ctx.beginPath();
+          roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
+          ctx.clip();
+          ctx.fillStyle = b.map.theme.accent;
+          ctx.globalAlpha = 0.55;
+          ctx.fillRect(btn.x, btn.y, btn.w * prog, btn.h);
+          ctx.restore();
+        }
+      }
       ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
       ctx.font = `bold ${btn.w < 140 ? 16 : 20}px "PingFang SC", sans-serif`;
       ctx.textAlign = 'center';
@@ -1470,7 +1478,7 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
 
 // 两翼主动技能图标：图标 + 环形冷却扇形 + 就绪金边 + 触发白环
 function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.status !== 'playing') return;
+  if (b.status !== 'playing' && b.status !== 'ready') return;
   for (const btn of getButtons(b)) {
     if (!btn.id.startsWith('act')) continue;
     const i = Number(btn.id.slice(3));
@@ -1526,7 +1534,7 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
 
 // 被动/强化技能行：图标块（进度类附小进度条）
 function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.status !== 'playing') return;
+  if (b.status !== 'playing' && b.status !== 'ready') return;
   for (const btn of getButtons(b)) {
     if (!btn.id.startsWith('pas')) continue;
     const i = Number(btn.id.slice(3));
