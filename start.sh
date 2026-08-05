@@ -10,6 +10,8 @@
 #   ./start.sh preview    # 预览已构建产物（http://127.0.0.1:5180）
 #   ./start.sh test       # 运行 game-core 数值单元测试
 #   ./start.sh check      # 类型检查（game-core + web）
+#   ./start.sh deploy     # 一键构建并部署到 ECS（默认 ssh ecs → /opt/xy/html，端口 8082）
+#                         # 可用环境变量覆盖：ECS_SSH / ECS_DIR / ECS_URL
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,9 +96,30 @@ case "$CMD" in
     (cd "$ROOT/web" && npm run typecheck)
     echo "✅ 类型检查通过"
     ;;
+  deploy)
+    # 一键部署：构建生产产物 → 打包经 ssh 传到 ECS 静态目录 → 健康检查。
+    # 服务器用 systemd(python http.server) 直读目录，无需重启；见首次部署说明。
+    ensure_deps "$ROOT/web"
+    ECS_SSH="${ECS_SSH:-ecs}"          # ~/.ssh/config 里的主机别名
+    ECS_DIR="${ECS_DIR:-/opt/xy/html}" # 服务器静态站根目录
+    ECS_URL="${ECS_URL:-http://124.221.105.4:8082/}" # 健康检查地址
+    echo "🔨 构建生产产物（web/dist）…"
+    (cd "$ROOT/web" && npm run build)
+    echo "📤 上传 dist → ${ECS_SSH}:${ECS_DIR}"
+    # COPYFILE_DISABLE=1 抑制 macOS 附加属性；remote 先清空目录再解包（原子性足够，站点为纯静态）
+    COPYFILE_DISABLE=1 tar czf - -C "$ROOT/web/dist" . 2>/dev/null \
+      | ssh "$ECS_SSH" "mkdir -p '${ECS_DIR}' && rm -rf '${ECS_DIR}'/* && tar xzf - -C '${ECS_DIR}' 2>/dev/null"
+    echo "🔎 健康检查：${ECS_URL}"
+    code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$ECS_URL" || echo 000)"
+    if [ "$code" = "200" ]; then
+      echo "✅ 部署完成：${ECS_URL} (HTTP ${code})"
+    else
+      echo "⚠️  已上传，但健康检查返回 HTTP ${code}（检查 systemd 服务 xy-web / 云安全组端口放行）"
+    fi
+    ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | bg | stop | logs | build | preview | test | check"
+    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy"
     exit 1
     ;;
 esac
