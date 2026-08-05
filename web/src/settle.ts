@@ -168,3 +168,53 @@ export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: nu
 
   ctx.restore();
 }
+
+// 无尽局结束展示数据（无星级变化，只展示波数/纪录/功德）。
+export interface EndlessResult {
+  wave: number;       // 本局抵达波数
+  best: number;       // 历史最高波数（含本局）
+  isNewRecord: boolean; // 本局是否破纪录
+  merit: number;      // 本局获得功德
+}
+
+// 无尽结算屏：静态展示（不做加减星动画）。点击任意处即返回主菜单（由 main.ts 处理）。
+export function drawEndlessSettle(ctx: CanvasRenderingContext2D, r: EndlessResult, _tMs: number): void {
+  // 半透明遮罩
+  ctx.fillStyle = 'rgba(20,14,8,0.78)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  const cx = VIEW_W / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // 标题
+  ctx.fillStyle = '#ffd873';
+  ctx.font = 'bold 40px "PingFang SC", sans-serif';
+  ctx.fillText('无尽 · 试炼结束', cx, VIEW_H * 0.30);
+
+  // 本局波数（大字）
+  ctx.fillStyle = '#fff4e0';
+  ctx.font = 'bold 72px "PingFang SC", sans-serif';
+  ctx.fillText(`第 ${r.wave} 波`, cx, VIEW_H * 0.44);
+
+  // 破纪录高亮 / 历史最高
+  if (r.isNewRecord) {
+    ctx.fillStyle = '#ff6f3c';
+    ctx.font = 'bold 30px "PingFang SC", sans-serif';
+    ctx.fillText('★ 新纪录！★', cx, VIEW_H * 0.54);
+  } else {
+    ctx.fillStyle = '#c9b98f';
+    ctx.font = '24px "PingFang SC", sans-serif';
+    ctx.fillText(`历史最高：第 ${r.best} 波`, cx, VIEW_H * 0.54);
+  }
+
+  // 功德奖励
+  ctx.fillStyle = '#e0a020';
+  ctx.font = '22px "PingFang SC", sans-serif';
+  ctx.fillText(`功德 +${r.merit}`, cx, VIEW_H * 0.62);
+
+  // 返回提示
+  ctx.fillStyle = '#b0a88f';
+  ctx.font = '18px "PingFang SC", sans-serif';
+  ctx.fillText('点击任意处返回', cx, VIEW_H * 0.72);
+}
