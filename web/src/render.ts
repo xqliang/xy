@@ -68,8 +68,8 @@ export function getButtons(b: Battle): Button[] {
   }
   const trayEmpty = b.tray.length === 0;
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
-  // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼主动技能图标，两端「布阵/神掌」，
-  // 下方一排被动/强化图标。取消「立即开战」（靠倒计时自动开波），保证开波前后 UI 不位移。
+  // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，左端「布阵」，
+  // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
   const btns: Button[] = [
     { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
