@@ -115,6 +115,20 @@ export function setHudRank(label: string): void {
   hudRankLabel = label;
 }
 
+// 背景整屏渐变缓存：全屏渐变每帧重建开销大，而一局内地图主题色固定，按颜色键复用同一对象。
+// 坐标固定在逻辑空间(0..VIEW_H)，不随 DPR 变换失效，可跨帧安全复用。
+let bgGradCache: { key: string; grad: CanvasGradient } | null = null;
+function themeBgGradient(ctx: CanvasRenderingContext2D, bg0: string, bg1: string): CanvasGradient {
+  const key = `${bg0}|${bg1}`;
+  if (!bgGradCache || bgGradCache.key !== key) {
+    const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    grad.addColorStop(0, bg0);
+    grad.addColorStop(1, bg1);
+    bgGradCache = { key, grad };
+  }
+  return bgGradCache.grad;
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -299,10 +313,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
     ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 淡宣纸薄纱：把写实场景压成柔和氛围底，突出扁平格子
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   } else {
-    const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-    bg.addColorStop(0, b.map.theme.bg0);
-    bg.addColorStop(1, b.map.theme.bg1);
-    ctx.fillStyle = bg;
+    ctx.fillStyle = themeBgGradient(ctx, b.map.theme.bg0, b.map.theme.bg1);
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
