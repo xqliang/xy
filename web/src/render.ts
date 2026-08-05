@@ -74,10 +74,13 @@ export function getButtons(b: Battle): Button[] {
     { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
   ];
-  // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
-  const actX = [90, 410];
+  // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
+  const ACT_D = 60; // 圆直径
+  const ACT_GAP = 10; // 与「征兵」按钮的间隙
+  const actX = [205 - ACT_GAP - ACT_D, 205 + 150 + ACT_GAP]; // 征兵 x=205 w=150：左侧/右侧
+  const actY = y + (h - ACT_D) / 2;
   for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
-    btns.push({ id: `act${i}`, label: '', x: actX[i]!, y, w: 60, h, enabled: true });
+    btns.push({ id: `act${i}`, label: '', x: actX[i]!, y: actY, w: ACT_D, h: ACT_D, enabled: true });
   }
   // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
   for (let i = 0; i < b.pickedItems.length; i++) {
@@ -1832,7 +1835,10 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
     if (!slot) continue;
     const def = activeById(slot.id);
     const cx = btn.x + btn.w / 2, cy = btn.y + btn.h / 2;
-    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
+    const r = btn.w / 2;
+    // 圆形底
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = slot.ready ? '#b5762a' : '#4a3f30';
     ctx.fill();
     // 图标字形
@@ -1842,13 +1848,13 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.textBaseline = 'middle';
     ctx.fillText(def?.icon ?? '?', cx, cy);
     if (!slot.ready) {
-      // 剩余冷却扇形（从 12 点方向顺时针覆盖，比例=剩余CD）
+      // 剩余冷却扇形（从 12 点方向顺时针覆盖，比例=剩余CD），半径与圆一致
       const frac = slot.cdMax > 0 ? slot.cd / slot.cdMax : 0;
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.beginPath();
       ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, btn.w * 0.6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+      ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -1856,22 +1862,24 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.font = 'bold 16px "PingFang SC", sans-serif';
       ctx.fillText(String(Math.ceil(slot.cd)), cx, cy);
     } else {
-      // 就绪：金色脉冲边
+      // 就绪：金色脉冲圆环
       ctx.save();
       ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 130);
       ctx.strokeStyle = '#ffe27a';
       ctx.lineWidth = 3;
-      roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
     if (slot.flash > 0) {
-      // 触发瞬间白环反馈
+      // 触发瞬间白色圆环反馈
       ctx.save();
       ctx.globalAlpha = slot.flash;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 3;
-      roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
