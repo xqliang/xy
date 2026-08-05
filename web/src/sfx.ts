@@ -121,125 +121,8 @@ export function playSfx(name: string): void {
   }
 }
 
-// —— 背景氛围音（每张地图不同风格：五声音阶旋律 + 低频和弦垫底 + 连续纹理）——
-// 全部用 Web Audio 实时合成，无任何音频文件。旋律用「预约调度器」提前排好每个音符的起始时刻，
-// 保证节奏精准；音色分 古筝(拨弦)/箫(长音)/钟(空灵) 三种。
-
-// 中国五声音阶：以主音为 0 的半音偏移（宫商角徵羽 = do re mi sol la 的不同调式）
-const PENTA = {
-  gong: [0, 2, 4, 7, 9], // 宫调式：明亮、大调感
-  zhi: [0, 2, 5, 7, 9], // 徵调式：流畅、清亮
-  yu: [0, 3, 5, 7, 10], // 羽调式：偏小调、苍凉
-  jue: [0, 4, 5, 7, 11], // 角调式：空灵、悬疑
-  shang: [0, 2, 5, 7, 10], // 商调式：古朴、神秘
-} as const;
-
-type Voice = 'zheng' | 'flute' | 'bell';
-
-interface AmbientCfg {
-  // —— 低频和弦垫底（pad）——
-  chord: number[]; // 和弦频率（低八度）
-  chordWave: Wave;
-  chordGain: number; // 每个和弦音的增益
-  // —— 五声旋律 ——
-  root: number; // 主音频率（Hz）
-  scale: readonly number[]; // 音阶（PENTA.*）
-  octaves: number; // 旋律跨越的八度数
-  bpm: number; // 速度（每分钟拍数）
-  voice: Voice; // 旋律音色
-  density: number; // 每拍出音概率（0..1，越低越空灵）
-  melGain: number; // 旋律音量
-  // —— 连续纹理（风/流水/空洞）——
-  texture?: 'stream' | 'hollow';
-  texFreq?: number;
-  texGain?: number;
-  // —— 偶发点缀（火焰噼啪/丝语）——
-  crackle?: boolean;
-  crackleMs?: number;
-  crackleHp?: number;
-  crackleLp?: number;
-}
-
-const AMBIENT: Record<string, AmbientCfg> = {
-  // 火焰山：苍凉厚重，羽调式慢古筝，低沉和弦
-  huoyanshan: {
-    chord: [110, 164.8], chordWave: 'sine', chordGain: 0.08,
-    root: 220, scale: PENTA.yu, octaves: 2, bpm: 60, voice: 'zheng', density: 0.5, melGain: 0.2,
-    crackle: true, crackleMs: 900, crackleHp: 1400, crackleLp: 5000,
-  },
-  // 流沙河：流畅温和，徵调式箫声 + 流水纹理
-  liushahe: {
-    chord: [130.8, 196], chordWave: 'sine', chordGain: 0.07,
-    root: 261.6, scale: PENTA.zhi, octaves: 2, bpm: 76, voice: 'flute', density: 0.62, melGain: 0.16,
-    texture: 'stream', texFreq: 900, texGain: 0.05,
-  },
-  // 白骨岭：空灵幽冷，角调式钟音，稀疏 + 空洞纹理
-  baiguling: {
-    chord: [98, 130.8], chordWave: 'triangle', chordGain: 0.07,
-    root: 293.7, scale: PENTA.jue, octaves: 2, bpm: 52, voice: 'bell', density: 0.32, melGain: 0.16,
-    texture: 'hollow', texFreq: 300, texGain: 0.045,
-  },
-  // 盘丝洞：诡异神秘，商调式快古筝 + 丝语点缀
-  pansidong: {
-    chord: [146.8, 220, 293.7], chordWave: 'sine', chordGain: 0.06,
-    root: 329.6, scale: PENTA.shang, octaves: 2, bpm: 88, voice: 'zheng', density: 0.55, melGain: 0.17,
-    crackle: true, crackleMs: 1300, crackleHp: 4000, crackleLp: 9000,
-  },
-};
-
-// 从主音+音阶展开成多八度的频率表
-function buildScale(root: number, semis: readonly number[], octaves: number): number[] {
-  const out: number[] = [];
-  for (let o = 0; o < octaves; o++) {
-    for (const s of semis) out.push(root * Math.pow(2, o + s / 12));
-  }
-  return out;
-}
-
-// 单个旋律音符：按音色合成，连到指定输出节点（dest），在绝对时刻 t0 起音
-function noteVoice(freq: number, dur: number, kind: Voice, gain: number, t0: number, dest: AudioNode): void {
-  if (!ctx) return;
-  if (kind === 'flute') {
-    // 箫/笛：正弦 + 慢起音 + 颤音，气声柔和
-    const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq;
-    const vib = ctx.createOscillator(); vib.type = 'sine'; vib.frequency.value = 5;
-    const vg = ctx.createGain(); vg.gain.value = freq * 0.006; // 颤音深度
-    vib.connect(vg); vg.connect(osc.frequency); vib.start(t0); vib.stop(t0 + dur + 0.05);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.09);
-    g.gain.setValueAtTime(gain, t0 + dur * 0.7);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(g); g.connect(dest);
-    osc.start(t0); osc.stop(t0 + dur + 0.05);
-  } else if (kind === 'bell') {
-    // 钟/磬：多个非整数泛音，快起音长衰减，金属空灵
-    [1, 2.01, 3.02].forEach((mul, i) => {
-      const osc = ctx!.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq * mul;
-      const g = ctx!.createGain(); const peak = gain * (i === 0 ? 1 : 0.28 / i);
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(peak, t0 + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * (i === 0 ? 1 : 0.6));
-      osc.connect(g); g.connect(dest);
-      osc.start(t0); osc.stop(t0 + dur + 0.05);
-    });
-  } else {
-    // 古筝/琵琶：锯齿基频 + 八度泛音，经低通「拨弦即亮、随即变暗」
-    const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = freq;
-    const oct = ctx.createOscillator(); oct.type = 'triangle'; oct.frequency.value = freq * 2;
-    const octG = ctx.createGain(); octG.gain.value = 0.4;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(Math.min(6000, freq * 6), t0);
-    lp.frequency.exponentialRampToValueAtTime(Math.max(400, freq * 1.5), t0 + dur * 0.8);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.008); // 极快起音=拨弦
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(g); oct.connect(octG); octG.connect(g); g.connect(lp); lp.connect(dest);
-    osc.start(t0); osc.stop(t0 + dur + 0.05);
-    oct.start(t0); oct.stop(t0 + dur + 0.05);
-  }
-}
+// —— 背景音乐（每张地图各一首真实音频循环）——
+// 程序化合成的氛围旋律已移除；各地图 BGM 一律走文件（见 MAP_BGM）。音效仍为实时合成（见上）。
 
 let ambientNodes: { stop?: () => void; node: AudioNode }[] = [];
 let ambientTimers: number[] = [];
@@ -248,7 +131,12 @@ let ambientMap = '';
 // —— 文件 BGM（真实音频循环）——
 // 指定地图 → 资源清单里的音频 key。这些地图用真实音频循环，替代程序化氛围旋律。
 // 循环平滑：各 bgm 文件已在离线裁剪时烘焙淡入/淡出（结尾数秒渐弱），循环接缝不突兀。
-const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong', huoyanshan: 'bgm-huoyanshan', baiguling: 'bgm-baiguling' };
+const MAP_BGM: Record<string, string> = {
+  huoyanshan: 'bgm-huoyanshan',
+  liushahe: 'bgm-liushahe',
+  baiguling: 'bgm-baiguling',
+  pansidong: 'bgm-pansidong',
+};
 const MENU_BGM_KEY = 'bgm-menu'; // 首页背景音乐
 const MENU_ID = '__menu'; // ambientMap 的首页占位 id（区别于地图 id）
 const bgmBuffers: Record<string, AudioBuffer> = {}; // 已解码缓存，键为 URL
@@ -306,84 +194,15 @@ export function stopAmbient(): void {
   ambientMap = '';
 }
 
-// 启动某地图的氛围音（幂等：同图不重启）
+// 启动某地图的背景音乐（幂等：同图不重启）。各地图一首真实音频循环；Web 端 fetch 播放，
+// 微信端无本地 fetch 则静音（合成氛围音已移除）。
 export function startAmbient(mapId: string): void {
   if (!ctx || !master || !musicOn) return; // 背景音乐关闭时不播放（音效仍正常）
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;
-
-  // 文件 BGM 优先（如盘丝洞用真实音频循环）：Web 端可 fetch 本地资源；微信端无 fetch，回退到下方程序化氛围。
   const bgmKey = MAP_BGM[mapId];
-  if (bgmKey && !isWeChat && ASSET_URLS[bgmKey]) {
-    startFileBgm(mapId, ASSET_URLS[bgmKey]!);
-    return; // 用文件 BGM，不再叠加合成旋律
-  }
-
-  const cfg = AMBIENT[mapId] ?? AMBIENT.huoyanshan!;
-  const bus = ctx.createGain();
-  bus.gain.value = 0.5; // 氛围总线（旋律/和弦/纹理都汇入这里，再进 master）
-  bus.connect(master);
-  ambientNodes.push({ node: bus });
-
-  // 低频和弦 drone + 慢速颤音（垫底）
-  for (const f of cfg.chord) {
-    const o = ctx.createOscillator(); o.type = cfg.chordWave; o.frequency.value = f;
-    const og = ctx.createGain(); og.gain.value = cfg.chordGain;
-    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.08 + Math.random() * 0.1;
-    const lg = ctx.createGain(); lg.gain.value = cfg.chordGain * 0.5;
-    lfo.connect(lg); lg.connect(og.gain);
-    o.connect(og); og.connect(bus);
-    o.start(); lfo.start();
-    ambientNodes.push({ node: o, stop: () => o.stop() }, { node: og }, { node: lfo, stop: () => lfo.stop() }, { node: lg });
-  }
-
-  // 五声旋律：预约调度器（每 60ms 检查一次，把 lookahead 秒内的音符提前排好）
-  const melBus = ctx.createGain(); melBus.gain.value = 1;
-  melBus.connect(bus);
-  ambientNodes.push({ node: melBus });
-  const scale = buildScale(cfg.root, cfg.scale, cfg.octaves);
-  const beat = 60 / cfg.bpm;
-  let idx = Math.floor(scale.length / 2); // 从音阶中部起步
-  let nextTime = ctx.currentTime + 0.15;
-  const lookahead = 0.25;
-  const melTimer = window.setInterval(() => {
-    if (muted || !ctx) return;
-    while (nextTime < ctx.currentTime + lookahead) {
-      if (Math.random() < cfg.density) {
-        // 小步随机游走：多为 ±1/±2 级，偶尔停在原地，保证悦耳不跳脱
-        const step = [-2, -1, -1, 0, 1, 1, 2][Math.floor(Math.random() * 7)]!;
-        idx = Math.max(0, Math.min(scale.length - 1, idx + step));
-        const dur = beat * ([1, 1, 2][Math.floor(Math.random() * 3)]!);
-        const vel = cfg.melGain * (0.8 + Math.random() * 0.3); // 轻微力度变化
-        noteVoice(scale[idx]!, dur * 0.95, cfg.voice, vel, nextTime, melBus);
-      }
-      nextTime += beat;
-    }
-  }, 60);
-  ambientTimers.push(melTimer);
-
-  // 连续纹理（流水/空洞）：循环噪声 + 带通
-  if (cfg.texture) {
-    const len = ctx.sampleRate * 2;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = cfg.texFreq ?? 800; bp.Q.value = 0.6;
-    const tg = ctx.createGain(); tg.gain.value = cfg.texGain ?? 0.05;
-    src.connect(bp); bp.connect(tg); tg.connect(bus);
-    src.start();
-    ambientNodes.push({ node: src, stop: () => src.stop() }, { node: bp }, { node: tg });
-  }
-
-  // 偶发点缀（火焰噼啪 / 盘丝洞丝语）
-  if (cfg.crackle) {
-    const crackleTimer = window.setInterval(() => {
-      if (!muted && ctx) noise(0.07, { gain: 0.05, hp: cfg.crackleHp ?? 1500, lp: cfg.crackleLp ?? 5000 });
-    }, cfg.crackleMs ?? 800);
-    ambientTimers.push(crackleTimer);
-  }
+  if (bgmKey && !isWeChat && ASSET_URLS[bgmKey]) startFileBgm(mapId, ASSET_URLS[bgmKey]!);
 }
 
 // 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。Web 端可 fetch；微信端无本地
