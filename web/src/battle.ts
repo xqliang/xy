@@ -20,6 +20,7 @@ import type { UnitType } from '@core';
 import { RNG } from './rng';
 import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, type GeneralDef } from './generals';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
+import { drawSummonTray } from './summon-draw';
 import {
   COLS,
   ROWS,
@@ -54,6 +55,7 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
+  summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
@@ -242,6 +244,7 @@ export class Battle {
   wave = 0;
   status: Status = 'ready';
   summonCost = TUNING.summonCostStart;
+  summonCount = 0;
 
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
@@ -380,7 +383,8 @@ export class Battle {
   }
 
   // 征兵：消耗蟠桃随机产出候选（兵种/铲子/武将字牌）。成本递增。
-  // 残余的「兵/铲」会被本次征兵清掉；但「字牌/已凑齐武将」属收集品，会保留累积。
+  // 兵/铲的分布走受约束的 drawSummonTray（同 key 上限 + 首次保底≥4兵）；
+  // 「字牌/已凑齐武将」属收集品，跨次征兵保留累积；非首次征兵按掉率把部分兵槽转为字牌。
   summon(): boolean {
     if (this.status === 'won' || this.status === 'lost') return false;
     const keep = this.tray.filter((t) => t.kind === 'word');
@@ -398,19 +402,29 @@ export class Battle {
     this.summonFlash = 1; // 征兵闪光
     this.summonAnimT = 0; // 触发候选令牌逐个飞入动画
     this.emit('summon');
-    this.tray = keep; // 保留字牌/武将，清掉残余兵与铲
+    // 保留字牌/武将（收集品），清掉残余兵与铲；新抽只填满剩余槽位
+    const avail = Math.max(0, TUNING.traySize - keep.length);
     const types = Object.keys(UNITS) as UnitType[];
-    for (let i = 0; i < TUNING.summonDraws; i++) {
-      const roll = this.rng.next();
-      if (roll < TUNING.shovelDrawChance) {
-        this.tray.push({ kind: 'shovel' });
-      } else if (roll < TUNING.shovelDrawChance + TUNING.wordDrawChance + this.mods.wordRateBonus) {
-        const w = this.rng.pick(WORD_POOL); // 武将字牌
-        this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: 1 });
-      } else {
-        this.tray.push({ kind: 'unit', type: this.rng.pick(types), tier: 1 });
+    const firstSummon = this.summonCount === 0;
+    // 兵/铲分布：受约束（同 key ≤ summonMaxPerKey，首次保底≥4兵）
+    const base = drawSummonTray({
+      rng: this.rng,
+      unitTypes: types,
+      draws: avail,
+      shovelChance: TUNING.shovelDrawChance,
+      maxPerKey: TUNING.summonMaxPerKey,
+      firstSummon,
+    });
+    this.summonCount += 1;
+    // 非首次征兵：按字牌掉率把部分「兵」槽转成武将字牌（首次保底不转，维持≥4兵）
+    const draws: TrayToken[] = base.map((tok) => {
+      if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus) {
+        const w = this.rng.pick(WORD_POOL);
+        return { kind: 'word', char: w.char, general: w.general, tier: 1 };
       }
-    }
+      return tok;
+    });
+    this.tray = [...keep, ...draws];
     this.message = '把兵拖到绿格；两个同将字牌可凑成武将（占两格）';
     return true;
   }

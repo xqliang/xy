@@ -76,7 +76,7 @@ export function getButtons(b: Battle): Button[] {
     }));
   }
   const trayEmpty = b.tray.length === 0;
-  const canSummon = b.peach >= b.summonCost; // 桃够即可征兵(不看候选槽；点后清空残余)
+  const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
   // 对战中：4 键（征兵/布阵/绝招/神掌）；备战中：3 键（征兵/布阵/立即开战）
   if (b.status === 'playing') {
     const w4 = 124;
