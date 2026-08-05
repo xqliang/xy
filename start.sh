@@ -15,6 +15,7 @@
 #   ./start.sh rollback           # 回滚到上一个发布（原子切换）
 #   ./start.sh rollback list      # 列出所有可回滚发布（标出当前）
 #   ./start.sh rollback <rel|时间戳>  # 回滚到指定发布（可传时间戳子串）
+#   ./start.sh wx         # 构建微信小游戏 bundle 到 wechat/（独立于 web，不影响 dev/deploy）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,6 +100,18 @@ case "$CMD" in
     (cd "$ROOT/web" && npm run typecheck)
     echo "✅ 类型检查通过"
     ;;
+  wx)
+    # 微信小游戏构建：把 web/src 打成单文件 bundle → wechat/game.bundle.js，并同步资源。
+    # 与 web 的 dev/build/deploy 完全分离，不影响本地调试与服务器部署。需微信开发者工具人工联调。
+    ensure_deps "$ROOT/web"
+    echo "🔨 构建微信小游戏 bundle（wechat/game.bundle.js）…"
+    (cd "$ROOT/web" && npx vite build --config vite.wx.config.ts)
+    echo "🖼  同步资源 → wechat/assets"
+    mkdir -p "$ROOT/wechat/assets"
+    cp -R "$ROOT/web/public/assets/." "$ROOT/wechat/assets/" 2>/dev/null || true
+    echo "✅ 微信构建完成：wechat/game.bundle.js"
+    echo "   下一步：把 weapp-adapter.js 放到 wechat/（见 wechat/README.md），用「微信开发者工具」打开 wechat/ 联调"
+    ;;
   deploy)
     # 一键部署：构建生产产物 → 打包经 ssh 传到 ECS 静态目录 → 健康检查。
     # 服务器用 systemd(python http.server) 直读目录，无需重启；见首次部署说明。
@@ -173,7 +186,7 @@ echo \"↩️  已回滚：\$DIR → \$TARGET（原：\${CUR:-无}）\""
     ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy | rollback"
+    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy | rollback | wx"
     exit 1
     ;;
 esac

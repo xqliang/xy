@@ -2,6 +2,7 @@
 // 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器要求用户手势后才能出声。
 // 静音状态持久化（跨平台存储）。
 import { storeGet, storeSet } from './storage';
+import { createAudioContext } from './platform';
 
 const MUTE_KEY = 'dasheng.mute';
 const MUSIC_KEY = 'dasheng.music';
@@ -16,8 +17,8 @@ musicOn = storeGet(MUSIC_KEY) === '1';
 export function initAudio(): void {
   if (ctx) { if (ctx.state === 'suspended') void ctx.resume(); return; }
   try {
-    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    ctx = new AC();
+    ctx = createAudioContext(); // 平台适配：Web=AudioContext，微信=wx.createWebAudioContext()
+    if (!ctx) return;
     master = ctx.createGain();
     master.gain.value = muted ? 0 : 0.5;
     master.connect(ctx.destination);

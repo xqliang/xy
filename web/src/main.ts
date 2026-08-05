@@ -24,9 +24,14 @@ import { drawBag, bagHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { initAudio, playSfx, startAmbient, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
 import { showRewardedAd } from './ads';
+import { getGameCanvas, onAppHide, onAppShow } from './platform';
 
-const canvas = document.getElementById('game') as HTMLCanvasElement;
+const canvas = getGameCanvas();
 const ctx = canvas.getContext('2d')!;
+
+// 切后台暂停背景音（对齐"看广告/切后台暂停"；Web 下 onAppHide 为 no-op，行为不变）
+onAppHide(() => { try { stopAmbient(); } catch { /* ignore */ } });
+onAppShow(() => { /* 恢复由游戏循环自然继续 */ });
 
 // 异步加载 Seedream 立绘（加载完成后游戏循环自动用上，未完成时用色块底座兜底）
 void loadAssets();

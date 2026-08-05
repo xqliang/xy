@@ -1,5 +1,6 @@
 // 资源加载：加载 Seedream 生成的立绘，把纯白背景抠成透明，缓存为离屏 canvas。
 import type { UnitType } from '@core';
+import { createImage, assetUrl } from './platform';
 
 export type AssetKey =
   | 'tangseng'
@@ -60,13 +61,13 @@ export function assetsReady(): boolean {
 
 function loadOne(key: AssetKey): Promise<void> {
   return new Promise((resolve) => {
-    const img = new Image();
+    const img = createImage();
     img.onload = () => {
       cache[key] = img; // 素材已是离线抠好的透明 PNG，直接使用
       resolve();
     };
     img.onerror = () => resolve();
-    img.src = FILES[key];
+    img.src = assetUrl(FILES[key]);
   });
 }
 
