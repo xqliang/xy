@@ -14,6 +14,7 @@ export type AssetKey =
   | 'monster-minion'
   | 'monster-boss'
   | 'item-shovel'
+  | 'camp'
   | 'hero-wukong'
   | 'hero-bajie'
   | 'hero-shaseng'

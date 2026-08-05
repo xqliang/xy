@@ -379,26 +379,57 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
   }
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 底板
-  ctx.fillStyle = '#efe6d2';
+  // 底板：木质竖向渐变 + 描边
+  const base = ctx.createLinearGradient(0, TRAY_Y, 0, TRAY_Y + TRAY_H);
+  base.addColorStop(0, '#efe3c6');
+  base.addColorStop(1, '#d9c39a');
+  ctx.fillStyle = base;
   roundRect(ctx, 8, TRAY_Y, VIEW_W - 16, TRAY_H, 10);
   ctx.fill();
-  // "营" 标
-  ctx.fillStyle = '#8a5a2b';
-  roundRect(ctx, 12, TRAY_Y + 6, 44, TRAY_H - 12, 8);
-  ctx.fill();
-  ctx.fillStyle = '#fff2d8';
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#8a6a3a';
+  ctx.stroke();
+  // 「营」招牌：优先用 Seedream 素材(camp)，未加载则画木牌+文字兜底
+  const campSpr = sprite('camp');
+  const campX = 12, campY = TRAY_Y + 5, campW = 46, campH = TRAY_H - 10;
+  if (campSpr) {
+    const s = Math.min(campW / campSpr.width, campH / campSpr.height); // 等比 contain
+    const dw = campSpr.width * s, dh = campSpr.height * s;
+    ctx.drawImage(campSpr, campX + (campW - dw) / 2, campY + (campH - dh) / 2, dw, dh);
+  } else {
+    const wood = ctx.createLinearGradient(0, campY, 0, campY + campH);
+    wood.addColorStop(0, '#a06a34');
+    wood.addColorStop(1, '#7d4f24');
+    ctx.fillStyle = wood;
+    roundRect(ctx, campX, campY, campW, campH, 8);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#5f3c1b';
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,230,180,0.5)'; // 顶部高光条
+    roundRect(ctx, campX + 3, campY + 3, campW - 6, 6, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff2d8';
+    ctx.font = 'bold 24px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('营', campX + campW / 2, campY + campH / 2 + 1);
+  }
   // 5 个候选槽
   const SLOT_STAGGER = 0.11, SLOT_DUR = 0.28;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
-    roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
-    ctx.fillStyle = '#dcccae';
+    // 木框凹槽：渐变底 + 深色描边
+    const sx = cx + 3, sy = TRAY_Y + 5, sw = TRAY_SLOT - 6, sh = TRAY_H - 10;
+    const slot = ctx.createLinearGradient(0, sy, 0, sy + sh);
+    slot.addColorStop(0, '#c9b48c');
+    slot.addColorStop(1, '#d8c8a6');
+    ctx.fillStyle = slot;
+    roundRect(ctx, sx, sy, sw, sh, 8);
     ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#a98a58';
+    ctx.stroke();
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
