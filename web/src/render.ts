@@ -15,6 +15,7 @@ import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
+import { getBestWave } from './endless';
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
@@ -322,7 +323,8 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSpawnGate(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
-  drawAiSide(ctx, b);
+  if (b.endless) drawEndlessPanel(ctx, b);
+  else drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
@@ -1655,6 +1657,14 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 无尽模式上半场提示文案（轮播，每数秒切换一条）。
+const ENDLESS_TIPS: string[] = [
+  '骑兵波移速翻倍——优先合成高阶弓兵远程拦截',
+  '每 5 波出 BOSS，攒好如来神掌应急',
+  '后期怪成堆，靠范围技/陨石清场',
+  '每 10 波一个难度台阶，提前囤高阶兵',
+];
+
 // 伪竞技 AI 对手（上半场，对角唐僧）。路径用棋盘格背景表示，不再画描边线。
 function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   // AI 怪物：图标 + 血条（与玩家侧一致，尺寸略小）
@@ -1709,6 +1719,47 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(b.aiDefeated ? '对手已败' : `对手唐僧 ❤${b.aiTangsengHP}`, x, y - rad - 12);
+}
+
+// 无尽模式上半场信息面板：网格/路径已由 drawBoard 照常绘制作背景，
+// 此处在上半场（行 0..FENCE_ROW）叠一层半透明面板，展示历史统计 + 玩法提示轮播。
+function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
+  const top = cellCenterPx(0, 0).y - CELL / 2;
+  const bottom = cellCenterPx(0, FENCE_ROW).y - CELL / 2;
+  const panelX = BOARD_X + CELL * 0.4;
+  const panelW = COLS * CELL - CELL * 0.8;
+  const panelY = top + CELL * 0.3;
+  const panelH = (bottom - top) - CELL * 0.6;
+
+  ctx.save();
+  roundRect(ctx, panelX, panelY, panelW, panelH, 14);
+  ctx.fillStyle = 'rgba(244,233,220,0.82)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(122,59,18,0.5)';
+  ctx.stroke();
+
+  const cx = panelX + panelW / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#b5391f';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.fillText('无尽 · 试炼', cx, panelY + 26);
+
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = 'bold 30px "PingFang SC", sans-serif';
+  ctx.fillText(`第 ${b.wave} 波`, cx, panelY + 62);
+  ctx.fillStyle = '#8a5a2b';
+  ctx.font = '16px "PingFang SC", sans-serif';
+  ctx.fillText(`历史最高：第 ${getBestWave()} 波`, cx, panelY + 90);
+
+  const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
+  ctx.fillStyle = '#7a3b12';
+  ctx.font = '15px "PingFang SC", sans-serif';
+  ctx.fillText('💡 ' + tip, cx, panelY + panelH - 22);
+
+  ctx.restore();
 }
 
 // 危险提示：怪物距唐僧≤3格时，在唐僧所在格叠加红色呼吸描边 + "危险"标签（玩家/AI 两侧）
