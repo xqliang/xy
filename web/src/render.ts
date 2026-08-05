@@ -1665,6 +1665,15 @@ const ENDLESS_TIPS: string[] = [
   '每 10 波一个难度台阶，提前囤高阶兵',
 ];
 
+// 无尽历史最高波数：渲染路径每帧读 localStorage 偏重，节流缓存 ~1s（一局内该值不变）。
+let endlessBestCache = 0;
+let endlessBestCacheT = -Infinity;
+function endlessBestWaveCached(): number {
+  const t = performance.now();
+  if (t - endlessBestCacheT > 1000) { endlessBestCache = getBestWave(); endlessBestCacheT = t; }
+  return endlessBestCache;
+}
+
 // 伪竞技 AI 对手（上半场，对角唐僧）。路径用棋盘格背景表示，不再画描边线。
 function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   // AI 怪物：图标 + 血条（与玩家侧一致，尺寸略小）
@@ -1752,7 +1761,7 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
   ctx.fillText(`第 ${b.wave} 波`, cx, panelY + 62);
   ctx.fillStyle = '#8a5a2b';
   ctx.font = '16px "PingFang SC", sans-serif';
-  ctx.fillText(`历史最高：第 ${getBestWave()} 波`, cx, panelY + 90);
+  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, panelY + 90);
 
   const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
   ctx.fillStyle = '#7a3b12';
