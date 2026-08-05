@@ -13,7 +13,8 @@ import {
 import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS } from './board';
 import { loadAssets } from './assets';
-import { loadRank, recordWin, recordLose, rankName, type RankState } from './rank';
+import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
+import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS } from './settle';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
@@ -38,7 +39,7 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag';
+type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag' | 'settle';
 let screen: Screen = 'menu';
 let rank: RankState = loadRank();
 let stamina: Stamina = loadStamina();
@@ -50,6 +51,8 @@ let shopToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag));
 let endHandled = false; // 本局胜负是否已结算入境界
+let settleChange: RankChange | null = null; // 结算页要播放的段位变化
+let settleStart = 0; // 进入结算页的时间戳（performance.now）
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
 
 function newGame() {
@@ -193,6 +196,15 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     return;
   }
+  if (screen === 'settle') {
+    if (isSettleAnimDone(performance.now() - settleStart)) {
+      settleChange = null;
+      screen = 'menu'; // 结算看完回主菜单（刷新段位/体力展示）
+    } else {
+      settleStart = performance.now() - SETTLE_ANIM_MS; // 点击跳过：直接到终态
+    }
+    return;
+  }
   if (handleButton(x, y)) { ui.selected = null; return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -285,6 +297,11 @@ function frame(now: number) {
     requestAnimationFrame(frame);
     return;
   }
+  if (screen === 'settle') {
+    if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
+    requestAnimationFrame(frame);
+    return;
+  }
   battle.step(dt);
   startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
   // 播放引擎发出的音效事件
@@ -292,11 +309,12 @@ function frame(now: number) {
     for (const ev of battle.sfxEvents) playSfx(ev);
     battle.sfxEvents.length = 0;
   }
-  // 胜负结算入境界 + 功德（仅一次）
+  // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
   if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
     endHandled = true;
     const won = battle.status === 'won';
-    rank = won ? recordWin(rank) : recordLose(rank);
+    const change = won ? recordWin(rank) : recordLose(rank);
+    rank = change.state;
     const gain = meritReward(won, battle.wave);
     merit = addMerit(merit, gain);
     // 本局掉落的神兵入背包（重复则升品质）
@@ -309,6 +327,10 @@ function frame(now: number) {
     battle.droppedWeapons = [];
     const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
     battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
+    // 切到结算页，播放加/减星动画
+    settleChange = change;
+    settleStart = performance.now();
+    screen = 'settle';
   }
   setHudRank(rankName(rank.level));
   draw(ctx, battle, ui);
