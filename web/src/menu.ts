@@ -35,6 +35,7 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 export function menuButtons(): MenuButton[] {
   const cx = VIEW_W / 2;
   return [
+    { id: 'endless', x: cx - 150, y: 520, w: 300, h: 34 },
     { id: 'start', x: cx - 150, y: 612, w: 300, h: 74 },
     { id: 'ad', x: cx - 150, y: 700, w: 145, h: 50 },
     { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
@@ -124,6 +125,34 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
         ctx.lineTo(mx + 13, my - 13);
         ctx.stroke();
       }
+      continue;
+    }
+    if (b.id === 'endless') {
+      // 勾选框：左侧方框（选中态填色打勾）+ 右侧文案
+      const boxSize = 24;
+      const boxX = b.x + 40;
+      const boxY = b.y + (b.h - boxSize) / 2;
+      roundRect(ctx, boxX, boxY, boxSize, boxSize, 6);
+      ctx.fillStyle = info.endlessOn ? '#b5391f' : 'rgba(255,244,224,0.65)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#7a3b12';
+      ctx.stroke();
+      if (info.endlessOn) {
+        // 打勾
+        ctx.strokeStyle = '#fff4e0';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(boxX + 5, boxY + 12);
+        ctx.lineTo(boxX + 10, boxY + 18);
+        ctx.lineTo(boxX + 19, boxY + 6);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#5a3a12';
+      ctx.font = 'bold 20px "PingFang SC", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('无尽模式', boxX + boxSize + 12, b.y + b.h / 2);
       continue;
     }
     if (b.id === 'mapPrev' || b.id === 'mapNext') {
