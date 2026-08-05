@@ -11,7 +11,7 @@ import {
 } from './board';
 import { Battle, unitColorOf, TUNING, itemById, SKILL_META, type TrayToken } from './battle';
 import { generalById, qualityColor, qualityName } from './generals';
-import { UNITS, getUnitStat, damage } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset } from './assets';
 
@@ -382,8 +382,10 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('营', 34, TRAY_Y + TRAY_H / 2);
-  // 5 个候选槽
-  const SLOT_STAGGER = 0.11, SLOT_DUR = 0.28;
+  // 5 个候选槽：征兵丝带瞬间出现，再从「营」端缩短变细，消于槽位后出图标
+  const HOLD = 0.01;
+  const RETRACT_STAGGER = 0.08;
+  const RETRACT_DUR = 0.09;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     roundRect(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, 8);
@@ -392,43 +394,96 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      // 征兵入场：令牌从「营」标处沿抛物线弧一个个"重重砸入"槽位；字牌(收集品)不重播
-      const p = token.kind === 'word' ? 1 : Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
-      if (p < 1) {
-        const srcX = 34, srcY = TRAY_Y - 40; // 从「营」标上方抛出
-        // 非对称时间轴：上升较缓、下落加速(重力砸落感)。apex 之后压缩时间→落得更快
-        const apex = 0.6;
-        const phase = p < apex ? (p / apex) * 0.5 : 0.5 + ((p - apex) / (1 - apex)) * 0.5;
-        const tx = srcX + (c.x - srcX) * p; // 水平匀速
-        const arc = 4 * phase * (1 - phase); // 抛物线：0→1→0
-        const ty = srcY + (c.y - srcY) * phase - arc * 70;
-        // 抛物弧拖尾（采样前几段位置连线）
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,220,140,0.45)';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let k = 0; k <= 6; k++) {
-          const pk = Math.max(0, p - k * 0.045);
-          const phk = pk < apex ? (pk / apex) * 0.5 : 0.5 + ((pk - apex) / (1 - apex)) * 0.5;
-          const kx = srcX + (c.x - srcX) * pk;
-          const ky = srcY + (c.y - srcY) * phk - 4 * phk * (1 - phk) * 70;
-          if (k === 0) ctx.moveTo(kx, ky); else ctx.lineTo(kx, ky);
-        }
-        ctx.stroke();
-        ctx.restore();
-        // 临近落地时轻微竖向压扁，强化"砸落"
-        const land = p > 0.82 ? (p - 0.82) / 0.18 : 0;
-        const sq = 1 - land * 0.18;
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.scale(1 + land * 0.12, sq);
-        drawTrayToken(ctx, token, 0, 0, (TRAY_H - 16) * (0.7 + 0.3 * p));
-        ctx.restore();
+      const retractAt = HOLD + i * RETRACT_STAGGER;
+      const t = b.summonAnimT;
+      if (t < retractAt) {
+        drawSummonRibbon(ctx, token, 0, 1, 1, c, i);
+      } else if (t < retractAt + RETRACT_DUR) {
+        const u = (t - retractAt) / RETRACT_DUR; // 0→1 从营收向槽
+        // 长度从营端吃掉，同时整体变细（丝带慢慢变小）
+        drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
         drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
       }
     }
   }
+}
+
+/** 单条平滑丝带（填充多边形，不是多段描边）：
+ * 营端细 → 槽位端粗；透明白 / 英雄淡黄白；弧高按槽位错开。
+ * start/end∈[0,1] 为路径裁剪；widthScale 整体变细。
+ */
+function drawSummonRibbon(
+  ctx: CanvasRenderingContext2D,
+  token: TrayToken,
+  start: number,
+  end: number,
+  widthScale: number,
+  dest: { x: number; y: number },
+  slotIndex: number,
+) {
+  const s0 = Math.max(0, Math.min(0.98, start));
+  const s1 = Math.max(s0 + 0.03, Math.min(1, end));
+  const srcX = 34;
+  const srcY = TRAY_Y + TRAY_H / 2;
+  const isHero = token.kind === 'word';
+  const fill = isHero ? 'rgba(255, 228, 140, 0.18)' : 'rgba(255, 255, 255, 0.16)';
+
+  const arcH = 50 + slotIndex * 30 + Math.abs(dest.x - srcX) * 0.05;
+  const ease = (t: number) => {
+    const apex = 0.5;
+    return t < apex ? (t / apex) * 0.42 : 0.42 + ((t - apex) / (1 - apex)) * 0.58;
+  };
+  const posAt = (t: number) => {
+    const tt = Math.max(0, Math.min(1, t));
+    const ph = ease(tt);
+    return {
+      x: srcX + (dest.x - srcX) * tt,
+      y: srcY + (dest.y - srcY) * ph - 4 * ph * (1 - ph) * arcH,
+    };
+  };
+  // 半宽：营端极细，槽位端更粗
+  const halfW = (t: number) => (1.2 + 9 * Math.pow(t, 1.3)) * Math.max(0.08, widthScale);
+
+  const n = Math.max(10, Math.floor(36 * (s1 - s0)));
+  const center: { x: number; y: number }[] = [];
+  for (let i = 0; i <= n; i++) {
+    center.push(posAt(s0 + (i / n) * (s1 - s0)));
+  }
+
+  // 左右轮廓：沿切线法向偏移，拼成一条丝带多边形
+  const left: { x: number; y: number }[] = [];
+  const right: { x: number; y: number }[] = [];
+  for (let i = 0; i < center.length; i++) {
+    const p = center[i]!;
+    const prev = center[Math.max(0, i - 1)]!;
+    const next = center[Math.min(center.length - 1, i + 1)]!;
+    let tx = next.x - prev.x;
+    let ty = next.y - prev.y;
+    const len = Math.hypot(tx, ty) || 1;
+    tx /= len;
+    ty /= len;
+    const nx = -ty;
+    const ny = tx;
+    const t = s0 + (i / n) * (s1 - s0);
+    const w = halfW(t);
+    left.push({ x: p.x + nx * w, y: p.y + ny * w });
+    right.push({ x: p.x - nx * w, y: p.y - ny * w });
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(left[0]!.x, left[0]!.y);
+  for (let i = 1; i < left.length; i++) ctx.lineTo(left[i]!.x, left[i]!.y);
+  for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i]!.x, right[i]!.y);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  // 极淡描边，让丝带边缘更干净（不是第二条弧）
+  ctx.strokeStyle = isHero ? 'rgba(255,220,120,0.08)' : 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
@@ -935,6 +990,20 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.restore();
 }
 
+function drawRangeRing(ctx: CanvasRenderingContext2D, x: number, y: number, rangeCells: number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, rangeCells * CELL, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(90,150,70,0.16)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(120,200,90,0.85)';
+  ctx.setLineDash([7, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.selected) return;
   const w = b.words.get(`${ui.selected.c},${ui.selected.r}`);
@@ -944,16 +1013,8 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
   const stat = getUnitStat(u.type, u.tier);
   // 攻击范围环
+  drawRangeRing(ctx, x, y, stat.rge);
   ctx.save();
-  ctx.beginPath();
-  ctx.arc(x, y, stat.rge * CELL, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(90,150,70,0.16)';
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(120,200,90,0.85)';
-  ctx.setLineDash([7, 6]);
-  ctx.stroke();
-  ctx.setLineDash([]);
   // 选中格描边
   const gx = BOARD_X + u.cell.c * CELL;
   const gy = BOARD_Y + u.cell.r * CELL;
@@ -1483,6 +1544,147 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillText(b.message, VIEW_W / 2, CTRL_Y + 64 + 20);
 }
 
+// 竞品式落点瞄准：四角黄括号 + 可选淡黄底 + 空位中央「+」
+function drawAimReticle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  opts: { plus: boolean; fill?: boolean },
+) {
+  const pad = 8; // 括号离格边留白
+  const len = Math.max(7, Math.min(w, h) * 0.18);
+  const lx = x + pad;
+  const ty = y + pad;
+  const rx = x + w - pad;
+  const by = y + h - pad;
+  ctx.save();
+  if (opts.fill !== false) {
+    ctx.fillStyle = 'rgba(255, 220, 90, 0.18)';
+    ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+  }
+  ctx.strokeStyle = '#f0c83a';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'square';
+  // 左上
+  ctx.beginPath();
+  ctx.moveTo(lx, ty + len);
+  ctx.lineTo(lx, ty);
+  ctx.lineTo(lx + len, ty);
+  ctx.stroke();
+  // 右上
+  ctx.beginPath();
+  ctx.moveTo(rx - len, ty);
+  ctx.lineTo(rx, ty);
+  ctx.lineTo(rx, ty + len);
+  ctx.stroke();
+  // 左下
+  ctx.beginPath();
+  ctx.moveTo(lx, by - len);
+  ctx.lineTo(lx, by);
+  ctx.lineTo(lx + len, by);
+  ctx.stroke();
+  // 右下
+  ctx.beginPath();
+  ctx.moveTo(rx - len, by);
+  ctx.lineTo(rx, by);
+  ctx.lineTo(rx, by - len);
+  ctx.stroke();
+  if (opts.plus) {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const arm = Math.min(w, h) * 0.08; // 约为原先一半
+    ctx.strokeStyle = 'rgba(160, 130, 40, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - arm, cy);
+    ctx.lineTo(cx + arm, cy);
+    ctx.moveTo(cx, cy - arm);
+    ctx.lineTo(cx, cy + arm);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** 候选令牌拖到该棋盘格是否合法（与 placeFromTray 语义对齐） */
+function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolean {
+  const key = `${cell.c},${cell.r}`;
+  if (token.kind === 'shovel') {
+    return b.lockedCells().some((c) => c.c === cell.c && c.r === cell.r);
+  }
+  if (!b.unlockedCells().some((c) => c.c === cell.c && c.r === cell.r)) return false;
+  if (token.kind === 'word') {
+    if (b.units.has(key)) return false;
+    return true; // 空格放置 / 字牌合并或交换
+  }
+  // 兵种：不可压字牌；空格放置 / 合并 / 与兵交换
+  if (b.words.has(key)) return false;
+  return true;
+}
+
+/** 候选区内另一槽是否可作为合并目标 */
+function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean {
+  if (!b) return false;
+  if (a.kind === 'word' && b.kind === 'word') {
+    return a.char === b.char && a.tier === b.tier && b.tier < MAX_TIER;
+  }
+  if (a.kind === 'unit' && b.kind === 'unit') {
+    return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
+  }
+  return false;
+}
+
+// 托盘拖拽时：标出全部可落点（棋盘 + 可合并的候选槽）+ 源槽黑圈，对标竞品瞄准心
+function drawTrayDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.dragTrayIndex === null) return;
+  const token = b.tray[ui.dragTrayIndex];
+  if (!token) return;
+
+  // 源槽：黑圈标选中
+  {
+    const cx = TRAY_LEFT + ui.dragTrayIndex * TRAY_SLOT;
+    const x = cx + 3;
+    const y = TRAY_Y + 5;
+    const w = TRAY_SLOT - 6;
+    const h = TRAY_H - 10;
+    ctx.save();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * 0.48, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 棋盘合法格
+  const cells =
+    token.kind === 'shovel'
+      ? b.lockedCells()
+      : b.unlockedCells().filter((c) => trayTokenCanDropOnCell(b, token, c));
+  for (const cell of cells) {
+    const key = `${cell.c},${cell.r}`;
+    const empty = !b.units.has(key) && !b.words.has(key);
+    drawAimReticle(ctx, BOARD_X + cell.c * CELL, BOARD_Y + cell.r * CELL, CELL, CELL, {
+      plus: empty,
+      fill: true,
+    });
+  }
+
+  // 候选区其它已占槽：竞品会全部打黄框（合并目标更明确；不可合并时落子仍会失败提示）
+  for (let i = 0; i < TUNING.traySize; i++) {
+    if (i === ui.dragTrayIndex) continue;
+    if (!b.tray[i]) continue;
+    const cx = TRAY_LEFT + i * TRAY_SLOT;
+    const mergeOk = trayTokenCanMergeSlot(token, b.tray[i]);
+    drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
+      plus: false,
+      fill: mergeOk, // 可合并的槽加淡黄底，仅框的是「有令牌」的槽
+    });
+  }
+}
+
 function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.dragPos) return;
   // 拖拽源中心（棋盘单位 或 候选区令牌）
@@ -1508,7 +1710,11 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     }
   }
   if (!ghost) return;
-  // 目标格高亮
+
+  // 托盘拖拽：先画全部可落点瞄准标记（在 ghost 之下）
+  if (ui.dragTrayIndex !== null) drawTrayDropHints(ctx, b, ui);
+
+  // 当前悬停格加粗描边；兵种悬停合法格时实时预览攻击范围
   const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
   if (target) {
     const x = BOARD_X + target.c * CELL;
@@ -1517,6 +1723,23 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.strokeStyle = '#e8a13c';
     ctx.lineWidth = 3;
     ctx.stroke();
+
+    if (ui.dragTrayIndex !== null) {
+      const token = b.tray[ui.dragTrayIndex];
+      if (token && token.kind === 'unit' && trayTokenCanDropOnCell(b, token, target)) {
+        const center = cellCenterPx(target.c, target.r);
+        const stat = getUnitStat(token.type, token.tier);
+        drawRangeRing(ctx, center.x, center.y, stat.rge);
+      }
+    } else if (ui.dragFrom) {
+      // 棋盘内拖兵种时同样预览落点范围
+      const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+      if (u && b.unlockedCells().some((c) => c.c === target.c && c.r === target.r)) {
+        const center = cellCenterPx(target.c, target.r);
+        const stat = getUnitStat(u.type, u.tier);
+        drawRangeRing(ctx, center.x, center.y, stat.rge);
+      }
+    }
   }
   // 源→当前的虚线连接（参考原作）
   if (src) {
