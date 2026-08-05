@@ -1,7 +1,8 @@
-// 段位（军衔）星级系统：跨局 localStorage 持久化。
+// 段位（军衔）星级系统：跨局持久化（storage 抽象层，Web=localStorage / 微信=wx storage）。
 // 每个大段位含 STARS_PER_TIER 颗星：胜 +1 星，满星晋级下一档并清零；败 -1 星，零星再败降回上一档并回退到 (满-1) 星。
 // 难度与星星解耦：仍按 胜×1.06 / 败×0.88 每局调节——长期均衡胜率约 70%（p·ln1.06 + (1-p)·ln0.88 ≈ 0 → p≈0.7），
 // 且"打不过掉星/掉档后更弱"（1.06×0.88<1），降低卡级挫败——对应原作军衔非对称回调。
+import { storeGet, storeSet } from './storage';
 const KEY = 'dasheng.rank';
 
 // 每个大段位的星数
@@ -34,7 +35,7 @@ export function rankName(level: number): string {
 
 export function loadRank(): RankState {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = storeGet(KEY);
     if (raw) {
       const s = JSON.parse(raw);
       if (typeof s.level === 'number' && typeof s.difficulty === 'number') {
@@ -51,7 +52,7 @@ export function loadRank(): RankState {
 
 export function saveRank(s: RankState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(s));
   } catch {
     /* ignore */
   }

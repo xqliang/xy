@@ -16,6 +16,11 @@ yarn-error.log*
 web/dist/
 web/shots/
 
+# 微信小游戏构建产物（由 ./start.sh wx 生成；weapp-adapter 需自行放置）
+wechat/game.bundle.js
+wechat/assets/
+wechat/weapp-adapter.js
+
 # seeddream 素材生成缓存（大文件另行管理/CDN）
 tools/seeddream/.cache/
 tools/seeddream/output_raw/

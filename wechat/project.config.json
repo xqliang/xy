@@ -1,0 +1,13 @@
+{
+  "appid": "touristappid",
+  "projectname": "dasheng-yu-tangseng",
+  "compileType": "game",
+  "setting": {
+    "es6": false,
+    "minified": false,
+    "postcss": false,
+    "urlCheck": false
+  },
+  "libVersion": "3.7.0",
+  "description": "《大圣与唐僧》微信小游戏（IAA）。appid 请替换为在 mp.weixin.qq.com 注册的小游戏 AppID。"
+}

@@ -1,6 +1,7 @@
 // 局外「功德商店」（神秘商人）：跨局 localStorage 持久化的永久成长。
 // 功德在对局结束时结算获得；可买断若干温和加成（有等级上限），开局注入本局。
 import type { MetaBonuses } from './battle';
+import { storeGet, storeSet } from './storage';
 
 const KEY = 'dasheng.merit';
 
@@ -47,7 +48,7 @@ export interface MeritState {
 
 export function loadMerit(): MeritState {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = storeGet(KEY);
     if (raw) {
       const s = JSON.parse(raw);
       if (typeof s.merit === 'number' && s.levels && typeof s.levels === 'object') {
@@ -62,7 +63,7 @@ export function loadMerit(): MeritState {
 
 export function saveMerit(s: MeritState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(s));
   } catch {
     /* ignore */
   }

@@ -2,6 +2,7 @@
 // 对局中随机掉落；重复掉落自动升品质；背包内最多装备 3 件（形成取舍）。
 // 数值有上限：最高品质也只给 +20% 单一属性，避免破坏兵种/武将的终局平衡。
 import { GENERALS, generalById } from './generals';
+import { storeGet, storeSet } from './storage';
 
 const KEY = 'dasheng.bag';
 
@@ -63,7 +64,7 @@ export interface BagState {
 
 export function loadBag(): BagState {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = storeGet(KEY);
     if (raw) {
       const s = JSON.parse(raw);
       if (s && typeof s.owned === 'object' && Array.isArray(s.equipped)) {
@@ -78,7 +79,7 @@ export function loadBag(): BagState {
 
 export function saveBag(s: BagState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(s));
   } catch {
     /* ignore */
   }

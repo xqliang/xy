@@ -107,6 +107,7 @@ export interface PlacedUnit {
   cell: Cell;
   cooldown: number; // 距下次攻击的秒数
   firePulse: number; // 开火脉冲(1→0)，用于渲染缩放
+  combo: number; // 连击计数：上次出招未收完就再次命中则累加，归零则清零（枪连刺形变用）
   fireDir?: number; // 上次开火朝向(弧度，格坐标系)，用于兵器形变动画朝向目标
   stunT: number; // 眩晕剩余(秒)：>0 时无法攻击
   slowT: number; // 减速剩余(秒)：>0 时冷却拉长
@@ -576,12 +577,12 @@ export class Battle {
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
       this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.emit('place');
@@ -899,7 +900,7 @@ export class Battle {
     for (const cell of this.aiCells) {
       if (added >= target) break;
       if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
-      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
       this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入AI可放置区域
       added++;
     }
@@ -926,7 +927,6 @@ export class Battle {
   // AI 单位攻击 AI 怪（与玩家同一套战斗数值，无道具加成、不产特效）
   private updateAiUnits(dt: number): void {
     for (const u of this.aiUnits) {
-      u.firePulse = Math.max(0, u.firePulse - dt * 6);
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier);
@@ -953,6 +953,7 @@ export class Battle {
         hit++;
       }
       if (hit > 0) {
+        u.combo = u.firePulse > 0.35 ? Math.min(9, u.combo + 1) : 0;
         u.firePulse = 1;
         const tp = posAlong(this.aiPath, inRange[0]!.m.dist);
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
@@ -1032,7 +1033,7 @@ export class Battle {
   // 单位攻击结算
   private updateUnits(dt: number): void {
     for (const u of this.units.values()) {
-      u.firePulse = Math.max(0, u.firePulse - dt * 6); // 开火脉冲衰减
+      // firePulse/combo 的衰减改在 updateFx（所有状态推进），避免波间冻结导致兵器卡在槽位
       // 减益计时衰减
       if (u.stunT > 0) u.stunT = Math.max(0, u.stunT - dt);
       if (u.slowT > 0) u.slowT = Math.max(0, u.slowT - dt);
@@ -1067,6 +1068,8 @@ export class Battle {
         hitCount++;
       }
       if (hitCount > 0) {
+        // 上次出招还没收完(firePulse 尚高)就再次命中 → 连击累加，用于枪的连刺形变
+        u.combo = u.firePulse > 0.35 ? Math.min(9, u.combo + 1) : 0;
         u.firePulse = 1;
         u.fireDir = Math.atan2(inRange[0]!.p.r - u.cell.r, inRange[0]!.p.c - u.cell.c); // 朝最靠前目标形变出招
         this.emit('attack');
@@ -1322,6 +1325,15 @@ export class Battle {
   private updateFx(dt: number): void {
     for (const f of this.fx) f.ttl -= dt;
     this.fx = this.fx.filter((f) => f.ttl > 0);
+    // 开火脉冲/连击衰减：在所有状态(含波间'ready')推进，避免单位兵器卡在槽位一直显示
+    for (const u of this.units.values()) {
+      u.firePulse = Math.max(0, u.firePulse - dt * 6);
+      if (u.firePulse <= 0.02) u.combo = 0; // 收招完成即清连击
+    }
+    for (const u of this.aiUnits) {
+      u.firePulse = Math.max(0, u.firePulse - dt * 6);
+      if (u.firePulse <= 0.02) u.combo = 0;
+    }
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);

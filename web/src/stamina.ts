@@ -1,4 +1,5 @@
-// 体力系统：localStorage 持久化。每日回满到上限；看广告/分享补充；开始游戏消耗 1。
+// 体力系统：跨平台存储持久化。每日回满到上限；看广告/分享补充；开始游戏消耗 1。
+import { storeGet, storeSet } from './storage';
 const KEY = 'dasheng.stamina';
 export const STAMINA_MAX = 30;
 
@@ -13,7 +14,7 @@ function today(): number {
 
 export function loadStamina(): Stamina {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = storeGet(KEY);
     if (raw) {
       const s = JSON.parse(raw);
       if (typeof s.value === 'number' && typeof s.day === 'number') {
@@ -29,7 +30,7 @@ export function loadStamina(): Stamina {
 
 function save(s: Stamina): Stamina {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(s));
   } catch {
     /* ignore */
   }
