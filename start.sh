@@ -12,6 +12,9 @@
 #   ./start.sh check      # 类型检查（game-core + web）
 #   ./start.sh deploy     # 一键构建并部署到 ECS（默认 ssh ecs → /opt/xy/html，端口 8082）
 #                         # 可用环境变量覆盖：ECS_SSH / ECS_DIR / ECS_URL
+#   ./start.sh rollback           # 回滚到上一个发布（原子切换）
+#   ./start.sh rollback list      # 列出所有可回滚发布（标出当前）
+#   ./start.sh rollback <rel|时间戳>  # 回滚到指定发布（可传时间戳子串）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,7 +115,7 @@ case "$CMD" in
     remote_cmd="set -e
 DIR='${ECS_DIR}'
 RELROOT=\"\$(dirname \"\$DIR\")/releases\"
-REL=\"\$RELROOT/rel-\$(date +%s)-\$\$\"
+REL=\"\$RELROOT/rel-\$(date +%Y%m%d%H%M%S)-\$\$\"
 mkdir -p \"\$REL\"
 tar xzf - -C \"\$REL\" 2>/dev/null
 if [ -d \"\$DIR\" ] && [ ! -L \"\$DIR\" ]; then rm -rf \"\$DIR\"; fi   # 首次：真实目录→迁移为 symlink（仅一次）
@@ -128,9 +131,49 @@ echo \"✅ 已原子切换：\$DIR → \$REL\""
       echo "⚠️  已上传，但健康检查返回 HTTP ${code}（检查 systemd 服务 xy-web / 云安全组端口放行）"
     fi
     ;;
+  rollback)
+    # 回滚到某个历史发布（releases/rel-*），同样用 ln -sfn 原子切换，零停机。
+    # 用法：rollback（上一个）| rollback list（列出）| rollback <rel名或时间戳子串>（指定）
+    ECS_SSH="${ECS_SSH:-ecs}"
+    ECS_DIR="${ECS_DIR:-/opt/xy/html}"
+    ECS_URL="${ECS_URL:-http://124.221.105.4:8082/}"
+    TARGET_ARG="${2:-}"
+    remote_cmd="set -e
+DIR='${ECS_DIR}'
+RELROOT=\"\$(dirname \"\$DIR\")/releases\"
+CUR=\"\$(readlink \"\$DIR\" 2>/dev/null || true)\"
+ARG='${TARGET_ARG}'
+if [ \"\$ARG\" = list ] || [ \"\$ARG\" = ls ]; then
+  echo \"可回滚发布（新→旧，* 为当前）：\"
+  for r in \$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null); do
+    if [ \"\$r\" = \"\$CUR\" ]; then echo \"* \$r\"; else echo \"  \$r\"; fi
+  done
+  exit 0
+fi
+TARGET=
+if [ -n \"\$ARG\" ]; then
+  for r in \$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null); do
+    case \"\$(basename \"\$r\")\" in *\"\$ARG\"*) TARGET=\"\$r\"; break;; esac
+  done
+  [ -z \"\$TARGET\" ] && { echo \"❌ 未找到匹配发布：\$ARG（用 rollback list 查看）\"; exit 1; }
+else
+  for r in \$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null); do
+    [ \"\$r\" != \"\$CUR\" ] && { TARGET=\"\$r\"; break; }
+  done
+  [ -z \"\$TARGET\" ] && { echo \"❌ 没有可回滚的历史发布\"; exit 1; }
+fi
+[ -d \"\$TARGET\" ] || { echo \"❌ 目标发布不存在：\$TARGET\"; exit 1; }
+ln -sfn \"\$TARGET\" \"\$DIR\"
+echo \"↩️  已回滚：\$DIR → \$TARGET（原：\${CUR:-无}）\""
+    ssh "$ECS_SSH" "$remote_cmd"
+    if [ "$TARGET_ARG" != "list" ] && [ "$TARGET_ARG" != "ls" ]; then
+      code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$ECS_URL" || echo 000)"
+      echo "🔎 健康检查 ${ECS_URL} → HTTP ${code}"
+    fi
+    ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy"
+    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy | rollback"
     exit 1
     ;;
 esac
