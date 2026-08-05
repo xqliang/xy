@@ -296,6 +296,8 @@ function onPointerUp() {
 // rAF，不再持续满帧空转；只有战斗、结算动画进行中才连续循环。待机时 CPU/GPU 几乎不工作，显著降功耗。
 let last = performance.now();
 let rafId: number | null = null; // 当前排队中的 rAF id；null 表示循环已停
+// 连续动画限速到 ~60fps：120Hz+ 屏隔帧处理，功耗近乎减半。-4ms 余量容忍 60Hz 抖动，避免误降到 30fps。
+const MIN_FRAME_MS = 1000 / 60 - 4;
 
 // 请求下一帧：若已有帧在排队则合并为一次（幂等），避免输入风暴导致重复调度。
 function scheduleFrame(): void {
@@ -311,7 +313,13 @@ function needsContinuousLoop(): boolean {
 
 function frame(now: number): void {
   rafId = null;
-  let dt = (now - last) / 1000;
+  const elapsed = now - last;
+  // 连续动画(战斗/结算)限速到 ~60fps；按需唤醒的单帧走 needsContinuousLoop()=false 分支，不受限、立即重绘。
+  if (needsContinuousLoop() && elapsed < MIN_FRAME_MS) {
+    scheduleFrame(); // 距上一帧太近，跳过本帧的 step/draw，仅重新排帧
+    return;
+  }
+  let dt = elapsed / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
   // 非对战界面停掉地图氛围音
