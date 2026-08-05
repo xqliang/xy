@@ -52,49 +52,43 @@ function passiveCardRect(i: number): { x: number; y: number } {
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
 
-export function shopHitAt(x: number, y: number): ShopHit | null {
+// 商城可滚动内容的总高度（最后一个被动卡片底部 + 底部留白）
+export function shopContentHeight(): number {
+  const passiveRows = Math.ceil(PASSIVE_SKILLS.length / COLS_N);
+  const lastBottom = PAS_TOP + (passiveRows - 1) * (ACT_CARD_H + GAP) + ACT_CARD_H;
+  return lastBottom + 24; // 底部留白
+}
+export const SHOP_MAX_SCROLL = () => Math.max(0, shopContentHeight() - VIEW_H);
+
+export function shopHitAt(x: number, y: number, scrollY = 0): ShopHit | null {
   if (x >= BACK.x && x <= BACK.x + BACK.w && y >= BACK.y && y <= BACK.y + BACK.h) return { kind: 'back' };
+  const cy0 = y + scrollY; // 卡片随内容上移，屏幕 y 映射到内容坐标需加回 scrollY
   for (let i = 0; i < UPGRADES.length; i++) {
     const { x: cx, y: cy } = cardRect(i);
-    if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + CARD_H) return { kind: 'buy', id: UPGRADES[i]!.id };
+    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + CARD_H) return { kind: 'buy', id: UPGRADES[i]!.id };
   }
   for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
     const { x: cx, y: cy } = activeCardRect(i);
-    if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + ACT_CARD_H) return { kind: 'buyActive', id: ACTIVE_SKILLS[i]!.id };
+    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyActive', id: ACTIVE_SKILLS[i]!.id };
   }
   for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
     const { x: cx, y: cy } = passiveCardRect(i);
-    if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + ACT_CARD_H) return { kind: 'buyPassive', id: PASSIVE_SKILLS[i]!.id };
+    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyPassive', id: PASSIVE_SKILLS[i]!.id };
   }
   return null;
 }
 
-export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loadout: LoadoutState, toast: string): void {
-  // 背景
+export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loadout: LoadoutState, toast: string, scrollY = 0): void {
+  // 背景（固定，铺满整个画布）
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
   bg.addColorStop(0, '#2a2140');
   bg.addColorStop(1, '#3a2c53');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  // 返回按钮
-  roundRect(ctx, BACK.x, BACK.y, BACK.w, BACK.h, 10);
-  ctx.fillStyle = '#5a4a7a';
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('‹ 返回', BACK.x + BACK.w / 2, BACK.y + BACK.h / 2);
-
-  // 标题 + 功德余额
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText('神秘商人', VIEW_W / 2, 56);
-  ctx.fillStyle = '#e0c8ff';
-  ctx.font = 'bold 20px "PingFang SC", sans-serif';
-  ctx.fillText(`功德 ${merit.merit}`, VIEW_W / 2, 92);
+  // —— 随内容竖向滚动的三段卡片（升级 / 主动 / 被动）——
+  ctx.save();
+  ctx.translate(0, -scrollY);
 
   // 卡片
   for (let i = 0; i < UPGRADES.length; i++) {
@@ -156,7 +150,6 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
   for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
     const act = ACTIVE_SKILLS[i]!;
     const equipped = isEquipped(loadout, act.id);
-    const full = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES && !equipped;
     const afford = merit.merit >= act.cost;
     const { x, y } = activeCardRect(i);
     roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
@@ -180,13 +173,13 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 26;
     roundRect(ctx, x + 12, by, bw, 20, 7);
-    ctx.fillStyle = equipped ? '#2f5a3a' : full ? '#3a3350' : afford ? '#c8792b' : '#4a3a30';
+    ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : full ? '#8a86a0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : full ? '装备已满' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 10);
+    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 10);
   }
 
   // —— 被动技能区（每日重置）——
@@ -198,7 +191,6 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
   for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
     const pas = PASSIVE_SKILLS[i]!;
     const equipped = isPassiveEquipped(loadout, pas.id);
-    const full = loadout.passives.length >= MAX_EQUIPPED_PASSIVES && !equipped;
     const afford = merit.merit >= pas.cost;
     const { x, y } = passiveCardRect(i);
     roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
@@ -220,14 +212,40 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 26;
     roundRect(ctx, x + 12, by, bw, 20, 7);
-    ctx.fillStyle = equipped ? '#2f5a3a' : full ? '#3a3350' : afford ? '#c8792b' : '#4a3a30';
+    ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : full ? '#8a86a0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : full ? '装备已满' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 10);
+    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 10);
   }
+
+  // —— 结束滚动内容 ——
+  ctx.restore();
+
+  // —— 固定顶部栏（不随滚动）：不透明色带遮住上滑卡片，再画返回/标题/余额 ——
+  ctx.fillStyle = '#2a2140';
+  ctx.fillRect(0, 0, VIEW_W, 104);
+
+  // 返回按钮
+  roundRect(ctx, BACK.x, BACK.y, BACK.w, BACK.h, 10);
+  ctx.fillStyle = '#5a4a7a';
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('‹ 返回', BACK.x + BACK.w / 2, BACK.y + BACK.h / 2);
+
+  // 标题 + 功德余额
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 30px "PingFang SC", sans-serif';
+  ctx.fillText('神秘商人', VIEW_W / 2, 56);
+  ctx.fillStyle = '#e0c8ff';
+  ctx.font = 'bold 20px "PingFang SC", sans-serif';
+  ctx.fillText(`功德 ${merit.merit}`, VIEW_W / 2, 92);
 
   // 提示（贴底显示，避免遮住被动技能卡片）
   if (toast) {

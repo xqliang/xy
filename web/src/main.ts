@@ -19,7 +19,7 @@ import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import { loadLoadout, buyActive, buyPassive, type LoadoutState } from './loadout';
-import { drawShop, shopHitAt } from './shop';
+import { drawShop, shopHitAt, SHOP_MAX_SCROLL } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt } from './bag';
@@ -56,6 +56,10 @@ let bag: BagState = loadBag();
 let bagToast = '';
 let menuToast = '';
 let shopToast = '';
+// 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
+let shopScrollY = 0;
+let shopPointerActive = false;
+let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
 let endHandled = false; // 本局胜负是否已结算入境界
@@ -104,6 +108,7 @@ function handleMenu(x: number, y: number) {
     menuToast = '体力 +5';
   } else if (id === 'shop') {
     shopToast = '';
+    shopScrollY = 0;
     screen = 'shop';
   } else if (id === 'codex') {
     screen = 'codex';
@@ -124,7 +129,7 @@ function handleMenu(x: number, y: number) {
 }
 
 function handleShop(x: number, y: number) {
-  const hit = shopHitAt(x, y);
+  const hit = shopHitAt(x, y, shopScrollY);
   if (!hit) return;
   if (hit.kind === 'back') {
     screen = 'menu';
@@ -199,7 +204,11 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (screen === 'shop') {
-    handleShop(x, y);
+    // 按下只记录起点；购买延迟到 pointerup 且未拖动时（拖动=滚动）
+    shopPointerActive = true;
+    shopDragged = false;
+    shopDownX = x; shopDownY = y; shopDownScroll = shopScrollY;
+    canvas.setPointerCapture(e.pointerId);
     return;
   }
   if (screen === 'codex') {
@@ -252,10 +261,24 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (screen === 'shop') {
+    if (!shopPointerActive) return;
+    const { y } = toLogical(e.clientX, e.clientY);
+    const dy = y - shopDownY;
+    if (Math.abs(dy) > 6) shopDragged = true;
+    shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopDownScroll - dy));
+    return;
+  }
   if (!ui.dragFrom && ui.dragTrayIndex === null) return;
   ui.dragPos = toLogical(e.clientX, e.clientY);
 });
 canvas.addEventListener('pointerup', () => {
+  if (screen === 'shop') {
+    // 轻点(未拖动)才触发购买；拖动只滚动
+    if (shopPointerActive && !shopDragged) handleShop(shopDownX, shopDownY);
+    shopPointerActive = false;
+    return;
+  }
   if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
     const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
@@ -282,6 +305,13 @@ canvas.addEventListener('pointerup', () => {
   ui.dragPos = null;
 });
 
+// 桌面端滚轮滚动商城
+canvas.addEventListener('wheel', (e) => {
+  if (screen !== 'shop') return;
+  e.preventDefault();
+  shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
+}, { passive: false });
+
 // —— 游戏循环 —— //
 let last = performance.now();
 function frame(now: number) {
@@ -304,7 +334,7 @@ function frame(now: number) {
     return;
   }
   if (screen === 'shop') {
-    drawShop(ctx, merit, loadout, shopToast);
+    drawShop(ctx, merit, loadout, shopToast, shopScrollY);
     requestAnimationFrame(frame);
     return;
   }
@@ -409,7 +439,7 @@ const hook: GameHook = {
   autoPlace: () => battle.autoPlaceTray(),
   select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
   enterBattle: () => { screen = 'battle'; },
-  openShop: () => { screen = 'shop'; },
+  openShop: () => { shopScrollY = 0; screen = 'shop'; },
   openCodex: () => { screen = 'codex'; },
   openRank: () => { screen = 'rank'; },
   openBag: () => { screen = 'bag'; },
