@@ -16,7 +16,7 @@ const res = await page.evaluate(async ()=>{
   // 掉落：跑完整局，看 droppedWeapons
   g.restart(5,1); g.enterBattle(); let b=g.battle;
   const manage=()=>{for(let k=0;k<30;k++){if(!g.summon()){g.autoPlace();if(!g.summon())break;}g.autoPlace();}};
-  for(let w=0;w<9;w++){ if(b.status==='won'||b.status==='lost')break; if(b.pendingShop)g.chooseItem(0); g.grantPeach(600); manage(); if(b.status==='ready')g.wave(); let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; if(b.ultReady())g.ult();} }
+  for(let w=0;w<9;w++){ if(b.status==='won'||b.status==='lost')break; if(b.pendingShop)g.chooseItem(0); g.grantPeach(600); manage(); if(b.status==='ready')g.wave(); let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; g.triggerActive(0);g.triggerActive(1);} }
   r.dropsInRun = b.droppedWeapons.length; r.status=b.status;
   // 背包：授予同一件2次 → 应升到2阶；装备上限3
   g.grantWeapon('jingubang'); g.grantWeapon('jingubang');

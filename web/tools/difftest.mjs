@@ -16,7 +16,7 @@ for (const diff of diffs) {
       let src='timeout';
       for(let w=1;w<=8;w++){const b=g.battle; if(b.status==='won'||b.status==='lost')break;
         if(b.pendingShop)g.chooseItem(0); manage(); if(b.status==='ready')g.wave();
-        let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; if(Math.round(t*10)%5===0){const s=g.snapshot(); if(s.dangerPct>=88&&s.palmReady)g.palm(); if(g.battle.ultReady())g.ult(); g.summon();g.autoPlace();}}
+        let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; if(Math.round(t*10)%5===0){const s=g.snapshot(); if(s.dangerPct>=88&&s.palmReady)g.palm(); g.triggerActive(0);g.triggerActive(1); g.summon();g.autoPlace();}}
         if(b.status!=='playing'&&b.status!=='ready'){src=b.aiDefeated?'ai':(g.snapshot().status==='won'?'survive':'lost');break;}
       }
       const f=g.snapshot(); endW.push(f.wave);

@@ -12,7 +12,7 @@ const res = await page.evaluate(()=>{
   g.openCodex(); g.openRank(); g.openShop();
   g.restart(7,1); g.enterBattle();
   const manage=()=>{for(let k=0;k<30;k++){if(!g.summon()){g.autoPlace();if(!g.summon())break;}g.autoPlace();}};
-  for(let w=0;w<10;w++){ const b=g.battle; if(b.status==='won'||b.status==='lost')break; if(b.pendingShop)g.chooseItem(0); manage(); if(b.status==='ready')g.wave(); let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; if(g.battle.ultReady())g.ult();} }
+  for(let w=0;w<10;w++){ const b=g.battle; if(b.status==='won'||b.status==='lost')break; if(b.pendingShop)g.chooseItem(0); manage(); if(b.status==='ready')g.wave(); let t=0; while(b.status==='playing'&&t<80){g.step(0.1);t+=0.1; g.triggerActive(0);g.triggerActive(1);} }
   return g.snapshot();
 });
 console.log('end:', JSON.stringify(res));

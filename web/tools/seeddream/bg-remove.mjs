@@ -8,7 +8,8 @@ import path from 'node:path';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets');
 
-const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg'));
+// 注意：map-*.jpg 是关卡大背景（本就不透明），不参与抠图，避免被误转成透明 PNG 并删除原图。
+const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg') && !f.startsWith('map-'));
 if (jpgs.length === 0) {
   console.log('没有 jpg 待处理');
   process.exit(0);

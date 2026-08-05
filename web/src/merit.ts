@@ -33,8 +33,6 @@ export const UPGRADES: MeritUpgrade[] = [
     desc: (lv) => `全体攻击 +${(lv + 1) * 5}%` },
   { id: 'frq', name: '疾风咒', icon: '🌀', rarity: '稀有', maxLevel: 4, cost: costFor('稀有'),
     desc: (lv) => `全体攻速 +${(lv + 1) * 5}%` },
-  { id: 'ult', name: '通臂加速', icon: '✨', rarity: '史诗', maxLevel: 3, cost: costFor('史诗'),
-    desc: (lv) => `绝招蓄力 -${(lv + 1) * 8}%` },
 ];
 
 export function upgradeById(id: string): MeritUpgrade | undefined {
@@ -106,8 +104,12 @@ export function metaBonuses(s: MeritState): MetaBonuses {
     bonusSlots: lv('slot'),
     atkPct: lv('atk') * 0.05,
     frqPct: lv('frq') * 0.05,
-    ultChargeMul: Math.max(0.4, 1 - lv('ult') * 0.08),
   };
+}
+
+// 扣除功德（用于购买主动技能等每日消耗；不校验余额，调用方自行保证 merit>=amount）
+export function spendMerit(s: MeritState, amount: number): MeritState {
+  return addMerit(s, -amount);
 }
 
 export const RARITY_COLOR: Record<Rarity, string> = { 普通: '#8a9a6a', 稀有: '#4a7ad0', 史诗: '#a05ad0' };

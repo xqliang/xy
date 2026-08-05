@@ -10,6 +10,7 @@ import {
   type Cell,
 } from './board';
 import { Battle, unitColorOf, TUNING, itemById, SKILL_META, type TrayToken } from './battle';
+import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
@@ -24,7 +25,11 @@ export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
 export const TRAY_H = 66;
 export const CTRL_Y = TRAY_Y + TRAY_H + 8; // 控制按钮行
-export const VIEW_H = CTRL_Y + 64 + 34;
+export const CTRL_H = 64;
+export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
+export const PAS_H = 46;
+export const MSG_Y = PAS_Y + PAS_H + 16; // 提示文字行
+export const VIEW_H = MSG_Y + 18;
 
 const UNIT_LABEL: Record<UnitType, string> = {
   monkey: '棍',
@@ -77,16 +82,23 @@ export function getButtons(b: Battle): Button[] {
   }
   const trayEmpty = b.tray.length === 0;
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
-  // 对战中：4 键（征兵/布阵/绝招/神掌）；备战中：3 键（征兵/布阵/立即开战）
+  // 对战中：中央「征兵」，两翼主动技能图标(带环形CD)，两端「布阵/神掌」，下方一排被动/强化图标
   if (b.status === 'playing') {
-    const w4 = 124;
-    const ultLabel = b.ultReady() ? '绝招 就绪🔥' : `绝招 ${Math.ceil(b.ultCooldownRemaining())}s`;
-    return [
-      { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 20, y, w: w4, h, enabled: canSummon },
-      { id: 'autoplace', label: '布阵', x: 152, y, w: w4, h, enabled: !trayEmpty },
-      { id: 'ult', label: ultLabel, x: 284, y, w: w4, h, enabled: b.ultReady() },
-      { id: 'palm', label: '神掌🖐', x: 416, y, w: w4, h, enabled: b.palmAvailable() },
+    const btns: Button[] = [
+      { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
+      { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
+      { id: 'palm', label: '神掌', x: 492, y, w: 56, h, enabled: b.palmAvailable() },
     ];
+    // 两翼主动技能图标（仅渲染已装备的槽；就绪与否由视觉表现，点击时再判定）
+    const actX = [90, 410];
+    for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
+      btns.push({ id: `act${i}`, label: '', x: actX[i]!, y, w: 60, h, enabled: true });
+    }
+    // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
+    for (let i = 0; i < b.pickedItems.length; i++) {
+      btns.push({ id: `pas${i}`, label: '', x: 12 + i * (PAS_H + 6), y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
+    }
+    return btns;
   }
   return [
     { id: 'summon', label: `征兵 (${b.effectiveSummonCost()}🍑)`, x: 20, y, w: 168, h, enabled: canSummon },
@@ -100,6 +112,7 @@ export interface UiState {
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
   selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
+  passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
 }
 
 // HUD 显示的境界名（由 main 设置）
@@ -308,13 +321,15 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawGenerals(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
-  drawHeroUlt(ctx, b);
+  drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b);
-  drawHeroEnergy(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
+  drawActiveIcons(ctx, b);
+  drawPassiveRow(ctx, b);
+  drawPassivePopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
 }
@@ -336,11 +351,20 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
     roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
     ctx.fillStyle = '#e0b24a';
     ctx.fill();
-    ctx.fillStyle = '#5a3a08';
-    ctx.font = `${Math.round(s * 0.5)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🪏', x, y);
+    const spr = sprite('item-shovel');
+    if (spr) {
+      // Seedream 生成的透明 PNG 铲子图标
+      const box = s * 0.86;
+      const scale = Math.min(box / spr.width, box / spr.height);
+      ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+    } else {
+      // 素材未加载完成时用汉字「铲」兜底
+      ctx.fillStyle = '#5a3a08';
+      ctx.font = `bold ${Math.round(s * 0.5)}px "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('铲', x, y);
+    }
   } else if (token.kind === 'word') {
     drawWordTile(ctx, token.char, token.tier, x, y, s);
   } else {
@@ -678,7 +702,7 @@ function emergeScale(t: number): number {
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }) {
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, trailDir = 1) {
   const rad = rad0 * emergeScale(m.spawnT);
   // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
   const phase = m.dist * 5.2;
@@ -694,6 +718,25 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   ctx.fill();
   ctx.restore();
   const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
+  // 骑兵视觉区分：身后拖出青蓝速度线（快速冲锋感）。拖尾始终在移动的反方向：
+  // trailDir=+1 表示向右移动→拖尾在左侧；trailDir=-1 表示向左移动→拖尾在右侧。
+  if (m.isCavalry) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(91,209,255,0.75)';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2;
+    const side = -trailDir; // 拖尾偏移方向（与移动方向相反）
+    const streak = rad0 * (1.4 + 0.4 * Math.abs(Math.sin(phase)));
+    for (let i = -1; i <= 1; i++) {
+      const ly = cy + i * rad0 * 0.45;
+      ctx.globalAlpha = 0.7 - Math.abs(i) * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(x + side * rad0 * 0.6, ly);
+      ctx.lineTo(x + side * (rad0 * 0.6 + streak), ly);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   if (spr) {
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
@@ -757,7 +800,10 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.monsters) {
     const p = posAtDistance(b.map, m.dist);
     const { x, y } = cellCenterPx(p.c, p.r);
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m);
+    // 采样前方一小段求水平朝向（骑兵拖尾方向用）：向右移=+1，向左移=-1
+    const np = posAtDistance(b.map, m.dist + 0.05);
+    const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
   }
 }
 
@@ -1223,7 +1269,9 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const m of b.aiMonsters) {
     const p = b.aiMonsterPos(m);
     const { x, y } = cellCenterPx(p.c, p.r);
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m);
+    const np = b.aiMonsterPos({ ...m, dist: m.dist + 0.05 });
+    const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
   }
   // AI 单位（上半场自动部署）
   const t = performance.now() / 1000;
@@ -1304,8 +1352,8 @@ function drawDanger(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 英雄绝招爆发：金色扩散冲击波 + 放射光束
-function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
+// AOE 技能爆发特效（紧箍咒/陨石共用）：金色扩散冲击波 + 放射光束
+function drawAoeBurst(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.ultFlash <= 0 || !b.ultCenter) return;
   const { x, y } = cellCenterPx(b.ultCenter.c, b.ultCenter.r);
   const t = 1 - b.ultFlash / 0.6; // 0→1
@@ -1315,12 +1363,12 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.strokeStyle = '#ffe27a';
   ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.arc(x, y, 10 + t * TUNING.ultRadius * CELL * 1.1, 0, Math.PI * 2);
+  ctx.arc(x, y, 10 + t * TUNING.aiClearRadius * CELL * 1.1, 0, Math.PI * 2);
   ctx.stroke();
   ctx.strokeStyle = '#fff3c4';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(x, y, 4 + t * TUNING.ultRadius * CELL * 0.7, 0, Math.PI * 2);
+  ctx.arc(x, y, 4 + t * TUNING.aiClearRadius * CELL * 0.7, 0, Math.PI * 2);
   ctx.stroke();
   // 放射金棒光束
   ctx.strokeStyle = '#ffd23c';
@@ -1334,61 +1382,6 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
     ctx.stroke();
   }
-  ctx.restore();
-}
-
-// 英雄绝招能量条（HUD 与棋盘之间的细条）+ 头像
-function drawHeroEnergy(ctx: CanvasRenderingContext2D, b: Battle) {
-  const y = HUD_H + 3;
-  const h = 6;
-  const x0 = BOARD_X + 22;
-  const w = CELL * COLS - 22;
-  ctx.save();
-  // 底槽
-  roundRect(ctx, x0, y, w, h, 3);
-  ctx.fillStyle = 'rgba(60,45,25,0.35)';
-  ctx.fill();
-  // 充能
-  const pct = Math.max(0, Math.min(1, b.heroEnergy));
-  const full = pct >= 1;
-  roundRect(ctx, x0, y, Math.max(2, w * pct), h, 3);
-  ctx.fillStyle = full ? '#ffe27a' : '#e0a83c';
-  ctx.fill();
-  if (full) {
-    ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 120);
-    ctx.strokeStyle = '#fff3c4';
-    ctx.lineWidth = 2;
-    roundRect(ctx, x0 - 1, y - 1, w + 2, h + 2, 4);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-  // 头像圆（左端）
-  const cx = BOARD_X + 12;
-  const cy = y + h / 2;
-  const rad = 12;
-  ctx.beginPath();
-  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-  ctx.fillStyle = full ? '#ffcf4d' : '#b98a3a';
-  ctx.fill();
-  const spr = sprite(b.heroKey as Parameters<typeof sprite>[0]);
-  if (spr) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, rad - 1, 0, Math.PI * 2);
-    ctx.clip();
-    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
-    ctx.drawImage(spr, cx - (spr.width * scale) / 2, cy - (spr.height * scale) / 2 - rad * 0.2, spr.width * scale, spr.height * scale);
-    ctx.restore();
-  }
-  // 绝招 CD 倒计时 / 就绪 文字（叠在能量条右侧）
-  ctx.fillStyle = full ? '#5a3a08' : 'rgba(90,60,20,0.85)';
-  ctx.font = `bold 11px "PingFang SC", sans-serif`;
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  const label = b.status === 'playing'
-    ? (full ? '绝招就绪·点下方按钮' : `绝招 ${Math.ceil(b.ultCooldownRemaining())}s`)
-    : '绝招蓄力';
-  ctx.fillText(label, x0 + w - 4, cy);
   ctx.restore();
 }
 
@@ -1427,6 +1420,8 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillText('胜利！选择一件道具（每日重置）', VIEW_W / 2, CTRL_Y - 44);
   }
   for (const btn of getButtons(b)) {
+    // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
+    if (btn.id.startsWith('act') || btn.id.startsWith('pas')) continue;
     const isItem = btn.id.startsWith('item');
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
     ctx.fillStyle = btn.enabled ? (isItem ? '#3a2c53' : b.map.theme.accent) : '#3a3128';
@@ -1441,7 +1436,7 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.font = 'bold 18px "PingFang SC", sans-serif';
       ctx.textBaseline = 'top';
       ctx.fillText(def?.name ?? btn.label, btn.x + btn.w / 2, btn.y + 12);
-      ctx.fillStyle = def?.kind === '主动' ? '#ffb86c' : '#9bffb0';
+      ctx.fillStyle = def?.kind === '强化' ? '#ffb86c' : '#9bffb0';
       ctx.font = '12px "PingFang SC", sans-serif';
       ctx.fillText(`[${def?.kind ?? ''}]`, btn.x + btn.w / 2, btn.y + 38);
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
@@ -1453,16 +1448,6 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
-      // 绝招就绪高亮描边
-      if (btn.id === 'ult' && btn.enabled) {
-        ctx.save();
-        ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 130);
-        ctx.strokeStyle = '#ffe27a';
-        ctx.lineWidth = 3;
-        roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
-        ctx.stroke();
-        ctx.restore();
-      }
       // 征兵闪光
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();
@@ -1480,7 +1465,135 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.font = '14px "PingFang SC", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(b.message, VIEW_W / 2, CTRL_Y + 64 + 20);
+  ctx.fillText(b.message, VIEW_W / 2, MSG_Y);
+}
+
+// 两翼主动技能图标：图标 + 环形冷却扇形 + 就绪金边 + 触发白环
+function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.status !== 'playing') return;
+  for (const btn of getButtons(b)) {
+    if (!btn.id.startsWith('act')) continue;
+    const i = Number(btn.id.slice(3));
+    const slot = b.activeSlots[i];
+    if (!slot) continue;
+    const def = activeById(slot.id);
+    const cx = btn.x + btn.w / 2, cy = btn.y + btn.h / 2;
+    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
+    ctx.fillStyle = slot.ready ? '#b5762a' : '#4a3f30';
+    ctx.fill();
+    // 图标字形
+    ctx.fillStyle = slot.ready ? '#fff6e6' : '#c9bfae';
+    ctx.font = `${Math.round(btn.w * 0.5)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def?.icon ?? '?', cx, cy);
+    if (!slot.ready) {
+      // 剩余冷却扇形（从 12 点方向顺时针覆盖，比例=剩余CD）
+      const frac = slot.cdMax > 0 ? slot.cd / slot.cdMax : 0;
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, btn.w * 0.6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px "PingFang SC", sans-serif';
+      ctx.fillText(String(Math.ceil(slot.cd)), cx, cy);
+    } else {
+      // 就绪：金色脉冲边
+      ctx.save();
+      ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 130);
+      ctx.strokeStyle = '#ffe27a';
+      ctx.lineWidth = 3;
+      roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (slot.flash > 0) {
+      // 触发瞬间白环反馈
+      ctx.save();
+      ctx.globalAlpha = slot.flash;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// 被动/强化技能行：图标块（进度类附小进度条）
+function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.status !== 'playing') return;
+  for (const btn of getButtons(b)) {
+    if (!btn.id.startsWith('pas')) continue;
+    const i = Number(btn.id.slice(3));
+    const def = itemById(b.pickedItems[i] ?? '');
+    if (!def) continue;
+    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 8);
+    ctx.fillStyle = def.kind === '强化' ? '#5a4326' : '#2c4a30';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = def.kind === '强化' ? '#e0a83c' : '#6ab07a';
+    ctx.stroke();
+    ctx.fillStyle = '#fff6e6';
+    ctx.font = `${Math.round(btn.w * 0.5)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.icon ?? def.name[0]!, btn.x + btn.w / 2, btn.y + btn.h / 2);
+    const prog = b.passiveProgress(def.id);
+    if (prog) {
+      const by = btn.y + btn.h - 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(btn.x + 4, by, btn.w - 8, 3);
+      ctx.fillStyle = '#ffd24d';
+      ctx.fillRect(btn.x + 4, by, (btn.w - 8) * Math.max(0, Math.min(1, prog.ratio)), 3);
+    }
+  }
+}
+
+// 被动/强化道具详情弹窗（点击图标后显示；点任意处关闭）
+function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.passivePopup === null) return;
+  const def = itemById(b.pickedItems[ui.passivePopup] ?? '');
+  if (!def) return;
+  const w = 264, h = 112;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  ctx.save();
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fillStyle = 'rgba(30,24,18,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = def.kind === '强化' ? '#e0a83c' : '#6ab07a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + 16, y + 14);
+  ctx.fillStyle = def.kind === '强化' ? '#ffb86c' : '#9bffb0';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(`[${def.kind}]`, x + 16, y + 42);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(def.desc, x + 16, y + 62);
+  const prog = b.passiveProgress(def.id);
+  if (prog) {
+    const by = y + h - 20, bw = w - 32;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(x + 16, by, bw, 8);
+    ctx.fillStyle = '#ffd24d';
+    ctx.fillRect(x + 16, by, bw * Math.max(0, Math.min(1, prog.ratio)), 8);
+    ctx.fillStyle = '#fff';
+    ctx.font = '11px "PingFang SC", sans-serif';
+    ctx.fillText(prog.text, x + 16, by - 13);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('点任意处关闭', x + w - 12, y + 16);
+  ctx.restore();
 }
 
 function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {

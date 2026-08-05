@@ -11,12 +11,12 @@ await page.goto('http://127.0.0.1:5180/?seed=7',{waitUntil:'networkidle0'});
 await page.waitForFunction('window.__game && window.__game.snapshot');
 await page.waitForFunction('window.__assetsReady===true',{timeout:15000}).catch(()=>{});
 const r = await page.evaluate(()=>{
-  const g=window.__game; g.restart(7); g.enterBattle();
+  const g=window.__game; g.equipActives(['act_meteor','act_palm']); g.enterBattle();
   const manage=()=>{for(let k=0;k<20;k++){if(!g.summon()){g.autoPlace();if(!g.summon())break;}g.autoPlace();}};
   manage(); g.wave();
-  // 跑到绝招接近就绪
-  for(let i=0;i<600;i++){ g.step(1/30); if(g.battle.heroEnergy>=1) break; if(g.snapshot().status!=='playing')break; }
-  return { ready:g.battle.ultReady(), cd:Math.ceil(g.battle.ultCooldownRemaining()), energy:Math.round(g.battle.heroEnergy*100) };
+  // 跑一段时间让主动技能冷却推进
+  for(let i=0;i<300;i++){ g.step(1/30); if(g.snapshot().status!=='playing')break; }
+  return { slots:g.battle.activeSlots.map(s=>({id:s.id,cd:Math.round(s.cd),ready:s.ready})), activesReady:g.snapshot().activesReady };
 });
 await new Promise(r=>setTimeout(r,80));
 await page.screenshot({ path: path.join(OUT,'ultui.png') });

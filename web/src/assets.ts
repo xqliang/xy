@@ -10,6 +10,7 @@ export type AssetKey =
   | 'unit-archer'
   | 'monster-minion'
   | 'monster-boss'
+  | 'item-shovel'
   | 'hero-wukong'
   | 'hero-bajie'
   | 'hero-shaseng'
@@ -35,6 +36,7 @@ const FILES: Record<AssetKey, string> = {
   'unit-archer': '/assets/unit-archer.png',
   'monster-minion': '/assets/monster-minion.png',
   'monster-boss': '/assets/monster-boss.png',
+  'item-shovel': '/assets/item-shovel.png',
   'hero-wukong': '/assets/hero-wukong.png',
   'hero-bajie': '/assets/hero-bajie.png',
   'hero-shaseng': '/assets/hero-shaseng.png',

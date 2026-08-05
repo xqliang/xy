@@ -12,8 +12,9 @@ export function drawSummonTray(opts: {
   shovelChance: number;
   maxPerKey: number;
   firstSummon: boolean;
+  forceShovel?: boolean;
 }): SummonToken[] {
-  const { rng, unitTypes, draws, shovelChance, maxPerKey, firstSummon } = opts;
+  const { rng, unitTypes, draws, shovelChance, maxPerKey, firstSummon, forceShovel } = opts;
   const counts = new Map<string, number>();
   const out: SummonToken[] = [];
   const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
@@ -43,6 +44,12 @@ export function drawSummonTray(opts: {
     const type = rng.pick(pool);
     out.push({ kind: 'unit', type, tier: 1 });
     bump(`unit:${type}`);
+  }
+
+  // 铲子保底：要求强制出铲但本盘一把都没出 → 把最后一个兵槽替换为铲子
+  if (forceShovel && !out.some((t) => t.kind === 'shovel')) {
+    const lastUnit = out.map((t) => t.kind).lastIndexOf('unit');
+    if (lastUnit >= 0) out[lastUnit] = { kind: 'shovel' };
   }
   return out;
 }

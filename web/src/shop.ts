@@ -1,6 +1,8 @@
-// 「神秘商人」功德商店界面：展示功德余额与可升级项，点击卡片购买，返回主菜单。
+// 「神秘商人」功德商店界面：展示功德余额与可升级项 + 主动技能（每日重置）购买，点击卡片购买，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
 import { UPGRADES, levelOf, RARITY_COLOR, type MeritState } from './merit';
+import { ACTIVE_SKILLS, MAX_EQUIPPED_ACTIVES } from './actives';
+import { isEquipped, type LoadoutState } from './loadout';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -20,7 +22,7 @@ const GRID_TOP = 130;
 const GRID_LEFT = (VIEW_W - (CARD_W * COLS_N + GAP)) / 2;
 
 export interface ShopHit {
-  kind: 'buy' | 'back';
+  kind: 'buy' | 'buyActive' | 'back';
   id?: string;
 }
 
@@ -28,6 +30,15 @@ function cardRect(i: number): { x: number; y: number } {
   const col = i % COLS_N;
   const row = Math.floor(i / COLS_N);
   return { x: GRID_LEFT + col * (CARD_W + GAP), y: GRID_TOP + row * (CARD_H + GAP) };
+}
+
+// 主动技能区（功德升级卡片下方）：紧凑卡片
+const ACT_CARD_H = 80;
+const ACT_TOP = GRID_TOP + Math.ceil(UPGRADES.length / COLS_N) * (CARD_H + GAP) + 44;
+function activeCardRect(i: number): { x: number; y: number } {
+  const col = i % COLS_N;
+  const row = Math.floor(i / COLS_N);
+  return { x: GRID_LEFT + col * (CARD_W + GAP), y: ACT_TOP + row * (ACT_CARD_H + GAP) };
 }
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
@@ -38,10 +49,14 @@ export function shopHitAt(x: number, y: number): ShopHit | null {
     const { x: cx, y: cy } = cardRect(i);
     if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + CARD_H) return { kind: 'buy', id: UPGRADES[i]!.id };
   }
+  for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
+    const { x: cx, y: cy } = activeCardRect(i);
+    if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + ACT_CARD_H) return { kind: 'buyActive', id: ACTIVE_SKILLS[i]!.id };
+  }
   return null;
 }
 
-export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, toast: string): void {
+export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loadout: LoadoutState, toast: string): void {
   // 背景
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
   bg.addColorStop(0, '#2a2140');
@@ -117,6 +132,48 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, toast
     ctx.fillStyle = maxed ? '#8a86a0' : afford ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 15px "PingFang SC", sans-serif';
     ctx.fillText(maxed ? '——' : `购买 · ${cost} 功德`, x + 14 + bw / 2, by + 12);
+  }
+
+  // —— 主动技能区（每日重置）——
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 20px "PingFang SC", sans-serif';
+  ctx.fillText(`主动技能（每日重置，最多装备 ${MAX_EQUIPPED_ACTIVES} 个）`, GRID_LEFT, ACT_TOP - 16);
+  for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
+    const act = ACTIVE_SKILLS[i]!;
+    const equipped = isEquipped(loadout, act.id);
+    const full = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES && !equipped;
+    const afford = merit.merit >= act.cost;
+    const { x, y } = activeCardRect(i);
+    roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
+    ctx.fillStyle = '#241d38';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = equipped ? '#6ab0ff' : '#5a4a7a';
+    ctx.stroke();
+    // 图标 + 名称
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '28px "PingFang SC", sans-serif';
+    ctx.fillStyle = '#fff6e6';
+    ctx.fillText(act.icon, x + 12, y + 12);
+    ctx.font = 'bold 18px "PingFang SC", sans-serif';
+    ctx.fillText(act.name, x + 52, y + 12);
+    ctx.fillStyle = 'rgba(255,240,210,0.8)';
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(act.desc, x + 52, y + 36);
+    // 购买/已装备条
+    const bw = CARD_W - 24;
+    const by = y + ACT_CARD_H - 26;
+    roundRect(ctx, x + 12, by, bw, 20, 7);
+    ctx.fillStyle = equipped ? '#2f5a3a' : full ? '#3a3350' : afford ? '#c8792b' : '#4a3a30';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = equipped ? '#9bffb0' : full ? '#8a86a0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.fillText(equipped ? '✓ 已装备' : full ? '装备已满' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 10);
   }
 
   // 提示

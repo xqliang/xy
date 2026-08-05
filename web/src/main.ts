@@ -18,6 +18,7 @@ import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS } from './settle';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
+import { loadLoadout, buyActive, type LoadoutState } from './loadout';
 import { drawShop, shopHitAt } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
@@ -50,20 +51,21 @@ let screen: Screen = 'menu';
 let rank: RankState = loadRank();
 let stamina: Stamina = loadStamina();
 let merit: MeritState = loadMerit();
+let loadout: LoadoutState = loadLoadout(); // 主动技能每日装备（跨天重置，需重新购买）
 let bag: BagState = loadBag();
 let bagToast = '';
 let menuToast = '';
 let shopToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag));
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag));
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
   endHandled = false;
 }
 
@@ -133,6 +135,12 @@ function handleShop(x: number, y: number) {
     merit = r.state;
     shopToast = r.ok ? '购买成功！' : r.reason ?? '无法购买';
   }
+  if (hit.kind === 'buyActive' && hit.id) {
+    const r = buyActive(loadout, merit, hit.id);
+    loadout = r.loadout;
+    merit = r.merit;
+    shopToast = r.ok ? '已装备（今日有效）' : r.reason ?? '无法购买';
+  }
 }
 
 // —— 画布尺寸 / DPR —— //
@@ -167,7 +175,9 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'wave') battle.startNextWave();
       else if (btn.id === 'palm') battle.usePalm();
-      else if (btn.id === 'ult') battle.castUltimate();
+      else if (btn.id === 'act0') battle.triggerActive(0);
+      else if (btn.id === 'act1') battle.triggerActive(1);
+      else if (btn.id.startsWith('pas')) ui.passivePopup = Number(btn.id.slice(3)); // 点击被动图标看详情
       else if (btn.id.startsWith('item')) battle.chooseItem(Number(btn.id.slice(4)));
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
@@ -215,6 +225,8 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     return;
   }
+  // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
+  if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
   if (handleButton(x, y)) { ui.selected = null; return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -288,7 +300,7 @@ function frame(now: number) {
     return;
   }
   if (screen === 'shop') {
-    drawShop(ctx, merit, shopToast);
+    drawShop(ctx, merit, loadout, shopToast);
     requestAnimationFrame(frame);
     return;
   }
@@ -354,7 +366,9 @@ interface GameHook {
   summon: () => boolean;
   wave: () => boolean;
   palm: () => boolean;
-  ult: () => boolean;
+  ult: () => boolean; // 兼容垫片：绝招已移除，恒返回 false（旧工具不报错）
+  triggerActive: (i: number) => boolean;
+  equipActives: (ids: string[]) => void;
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   placeFromTray: (index: number, to: Cell) => boolean;
@@ -382,7 +396,9 @@ const hook: GameHook = {
   summon: () => battle.summon(),
   wave: () => battle.startNextWave(),
   palm: () => battle.usePalm(),
-  ult: () => battle.castUltimate(),
+  ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
+  triggerActive: (i: number) => battle.triggerActive(i),
+  equipActives: (ids: string[]) => { loadout = { ...loadout, equipped: ids.slice(0, 2) }; newGame(); },
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
@@ -397,7 +413,7 @@ const hook: GameHook = {
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag));
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
     endHandled = false;
     screen = 'battle';
   },

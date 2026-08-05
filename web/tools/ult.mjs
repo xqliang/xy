@@ -13,14 +13,14 @@ await page.waitForFunction('window.__game && window.__game.snapshot');
 await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
 const res = await page.evaluate(() => {
   const g = window.__game;
-  g.restart(7); g.enterBattle();
+  g.equipActives(['act_meteor', 'act_jinggu']); g.enterBattle();
   const manage = () => { for (let k=0;k<30;k++){ if(!g.summon()){g.autoPlace(); if(!g.summon())break;} g.autoPlace(); } };
   for (let w=0; w<2; w++){ if(g.battle.pendingShop) g.chooseItem(0); g.grantPeach(400); manage(); g.wave(); g.fastForward(30); }
   if(g.battle.pendingShop) g.chooseItem(0); g.grantPeach(400); manage();
   g.wave();
   let fireSnap=null;
-  for(let i=0;i<900;i++){ g.step(1/30); if(g.battle.ultFlash>0){fireSnap=g.snapshot();break;} if(g.snapshot().status!=='playing')break; }
-  return { fireSnap, cur: g.snapshot(), ultCount: g.battle.ultCount };
+  for(let i=0;i<900;i++){ g.step(1/30); g.triggerActive(0); g.triggerActive(1); if(g.battle.ultFlash>0){fireSnap=g.snapshot();break;} if(g.snapshot().status!=='playing')break; }
+  return { fireSnap, cur: g.snapshot(), activesReady: g.snapshot().activesReady };
 });
 await new Promise((r)=>setTimeout(r,80));
 await page.screenshot({ path: path.join(OUT, 'ult.png') });
