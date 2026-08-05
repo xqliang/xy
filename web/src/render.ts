@@ -389,6 +389,16 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#8a6a3a';
   ctx.stroke();
+  // 立体倒角：顶部亮边、底部暗边
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,248,225,0.55)';
+  ctx.beginPath();
+  ctx.moveTo(14, TRAY_Y + 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + 2);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(90,60,25,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(14, TRAY_Y + TRAY_H - 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + TRAY_H - 2);
+  ctx.stroke();
   // 「营」招牌：优先用 Seedream 素材(camp)，未加载则画木牌+文字兜底
   const campSpr = sprite('camp');
   const campX = 12, campY = TRAY_Y + 5, campW = 46, campH = TRAY_H - 10;
@@ -419,17 +429,38 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const SLOT_STAGGER = 0.11, SLOT_DUR = 0.28;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
-    // 木框凹槽：渐变底 + 深色描边
+    // 木框凹槽（内凹口袋）：上暗下亮内凹渐变 + 深色描边 + 顶部内阴影
     const sx = cx + 3, sy = TRAY_Y + 5, sw = TRAY_SLOT - 6, sh = TRAY_H - 10;
     const slot = ctx.createLinearGradient(0, sy, 0, sy + sh);
-    slot.addColorStop(0, '#c9b48c');
-    slot.addColorStop(1, '#d8c8a6');
+    slot.addColorStop(0, '#c3ac80');
+    slot.addColorStop(0.5, '#d3c096');
+    slot.addColorStop(1, '#ddcfac');
     ctx.fillStyle = slot;
     roundRect(ctx, sx, sy, sw, sh, 8);
     ctx.fill();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = '#a98a58';
+    ctx.strokeStyle = '#9a7c4c';
     ctx.stroke();
+    // 顶部内阴影(凹陷感)
+    ctx.save();
+    roundRect(ctx, sx, sy, sw, sh, 8);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(90,60,25,0.28)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(sx + 2, sy + 2); ctx.lineTo(sx + sw - 2, sy + 2);
+    ctx.stroke();
+    ctx.restore();
+    // 空槽虚线提示「待放置」
+    if (!b.tray[i]) {
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(120,95,55,0.45)';
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, sx + 6, sy + 6, sw - 12, sh - 12, 6);
+      ctx.stroke();
+      ctx.restore();
+    }
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
