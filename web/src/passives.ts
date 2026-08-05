@@ -9,8 +9,8 @@ export interface PassiveSkillDef {
   desc: string; // 商店说明（新人能看懂）
 }
 
-// 最多可装备（购买）的被动技能数
-export const MAX_EQUIPPED_PASSIVES = 2;
+// 最多「生效」的被动技能数（购买不设上限，仅保留最新 N 个生效）
+export const MAX_EQUIPPED_PASSIVES = 6;
 
 export const PASSIVE_SKILLS: PassiveSkillDef[] = [
   {
@@ -20,6 +20,21 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
     cost: 60,
     desc: '每40s在空地自动种下1棵桃树；桃树按等级产桃(20/10/5/3/2s)，同级拖动可合并升级，最高5级',
   },
+  { id: 'xiandan', name: '仙丹', icon: '💊', cost: 60, desc: '全体攻击 +15%' },
+  { id: 'fenghuolun', name: '风火轮符', icon: '🌀', cost: 60, desc: '全体攻速 +20%' },
+  { id: 'fabaofu', name: '法宝符', icon: '📜', cost: 80, desc: '所有武将等级 +1' },
+  { id: 'jifeng', name: '疾风咒', icon: '💨', cost: 70, desc: '全体攻速 +50%（AI 对手仅 +25%）' },
+  { id: 'zhaoxian', name: '招贤榜', icon: '📋', cost: 40, desc: '武将字牌掉率 +10%' },
+  { id: 'mojin', name: '摸金校尉', icon: '⛏', cost: 40, desc: '每次用铲子额外 +6 蟠桃' },
+  { id: 'luoyangchan', name: '洛阳铲', icon: '🥄', cost: 50, desc: '每 45 秒自动获得 1 把铲子' },
+  { id: 'yunshi', name: '陨石', icon: '☄', cost: 70, desc: '每波开始砸向最前妖怪' },
+  { id: 'yuni', name: '淤泥', icon: '🟤', cost: 50, desc: '出怪口附近妖怪移速 -18%' },
+  { id: 'xianyuan', name: '仙缘幡', icon: '🎏', cost: 50, desc: '召唤成本 -1' },
+  { id: 'jubaopen', name: '聚宝盆', icon: '💰', cost: 40, desc: '击杀额外 +1 蟠桃' },
+  { id: 'hushen', name: '护身金光', icon: '🛡', cost: 40, desc: '唐僧 +1 血' },
+  { id: 'zhuwang', name: '绊妖蛛网', icon: '🕸', cost: 50, desc: '妖怪移速 -12%' },
+  { id: 'tongxin', name: '同心咒', icon: '❤', cost: 60, desc: '唐僧 +3 血（对手仅 +2）' },
+  { id: 'dinghai', name: '自动定海针', icon: '🪡', cost: 70, desc: '立即开辟 1 阵位' },
 ];
 
 export function passiveById(id: string): PassiveSkillDef | undefined {
