@@ -97,6 +97,7 @@ export const TUNING = {
   // AI 对手每波部署的新单位数(基数 + 波次×系数)，使 AI 战力与玩家大致对称(伪竞技公平性)
   aiDeployBase: 8,
   aiDeployPerWave: 1.5,
+  aiDeployInterval: 2.2, // AI 逐个部署的间隔(秒)：模拟人手动从候选区往地图放，不再开波瞬间铺满(总量不变，只拉长过程)
 };
 
 // 怪物技能：对附近武将施加的减益类型
@@ -333,6 +334,9 @@ export class Battle {
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
+  // AI 逐个慢速部署：不再开波瞬间铺满，而是把本波该放的格排进队列，随后按 aiDeployInterval 一个个落子（模拟人操作）。
+  private aiDeployQueue: Cell[] = []; // 待部署的目标格（按贴路顺序）
+  private aiDeployTimer = 0; // 距下一个 AI 单位落子的倒计时（秒）
   private nextWaveTimer = 0; // 波间自动切换倒计时
 
   // 候选区（征兵产出）与铲子（开格资源）
@@ -802,7 +806,7 @@ export class Battle {
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
-    this.aiDeploy(); // AI 同步部署本波防御
+    this.queueAiDeploy(); // 排入本波 AI 部署量，随后在 updateAi 里按人类节奏逐个落子（不再瞬间铺满）
     this.status = 'playing';
     this.waveActive = true;
     this.palmUsedThisWave = false;
@@ -1103,20 +1107,36 @@ export class Battle {
     return null;
   }
 
-  // AI 自动部署：每波在上半场镜像格补兵并合成升阶（模拟一名对手玩家）
-  private aiDeploy(): void {
-    const types = Object.keys(UNITS) as UnitType[];
-    // 本波补若干 1 阶到空的 AI 格（数量随波次与难度增长，逼近玩家战力曲线并跟上高境界怪物）
-    let added = 0;
+  // AI 部署（模拟一名对手玩家）：把本波该补的格排进队列，随后由 updateAi 按 aiDeployInterval 逐个落子。
+  // 只把「当前为空且未在队列中」的镜像格计入，取前 target 个（贴路优先），保证总量与旧的一次性部署一致。
+  private queueAiDeploy(): void {
     const target = Math.round((TUNING.aiDeployBase + this.wave * TUNING.aiDeployPerWave) * this.difficultyMul);
-    for (const cell of this.aiCells) {
-      if (added >= target) break;
-      if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
+    const queued = new Set(this.aiDeployQueue.map((c) => cellKey(c.c, c.r)));
+    const empties = this.aiCells.filter(
+      (c) => !queued.has(cellKey(c.c, c.r)) && !this.aiUnits.some((u) => u.cell.c === c.c && u.cell.r === c.r),
+    );
+    this.aiDeployQueue.push(...empties.slice(0, target));
+    if (this.aiDeployTimer <= 0) this.aiDeployTimer = TUNING.aiDeployInterval; // 开波后隔一个间隔再放第一个
+  }
+
+  // 逐个落子一步：到点则从队列取一格放 1 阶单位并做一次合成，模拟人「放一个、合一下」的节奏。
+  private tickAiDeploy(dt: number): void {
+    if (this.aiDeployQueue.length === 0) return;
+    this.aiDeployTimer -= dt;
+    if (this.aiDeployTimer > 0) return;
+    const cell = this.aiDeployQueue.shift()!;
+    // 该格仍为空才放置（合成不会占用空格，此处仅作保险）；消费队列以维持总量不超发。
+    if (!this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) {
+      const types = Object.keys(UNITS) as UnitType[];
       this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
-      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入AI可放置区域
-      added++;
+      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入 AI 可放置区域（逐步"占领"）
+      this.aiMergeUnits();
     }
-    // 合成：同型同级两两合并升阶
+    this.aiDeployTimer = TUNING.aiDeployInterval;
+  }
+
+  // AI 单位合成：同型同级两两合并升阶（放一个后调用一次）
+  private aiMergeUnits(): void {
     for (let pass = 0; pass < 10; pass++) {
       let merged = false;
       for (let i = 0; i < this.aiUnits.length && !merged; i++) {
@@ -1176,6 +1196,7 @@ export class Battle {
 
   // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
   private updateAi(dt: number): void {
+    this.tickAiDeploy(dt); // AI 逐个慢速部署（模拟人手动落子，不再开波瞬间铺满）
     this.updateAiUnits(dt);
     // AI 定期清场：随境界增强以跟上高难度怪物(维持对手不被单方碾压)。就绪后带随机时机。
     if (this.aiMonsters.length > 0) {
