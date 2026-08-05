@@ -151,6 +151,14 @@ function handleShop(x: number, y: number) {
   }
 }
 
+// —— 游戏循环状态 —— //
+// 提前声明：resize() 在初始化时同步调用 scheduleFrame()，而 scheduleFrame 读取 rafId；
+// 若这些 let/const 声明晚于 resize() 调用点，会触发 TDZ（Cannot access 'rafId' before initialization）导致黑屏。
+let last = performance.now();
+let rafId: number | null = null; // 当前排队中的 rAF id；null 表示循环已停
+// 连续动画限速到 ~60fps：120Hz+ 屏隔帧处理，功耗近乎减半。-4ms 余量容忍 60Hz 抖动，避免误降到 30fps。
+const MIN_FRAME_MS = 1000 / 60 - 4;
+
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
 function resize() {
@@ -294,10 +302,7 @@ function onPointerUp() {
 // —— 游戏循环（按需重绘） —— //
 // 静态界面（菜单/商店/图鉴/排行/背包，以及结算星级动画播完后）只在状态变化时画一帧，画完即停掉
 // rAF，不再持续满帧空转；只有战斗、结算动画进行中才连续循环。待机时 CPU/GPU 几乎不工作，显著降功耗。
-let last = performance.now();
-let rafId: number | null = null; // 当前排队中的 rAF id；null 表示循环已停
-// 连续动画限速到 ~60fps：120Hz+ 屏隔帧处理，功耗近乎减半。-4ms 余量容忍 60Hz 抖动，避免误降到 30fps。
-const MIN_FRAME_MS = 1000 / 60 - 4;
+// （last / rafId / MIN_FRAME_MS 已在 resize() 之前声明，避免初始化 TDZ。）
 
 // 请求下一帧：若已有帧在排队则合并为一次（幂等），避免输入风暴导致重复调度。
 function scheduleFrame(): void {
