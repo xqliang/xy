@@ -14,7 +14,7 @@ import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
 import type { UnitType } from '@core';
-import { sprite, unitAsset } from './assets';
+import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
 
 export const VIEW_W = 560;
@@ -714,7 +714,7 @@ function emergeScale(t: number): number {
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, trailDir = 1) {
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, mapId: string, trailDir = 1) {
   const rad = rad0 * emergeScale(m.spawnT);
   // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
   const phase = m.dist * 5.2;
@@ -729,7 +729,7 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   ctx.ellipse(x, y + rad0 * 0.82, shW, rad0 * 0.32, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
+  const spr = monsterSprite(mapId, m.isBoss);
   // 骑兵视觉区分：身后拖出青蓝速度线（快速冲锋感）。拖尾始终在移动的反方向：
   // trailDir=+1 表示向右移动→拖尾在左侧；trailDir=-1 表示向左移动→拖尾在右侧。
   if (m.isCavalry) {
@@ -815,7 +815,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     // 采样前方一小段求水平朝向（骑兵拖尾方向用）：向右移=+1，向左移=-1
     const np = posAtDistance(b.map, m.dist + 0.05);
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
   }
 }
 
@@ -1134,8 +1134,8 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16));
     // 攻击瞬间：字→兵器形变，朝目标出招
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
-    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身）
-    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : null;
+    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身/缠丝）
+    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : u.rangeCutT > 0 ? SKILL_META.webbind.icon : null;
     if (debuff) {
       ctx.save();
       if (u.stunT > 0) {
@@ -1682,7 +1682,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const { x, y } = cellCenterPx(p.c, p.r);
     const np = b.aiMonsterPos({ ...m, dist: m.dist + 0.05 });
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
   }
   // AI 单位（上半场自动部署）
   const t = performance.now() / 1000;

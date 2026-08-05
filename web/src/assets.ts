@@ -13,6 +13,14 @@ export type AssetKey =
   | 'unit-archer'
   | 'monster-minion'
   | 'monster-boss'
+  | 'monster-minion-huoyanshan'
+  | 'monster-boss-huoyanshan'
+  | 'monster-minion-liushahe'
+  | 'monster-boss-liushahe'
+  | 'monster-minion-baiguling'
+  | 'monster-boss-baiguling'
+  | 'monster-minion-pansidong'
+  | 'monster-boss-pansidong'
   | 'item-shovel'
   | 'hero-wukong'
   | 'hero-bajie'
@@ -65,4 +73,10 @@ export function sprite(key: AssetKey): HTMLImageElement | undefined {
 
 export function unitAsset(type: UnitType): AssetKey {
   return `unit-${type}` as AssetKey;
+}
+
+// 怪物立绘按地图取专属图（monster-{role}-{mapId}），缺图回退通用 monster-{role}。
+export function monsterSprite(mapId: string, isBoss: boolean): HTMLImageElement | undefined {
+  const role = isBoss ? 'boss' : 'minion';
+  return cache[`monster-${role}-${mapId}` as AssetKey] ?? cache[`monster-${role}` as AssetKey];
 }

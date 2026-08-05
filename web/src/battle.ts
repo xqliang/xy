@@ -90,6 +90,8 @@ export const TUNING = {
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
+  webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
+  webbindRangeMul: 0.5, // 缠丝期间有效射程倍率（最低 1 格，见 updateUnits）
   // —— AI 清场（AI 对手定期释放的大范围爆发，维持伪竞技对称；玩家侧无此机制）——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
   aiClearRadius: 2.5, // AI 清场作用半径（格）
@@ -104,11 +106,20 @@ export const TUNING = {
 };
 
 // 怪物技能：对附近武将施加的减益类型
-export type MonsterSkill = 'stun' | 'slow' | 'weaken';
+export type MonsterSkill = 'stun' | 'slow' | 'weaken' | 'webbind';
 export const SKILL_META: Record<MonsterSkill, { name: string; color: string; icon: string }> = {
   stun: { name: '定身', color: '#ffd34d', icon: '💫' },
   slow: { name: '迟滞', color: '#5bd1ff', icon: '🐌' },
   weaken: { name: '弱身', color: '#c77dff', icon: '⬇' },
+  webbind: { name: '缠丝', color: '#b76bd6', icon: '🕸' },
+};
+
+// 每张地图的专属技能主题：该图 Boss 必带、精英小怪也带同一技能（不再随机三选一）
+const MAP_SKILL: Record<string, MonsterSkill> = {
+  huoyanshan: 'weaken', // 火焰山：烈焰灼身，攻击↓
+  liushahe: 'slow', // 流沙河：流沙裹足，出手变慢
+  baiguling: 'stun', // 白骨岭：白骨魅惑，无法出手
+  pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
 };
 
 // 候选区令牌：兵种 / 铲子 / 武将字牌（字牌带阶数，可同字同阶合并升阶）
@@ -130,6 +141,7 @@ export interface PlacedUnit {
   stunT: number; // 眩晕剩余(秒)：>0 时无法攻击
   slowT: number; // 减速剩余(秒)：>0 时冷却拉长
   weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
+  rangeCutT: number; // 缠丝剩余(秒)：>0 时有效射程削减
 }
 
 // 棋盘上的单个武将字牌（占一格，带阶数；同字同阶可合并升阶）
@@ -649,7 +661,7 @@ export class Battle {
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
       this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
@@ -666,12 +678,12 @@ export class Battle {
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
       this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.emit('place');
@@ -1114,11 +1126,10 @@ export class Battle {
 
   // 决定怪物携带的技能：BOSS 必带（随机一种），精英按概率带，普通妖无
   private rollMonsterSkill(isBoss: boolean): MonsterSkill | null {
-    const pool: MonsterSkill[] = ['stun', 'slow', 'weaken'];
-    if (isBoss) return this.rng.pick(pool);
-    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) {
-      return this.rng.pick(pool);
-    }
+    // 技能按地图主题固定（该图 Boss 必带；精英小怪按概率带同一技能）；未配置的地图回退定身。
+    const skill = MAP_SKILL[this.map.id] ?? 'stun';
+    if (isBoss) return skill;
+    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) return skill;
     return null;
   }
 
@@ -1143,7 +1154,7 @@ export class Battle {
     // 该格仍为空才放置（合成不会占用空格，此处仅作保险）；消费队列以维持总量不超发。
     if (!this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) {
       const types = Object.keys(UNITS) as UnitType[];
-      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
       this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入 AI 可放置区域（逐步"占领"）
       this.aiMergeUnits();
     }
@@ -1288,10 +1299,13 @@ export class Battle {
       if (u.stunT > 0) u.stunT = Math.max(0, u.stunT - dt);
       if (u.slowT > 0) u.slowT = Math.max(0, u.slowT - dt);
       if (u.weakenT > 0) u.weakenT = Math.max(0, u.weakenT - dt);
+      if (u.rangeCutT > 0) u.rangeCutT = Math.max(0, u.rangeCutT - dt);
       if (u.stunT > 0) continue; // 眩晕：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier); // atk/frq/rge/targets（来自 game-core）
+      // 缠丝：有效射程削减（最低 1 格），逼近战化，配合盘丝洞蛛网主题
+      const effRge = u.rangeCutT > 0 ? Math.max(1, stat.rge * TUNING.webbindRangeMul) : stat.rge;
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
@@ -1301,7 +1315,7 @@ export class Battle {
           const d = Math.hypot(p.c - u.cell.c, p.r - u.cell.r);
           return { m, d, p };
         })
-        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .filter((x) => x.d <= effRge + TUNING.rangeTolerance)
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益临时抬高攻击
@@ -1500,6 +1514,7 @@ export class Battle {
     if (skill === 'stun') u.stunT = Math.max(u.stunT, TUNING.stunDur);
     else if (skill === 'slow') u.slowT = Math.max(u.slowT, TUNING.slowDur);
     else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
+    else if (skill === 'webbind') u.rangeCutT = Math.max(u.rangeCutT, TUNING.webbindDur);
   }
 
   // 主动技能：每帧推进各槽冷却与临时增益计时。
