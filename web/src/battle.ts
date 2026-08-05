@@ -22,6 +22,7 @@ import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GE
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
+import { MAX_EQUIPPED_PASSIVES } from './passives';
 import {
   COLS,
   ROWS,
@@ -289,7 +290,7 @@ export class Battle {
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
   trees = new Map<string, PeachTree>(); // 蟠桃园桃树（各占一格未开垦地）
-  private gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
+  gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
   private plantTimer = 0; // 距下次自动种树累积秒数
   generalStates = new Map<string, GeneralState>(); // 各武将的等级/经验/冷却（按 id）
   monsters: Monster[] = [];
@@ -364,7 +365,6 @@ export class Battle {
 
   constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = []) {
     this.weaponBonuses = weapons;
-    this.gardenOn = passives.includes('pas_pantao'); // 蟠桃园：装备后每局自动种桃树产桃
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
     this.map = map;
@@ -400,6 +400,13 @@ export class Battle {
     for (let i = 0; i < TUNING.initialOpenSlots && i < this.slotOrder.length; i++) {
       const m = mirrorCell(this.slotOrder[i]!);
       this.aiUnlocked.add(cellKey(m.c, m.r));
+    }
+    // 每日被动技能：开局按 id 注入本局。蟠桃园走桃树系统；其余复用 applyItem 效果引擎。
+    // 只取前 MAX_EQUIPPED_PASSIVES 个作防御（正常 loadout 已保证 ≤N，且为最新 N）。
+    for (const id of passives.slice(0, MAX_EQUIPPED_PASSIVES)) {
+      if (id === 'pas_pantao') { this.gardenOn = true; continue; }
+      this.applyItem(id);
+      this.pickedItems.push(id);
     }
   }
 
@@ -901,9 +908,9 @@ export class Battle {
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
-      // 双刃道具：同时作用于敌我双方（照搬原作「双向影响」设计）
-      case 'jifeng': this.mods.frqMul += 0.25; this.aiFrqMul += 0.25; break;
-      case 'tongxin': this.tangsengMaxHP += 1; this.tangsengHP += 1; this.aiTangsengHP += 1; break;
+      // 非对称正向：我方收益优于 AI 对手
+      case 'jifeng': this.mods.frqMul += 0.5; this.aiFrqMul += 0.25; break;
+      case 'tongxin': this.tangsengMaxHP += 3; this.tangsengHP += 3; this.aiTangsengHP += 2; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
