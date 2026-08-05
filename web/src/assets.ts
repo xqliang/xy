@@ -52,7 +52,9 @@ function loadOne(key: AssetKey): Promise<void> {
 }
 
 export async function loadAssets(): Promise<void> {
-  await Promise.all((Object.keys(ASSET_URLS) as AssetKey[]).map(loadOne));
+  // 只预载图片素材；bgm-* 等音频资源不走 <img>，由 sfx 模块按需 fetch+decode。
+  const imgKeys = (Object.keys(ASSET_URLS) as AssetKey[]).filter((k) => !k.startsWith('bgm-'));
+  await Promise.all(imgKeys.map(loadOne));
   ready = true;
   (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
 }

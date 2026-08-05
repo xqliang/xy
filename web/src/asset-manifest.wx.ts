@@ -27,4 +27,5 @@ export const ASSET_URLS: Record<string, string> = {
   'map-liushahe': 'assets/map-liushahe.jpg',
   'map-baiguling': 'assets/map-baiguling.jpg',
   'map-pansidong': 'assets/map-pansidong.jpg',
+  'bgm-pansidong': 'assets/bgm-pansidong.mp3',
 };

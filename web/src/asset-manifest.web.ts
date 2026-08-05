@@ -6,9 +6,9 @@
 // eager + ?url：拿到每个资源的最终打包 URL（字符串）
 const mods = import.meta.glob('./game-assets/*', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
-// key = 去掉目录与扩展名的文件名（即 AssetKey，如 'unit-archer' / 'map-huoyanshan'）
+// key = 去掉目录与扩展名的文件名（即 AssetKey，如 'unit-archer' / 'map-huoyanshan' / 'bgm-pansidong'）
 export const ASSET_URLS: Record<string, string> = {};
 for (const [p, url] of Object.entries(mods)) {
-  const name = p.split('/').pop()!.replace(/\.(png|jpg)$/, '');
+  const name = p.split('/').pop()!.replace(/\.(png|jpg|mp3)$/, '');
   ASSET_URLS[name] = url;
 }

@@ -1,8 +1,11 @@
-// 程序化音效：用 Web Audio API 实时合成短音效（无任何外部/版权音频文件）。
+// 程序化音效：用 Web Audio API 实时合成短音效。地图氛围音默认也为程序化合成；
+// 个别地图（如盘丝洞）改用真实音频文件循环播放（见 MAP_BGM）——Web 端 fetch+decodeAudioData，
+// 微信端暂无本地文件 fetch，回退到程序化氛围。
 // 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器要求用户手势后才能出声。
 // 静音状态持久化（跨平台存储）。
 import { storeGet, storeSet } from './storage';
-import { createAudioContext } from './platform';
+import { createAudioContext, isWeChat } from './platform';
+import { ASSET_URLS } from '@asset-manifest';
 
 const MUTE_KEY = 'dasheng.mute';
 const MUSIC_KEY = 'dasheng.music';
@@ -242,6 +245,56 @@ let ambientNodes: { stop?: () => void; node: AudioNode }[] = [];
 let ambientTimers: number[] = [];
 let ambientMap = '';
 
+// —— 文件 BGM（真实音频循环）——
+// 指定地图 → 资源清单里的音频 key。这些地图用真实音频循环，替代程序化氛围旋律。
+const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong' };
+const bgmBuffers: Record<string, AudioBuffer> = {}; // 已解码缓存，键为 URL
+const bgmDecoding: Record<string, Promise<AudioBuffer | null>> = {}; // 解码中的去重
+
+// 拉取并解码音频文件（web）。用回调式 decodeAudioData 以兼容旧 Safari；结果按 URL 缓存。
+function decodeBgm(url: string): Promise<AudioBuffer | null> {
+  if (bgmBuffers[url]) return Promise.resolve(bgmBuffers[url]!);
+  if (url in bgmDecoding) return bgmDecoding[url]!;
+  const p = fetch(url)
+    .then((r) => r.arrayBuffer())
+    .then(
+      (ab) =>
+        new Promise<AudioBuffer | null>((res) => {
+          if (!ctx) { res(null); return; }
+          ctx.decodeAudioData(ab, (b) => { bgmBuffers[url] = b; res(b); }, () => res(null));
+        }),
+    )
+    .catch(() => null);
+  bgmDecoding[url] = p;
+  return p;
+}
+
+// 用已解码的 buffer 起一个循环源，接到给定增益节点（该节点已入 ambientNodes，随 stopAmbient 清理）。
+function startBgmLoop(buffer: AudioBuffer, out: GainNode): void {
+  if (!ctx) return;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
+  src.connect(out);
+  src.start();
+  ambientNodes.push({ node: src, stop: () => { try { src.stop(); } catch { /* ignore */ } } });
+}
+
+// 文件 BGM 启动：先放占位增益节点（使 startAmbient 幂等守卫在异步解码期间命中，避免每帧重复触发），
+// 解码完成后若仍停留在该地图且音乐未关，再挂上循环源。
+function startFileBgm(mapId: string, url: string): void {
+  if (!ctx || !master) return;
+  const g = ctx.createGain();
+  g.gain.value = 0.5;
+  g.connect(master);
+  ambientNodes.push({ node: g });
+  const cached = bgmBuffers[url];
+  if (cached) { startBgmLoop(cached, g); return; }
+  void decodeBgm(url).then((buf) => {
+    if (buf && ctx && musicOn && ambientMap === mapId) startBgmLoop(buf, g);
+  });
+}
+
 export function stopAmbient(): void {
   for (const id of ambientTimers) clearInterval(id);
   ambientTimers = [];
@@ -256,6 +309,14 @@ export function startAmbient(mapId: string): void {
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;
+
+  // 文件 BGM 优先（如盘丝洞用真实音频循环）：Web 端可 fetch 本地资源；微信端无 fetch，回退到下方程序化氛围。
+  const bgmKey = MAP_BGM[mapId];
+  if (bgmKey && !isWeChat && ASSET_URLS[bgmKey]) {
+    startFileBgm(mapId, ASSET_URLS[bgmKey]!);
+    return; // 用文件 BGM，不再叠加合成旋律
+  }
+
   const cfg = AMBIENT[mapId] ?? AMBIENT.huoyanshan!;
   const bus = ctx.createGain();
   bus.gain.value = 0.5; // 氛围总线（旋律/和弦/纹理都汇入这里，再进 master）
