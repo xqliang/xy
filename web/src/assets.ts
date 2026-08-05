@@ -1,6 +1,9 @@
-// 资源加载：加载 Seedream 生成的立绘，把纯白背景抠成透明，缓存为离屏 canvas。
+// 资源加载：加载 Seedream 生成的立绘（已离线抠成透明 PNG），缓存为 <img>。
+// 资源 URL 来自 @asset-manifest：web 构建=带内容哈希的 /assets/*-<hash>.*（见 asset-manifest.web.ts），
+// 微信构建=包内相对路径 assets/*（见 asset-manifest.wx.ts）；由各自 vite 配置的别名切换。
 import type { UnitType } from '@core';
-import { createImage, assetUrl } from './platform';
+import { createImage } from './platform';
+import { ASSET_URLS } from '@asset-manifest';
 
 export type AssetKey =
   | 'tangseng'
@@ -28,33 +31,6 @@ export type AssetKey =
   | 'map-baiguling'
   | 'map-pansidong';
 
-const FILES: Record<AssetKey, string> = {
-  tangseng: '/assets/tangseng.png',
-  'unit-monkey': '/assets/unit-monkey.png',
-  'unit-spear': '/assets/unit-spear.png',
-  'unit-cavalry': '/assets/unit-cavalry.png',
-  'unit-archer': '/assets/unit-archer.png',
-  'monster-minion': '/assets/monster-minion.png',
-  'monster-boss': '/assets/monster-boss.png',
-  'item-shovel': '/assets/item-shovel.png',
-  'hero-wukong': '/assets/hero-wukong.png',
-  'hero-bajie': '/assets/hero-bajie.png',
-  'hero-shaseng': '/assets/hero-shaseng.png',
-  'hero-guanyin': '/assets/hero-guanyin.png',
-  'hero-nezha': '/assets/hero-nezha.png',
-  'hero-erlang': '/assets/hero-erlang.png',
-  'hero-tangseng-hero': '/assets/hero-tangseng-hero.png',
-  'hero-honghaier': '/assets/hero-honghaier.png',
-  'hero-tieshan': '/assets/hero-tieshan.png',
-  'hero-baigujing': '/assets/hero-baigujing.png',
-  'hero-niumowang': '/assets/hero-niumowang.png',
-  'hero-mile': '/assets/hero-mile.png',
-  'map-huoyanshan': '/assets/map-huoyanshan.jpg',
-  'map-liushahe': '/assets/map-liushahe.jpg',
-  'map-baiguling': '/assets/map-baiguling.jpg',
-  'map-pansidong': '/assets/map-pansidong.jpg',
-};
-
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;
 export function assetsReady(): boolean {
@@ -63,18 +39,20 @@ export function assetsReady(): boolean {
 
 function loadOne(key: AssetKey): Promise<void> {
   return new Promise((resolve) => {
+    const url = ASSET_URLS[key];
+    if (!url) { resolve(); return; }
     const img = createImage();
     img.onload = () => {
       cache[key] = img; // 素材已是离线抠好的透明 PNG，直接使用
       resolve();
     };
     img.onerror = () => resolve();
-    img.src = assetUrl(FILES[key]);
+    img.src = url;
   });
 }
 
 export async function loadAssets(): Promise<void> {
-  await Promise.all((Object.keys(FILES) as AssetKey[]).map(loadOne));
+  await Promise.all((Object.keys(ASSET_URLS) as AssetKey[]).map(loadOne));
   ready = true;
   (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
 }

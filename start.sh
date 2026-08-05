@@ -108,7 +108,7 @@ case "$CMD" in
     (cd "$ROOT/web" && npx vite build --config vite.wx.config.ts)
     echo "🖼  同步资源 → wechat/assets"
     mkdir -p "$ROOT/wechat/assets"
-    cp -R "$ROOT/web/public/assets/." "$ROOT/wechat/assets/" 2>/dev/null || true
+    cp -R "$ROOT/web/src/game-assets/." "$ROOT/wechat/assets/" 2>/dev/null || true
     echo "✅ 微信构建完成：wechat/game.bundle.js"
     echo "   下一步：把 weapp-adapter.js 放到 wechat/（见 wechat/README.md），用「微信开发者工具」打开 wechat/ 联调"
     ;;
