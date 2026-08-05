@@ -30,4 +30,5 @@ export const ASSET_URLS: Record<string, string> = {
   'bgm-pansidong': 'assets/bgm-pansidong.mp3',
   'bgm-menu': 'assets/bgm-menu.mp3',
   'bgm-huoyanshan': 'assets/bgm-huoyanshan.mp3',
+  'bgm-baiguling': 'assets/bgm-baiguling.mp3',
 };

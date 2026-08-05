@@ -248,7 +248,7 @@ let ambientMap = '';
 // —— 文件 BGM（真实音频循环）——
 // 指定地图 → 资源清单里的音频 key。这些地图用真实音频循环，替代程序化氛围旋律。
 // 循环平滑：各 bgm 文件已在离线裁剪时烘焙淡入/淡出（结尾数秒渐弱），循环接缝不突兀。
-const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong', huoyanshan: 'bgm-huoyanshan' };
+const MAP_BGM: Record<string, string> = { pansidong: 'bgm-pansidong', huoyanshan: 'bgm-huoyanshan', baiguling: 'bgm-baiguling' };
 const MENU_BGM_KEY = 'bgm-menu'; // 首页背景音乐
 const MENU_ID = '__menu'; // ambientMap 的首页占位 id（区别于地图 id）
 const bgmBuffers: Record<string, AudioBuffer> = {}; // 已解码缓存，键为 URL
