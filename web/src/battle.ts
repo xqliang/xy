@@ -49,7 +49,7 @@ export const TUNING = {
   monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
   bossEveryWave: 5, // 每 5 波出一个 BOSS
-  bossHpMul: 7,
+  bossHpMul: 14,
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
