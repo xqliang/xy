@@ -74,7 +74,7 @@ export const TUNING = {
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   winWave: 10, // 通关波次
-  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梗式 ×endlessCycleStep ——
+  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梯式 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
   endlessCycleStep: 1.3,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
@@ -1035,7 +1035,7 @@ export class Battle {
     this.pendingShop = picks.length > 0 ? picks : null;
   }
 
-  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梗系数。
+  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梯系数。
   // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
   effectiveDifficulty(wave: number = this.wave): number {
     if (!this.endless) return this.difficultyMul;

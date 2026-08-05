@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在现有 10 波通关玩法外，新增可在首页勾选的无尽模式：波数不限、每 10 波一圈阶梗式提升难度、关闭 AI 对手、上半场改为信息面板，结束只记录历史最高波数而不涨降境界。
+**Goal:** 在现有 10 波通关玩法外，新增可在首页勾选的无尽模式：波数不限、每 10 波一圈阶梯式提升难度、关闭 AI 对手、上半场改为信息面板，结束只记录历史最高波数而不涨降境界。
 
 **Architecture:** 复用现有 `Battle` 引擎，构造函数加 `endless` 布尔标记；难度经由新方法 `effectiveDifficulty(wave)` 统一注入怪物侧数值（正常模式恒等于 `difficultyMul`，行为零变化）；无尽下跳过 AI 对手逻辑与通关封顶，唯一结束路径是失守。持久化走现有 `storeGet/storeSet`。UI 层在菜单加勾选框、在上半场用信息面板替换 `drawAiSide`、加无尽专属结算屏。
 
@@ -148,7 +148,7 @@ git commit -m "feat(web): 无尽模式持久化——开关 + 历史最高波数
 import { Battle, TUNING } from '../src/battle';
 
 describe('endless difficulty curve', () => {
-  it('effectiveDifficulty 分圈阶梗：每 10 波一圈 ×STEP', () => {
+  it('effectiveDifficulty 分圈阶梯：每 10 波一圈 ×STEP', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
     const S = TUNING.endlessCycleStep;
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1, 5);      // 圈0
@@ -176,7 +176,7 @@ Expected: FAIL —「Expected 8 arguments, but got ...」或 `b.effectiveDifficu
 在 `web/src/battle.ts` 的 `TUNING` 对象内，`winWave: 10,`（line 76）下一行加：
 
 ```typescript
-  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梗式 ×endlessCycleStep ——
+  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梯式 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
   endlessCycleStep: 1.3,
 ```
@@ -207,7 +207,7 @@ Expected: FAIL —「Expected 8 arguments, but got ...」或 `b.effectiveDifficu
 在 `waveSpawnCount`（line 1031）方法**前**插入：
 
 ```typescript
-  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梗系数。
+  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梯系数。
   // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
   effectiveDifficulty(wave: number = this.wave): number {
     if (!this.endless) return this.difficultyMul;
@@ -253,7 +253,7 @@ Expected: PASS（新增 2 个用例通过；原有用例仍通过）
 
 ```bash
 git add web/src/battle.ts web/tests/endless.test.ts
-git commit -m "feat(web): 引擎加 endless 标记与分圈阶梗难度曲线"
+git commit -m "feat(web): 引擎加 endless 标记与分圈阶梯难度曲线"
 ```
 
 ---

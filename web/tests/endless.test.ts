@@ -40,7 +40,7 @@ describe('endless persistence', () => {
 });
 
 describe('endless difficulty curve', () => {
-  it('effectiveDifficulty 分圈阶梗：每 10 波一圈 ×STEP', () => {
+  it('effectiveDifficulty 分圈阶梯：每 10 波一圈 ×STEP', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
     const S = TUNING.endlessCycleStep;
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1, 5);
