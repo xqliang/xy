@@ -136,6 +136,17 @@ export interface PlacedWord {
   cell: Cell;
 }
 
+// 蟠桃园桃树：种在「未开垦」空地上，按等级周期产桃，同级可拖动合并升级（最高 5 级）。
+export interface PeachTree {
+  level: number; // 1..5
+  cell: Cell;
+  growT: number; // 距下次产桃已累积秒数
+}
+// 各等级产 1 桃的间隔（秒）：1级20s / 2级10s / 3级5s / 4级3s / 5级2s
+export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
+export const PEACH_TREE_MAX_LEVEL = 5;
+export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
+
 // 武将的持续状态（按武将 id 记录，拆分再重组可延续等级/经验）
 export interface GeneralState {
   level: number;
@@ -212,7 +223,6 @@ export const ITEMS: ItemDef[] = [
   { id: 'fabaofu', name: '法宝符', kind: '强化', desc: '所有武将等级 +1（对应神兵符）', icon: '📜' },
   { id: 'jifeng', name: '疾风咒', kind: '强化', desc: '敌我双方全体攻速 +25%（双刃道具）', icon: '💨' },
   // 被动（最多 6）
-  { id: 'pantaoyuan', name: '蟠桃园', kind: '被动', desc: '每 8 秒自动产 1 蟠桃（对应农民）', icon: '🍑' },
   { id: 'zhaoxian', name: '招贤榜', kind: '被动', desc: '武将字牌掉率 +10%', icon: '📋' },
   { id: 'mojin', name: '摸金校尉', kind: '被动', desc: '每次用铲子额外 +6 蟠桃', icon: '⛏' },
   { id: 'luoyangchan', name: '洛阳铲', kind: '被动', desc: '每 45 秒自动获得 1 把铲子', icon: '🥄' },
@@ -237,7 +247,6 @@ interface Modifiers {
   summonCostDelta: number;
   wordRateBonus: number; // 招贤榜：字牌掉率加成
   shovelPeach: number; // 摸金校尉：每次开挖额外蟠桃
-  peachFarm: boolean; // 蟠桃园：定期产桃
   autoShovel: boolean; // 洛阳铲：定期产铲
   meteor: boolean; // 陨石：每波开始砸最前妖怪
   mud: boolean; // 淤泥：出怪口附近减速
@@ -266,6 +275,9 @@ export class Battle {
 
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
+  trees = new Map<string, PeachTree>(); // 蟠桃园桃树（各占一格未开垦地）
+  private gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
+  private plantTimer = 0; // 距下次自动种树累积秒数
   generalStates = new Map<string, GeneralState>(); // 各武将的等级/经验/冷却（按 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
@@ -315,8 +327,7 @@ export class Battle {
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // 道具与修正器
-  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, peachFarm: false, autoShovel: false, meteor: false, mud: false };
-  private farmTimer = 0; // 蟠桃园产桃计时
+  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false };
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
@@ -337,8 +348,9 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = []) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = []) {
     this.weaponBonuses = weapons;
+    this.gardenOn = passives.includes('pas_pantao'); // 蟠桃园：装备后每局自动种桃树产桃
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
     this.map = map;
@@ -546,6 +558,10 @@ export class Battle {
         this.message = '铲子只能挖开锁定的绿格';
         return false;
       }
+      if (this.trees.has(cellKey(to.c, to.r))) {
+        this.message = '该格有桃树，不能开垦';
+        return false;
+      }
       this.unlocked.add(cellKey(to.c, to.r));
       this.tray.splice(index, 1);
       this.peach += this.mods.shovelPeach; // 摸金校尉
@@ -643,6 +659,7 @@ export class Battle {
   useShovelOn(to: Cell): boolean {
     if (this.shovels <= 0) return false;
     if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) return false;
+    if (this.trees.has(cellKey(to.c, to.r))) { this.message = '该格有桃树，不能开垦'; return false; }
     this.shovels -= 1;
     this.unlocked.add(cellKey(to.c, to.r));
     this.peach += this.mods.shovelPeach; // 摸金校尉
@@ -650,8 +667,9 @@ export class Battle {
     return true;
   }
 
-  // 棋盘内拖拽总入口：源格是字牌走 dragWord，否则走 dragUnit
+  // 棋盘内拖拽总入口：源格是桃树走 dragTree，字牌走 dragWord，否则走 dragUnit
   dragBoard(from: Cell, to: Cell): boolean {
+    if (this.trees.has(cellKey(from.c, from.r))) return this.dragTree(from, to);
     if (this.words.has(cellKey(from.c, from.r))) return this.dragWord(from, to);
     return this.dragUnit(from, to);
   }
@@ -828,7 +846,6 @@ export class Battle {
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
   passiveProgress(id: string): { ratio: number; text: string } | null {
-    if (id === 'pantaoyuan') return { ratio: this.farmTimer / 8, text: `产桃 ${this.farmTimer.toFixed(1)}/8s` };
     if (id === 'luoyangchan') return { ratio: this.shovelTimer / 45, text: `产铲 ${this.shovelTimer.toFixed(0)}/45s` };
     return null;
   }
@@ -862,7 +879,6 @@ export class Battle {
         }
         break;
       }
-      case 'pantaoyuan': this.mods.peachFarm = true; break;
       case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
       case 'mojin': this.mods.shovelPeach += 6; break;
       case 'luoyangchan': this.mods.autoShovel = true; break;
@@ -879,16 +895,81 @@ export class Battle {
     }
   }
 
-  // 被动道具的持续效果：蟠桃园产桃 / 洛阳铲产铲
+  // 被动道具的持续效果：洛阳铲产铲
   private updateItemEffects(dt: number): void {
-    if (this.mods.peachFarm) {
-      this.farmTimer += dt;
-      if (this.farmTimer >= 8) { this.farmTimer = 0; this.peach += 1; }
-    }
     if (this.mods.autoShovel) {
       this.shovelTimer += dt;
       if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; }
     }
+  }
+
+  // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
+  // 仅在 status 为 playing/ready（对局进行中）推进，由 updateFx 调用。
+  private updatePeachTrees(dt: number): void {
+    if (this.gardenOn) {
+      this.plantTimer += dt;
+      if (this.plantTimer >= PEACH_TREE_PLANT_INTERVAL) {
+        if (this.plantTree()) this.plantTimer = 0;
+        else this.plantTimer = PEACH_TREE_PLANT_INTERVAL; // 无空地则封顶，等有空地立刻种
+      }
+    }
+    for (const t of this.trees.values()) {
+      t.growT += dt;
+      const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+      if (t.growT >= iv) {
+        t.growT -= iv;
+        this.peach += 1;
+      }
+    }
+  }
+
+  // 在一处「未开垦(未挖锁定)且无树」的可摆放格随机种下 1 级桃树；无候选返回 false。
+  private plantTree(): boolean {
+    const spots = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r)));
+    if (spots.length === 0) return false;
+    const spot = spots[this.rng.int(spots.length)]!;
+    this.trees.set(cellKey(spot.c, spot.r), { level: 1, cell: { c: spot.c, r: spot.r }, growT: 0 });
+    return true;
+  }
+
+  // 距下次产桃剩余秒数（供 UI 进度条），无树返回 null
+  treeCountdown(t: PeachTree): number {
+    const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+    return Math.max(0, iv - t.growT);
+  }
+
+  // 拖拽桃树：仅能在「未开垦空地」之间移动；落到同级桃树则合并升级(≤5)，落到不同级则交换位置。
+  dragTree(from: Cell, to: Cell): boolean {
+    const kFrom = cellKey(from.c, from.r);
+    const t = this.trees.get(kFrom);
+    if (!t) return false;
+    if (from.c === to.c && from.r === to.r) return false;
+    // 目标必须是未开垦的可摆放格（桃树不进兵阵位）
+    if (!this.isPlaceable(to.c, to.r) || this.isUnlocked(to.c, to.r)) {
+      this.message = '桃树只能种在未开垦的空地';
+      return false;
+    }
+    const kTo = cellKey(to.c, to.r);
+    const tt = this.trees.get(kTo);
+    if (tt) {
+      if (tt.level === t.level && tt.level < PEACH_TREE_MAX_LEVEL) {
+        tt.level += 1;
+        tt.growT = 0;
+        this.trees.delete(kFrom);
+        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#7ec46a' });
+        this.message = `桃树升为 ${tt.level} 级`;
+        this.emit('merge');
+        return true;
+      }
+      // 不同级 → 交换位置
+      this.trees.set(kFrom, { ...tt, cell: { c: from.c, r: from.r } });
+      this.trees.set(kTo, { ...t, cell: { c: to.c, r: to.r } });
+      return true;
+    }
+    // 移到空的未开垦格
+    this.trees.delete(kFrom);
+    this.trees.set(kTo, { ...t, cell: { c: to.c, r: to.r } });
+    return true;
   }
 
   // 陨石：每波开始时砸向最前妖怪（容错保险）。被动「陨石」道具触发，带 mods.meteor 守卫。
@@ -1510,7 +1591,8 @@ export class Battle {
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
-    this.updateItemEffects(dt); // 被动道具收益（蟠桃园/洛阳铲）在所有状态下持续
+    this.updateItemEffects(dt); // 被动道具收益（洛阳铲）在所有状态下持续
+    if (this.status === 'playing' || this.status === 'ready') this.updatePeachTrees(dt); // 蟠桃园：对局进行中种树/产桃
   }
 
   // 推进 dt 秒
@@ -1588,7 +1670,7 @@ export class Battle {
     while (this.tray.length > 0 && guard++ < 200) {
       const idx = this.tray.findIndex((t) => t.kind === 'shovel');
       if (idx >= 0) {
-        const locked = this.lockedCells();
+        const locked = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))); // 有桃树的格不开垦
         if (locked.length > 0) {
           this.placeFromTray(idx, locked[0]!);
           continue;

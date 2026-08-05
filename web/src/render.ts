@@ -9,7 +9,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById, SKILL_META, type TrayToken } from './battle';
+import { Battle, unitColorOf, TUNING, itemById, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree } from './battle';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage } from '@core';
@@ -313,6 +313,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
+  drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
   drawAoeBurst(ctx, b);
@@ -977,6 +978,8 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
 
 function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.selected) return;
+  const tree = b.trees.get(`${ui.selected.c},${ui.selected.r}`);
+  if (tree) { drawTreeSelection(ctx, b, tree); return; }
   const w = b.words.get(`${ui.selected.c},${ui.selected.r}`);
   if (w) { drawWordSelection(ctx, b, w); return; }
   const u = b.units.get(`${ui.selected.c},${ui.selected.r}`);
@@ -1046,6 +1049,114 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.fillText(v, px + pw - 12, ry);
     ry += 16;
   }
+  ctx.restore();
+}
+
+// 蟠桃园桃树：画在未开垦格上（树干+树冠+按等级数量的桃子+等级角标）；选中/拖拽态描边或隐藏
+function drawPeachTrees(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  for (const t of b.trees.values()) {
+    if (ui.dragFrom && ui.dragFrom.c === t.cell.c && ui.dragFrom.r === t.cell.r) continue; // 拖拽中隐藏源
+    const { x, y } = cellCenterPx(t.cell.c, t.cell.r);
+    drawPeachTree(ctx, x, y, CELL * 0.7, t.level);
+    if (ui.selected && ui.selected.c === t.cell.c && ui.selected.r === t.cell.r) {
+      const gx = BOARD_X + t.cell.c * CELL;
+      const gy = BOARD_Y + t.cell.r * CELL;
+      ctx.save();
+      roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#ffe08a';
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// 单棵桃树矢量图标（自包含，无需外部图片素材）：越高级树冠越大、桃子越多、颜色越艳
+function drawPeachTree(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, level: number) {
+  const s = size;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  // 树干
+  ctx.fillStyle = '#7a4a24';
+  ctx.fillRect(x - s * 0.05, y + s * 0.04, s * 0.1, s * 0.3);
+  // 树冠：三团叠加的圆，随等级略增大
+  const r = s * (0.24 + level * 0.02);
+  const canopy: [number, number][] = [[-r * 0.7, 0], [r * 0.7, 0], [0, -r * 0.75]];
+  ctx.fillStyle = '#2f7a34';
+  for (const [dx, dy] of canopy) { ctx.beginPath(); ctx.arc(x + dx, y + dy - s * 0.02, r, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = '#49a24e'; // 高光团
+  ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.35 - s * 0.02, r * 0.7, 0, Math.PI * 2); ctx.fill();
+  // 桃子：数量 = 等级（1..5），粉色带小尖
+  const peachN = Math.min(level, PEACH_TREE_MAX_LEVEL);
+  const pr = s * 0.075;
+  for (let i = 0; i < peachN; i++) {
+    const a = -Math.PI / 2 + (i - (peachN - 1) / 2) * 0.7;
+    const px = x + Math.cos(a) * r * 0.8;
+    const py = y + Math.sin(a) * r * 0.8 - s * 0.04;
+    ctx.fillStyle = '#ff8fa8';
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e0577a';
+    ctx.beginPath(); ctx.arc(px + pr * 0.35, py, pr * 0.55, 0, Math.PI * 2); ctx.fill();
+  }
+  // 等级角标
+  ctx.fillStyle = 'rgba(20,16,10,0.7)';
+  roundRect(ctx, x + s * 0.18, y + s * 0.14, s * 0.24, s * 0.2, 4);
+  ctx.fill();
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = `bold ${Math.round(s * 0.18)}px "PingFang SC", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${level}`, x + s * 0.3, y + s * 0.245);
+  ctx.restore();
+}
+
+// 选中桃树：信息面板（名称/等级/产桃间隔 + 「还差 Xs 产桃」进度条），固定 AI 半场中央
+function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTree) {
+  const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+  const remain = b.treeCountdown(t);
+  const ratio = Math.max(0, Math.min(1, 1 - remain / iv));
+  const pw = 196;
+  const ph = 118;
+  const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
+  const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
+  ctx.save();
+  roundRect(ctx, px, py, pw, ph, 10);
+  ctx.fillStyle = 'rgba(28,22,14,0.94)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#7ec46a';
+  ctx.stroke();
+  // 标题
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#c9f0b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText('蟠桃园·桃树', px + 12, py + 18);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 14px "PingFang SC", sans-serif';
+  ctx.fillText(`Lv.${t.level}`, px + pw - 12, py + 18);
+  // 说明
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,240,210,0.75)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(`每 ${iv}s 产 1 蟠桃 · 同级拖动可合并升级(≤${PEACH_TREE_MAX_LEVEL})`, px + 12, py + 44);
+  // 产桃进度条
+  const bx = px + 12, by = py + 66, bw = pw - 24, bh = 14;
+  roundRect(ctx, bx, by, bw, bh, 7);
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fill();
+  ctx.save();
+  roundRect(ctx, bx, by, bw, bh, 7);
+  ctx.clip();
+  ctx.fillStyle = '#7ec46a';
+  ctx.fillRect(bx, by, bw * ratio, bh);
+  ctx.restore();
+  // 倒计时文字
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(`还差 ${remain.toFixed(1)}s 产下一颗桃`, px + pw / 2, py + ph - 16);
   ctx.restore();
 }
 
@@ -1619,6 +1730,12 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       if (w) {
         src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
         ghost = () => drawWordTile(ctx, w.char, w.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.74);
+      } else {
+        const t = b.trees.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+        if (t) {
+          src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
+          ghost = () => drawPeachTree(ctx, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.72, t.level);
+        }
       }
     }
   } else if (ui.dragTrayIndex !== null) {
