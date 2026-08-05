@@ -18,7 +18,7 @@ import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS } from './settle';
 import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
-import { loadLoadout, buyActive, type LoadoutState } from './loadout';
+import { loadLoadout, buyActive, buyPassive, type LoadoutState } from './loadout';
 import { drawShop, shopHitAt } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
@@ -57,7 +57,7 @@ let bagToast = '';
 let menuToast = '';
 let shopToast = '';
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
@@ -65,7 +65,7 @@ const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, select
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
   endHandled = false;
 }
 
@@ -137,6 +137,12 @@ function handleShop(x: number, y: number) {
   }
   if (hit.kind === 'buyActive' && hit.id) {
     const r = buyActive(loadout, merit, hit.id);
+    loadout = r.loadout;
+    merit = r.merit;
+    shopToast = r.ok ? '已装备（今日有效）' : r.reason ?? '无法购买';
+  }
+  if (hit.kind === 'buyPassive' && hit.id) {
+    const r = buyPassive(loadout, merit, hit.id);
     loadout = r.loadout;
     merit = r.merit;
     shopToast = r.ok ? '已装备（今日有效）' : r.reason ?? '无法购买';
@@ -236,9 +242,9 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  // 棋盘拖拽（兵或武将字牌：重新布阵/合成/拆分）或点击选中查看信息
+  // 棋盘拖拽（兵/武将字牌/桃树：重新布阵、合成、移动）或点击选中查看信息
   const cell = pxToCell(x, y);
-  if (cell && (battle.units.has(`${cell.c},${cell.r}`) || battle.words.has(`${cell.c},${cell.r}`))) {
+  if (cell && (battle.units.has(`${cell.c},${cell.r}`) || battle.words.has(`${cell.c},${cell.r}`) || battle.trees.has(`${cell.c},${cell.r}`))) {
     ui.dragFrom = cell;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
@@ -368,6 +374,7 @@ interface GameHook {
   ult: () => boolean; // 兼容垫片：绝招已移除，恒返回 false（旧工具不报错）
   triggerActive: (i: number) => boolean;
   equipActives: (ids: string[]) => void;
+  equipPassives: (ids: string[]) => void;
   chooseItem: (i: number) => boolean;
   drag: (from: Cell, to: Cell) => boolean;
   placeFromTray: (index: number, to: Cell) => boolean;
@@ -398,6 +405,7 @@ const hook: GameHook = {
   ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
   triggerActive: (i: number) => battle.triggerActive(i),
   equipActives: (ids: string[]) => { loadout = { ...loadout, equipped: ids.slice(0, 2) }; newGame(); },
+  equipPassives: (ids: string[]) => { loadout = { ...loadout, passives: ids.slice(0, 2) }; newGame(); },
   chooseItem: (i: number) => battle.chooseItem(i),
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
@@ -412,7 +420,7 @@ const hook: GameHook = {
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped);
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
     endHandled = false;
     screen = 'battle';
   },

@@ -2,6 +2,7 @@
 // 玩家每天需重新用功德购买主动技能才能装备（功德每日消耗，形成消耗口）。
 import { storeGet, storeSet } from './storage';
 import { MAX_EQUIPPED_ACTIVES, activeById } from './actives';
+import { MAX_EQUIPPED_PASSIVES, passiveById } from './passives';
 import { spendMerit, type MeritState } from './merit';
 
 const KEY = 'dasheng.loadout';
@@ -14,6 +15,7 @@ function today(): number {
 export interface LoadoutState {
   day: number;
   equipped: string[]; // 已装备(已购买)的主动技能 id，最多 MAX_EQUIPPED_ACTIVES 个
+  passives: string[]; // 已装备(已购买)的被动技能 id，最多 MAX_EQUIPPED_PASSIVES 个
 }
 
 function save(s: LoadoutState): LoadoutState {
@@ -32,18 +34,26 @@ export function loadLoadout(): LoadoutState {
     if (raw) {
       const s = JSON.parse(raw);
       if (typeof s.day === 'number' && Array.isArray(s.equipped)) {
-        if (s.day !== today()) return save({ day: today(), equipped: [] }); // 跨天重置
-        return { day: s.day, equipped: s.equipped.slice(0, MAX_EQUIPPED_ACTIVES) };
+        if (s.day !== today()) return save({ day: today(), equipped: [], passives: [] }); // 跨天重置
+        return {
+          day: s.day,
+          equipped: s.equipped.slice(0, MAX_EQUIPPED_ACTIVES),
+          passives: Array.isArray(s.passives) ? s.passives.slice(0, MAX_EQUIPPED_PASSIVES) : [],
+        };
       }
     }
   } catch {
     /* ignore */
   }
-  return save({ day: today(), equipped: [] });
+  return save({ day: today(), equipped: [], passives: [] });
 }
 
 export function isEquipped(s: LoadoutState, id: string): boolean {
   return s.equipped.includes(id);
+}
+
+export function isPassiveEquipped(s: LoadoutState, id: string): boolean {
+  return s.passives.includes(id);
 }
 
 // 购买即装备：校验未装备、未满额、功德足够，成功则扣功德并追加装备。
@@ -60,6 +70,24 @@ export function buyActive(
   }
   if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
   const nextMerit = spendMerit(merit, def.cost);
-  const nextLoadout = save({ day: today(), equipped: [...loadout.equipped, id] });
+  const nextLoadout = save({ ...loadout, day: today(), equipped: [...loadout.equipped, id] });
+  return { loadout: nextLoadout, merit: nextMerit, ok: true };
+}
+
+// 购买即装备被动技能：校验未装备、未满额、功德足够，成功则扣功德并追加装备。
+export function buyPassive(
+  loadout: LoadoutState,
+  merit: MeritState,
+  id: string,
+): { loadout: LoadoutState; merit: MeritState; ok: boolean; reason?: string } {
+  const def = passiveById(id);
+  if (!def) return { loadout, merit, ok: false, reason: '无此技能' };
+  if (isPassiveEquipped(loadout, id)) return { loadout, merit, ok: false, reason: '已装备' };
+  if (loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
+    return { loadout, merit, ok: false, reason: `最多装备 ${MAX_EQUIPPED_PASSIVES} 个` };
+  }
+  if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
+  const nextMerit = spendMerit(merit, def.cost);
+  const nextLoadout = save({ ...loadout, day: today(), passives: [...loadout.passives, id] });
   return { loadout: nextLoadout, merit: nextMerit, ok: true };
 }

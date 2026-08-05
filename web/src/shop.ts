@@ -2,7 +2,8 @@
 import { VIEW_W, VIEW_H } from './render';
 import { UPGRADES, levelOf, RARITY_COLOR, type MeritState } from './merit';
 import { ACTIVE_SKILLS, MAX_EQUIPPED_ACTIVES } from './actives';
-import { isEquipped, type LoadoutState } from './loadout';
+import { PASSIVE_SKILLS, MAX_EQUIPPED_PASSIVES } from './passives';
+import { isEquipped, isPassiveEquipped, type LoadoutState } from './loadout';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -17,12 +18,12 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 const COLS_N = 2;
 const CARD_W = 250;
 const CARD_H = 150;
-const GAP = 16;
-const GRID_TOP = 130;
+const GAP = 12;
+const GRID_TOP = 110;
 const GRID_LEFT = (VIEW_W - (CARD_W * COLS_N + GAP)) / 2;
 
 export interface ShopHit {
-  kind: 'buy' | 'buyActive' | 'back';
+  kind: 'buy' | 'buyActive' | 'buyPassive' | 'back';
   id?: string;
 }
 
@@ -33,12 +34,20 @@ function cardRect(i: number): { x: number; y: number } {
 }
 
 // 主动技能区（功德升级卡片下方）：紧凑卡片
-const ACT_CARD_H = 80;
-const ACT_TOP = GRID_TOP + Math.ceil(UPGRADES.length / COLS_N) * (CARD_H + GAP) + 44;
+const ACT_CARD_H = 72;
+const ACT_TOP = GRID_TOP + Math.ceil(UPGRADES.length / COLS_N) * (CARD_H + GAP) + 30;
 function activeCardRect(i: number): { x: number; y: number } {
   const col = i % COLS_N;
   const row = Math.floor(i / COLS_N);
   return { x: GRID_LEFT + col * (CARD_W + GAP), y: ACT_TOP + row * (ACT_CARD_H + GAP) };
+}
+
+// 被动技能区（主动技能区下方）：与主动技能同样的紧凑卡片
+const PAS_TOP = ACT_TOP + Math.ceil(ACTIVE_SKILLS.length / COLS_N) * (ACT_CARD_H + GAP) + 30;
+function passiveCardRect(i: number): { x: number; y: number } {
+  const col = i % COLS_N;
+  const row = Math.floor(i / COLS_N);
+  return { x: GRID_LEFT + col * (CARD_W + GAP), y: PAS_TOP + row * (ACT_CARD_H + GAP) };
 }
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
@@ -52,6 +61,10 @@ export function shopHitAt(x: number, y: number): ShopHit | null {
   for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
     const { x: cx, y: cy } = activeCardRect(i);
     if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + ACT_CARD_H) return { kind: 'buyActive', id: ACTIVE_SKILLS[i]!.id };
+  }
+  for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
+    const { x: cx, y: cy } = passiveCardRect(i);
+    if (x >= cx && x <= cx + CARD_W && y >= cy && y <= cy + ACT_CARD_H) return { kind: 'buyPassive', id: PASSIVE_SKILLS[i]!.id };
   }
   return null;
 }
@@ -176,11 +189,52 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillText(equipped ? '✓ 已装备' : full ? '装备已满' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 10);
   }
 
-  // 提示
+  // —— 被动技能区（每日重置）——
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 20px "PingFang SC", sans-serif';
+  ctx.fillText(`被动技能（每日重置，最多装备 ${MAX_EQUIPPED_PASSIVES} 个）`, GRID_LEFT, PAS_TOP - 16);
+  for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
+    const pas = PASSIVE_SKILLS[i]!;
+    const equipped = isPassiveEquipped(loadout, pas.id);
+    const full = loadout.passives.length >= MAX_EQUIPPED_PASSIVES && !equipped;
+    const afford = merit.merit >= pas.cost;
+    const { x, y } = passiveCardRect(i);
+    roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
+    ctx.fillStyle = '#241d38';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = equipped ? '#7ec46a' : '#5a4a7a';
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '28px "PingFang SC", sans-serif';
+    ctx.fillStyle = '#fff6e6';
+    ctx.fillText(pas.icon, x + 12, y + 12);
+    ctx.font = 'bold 18px "PingFang SC", sans-serif';
+    ctx.fillText(pas.name, x + 52, y + 12);
+    ctx.fillStyle = 'rgba(255,240,210,0.8)';
+    ctx.font = '11px "PingFang SC", sans-serif';
+    ctx.fillText(pas.desc.length > 22 ? pas.desc.slice(0, 22) + '…' : pas.desc, x + 52, y + 36);
+    const bw = CARD_W - 24;
+    const by = y + ACT_CARD_H - 26;
+    roundRect(ctx, x + 12, by, bw, 20, 7);
+    ctx.fillStyle = equipped ? '#2f5a3a' : full ? '#3a3350' : afford ? '#c8792b' : '#4a3a30';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = equipped ? '#9bffb0' : full ? '#8a86a0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.fillText(equipped ? '✓ 已装备' : full ? '装备已满' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 10);
+  }
+
+  // 提示（贴底显示，避免遮住被动技能卡片）
   if (toast) {
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#ffd76a';
-    ctx.font = '16px "PingFang SC", sans-serif';
-    ctx.fillText(toast, VIEW_W / 2, VIEW_H - 40);
+    ctx.font = '14px "PingFang SC", sans-serif';
+    ctx.fillText(toast, VIEW_W / 2, VIEW_H - 8);
   }
 }
