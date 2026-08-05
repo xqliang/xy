@@ -65,12 +65,11 @@ export function buyActive(
   const def = activeById(id);
   if (!def) return { loadout, merit, ok: false, reason: '无此技能' };
   if (isEquipped(loadout, id)) return { loadout, merit, ok: false, reason: '已装备' };
-  if (loadout.equipped.length >= MAX_EQUIPPED_ACTIVES) {
-    return { loadout, merit, ok: false, reason: `最多装备 ${MAX_EQUIPPED_ACTIVES} 个` };
-  }
   if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
   const nextMerit = spendMerit(merit, def.cost);
-  const nextLoadout = save({ ...loadout, day: today(), equipped: [...loadout.equipped, id] });
+  const equipped = [...loadout.equipped, id];
+  while (equipped.length > MAX_EQUIPPED_ACTIVES) equipped.shift(); // 后买挤掉最旧，恒留最新 N 个
+  const nextLoadout = save({ ...loadout, day: today(), equipped });
   return { loadout: nextLoadout, merit: nextMerit, ok: true };
 }
 
@@ -83,11 +82,10 @@ export function buyPassive(
   const def = passiveById(id);
   if (!def) return { loadout, merit, ok: false, reason: '无此技能' };
   if (isPassiveEquipped(loadout, id)) return { loadout, merit, ok: false, reason: '已装备' };
-  if (loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
-    return { loadout, merit, ok: false, reason: `最多装备 ${MAX_EQUIPPED_PASSIVES} 个` };
-  }
   if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
   const nextMerit = spendMerit(merit, def.cost);
-  const nextLoadout = save({ ...loadout, day: today(), passives: [...loadout.passives, id] });
+  const passives = [...loadout.passives, id];
+  while (passives.length > MAX_EQUIPPED_PASSIVES) passives.shift(); // 后买挤掉最旧，恒留最新 N 个
+  const nextLoadout = save({ ...loadout, day: today(), passives });
   return { loadout: nextLoadout, merit: nextMerit, ok: true };
 }
