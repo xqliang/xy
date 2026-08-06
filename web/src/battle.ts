@@ -52,7 +52,8 @@ export const TUNING = {
   bossEveryWave: 5, // 无尽模式：每 5 波出一个 BOSS（正常模式改用随机 BOSS 波，见 computeBossWaves）
   bossWaveChance: 0.35, // 正常模式：第 5..winWave-1 波各自成为 BOSS 波的概率
   bossMinBosses: 2, // 正常模式：第 5..winWave-1 波至少出现的 BOSS 次数
-  bossHpMul: 14,
+  bossHpMul: 14, // 后期(通关波)BOSS 血量倍数
+  bossHpMulEarly: 8, // 前期(第5波)BOSS 血量倍数；第5波→通关波之间线性爬升到 bossHpMul
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
@@ -1045,7 +1046,11 @@ export class Battle {
 
     let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
     hp *= this.effectiveDifficulty(); // 境界越高妖怪越强；无尽模式再叠分圈系数
-    if (isBoss) hp *= TUNING.bossHpMul; // 骑兵血量与普通妖相同，故不额外调整血量
+    if (isBoss) {
+      // BOSS 血量倍数随波次爬升：前期(第5波)较低，后期(通关波)到满。骑兵血量与普通妖相同，不额外调整。
+      const t = Math.max(0, Math.min(1, (this.wave - 5) / Math.max(1, TUNING.winWave - 5)));
+      hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+    }
 
     // 移速倍率：BOSS 减半、骑兵翻倍（二者互斥，BOSS 不会被判为骑兵）
     const spdMul = isBoss ? TUNING.bossSpdMul : isCavalry ? TUNING.cavalrySpdMul : 1;
