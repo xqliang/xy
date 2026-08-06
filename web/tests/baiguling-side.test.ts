@@ -4,10 +4,23 @@ import { mapById, isPlayerCell, isPathCell, slotUnlockOrder, mirrorCell } from '
 describe('baiguling side', () => {
   const m = mapById('baiguling');
 
+  it('path follows left edge, stepped fence, right edge', () => {
+    // 左缘
+    expect(isPathCell(m, 0, 7)).toBe(true);
+    expect(isPathCell(m, 0, 6)).toBe(true);
+    expect(isPathCell(m, 0, 5)).toBe(true);
+    // 中间栅栏台阶
+    expect(isPathCell(m, 2, 5)).toBe(true);
+    expect(isPathCell(m, 3, 3)).toBe(true);
+    expect(isPathCell(m, 5, 3)).toBe(true);
+    // 右缘至唐僧
+    expect(isPathCell(m, 7, 5)).toBe(true);
+    expect(isPathCell(m, 7, 9)).toBe(true);
+  });
+
   it('left cols: player below path (镜像路除外)', () => {
-    // (0,6) 是右段路径 (7,3) 的镜像，算 AI 路；我方从 r>=7
-    expect(isPlayerCell(m, 0, 6)).toBe(false);
-    expect(isPlayerCell(m, 0, 7)).toBe(true);
+    expect(isPlayerCell(m, 0, 7)).toBe(false); // 左缘通路
+    expect(isPlayerCell(m, 1, 7)).toBe(true);
     expect(isPlayerCell(m, 0, 4)).toBe(false);
   });
 
