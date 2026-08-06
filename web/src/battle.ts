@@ -1304,7 +1304,7 @@ export class Battle {
     for (const m of this.aiMonsters) {
       m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
-      if (m.hp <= 0) { this.creditAiKill(m.isBoss, !!m.skill); continue; } // 击杀产桃（精英近似：带技能怪）
+      if (m.hp <= 0) { this.creditAiKill(m.isBoss, !m.isBoss && !!m.skill); continue; } // 击杀产桃（精英=非BOSS且带技能，对齐玩家语义）
       m.dist += m.spd * dt;
       if (m.dist >= this.aiPathLen) {
         this.aiTangsengHP -= 1;
