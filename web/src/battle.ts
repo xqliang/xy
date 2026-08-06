@@ -504,7 +504,7 @@ export class Battle {
     }
     this.tray = draws;
     if (draws.some((t) => t.kind === 'word')) this.summonsSinceWord = 0;
-    else if (!firstSummon) this.summonsSinceWord += 1;
+    else if (!firstSummon) this.summonsSinceWord += 1; // 首次征兵不计入保底 streak
     this.message = '把兵拖到绿格；两个同将字牌可凑成武将（占两格）';
     return true;
   }
@@ -1305,27 +1305,34 @@ export class Battle {
     return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
   }
 
-  // 武将升阶进度：每级所需经验 = 10 × 当前等级；满条时双字各 +1 阶（上限 10 级进度）
-  static readonly GENERAL_MAX_LEVEL = 10;
+  // 武将升阶进度：每级所需经验 = 10 × 当前 level；满条时双字各 +1 阶（level 仅作阈值曲线，不参与攻力）
   static expToNext(level: number): number {
     return 10 * level;
   }
   addGeneralCombatExp(g: ActiveGeneral, amount: number): void {
+    const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
+    const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
+    if (!wa || !wb) return;
+    if (wa.tier >= MAX_TIER && wb.tier >= MAX_TIER) return; // 双字已满阶：丢弃经验，不存入 generalStates
+
     const s = g.state;
     s.exp += amount;
     while (s.exp >= Battle.expToNext(s.level)) {
-      const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
-      const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
-      if (!wa || !wb) break;
-      const can = (wa.tier < MAX_TIER) || (wb.tier < MAX_TIER);
-      if (!can) break;
+      const wa2 = this.wordAt(g.cells[0].c, g.cells[0].r);
+      const wb2 = this.wordAt(g.cells[1].c, g.cells[1].r);
+      if (!wa2 || !wb2) break;
+      const can = wa2.tier < MAX_TIER || wb2.tier < MAX_TIER;
+      if (!can) {
+        s.exp = 0; // 升阶过程中触顶：清掉剩余进度，避免拆开后多段连升
+        break;
+      }
       s.exp -= Battle.expToNext(s.level);
-      if (wa.tier < MAX_TIER) wa.tier += 1;
-      if (wb.tier < MAX_TIER) wb.tier += 1;
-      s.level += 1; // 仅作下次阈值曲线，不参与攻力
+      if (wa2.tier < MAX_TIER) wa2.tier += 1;
+      if (wb2.tier < MAX_TIER) wb2.tier += 1;
+      s.level += 1;
       this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
       this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
-      this.message = `${g.def.name} 升为 ${Math.min(wa.tier, wb.tier)} 阶`;
+      this.message = `${g.def.name} 升为 ${Math.min(wa2.tier, wb2.tier)} 阶`;
     }
   }
   // 含品质阶的武将实际攻击力

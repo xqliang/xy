@@ -1741,7 +1741,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   }
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
-  // 属性（激活时计入等级/神兵）
+  // 属性（激活时计入品质阶/神兵）
   const rows: [string, string][] = active
     ? [
         ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
