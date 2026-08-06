@@ -20,10 +20,10 @@ import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import { loadLoadout, buyActive, buyPassive, type LoadoutState } from './loadout';
-import { drawShop, shopHitAt, SHOP_MAX_SCROLL } from './shop';
+import { drawShop, shopHitAt, SHOP_MAX_SCROLL, drawShopPopup, shopPopupHitAt, type ShopPopupState } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
-import { drawBag, bagHitAt } from './bag';
+import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { initAudio, playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
 import { showRewardedAd } from './ads';
@@ -56,8 +56,10 @@ let merit: MeritState = loadMerit();
 let loadout: LoadoutState = loadLoadout(); // 主动技能每日装备（跨天重置，需重新购买）
 let bag: BagState = loadBag();
 let bagToast = '';
+let bagPopup: string | null = null; // 打开详情 tips 的神兵 id（null=未开）
 let menuToast = '';
 let shopToast = '';
+let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗（null=未开）
 // 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
 let shopScrollY = 0;
 let shopPointerActive = false;
@@ -121,6 +123,7 @@ function handleMenu(x: number, y: number) {
   } else if (id === 'shop') {
     shopToast = '';
     shopScrollY = 0;
+    shopPopup = null;
     screen = 'shop';
   } else if (id === 'codex') {
     screen = 'codex';
@@ -128,6 +131,7 @@ function handleMenu(x: number, y: number) {
     screen = 'rank';
   } else if (id === 'bag') {
     bagToast = '';
+    bagPopup = null;
     screen = 'bag';
   } else if (id === 'mapPrev' || id === 'mapNext') {
     const idx = MAPS.findIndex((m) => m.id === currentMap.id);
@@ -147,23 +151,35 @@ function handleShop(x: number, y: number) {
     screen = 'menu';
     return;
   }
-  if (hit.kind === 'buy' && hit.id) {
-    const r = buyUpgrade(merit, hit.id);
-    merit = r.state;
-    shopToast = r.ok ? '购买成功！' : r.reason ?? '无法购买';
+  // 点击商品卡片：打开详情 tips 弹窗（购买改到弹窗内二次确认）
+  if (hit.id) shopPopup = { kind: hit.kind, id: hit.id, phase: 'detail' };
+}
+
+// 处理商品弹窗点击：detail 阶段点购买→进入 confirm；confirm 阶段确认才真正扣费。
+function handleShopPopup(x: number, y: number) {
+  if (!shopPopup) return;
+  const r = shopPopupHitAt(x, y, shopPopup);
+  if (r === 'close' || r === 'outside') { shopPopup = null; return; }
+  if (r === 'action') { shopPopup = { ...shopPopup, phase: 'confirm' }; return; }
+  if (r === 'cancel') { shopPopup = { ...shopPopup, phase: 'detail' }; return; }
+  if (r === 'confirm') {
+    const { kind, id } = shopPopup;
+    if (kind === 'buy') {
+      const res = buyUpgrade(merit, id);
+      merit = res.state;
+      shopToast = res.ok ? '购买成功！' : res.reason ?? '无法购买';
+    } else if (kind === 'buyActive') {
+      const res = buyActive(loadout, merit, id);
+      loadout = res.loadout; merit = res.merit;
+      shopToast = res.ok ? '已装备（今日有效）' : res.reason ?? '无法购买';
+    } else {
+      const res = buyPassive(loadout, merit, id);
+      loadout = res.loadout; merit = res.merit;
+      shopToast = res.ok ? '已装备（今日有效）' : res.reason ?? '无法购买';
+    }
+    shopPopup = null;
   }
-  if (hit.kind === 'buyActive' && hit.id) {
-    const r = buyActive(loadout, merit, hit.id);
-    loadout = r.loadout;
-    merit = r.merit;
-    shopToast = r.ok ? '已装备（今日有效）' : r.reason ?? '无法购买';
-  }
-  if (hit.kind === 'buyPassive' && hit.id) {
-    const r = buyPassive(loadout, merit, hit.id);
-    loadout = r.loadout;
-    merit = r.merit;
-    shopToast = r.ok ? '已装备（今日有效）' : r.reason ?? '无法购买';
-  }
+  // r === null：点在弹窗内非按钮区，吞掉本次点击（不关闭）
 }
 
 // —— 游戏循环状态 —— //
@@ -225,6 +241,8 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'shop') {
+    // 弹窗打开时：点击即处理弹窗按钮/关闭，不进入卡片滚动逻辑
+    if (shopPopup) { handleShopPopup(x, y); return; }
     // 按下只记录起点；购买延迟到 pointerup 且未拖动时（拖动=滚动）
     shopPointerActive = true;
     shopDragged = false;
@@ -241,13 +259,20 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'bag') {
+    // 弹窗打开时：点击处理装备切换/关闭
+    if (bagPopup) {
+      const r = bagPopupHitAt(x, y);
+      if (r === 'close' || r === 'outside') bagPopup = null;
+      else if (r === 'toggle') {
+        const res = toggleEquip(bag, bagPopup);
+        bag = res.state;
+        bagToast = res.ok ? '' : res.reason ?? '';
+      }
+      return;
+    }
     const hit = bagHitAt(x, y);
     if (hit?.kind === 'back') screen = 'menu';
-    else if (hit?.kind === 'toggle') {
-      const r = toggleEquip(bag, hit.id);
-      bag = r.state;
-      bagToast = r.ok ? '' : r.reason ?? '';
-    }
+    else if (hit?.kind === 'toggle') bagPopup = hit.id; // 点击神兵行：打开详情 tips 弹窗
     return;
   }
   if (screen === 'settle') {
@@ -384,12 +409,14 @@ function frame(now: number): void {
     });
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
+    if (shopPopup) drawShopPopup(ctx, shopPopup, merit, loadout);
   } else if (screen === 'codex') {
     drawCodex(ctx);
   } else if (screen === 'rank') {
     drawLeaderboard(ctx, rank.level);
   } else if (screen === 'bag') {
     drawBag(ctx, bag, bagToast);
+    if (bagPopup) drawBagPopup(ctx, bag, bagPopup);
   } else if (screen === 'settle') {
     if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
@@ -506,10 +533,10 @@ const hook: GameHook = {
   autoPlace: () => battle.autoPlaceTray(),
   select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
   enterBattle: () => { screen = 'battle'; scheduleFrame(); },
-  openShop: () => { shopScrollY = 0; screen = 'shop'; scheduleFrame(); },
+  openShop: () => { shopScrollY = 0; shopPopup = null; screen = 'shop'; scheduleFrame(); },
   openCodex: () => { screen = 'codex'; scheduleFrame(); },
   openRank: () => { screen = 'rank'; scheduleFrame(); },
-  openBag: () => { screen = 'bag'; scheduleFrame(); },
+  openBag: () => { bagPopup = null; screen = 'bag'; scheduleFrame(); },
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
