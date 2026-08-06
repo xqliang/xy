@@ -21,6 +21,7 @@ import { RNG } from './rng';
 import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, ultTypeOf, CRIT_MULT, type GeneralDef } from './generals';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
+import { planAutoPlace, type AutoPlaceView } from './autoplace';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
 import {
@@ -443,6 +444,17 @@ export class Battle {
   // 尚未解锁的可摆放格（供铲子开挖，按贴路顺序）
   lockedCells(): Cell[] {
     return this.slotOrder.filter((s) => !this.unlocked.has(cellKey(s.c, s.r)));
+  }
+
+  // 某格到怪物路径的最近距离（格）——与 board.placeableByProximity 的 nearest 同口径
+  nearestPathDist(cell: { c: number; r: number }): number {
+    let min = Infinity;
+    for (const p of this.map.path) {
+      if (p.r < 0 || p.r >= ROWS) continue;
+      const d = Math.hypot(p.c - cell.c, p.r - cell.r);
+      if (d < min) min = d;
+    }
+    return min;
   }
 
   // 征兵：消耗蟠桃随机产出候选（兵种/铲子/武将字牌）。成本递增。
@@ -1696,51 +1708,22 @@ export class Battle {
   }
 
   // 一键布阵：把候选区令牌自动落位（铲子挖最靠前锁定格；兵种优先合成同型同级，否则放空格）。
-  // 供"一键布阵"便捷按钮与自动化自测使用。
+  // 供"一键布阵"便捷按钮与自动化自测使用。委托共享策略 planAutoPlace：射程感知铺格、绝不丢弃。
+  private buildPlayerAutoView(): AutoPlaceView {
+    return {
+      tray: () => this.tray,
+      freeCells: () => this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)),
+      diggableCells: () => this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))),
+      placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
+      placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
+      nearestPathDist: (cell) => this.nearestPathDist(cell),
+      wordChars: (general) => generalById(general)?.chars,
+      place: (i, cell) => this.placeFromTray(i, cell),
+    };
+  }
+
   autoPlaceTray(): void {
-    let guard = 0;
-    while (this.tray.length > 0 && guard++ < 200) {
-      const idx = this.tray.findIndex((t) => t.kind === 'shovel');
-      if (idx >= 0) {
-        const locked = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))); // 有桃树的格不开垦
-        if (locked.length > 0) {
-          this.placeFromTray(idx, locked[0]!);
-          continue;
-        }
-        this.tray.splice(idx, 1); // 无处可挖则弃置
-        continue;
-      }
-      const token = this.tray[0]!;
-      // 字牌：优先放到能与同将另一个字左右相邻的格（直接激活武将）；否则放任意空格
-      if (token.kind === 'word') {
-        const mate = [...this.words.values()].find((w) => w.general === token.general && w.char !== token.char);
-        const cells = this.unlockedCells().filter((c) => this.cellFree(c.c, c.r));
-        // 按左→右连读顺序放：token 是 chars[0] 放 mate 左侧，是 chars[1] 放 mate 右侧，确保能激活
-        const def = generalById(token.general);
-        const tokenIsLeft = def ? token.char === def.chars[0] : true;
-        const wantC = mate ? (tokenIsLeft ? mate.cell.c - 1 : mate.cell.c + 1) : undefined;
-        let target = mate && wantC != null
-          ? cells.find((c) => c.r === mate.cell.r && c.c === wantC)
-          : undefined;
-        target ??= cells[0];
-        if (target && this.placeFromTray(0, target)) continue;
-        this.tray.splice(0, 1); // 无空格可放则弃置
-        continue;
-      }
-      if (token.kind !== 'unit') { this.tray.splice(0, 1); continue; }
-      // 优先合成：找同型同级单位
-      const mergeTarget = [...this.units.values()].find((u) => u.type === token.type && u.tier === token.tier);
-      if (mergeTarget) {
-        if (this.placeFromTray(0, mergeTarget.cell)) continue;
-      }
-      // 否则放到首个空的已解锁格
-      const empty = this.unlockedCells().find((c) => this.cellFree(c.c, c.r));
-      if (empty) {
-        this.placeFromTray(0, empty);
-      } else {
-        this.tray.splice(0, 1); // 无空位，弃置该兵
-      }
-    }
+    planAutoPlace(this.buildPlayerAutoView(), { rng: () => this.rng.next(), pSubOptimal: 0 });
   }
 
   // 便于自测/渲染读取的快照
