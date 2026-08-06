@@ -24,7 +24,6 @@ import { drawSummonTray } from './summon-draw';
 import {
   COLS,
   ROWS,
-  FENCE_ROW,
   pathTotalLen,
   posAtDistance,
   posAlong,
@@ -36,6 +35,7 @@ import {
   placeableCells,
   placeableByProximity,
   isPathCell,
+  isPlayerCell,
   MAPS,
   type GameMap,
   type Cell,
@@ -389,9 +389,9 @@ export class Battle {
     return this.unlocked.has(cellKey(c, r));
   }
 
-  // 该格是否为可摆放格（玩家半场、非路径、在网格内且解锁）
+  // 该格是否为可摆放格（玩家半场、非路径、在网格内）
   private isPlaceable(c: number, r: number): boolean {
-    return !isPathCell(this.map, c, r) && c >= 0 && c < COLS && r >= FENCE_ROW && r < ROWS;
+    return isPlayerCell(this.map, c, r);
   }
 
   unlockedCells(): Cell[] {

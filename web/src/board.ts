@@ -33,6 +33,24 @@ export function isPathCell(map: GameMap, c: number, r: number): boolean {
   return map.path.some((p) => p.c === c && p.r === r);
 }
 
+// 玩家路径或其 180° 镜像（AI 路径）上的格子——两方都不可放置
+export function isEitherPathCell(map: GameMap, c: number, r: number): boolean {
+  if (isPathCell(map, c, r)) return true;
+  const m = mirrorCell({ c, r });
+  return isPathCell(map, m.c, m.r);
+}
+
+// 该格是否属于玩家可放置半场（非任一侧路径）。默认下半场 r>=FENCE_ROW；白骨岭为台阶分界。
+export function isPlayerCell(map: GameMap, c: number, r: number): boolean {
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+  if (isEitherPathCell(map, c, r)) return false;
+  if (map.id === 'baiguling') {
+    const fenceR = c <= 3 ? 5 : 3; // 左 4 列路径在 r=5，右 4 列在 r=3
+    return r > fenceR;
+  }
+  return r >= FENCE_ROW;
+}
+
 export function pathSegments(map: GameMap): { from: Cell; to: Cell; len: number }[] {
   return segmentsOf(map.path);
 }
@@ -99,9 +117,9 @@ export function posAtDistance(map: GameMap, dist: number): { c: number; r: numbe
 
 export function placeableCells(map: GameMap): Cell[] {
   const cells: Cell[] = [];
-  for (let r = FENCE_ROW; r < ROWS; r++) { // 仅玩家半场（下 5 行）
+  for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (!isPathCell(map, c, r)) cells.push({ c, r });
+      if (isPlayerCell(map, c, r)) cells.push({ c, r });
     }
   }
   return cells;
@@ -164,13 +182,19 @@ export const MAPS: GameMap[] = [
     id: 'baiguling',
     name: '白骨岭',
     theme: { bg0: '#e2e5dc', bg1: '#c6cabd', cellUnlocked: '#f4f6ee', cellLocked: '#a6b199', path: '#98a08a', hud: '#c8ccbf', accent: '#6d7c5b' },
+    // 巨鹿式台阶路：左 4 列 r=5、右 4 列 r=3，右缘下行至对角唐僧；AI 唐僧镜像 (0,0)
     path: [
-      { c: -1, r: 6 }, { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 }, { c: 5, r: 7 }, { c: 6, r: 7 }, { c: 7, r: 7 },
-      { c: 7, r: 8 }, { c: 7, r: 9 }, { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
+      { c: -1, r: 5 }, { c: 0, r: 5 }, { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 },
+      { c: 3, r: 4 }, { c: 3, r: 3 },
+      { c: 4, r: 3 }, { c: 5, r: 3 }, { c: 6, r: 3 }, { c: 7, r: 3 },
+      { c: 7, r: 4 }, { c: 7, r: 5 }, { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 },
     ],
-    tangseng: { c: 0, r: 9 },
-    initialBlock: [{ c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }],
-    fenceGaps: [0, 1],
+    tangseng: { c: 7, r: 9 },
+    initialBlock: [
+      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+      { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
+    ],
+    fenceGaps: [], // 台阶白骨堆栅栏无开口
   },
   {
     id: 'pansidong',

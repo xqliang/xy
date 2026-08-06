@@ -8,7 +8,9 @@ import path from 'node:path';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets');
 
-const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg'));
+// 可选：node bg-remove.mjs fence-baiguling.jpg  — 只处理指定文件，避免误伤地图 jpg
+const only = process.argv.slice(2);
+const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg') && (only.length === 0 || only.includes(f)));
 if (jpgs.length === 0) {
   console.log('没有 jpg 待处理');
   process.exit(0);

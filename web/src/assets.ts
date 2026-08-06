@@ -25,7 +25,8 @@ export type AssetKey =
   | 'map-huoyanshan'
   | 'map-liushahe'
   | 'map-baiguling'
-  | 'map-pansidong';
+  | 'map-pansidong'
+  | 'fence-baiguling';
 
 const FILES: Record<AssetKey, string> = {
   tangseng: '/assets/tangseng.png',
@@ -51,6 +52,7 @@ const FILES: Record<AssetKey, string> = {
   'map-liushahe': '/assets/map-liushahe.jpg',
   'map-baiguling': '/assets/map-baiguling.jpg',
   'map-pansidong': '/assets/map-pansidong.jpg',
+  'fence-baiguling': '/assets/fence-baiguling.png',
 };
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};

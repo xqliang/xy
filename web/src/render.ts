@@ -4,6 +4,8 @@ import {
   ROWS,
   FENCE_ROW,
   isPathCell,
+  isEitherPathCell,
+  isPlayerCell,
   posAtDistance,
   mirrorCell,
   placeableCells,
@@ -503,10 +505,10 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
     for (let c = 0; c < COLS; c++) {
       const x = BOARD_X + c * CELL;
       const y = BOARD_Y + r * CELL;
-      const inPlayer = r >= FENCE_ROW;
-      const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
-      const onPath = isPathCell(b.map, src.c, src.r);
-      const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : aiUnlocked.has(`${c},${r}`);
+      // 玩家路径 ∪ AI 镜像路径（白骨岭台阶路跨半场时也能画全）
+      const onPath = isEitherPathCell(b.map, c, r);
+      const inPlayer = isPlayerCell(b.map, c, r);
+      const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : !onPath && aiUnlocked.has(`${c},${r}`);
       const ix = x + 1.5, iy = y + 1.5, iw = CELL - 3, ih = CELL - 3;
       if (onPath) {
         // 路径格：道路色 + 黑色描边与其他块分隔（水墨勾线）
@@ -652,8 +654,12 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   ctx.restore();
 }
 
-// 中间栅栏：每张地图开口不同（fenceGaps）
+// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭为台阶白骨堆且无开口
 function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.map.id === 'baiguling') {
+    drawBaigulingBoneFence(ctx);
+    return;
+  }
   const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
   const gaps = new Set(b.map.fenceGaps);
   ctx.save();
@@ -668,6 +674,41 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
     // 立柱
     ctx.fillStyle = '#5f4520';
     ctx.fillRect(x + CELL / 2 - 3, y - 12, 6, 24);
+  }
+  ctx.restore();
+}
+
+// 白骨岭：沿台阶分界连续铺白骨堆（无开口）
+function drawBaigulingBoneFence(ctx: CanvasRenderingContext2D) {
+  const spr = sprite('fence-baiguling');
+  const marks: { c: number; r: number }[] = [];
+  // 左 4 列：路径 r=5 与我方之间
+  for (let c = 0; c <= 3; c++) marks.push({ c, r: 5 });
+  // 竖拐角
+  marks.push({ c: 3, r: 4 }, { c: 3, r: 3 });
+  // 右 4 列：路径 r=3
+  for (let c = 4; c <= 7; c++) marks.push({ c, r: 3 });
+  ctx.save();
+  for (const m of marks) {
+    const { x, y } = cellCenterPx(m.c, m.r);
+    const size = CELL * 0.72;
+    if (spr) {
+      const scale = Math.min(size / spr.width, size / spr.height);
+      const dw = spr.width * scale;
+      const dh = spr.height * scale;
+      ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    } else {
+      // 缺图兜底：小白骨色块堆
+      ctx.fillStyle = '#e8e0d4';
+      ctx.strokeStyle = 'rgba(40,36,30,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x - 6, y + 2, 7, 0, Math.PI * 2);
+      ctx.arc(x + 5, y - 2, 6, 0, Math.PI * 2);
+      ctx.arc(x, y + 6, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
   }
   ctx.restore();
 }
