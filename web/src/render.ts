@@ -131,18 +131,37 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number) {
+// 统一的右上角阶数徽标：非加粗金字 + 深描边，单位/字牌/激活武将共用，保证清晰一致
+function drawTierBadge(ctx: CanvasRenderingContext2D, nx: number, ny: number, tier: number, fontPx: number) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${fontPx}px "PingFang SC", sans-serif`;
+  ctx.lineWidth = Math.max(2, fontPx * 0.18);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(20,14,6,0.9)';
+  ctx.strokeText(String(tier), nx, ny);
+  ctx.fillStyle = '#ffe6a2';
+  ctx.fillText(String(tier), nx, ny);
+  ctx.restore();
+}
+
+function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number, faceLeft = false, badge?: { x: number; y: number; s: number }) {
   const s = size;
   // 不再画类型色底座：棋盘格与托盘都直接用透明立绘，无背景色
   const spr = sprite(unitAsset(type));
   if (spr) {
     // 立绘按 contain 缩放居中，铺满整格；各类型内容留白不同，按系数微调视觉大小
-    const typeScale = type === 'monkey' ? 1.15 : type === 'archer' || type === 'spear' ? 1.05 : 1; // 棍×1.15 / 射手·矛×1.05 / 骑手×1
+    const typeScale = type === 'monkey' ? 1.18 : type === 'archer' ? 1.1 : type === 'spear' ? 1.05 : 1; // 棍×1.18 / 射手×1.1 / 矛×1.05 / 骑手×1
     const box = s;
     const scale = Math.min(box / spr.width, box / spr.height) * typeScale;
     const dw = spr.width * scale;
     const dh = spr.height * scale;
+    ctx.save();
+    // 仅射手/骑手朝左攻击时水平翻转立绘（矛/棍不翻转）
+    if (faceLeft && (type === 'archer' || type === 'cavalry')) { ctx.translate(x, 0); ctx.scale(-1, 1); ctx.translate(-x, 0); }
     ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    ctx.restore();
   } else {
     ctx.fillStyle = '#1a1208';
     ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
@@ -151,16 +170,9 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
     ctx.fillText(UNIT_LABEL[type], x, y - s * 0.06);
   }
 
-  // 阶数星点（底部）
-  ctx.fillStyle = '#fff4d6';
-  const pipR = 3;
-  const gap = 9;
-  const startX = x - ((tier - 1) * gap) / 2;
-  for (let i = 0; i < tier; i++) {
-    ctx.beginPath();
-    ctx.arc(startX + i * gap, y + s * 0.4, pipR, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // 阶数：右上角小数字 1-5（统一徽标样式，非加粗）；锚定在固定的格中心/尺寸(badge)，不随立绘 bob/开火脉冲抖动
+  const ax = badge ? badge.x : x, ay = badge ? badge.y : y, as = badge ? badge.s : s;
+  drawTierBadge(ctx, ax + as * 0.44, ay - as * 0.36, tier, Math.round(as * 0.3));
 }
 
 // 「攻击瞬间形变为兵器」叠加层：在单位格上，沿 dir 朝目标出招，pulse(1→0) 驱动幅度/透明度/旋转。
@@ -352,31 +364,21 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
   }
 }
 
-// 武将字牌：宣纸底 + 墨字 + 右上角阶数上标
+// 武将字牌：去掉宣纸底/边框，直接画金黄墨字（深棕描边保证清晰）+ 右上角统一阶数徽标
 function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number, x: number, y: number, s: number, showTier = true) {
-  roundRect(ctx, x - s / 2, y - s / 2, s, s, 7);
-  ctx.fillStyle = '#f8f4e6';
-  ctx.fill();
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = qualityColor(tier);
-  ctx.stroke();
-  ctx.font = `bold ${Math.round(s * 0.58)}px "PingFang SC", serif`;
+  ctx.font = `bold ${Math.round(s * 0.62)}px "PingFang SC", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // 金黄字：先描深棕边再填金，保证在浅宣纸底上依然清晰可读
-  ctx.lineWidth = Math.max(2, s * 0.055);
+  // 金黄字：先描深棕边再填金，无底框也能在各种格底上清晰可读
+  ctx.lineWidth = Math.max(2.5, s * 0.07);
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#5a3a08';
   ctx.strokeText(char, x, y + s * 0.02);
   ctx.fillStyle = '#f2b414';
   ctx.fillText(char, x, y + s * 0.02);
-  // 阶数上标（合成为激活武将时由 showTier=false 隐藏，避免与金框整体 Lv 重复）
+  // 阶数徽标（合成为激活武将时由 showTier=false 隐藏，改由武将整体阶数在右上角显示）
   if (showTier) {
-    ctx.fillStyle = qualityColor(tier);
-    ctx.font = `bold ${Math.round(s * 0.24)}px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillText(String(tier), x + s / 2 - 3, y - s / 2 + 2);
+    drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
   }
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
@@ -1643,7 +1645,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     // 开火脉冲：放大 + 上跳
     const pulse = u.firePulse;
     const uy = y - pulse * 4 + bob;
-    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16));
+    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.72 });
     // 攻击瞬间：字→兵器形变，朝目标出招
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
     // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身/缠丝）
@@ -1704,6 +1706,9 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
+  // 整体放大信息面板（含底板与文字），围绕面板中心缩放、保持居中
+  const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
+  ctx.translate(pcx, pcy); ctx.scale(K, K); ctx.translate(-pcx, -pcy);
   roundRect(ctx, px, py, pw, ph, 10);
   ctx.fillStyle = 'rgba(28,22,14,0.94)';
   ctx.fill();
@@ -1818,6 +1823,9 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
+  // 整体放大信息面板（含底板与文字），围绕面板中心缩放、保持居中
+  const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
+  ctx.translate(pcx, pcy); ctx.scale(K, K); ctx.translate(-pcx, -pcy);
   roundRect(ctx, px, py, pw, ph, 10);
   ctx.fillStyle = 'rgba(28,22,14,0.92)';
   ctx.fill();
@@ -1992,12 +2000,15 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
     ctx.globalAlpha = 1;
-    // 名号 + 等级（框上方小标）
+    // 名号（框上方小标，去掉 Lv 等级样式）
     ctx.fillStyle = '#7a4a10';
     ctx.font = `bold 11px "PingFang SC", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(`${g.def.name}·Lv${g.state.level}`, x + w / 2, y - 1);
+    ctx.fillText(`${g.def.name}`, x + w / 2, y - 1);
+    // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
+    const sTile = CELL * 0.78;
+    drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
     // 经验条
     const need = 10 * g.state.level;
     const pct = Math.max(0, Math.min(1, g.state.exp / need));
@@ -2208,7 +2219,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.1;
     const uy = y - u.firePulse * 3 + bob;
-    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14));
+    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.66 });
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, u.firePulse, u.combo);
   }
   // 对手终点：唐僧立绘（不再用「斗」字）
@@ -2260,7 +2271,7 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
 
   ctx.save();
   roundRect(ctx, panelX, panelY, panelW, panelH, 14);
-  ctx.fillStyle = 'rgba(244,233,220,0.9)'; // 波次框背景更实（降低透明度），文字更清晰
+  ctx.fillStyle = 'rgba(244,233,220,1)'; // 波次框背景不透明，文字更清晰
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(122,59,18,0.5)';

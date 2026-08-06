@@ -560,9 +560,11 @@ export class Battle {
       if (!right) continue;
       const kR = cellKey(right.cell.c, right.cell.r);
       if (used.has(kR)) continue;
-      if (right.general !== w.general || right.char === w.char) continue;
+      if (right.general !== w.general) continue;
       const def = generalById(w.general);
       if (!def) continue;
+      // 必须左→右按武将名连读：左格=chars[0]、右格=chars[1]（如「二郎」成立，「郎二」不激活）
+      if (w.char !== def.chars[0] || right.char !== def.chars[1]) continue;
       used.add(kL);
       used.add(kR);
       out.push({
@@ -647,7 +649,7 @@ export class Battle {
       const def = generalById(token.general);
       const active = this.activeGenerals().some((g) => g.def.id === token.general);
       this.emit(active ? 'general' : 'place');
-      this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，与「${def?.chars.find((c) => c !== token.char)}」左右相邻可激活`;
+      this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，按「${def?.name ?? ''}」顺序左右相邻可激活（${def?.chars[0]}在左·${def?.chars[1]}在右）`;
       return true;
     }
     // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称
@@ -1713,8 +1715,12 @@ export class Battle {
       if (token.kind === 'word') {
         const mate = [...this.words.values()].find((w) => w.general === token.general && w.char !== token.char);
         const cells = this.unlockedCells().filter((c) => this.cellFree(c.c, c.r));
-        let target = mate
-          ? cells.find((c) => c.r === mate.cell.r && (c.c === mate.cell.c + 1 || c.c === mate.cell.c - 1))
+        // 按左→右连读顺序放：token 是 chars[0] 放 mate 左侧，是 chars[1] 放 mate 右侧，确保能激活
+        const def = generalById(token.general);
+        const tokenIsLeft = def ? token.char === def.chars[0] : true;
+        const wantC = mate ? (tokenIsLeft ? mate.cell.c - 1 : mate.cell.c + 1) : undefined;
+        let target = mate && wantC != null
+          ? cells.find((c) => c.r === mate.cell.r && c.c === wantC)
           : undefined;
         target ??= cells[0];
         if (target && this.placeFromTray(0, target)) continue;
