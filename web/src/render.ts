@@ -9,7 +9,15 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, itemById, SKILL_META, type TrayToken } from './battle';
+import {
+  Battle,
+  unitColorOf,
+  TUNING,
+  itemById,
+  SKILL_META,
+  PEACH_FLOAT_FALL,
+  type TrayToken,
+} from './battle';
 import { generalById, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
@@ -308,6 +316,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawGenerals(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
+  drawPeachFloats(ctx, b);
   drawHeroUlt(ctx, b);
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
@@ -853,6 +862,28 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.stroke();
       }
     }
+    ctx.restore();
+  }
+}
+
+// 击杀蟠桃飘字：头上 🍑+N，升空不透明，过顶后按下落进度淡出
+function drawPeachFloats(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const p of b.peachFloats) {
+    const { x, y: cy } = cellCenterPx(p.c, p.r);
+    const y = cy + p.y * CELL;
+    const fallProgress = p.y >= p.peakY ? (p.y - p.peakY) / PEACH_FLOAT_FALL : 0;
+    const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${Math.round(CELL * 0.42)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const text = `🍑+${p.amount}`;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(20,16,12,0.85)';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = '#fffef6';
+    ctx.fillText(text, x, y);
     ctx.restore();
   }
 }

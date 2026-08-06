@@ -177,6 +177,25 @@ export interface Burst {
   color: string;
 }
 
+// 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
+export const PEACH_FLOAT_HEAD_Y = -0.55; // 相对格中心（格；负=向上）
+export const PEACH_FLOAT_RISE = 0.5;
+export const PEACH_FLOAT_FALL = 0.2;
+export const PEACH_FLOAT_GRAVITY = 6; // 格/秒²
+
+export interface PeachFloat {
+  c: number;
+  r: number;
+  amount: number;
+  y: number;
+  vy: number;
+  peakY: number;
+}
+
+export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
+  return -Math.sqrt(2 * gravity * rise);
+}
+
 // —— 日重置道具（波间 3 选 1，肉鸽 Build）——
 // 携带上限对齐竞品：主动最多 2 个、被动最多 6 个。
 export const MAX_ACTIVE_ITEMS = 2;
@@ -253,6 +272,7 @@ export class Battle {
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
+  peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -1290,9 +1310,20 @@ export class Battle {
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         const isElite = !m.isBoss && m.skill !== null; // 精英=非BOSS但带词条(技能)
-        this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0) + this.mods.killBonus; // 击杀产蟠桃(精英额外+10, +道具)
+        const amount =
+          (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0) + this.mods.killBonus; // 击杀产蟠桃(精英额外+10, +道具)
+        this.peach += amount;
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
+        const vy0 = peachFloatInitialVy();
+        this.peachFloats.push({
+          c: dp.c,
+          r: dp.r,
+          amount,
+          y: PEACH_FLOAT_HEAD_Y,
+          vy: vy0,
+          peakY: PEACH_FLOAT_HEAD_Y,
+        });
         this.emit(m.isBoss ? 'bosskill' : 'kill');
         continue;
       }
@@ -1336,6 +1367,12 @@ export class Battle {
     }
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    for (const p of this.peachFloats) {
+      p.vy += PEACH_FLOAT_GRAVITY * dt;
+      p.y += p.vy * dt;
+      if (p.y < p.peakY) p.peakY = p.y;
+    }
+    this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
