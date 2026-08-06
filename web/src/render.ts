@@ -510,12 +510,18 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : !onPath && aiUnlocked.has(`${c},${r}`);
       const ix = x + 1.5, iy = y + 1.5, iw = CELL - 3, ih = CELL - 3;
       if (onPath) {
-        // 路径格：道路色 + 黑色描边与其他块分隔（水墨勾线）
+        // 路径格：底色半透明淡化（偏灰、次要），与可放置交界的加粗黑线另画
         roundRect(ctx, ix, iy, iw, ih, 4);
+        ctx.save();
+        ctx.globalAlpha = 0.5;
         ctx.fillStyle = th.path;
         ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(30,26,20,0.7)';
+        ctx.restore();
+        // 略压一层冷灰，让路更退后
+        ctx.fillStyle = 'rgba(90,95,88,0.22)';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(30,26,20,0.45)';
         ctx.stroke();
       } else if (cellOpen) {
         // 可放置格：米白 + 内斜角高光 + 柔和投影
@@ -561,8 +567,67 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       }
     }
   }
+  drawPathDiggableBorders(ctx, b);
+  drawBoardOuterBorder(ctx);
   drawBorderMotif(ctx, b);
   drawFence(ctx, b);
+}
+
+// 棋盘最外缘黑色加粗框，把整图包起来
+function drawBoardOuterBorder(ctx: CanvasRenderingContext2D) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(20,18,14,0.92)';
+  ctx.lineWidth = 3.5;
+  ctx.lineJoin = 'round';
+  ctx.strokeRect(BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL);
+  ctx.restore();
+}
+
+// 「路径格 ↔ 可挖格」交界画黑色加粗线（含未解锁的可挖格；不含路径彼此之间）
+function drawPathDiggableBorders(ctx: CanvasRenderingContext2D, b: Battle) {
+  // 可挖：非路径的棋盘格（我方半场未开格子 + AI 半场对应格）
+  const isDiggable = (c: number, r: number): boolean => {
+    if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+    return !isEitherPathCell(b.map, c, r);
+  };
+  const edges = new Map<string, { x0: number; y0: number; x1: number; y1: number }>();
+  const add = (x0: number, y0: number, x1: number, y1: number) => {
+    const key = `${Math.min(x0, x1)},${Math.min(y0, y1)},${Math.max(x0, x1)},${Math.max(y0, y1)}`;
+    edges.set(key, { x0, y0, x1, y1 });
+  };
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!isEitherPathCell(b.map, c, r)) continue;
+      if (isDiggable(c, r - 1)) {
+        const y = BOARD_Y + r * CELL;
+        add(BOARD_X + c * CELL, y, BOARD_X + (c + 1) * CELL, y);
+      }
+      if (isDiggable(c + 1, r)) {
+        const x = BOARD_X + (c + 1) * CELL;
+        add(x, BOARD_Y + r * CELL, x, BOARD_Y + (r + 1) * CELL);
+      }
+      if (isDiggable(c, r + 1)) {
+        const y = BOARD_Y + (r + 1) * CELL;
+        add(BOARD_X + c * CELL, y, BOARD_X + (c + 1) * CELL, y);
+      }
+      if (isDiggable(c - 1, r)) {
+        const x = BOARD_X + c * CELL;
+        add(x, BOARD_Y + r * CELL, x, BOARD_Y + (r + 1) * CELL);
+      }
+    }
+  }
+  if (edges.size === 0) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(20,18,14,0.92)';
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  for (const e of edges.values()) {
+    ctx.beginPath();
+    ctx.moveTo(e.x0, e.y0);
+    ctx.lineTo(e.x1, e.y1);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // 棋盘四周的地图专属边界装饰（不同地图不同风格）
@@ -626,22 +691,23 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   const off = open * CELL * 0.34;
   ctx.save();
   if (id === 'pansidong') {
-    // 盘丝洞：两团云/丝絮分开又合拢
-    const puff = (px: number) => {
-      ctx.beginPath();
-      ctx.arc(px, y - 6, CELL * 0.16, 0, Math.PI * 2);
-      ctx.arc(px + (px < x ? 6 : -6), y + 4, CELL * 0.13, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    ctx.fillStyle = 'rgba(150,110,150,0.75)';
-    puff(x - off - CELL * 0.14);
-    puff(x + off + CELL * 0.14);
+    // 盘丝洞：两扇蛛网；gateT=0 时合拢成整网，出怪时左右拉开
+    drawPansidongWebGate(ctx, x - off, y, -1);
+    drawPansidongWebGate(ctx, x + off, y, 1);
+  } else if (id === 'baiguling') {
+    // 白骨岭：两座白骨门柱左右开合（骨节堆 + 顶颅）
+    drawBaigulingGateLeaf(ctx, x - off - CELL * 0.22, y, -1);
+    drawBaigulingGateLeaf(ctx, x + off + CELL * 0.22, y, 1);
+  } else if (id === 'huoyanshan') {
+    // 火焰山：两柱火焰门，默认合拢，出怪时左右分开
+    drawHuoyanshanFlameGate(ctx, x - off, y, -1);
+    drawHuoyanshanFlameGate(ctx, x + off, y, 1);
   } else {
-    // 火焰山/流沙河/白骨岭：两扇闸门开合
+    // 流沙河：两扇闸门开合
     const w = CELL * 0.4, h = CELL * 0.52;
     const leaf = (lx: number) => {
       roundRect(ctx, lx, y - h / 2, w, h, 5);
-      ctx.fillStyle = id === 'baiguling' ? 'rgba(110,116,98,0.85)' : id === 'liushahe' ? 'rgba(150,124,70,0.85)' : 'rgba(120,60,40,0.85)';
+      ctx.fillStyle = 'rgba(150,124,70,0.85)';
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(30,26,20,0.7)';
@@ -653,10 +719,141 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   ctx.restore();
 }
 
-// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭为台阶白骨堆且无开口
+// 火焰山出怪口：半边火焰门柱（合拢时拼成火门，出怪时分开）
+function drawHuoyanshanFlameGate(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(side, 1);
+  const h = CELL * 0.55;
+  const w = CELL * 0.28;
+  // 炽热门框
+  ctx.fillStyle = 'rgba(80,30,18,0.85)';
+  ctx.strokeStyle = 'rgba(40,16,10,0.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2);
+  ctx.lineTo(w, -h / 2 + 4);
+  ctx.lineTo(w * 0.85, h / 2);
+  ctx.lineTo(0, h / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // 外焰
+  const flame = (ox: number, baseY: number, fh: number, fw: number, color: string) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(ox, baseY);
+    ctx.quadraticCurveTo(ox + fw * 0.15, baseY - fh * 0.45, ox + fw * 0.05, baseY - fh);
+    ctx.quadraticCurveTo(ox + fw * 0.55, baseY - fh * 0.55, ox + fw, baseY - fh * 0.15);
+    ctx.quadraticCurveTo(ox + fw * 0.45, baseY - fh * 0.05, ox, baseY);
+    ctx.closePath();
+    ctx.fill();
+  };
+  flame(2, h * 0.15, h * 0.85, w * 0.9, 'rgba(220,70,30,0.92)');
+  flame(4, h * 0.2, h * 0.65, w * 0.55, 'rgba(255,150,40,0.95)');
+  flame(6, h * 0.22, h * 0.42, w * 0.32, 'rgba(255,230,120,0.98)');
+  ctx.restore();
+}
+
+// 盘丝洞出怪口：半圆形蛛网扇叶（开合时左右分开）
+function drawPansidongWebGate(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  const R = CELL * 0.38;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(side, 1);
+  // 半圆底
+  ctx.fillStyle = 'rgba(80,45,75,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  // 放射丝
+  ctx.strokeStyle = 'rgba(245,225,240,0.95)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + (i / 4) * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+    ctx.stroke();
+  }
+  // 同心弧网
+  ctx.strokeStyle = 'rgba(220,180,210,0.9)';
+  ctx.lineWidth = 1.6;
+  for (const rr of [R * 0.35, R * 0.6, R * 0.85]) {
+    ctx.beginPath();
+    ctx.arc(0, 0, rr, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+  }
+  // 外框加粗，更易辨认
+  ctx.strokeStyle = 'rgba(160,90,150,0.95)';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2);
+  ctx.stroke();
+  // 蛛丝锚点
+  ctx.fillStyle = 'rgba(245,230,240,0.95)';
+  ctx.strokeStyle = 'rgba(120,60,110,0.85)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 白骨岭出怪闸口的一侧门柱：交错骨节立柱 + 顶上小颅骨
+function drawBaigulingGateLeaf(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = '#efe6d8';
+  ctx.strokeStyle = 'rgba(40,36,30,0.85)';
+  ctx.lineWidth = 1.7;
+  const bone = (bx: number, by: number, w: number, h: number, rot: number) => {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.arc(w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+  // 立柱：竖向叠骨
+  bone(side * 2, CELL * 0.14, CELL * 0.14, CELL * 0.04, Math.PI / 2 + side * 0.08);
+  bone(side * -1, CELL * 0.02, CELL * 0.13, CELL * 0.038, Math.PI / 2 - side * 0.12);
+  bone(side * 3, -CELL * 0.1, CELL * 0.12, CELL * 0.036, Math.PI / 2 + side * 0.05);
+  // 斜撑交叉骨
+  bone(side * 4, CELL * 0.06, CELL * 0.11, CELL * 0.032, side * 0.7);
+  bone(side * -3, -CELL * 0.02, CELL * 0.1, CELL * 0.03, -side * 0.65);
+  // 顶颅
+  ctx.beginPath();
+  ctx.arc(0, -CELL * 0.22, CELL * 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(40,36,30,0.85)';
+  ctx.beginPath();
+  ctx.arc(-CELL * 0.035, -CELL * 0.23, CELL * 0.022, 0, Math.PI * 2);
+  ctx.arc(CELL * 0.035, -CELL * 0.23, CELL * 0.022, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭白骨堆；盘丝洞蛛丝网
 function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.map.id === 'baiguling') {
     drawBaigulingBoneFence(ctx);
+    return;
+  }
+  if (b.map.id === 'pansidong') {
+    drawPansidongSilkFence(ctx, b);
     return;
   }
   const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
@@ -677,37 +874,159 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-// 白骨岭：沿台阶分界连续铺白骨堆（无开口）
-function drawBaigulingBoneFence(ctx: CanvasRenderingContext2D) {
-  const spr = sprite('fence-baiguling');
-  const marks: { c: number; r: number }[] = [];
-  // 左 4 列：路径 r=5 与我方之间
-  for (let c = 0; c <= 3; c++) marks.push({ c, r: 5 });
-  // 竖拐角
-  marks.push({ c: 3, r: 4 }, { c: 3, r: 3 });
-  // 右 4 列：路径 r=3
-  for (let c = 4; c <= 7; c++) marks.push({ c, r: 3 });
+// 盘丝洞：中线蛛丝篱笆（丝线 + 蛛网结 + 小茧），无开口
+function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL;
+  const x0 = BOARD_X;
+  const x1 = BOARD_X + COLS * CELL;
+  const accent = b.map.theme.accent;
   ctx.save();
-  for (const m of marks) {
-    const { x, y } = cellCenterPx(m.c, m.r);
-    const size = CELL * 0.72;
-    if (spr) {
-      const scale = Math.min(size / spr.width, size / spr.height);
-      const dw = spr.width * scale;
-      const dh = spr.height * scale;
-      ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
-    } else {
-      // 缺图兜底：小白骨色块堆
-      ctx.fillStyle = '#e8e0d4';
-      ctx.strokeStyle = 'rgba(40,36,30,0.75)';
-      ctx.lineWidth = 2;
+  // 底衬丝带
+  ctx.strokeStyle = 'rgba(120,70,110,0.35)';
+  ctx.lineWidth = CELL * 0.28;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, y);
+  ctx.lineTo(x1, y);
+  ctx.stroke();
+  // 主丝线（多股微起伏）
+  for (const dy of [-3, 0, 3]) {
+    ctx.strokeStyle = dy === 0 ? 'rgba(240,220,235,0.9)' : 'rgba(200,160,190,0.55)';
+    ctx.lineWidth = dy === 0 ? 2.2 : 1.2;
+    ctx.beginPath();
+    for (let i = 0; i <= COLS * 4; i++) {
+      const t = i / (COLS * 4);
+      const x = x0 + (x1 - x0) * t;
+      const wave = Math.sin(t * Math.PI * 8 + dy) * 2.2;
+      if (i === 0) ctx.moveTo(x, y + dy + wave);
+      else ctx.lineTo(x, y + dy + wave);
+    }
+    ctx.stroke();
+  }
+  // 每隔一段一个蛛网结 / 小茧
+  for (let c = 0; c < COLS; c++) {
+    const cx = BOARD_X + c * CELL + CELL / 2;
+    // 斜向交叉丝
+    ctx.strokeStyle = 'rgba(230,200,220,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, y - 9);
+    ctx.lineTo(cx + 10, y + 9);
+    ctx.moveTo(cx + 10, y - 9);
+    ctx.lineTo(cx - 10, y + 9);
+    ctx.stroke();
+    // 网心小环
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, y, 4.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // 小茧（偶发）
+    if (c % 2 === 0) {
+      ctx.fillStyle = 'rgba(245,230,240,0.92)';
+      ctx.strokeStyle = 'rgba(130,80,120,0.7)';
+      ctx.lineWidth = 1.3;
       ctx.beginPath();
-      ctx.arc(x - 6, y + 2, 7, 0, Math.PI * 2);
-      ctx.arc(x + 5, y - 2, 6, 0, Math.PI * 2);
-      ctx.arc(x, y + 6, 5, 0, Math.PI * 2);
+      ctx.ellipse(cx, y - 8, 5.5, 7.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      // 茧上细丝
+      ctx.beginPath();
+      ctx.moveTo(cx - 3, y - 12);
+      ctx.quadraticCurveTo(cx, y - 8, cx + 3, y - 4);
+      ctx.stroke();
     }
+  }
+  ctx.restore();
+}
+
+// 白骨岭：白骨堆画在台阶分界格线上（左 r=5|6、竖 c=3|4、右 r=3|4），连续无开口
+function drawBaigulingBoneFence(ctx: CanvasRenderingContext2D) {
+  const yLeft = BOARD_Y + 6 * CELL;
+  const yRight = BOARD_Y + 4 * CELL;
+  const xStep = BOARD_X + 4 * CELL;
+  const x0 = BOARD_X;
+  const x1 = BOARD_X + COLS * CELL;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(45, 42, 36, 0.55)';
+  ctx.lineWidth = CELL * 0.38;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, yLeft);
+  ctx.lineTo(xStep, yLeft);
+  ctx.lineTo(xStep, yRight);
+  ctx.lineTo(x1, yRight);
+  ctx.stroke();
+  const step = CELL * 0.32;
+  const segs: { x0: number; y0: number; x1: number; y1: number }[] = [
+    { x0, y0: yLeft, x1: xStep, y1: yLeft },
+    { x0: xStep, y0: yLeft, x1: xStep, y1: yRight },
+    { x0: xStep, y0: yRight, x1, y1: yRight },
+  ];
+  for (const s of segs) {
+    const len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const n = Math.max(2, Math.ceil(len / step));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      drawBonePileOnLine(
+        ctx,
+        s.x0 + (s.x1 - s.x0) * t,
+        s.y0 + (s.y1 - s.y0) * t,
+        Math.atan2(s.y1 - s.y0, s.x1 - s.x0),
+        i,
+      );
+    }
+  }
+  ctx.restore();
+}
+
+// 单簇白骨堆：矢量骨节密叠成墙；精灵仅作偶发点缀（整段图标会不像栅栏）
+function drawBonePileOnLine(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, seed: number) {
+  const jitter = ((seed * 17) % 7) - 3;
+  const nx = Math.cos(ang + Math.PI / 2);
+  const ny = Math.sin(ang + Math.PI / 2);
+  const px = x + nx * jitter * 0.35;
+  const py = y + ny * jitter * 0.35;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(ang);
+  ctx.fillStyle = seed % 2 === 0 ? '#f3ebe0' : '#e8dfd0';
+  ctx.strokeStyle = 'rgba(40,36,30,0.82)';
+  ctx.lineWidth = 1.5;
+  const bone = (bx: number, by: number, w: number, h: number, rot: number) => {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.arc(w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+  // 沿栅栏切向叠 2～3 根骨头 + 顶部小颅，形成矮墙截面
+  bone(-CELL * 0.12, 2, CELL * 0.16, CELL * 0.045, -0.2);
+  bone(CELL * 0.1, -1, CELL * 0.14, CELL * 0.04, 0.28);
+  bone(0, CELL * 0.06, CELL * 0.13, CELL * 0.038, 0.02);
+  ctx.beginPath();
+  ctx.arc(CELL * 0.02, -CELL * 0.08, CELL * 0.075, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  const spr = sprite('fence-baiguling');
+  if (spr && seed % 4 === 0) {
+    const size = CELL * 0.36;
+    const scale = Math.min(size / spr.width, size / spr.height);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(spr, -dw / 2, -dh * 0.85, dw, dh);
   }
   ctx.restore();
 }
@@ -906,24 +1225,36 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 击杀蟠桃飘字：头上 🍑+N，升空不透明，过顶后按下落进度淡出
+// 击杀蟠桃飘字：头上 🍑+N（+N 字号更小），升空不透明，过顶后按下落进度淡出
 function drawPeachFloats(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const p of b.peachFloats) {
     const { x, y: cy } = cellCenterPx(p.c, p.r);
     const y = cy + p.y * CELL;
     const fallProgress = p.y >= p.peakY ? (p.y - p.peakY) / PEACH_FLOAT_FALL : 0;
     const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
+    const peach = '🍑';
+    const num = `+${p.amount}`;
+    const peachPx = Math.round(CELL * 0.42);
+    const numPx = Math.round(CELL * 0.28);
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = `bold ${Math.round(CELL * 0.42)}px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const text = `🍑+${p.amount}`;
+    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
+    const peachW = ctx.measureText(peach).width;
+    ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
+    const numW = ctx.measureText(num).width;
+    const totalW = peachW + numW;
+    const left = x - totalW / 2;
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(20,16,12,0.85)';
-    ctx.strokeText(text, x, y);
     ctx.fillStyle = '#fffef6';
-    ctx.fillText(text, x, y);
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
+    ctx.strokeText(peach, left, y);
+    ctx.fillText(peach, left, y);
+    ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
+    ctx.strokeText(num, left + peachW, y);
+    ctx.fillText(num, left + peachW, y);
     ctx.restore();
   }
 }
