@@ -242,7 +242,6 @@ export const PEACH_FLOAT_HEAD_Y = -0.55; // 相对格中心（格；负=向上�
 export const PEACH_FLOAT_RISE = 0.5;
 export const PEACH_FLOAT_FALL = 0.2;
 export const PEACH_FLOAT_GRAVITY = 6; // 格/秒²
-
 export interface PeachFloat {
   c: number;
   r: number;
@@ -255,6 +254,8 @@ export interface PeachFloat {
 export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
   return -Math.sqrt(2 * gravity * rise);
 }
+
+export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
 
 interface Modifiers {
   atkMul: number;
@@ -302,6 +303,7 @@ export class Battle {
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
+  digFx: { c: number; r: number; t: number }[] = []; // 铲子挖坑动画(来回两下)，t 累积秒数
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -416,7 +418,7 @@ export class Battle {
     // 每日被动技能：开局按 id 注入本局。蟠桃园走桃树系统；其余复用 applyItem 效果引擎。
     // 只取前 MAX_EQUIPPED_PASSIVES 个作防御（正常 loadout 已保证 ≤N，且为最新 N）。
     for (const id of passives.slice(0, MAX_EQUIPPED_PASSIVES)) {
-      if (id === 'pas_pantao') { this.gardenOn = true; continue; }
+      if (id === 'pas_pantao') { this.gardenOn = true; this.pickedItems.push(id); continue; } // 蟠桃园走桃树系统，同时进被动栏展示
       this.applyItem(id);
       this.pickedItems.push(id);
     }
@@ -600,6 +602,7 @@ export class Battle {
         return false;
       }
       this.unlocked.add(cellKey(to.c, to.r));
+      this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
       this.tray.splice(index, 1);
       this.peach += this.mods.shovelPeach; // 摸金校尉
       this.emit('shovel');
@@ -699,6 +702,7 @@ export class Battle {
     if (this.trees.has(cellKey(to.c, to.r))) { this.message = '该格有桃树，不能开垦'; return false; }
     this.shovels -= 1;
     this.unlocked.add(cellKey(to.c, to.r));
+    this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
     this.peach += this.mods.shovelPeach; // 摸金校尉
     this.message = '铲子挖开了新阵位';
     return true;
@@ -903,6 +907,8 @@ export class Battle {
       if (t.growT >= iv) {
         t.growT -= iv;
         this.peach += 1;
+        // 桃树旁「+1」飘字（复用击杀蟠桃飘字）
+        this.peachFloats.push({ c: t.cell.c, r: t.cell.r, amount: 1, y: PEACH_FLOAT_HEAD_Y, vy: peachFloatInitialVy(), peakY: PEACH_FLOAT_HEAD_Y });
       }
     }
   }
@@ -1521,6 +1527,8 @@ export class Battle {
     }
     switch (def.effect) {
       case 'palm':
+        // 推回前在每只妖怪处爆冲击环，让"推"看得见
+        for (const m of this.monsters) { const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' }); }
         this.pushMonstersToStart();
         this.message = '如来神掌！妖怪被推回起点';
         this.emit('palm');
@@ -1532,16 +1540,18 @@ export class Battle {
         break;
       case 'atkBuff':
         this.atkBuffT = 5; this.atkBuffMul = 1.5;
+        for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ff7a3c' }); // 己方单位泛红光
         this.message = '仙丹！全体攻击提升';
         this.emit('item');
         break;
       case 'frqBuff':
         this.frqBuffT = 5; this.frqBuffMul = 1.4;
+        for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ffd76a' }); // 己方单位泛金光
         this.message = '风火轮！全体攻速提升';
         this.emit('item');
         break;
       case 'freeze':
-        for (const m of this.monsters) m.stunT = Math.max(m.stunT, 2);
+        for (const m of this.monsters) { m.stunT = Math.max(m.stunT, 2); const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' }); } // 每只妖怪冰霜爆
         this.message = '冰封定身！';
         this.emit('item');
         break;
@@ -1550,6 +1560,7 @@ export class Battle {
         this.emit('ult');
         break;
     }
+    this.ultFlash = Math.max(this.ultFlash, 0.35); // 释放主动技能时统一来一下屏幕闪，增强"放了技能"的反馈
     slot.cd = slot.cdMax;
     slot.ready = false;
     slot.flash = 0.6;
@@ -1650,6 +1661,8 @@ export class Battle {
       if (p.y < p.peakY) p.peakY = p.y;
     }
     this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
+    for (const d of this.digFx) d.t += dt;
+    this.digFx = this.digFx.filter((d) => d.t < DIG_DUR);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)

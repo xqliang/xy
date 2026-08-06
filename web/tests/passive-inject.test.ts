@@ -28,10 +28,10 @@ describe('被动技能开局注入', () => {
     expect(b.unlocked.size).toBe(base.unlocked.size + 1);
   });
 
-  it('蟠桃园：走桃树系统(gardenOn)，不进入 pickedItems', () => {
+  it('蟠桃园：走桃树系统(gardenOn)，并进入 pickedItems 以在被动栏展示', () => {
     const b = make(['pas_pantao']);
     expect(b.gardenOn).toBe(true);
-    expect(b.pickedItems).not.toContain('pas_pantao');
+    expect(b.pickedItems).toContain('pas_pantao');
   });
 
   it('防御性上限：传入第7个被动不生效(slice)', () => {

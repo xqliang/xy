@@ -10,7 +10,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
@@ -88,9 +88,11 @@ export function getButtons(b: Battle): Button[] {
   for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
     btns.push({ id: `act${i}`, label: '', x: actX[i]!, y: actY, w: ACT_D, h: ACT_D, enabled: true });
   }
-  // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
+  // 被动/强化技能行：居中显示，每个已携带道具一格，可点击查看详情/进度
+  const pasPitch = PAS_H + 6;
+  const pasStartX = (VIEW_W - (b.pickedItems.length * pasPitch - 6)) / 2;
   for (let i = 0; i < b.pickedItems.length; i++) {
-    btns.push({ id: `pas${i}`, label: '', x: 12 + i * (PAS_H + 6), y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
+    btns.push({ id: `pas${i}`, label: '', x: pasStartX + i * pasPitch, y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
   }
   return btns;
 }
@@ -312,6 +314,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
+  drawDigFx(ctx, b);
   drawBursts(ctx, b);
   drawPeachFloats(ctx, b);
   drawHeroUlt(ctx, b);
@@ -1326,6 +1329,36 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 // 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
+function drawDigFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const spr = sprite('item-shovel');
+  for (const d of b.digFx) {
+    const { x, y } = cellCenterPx(d.c, d.r);
+    const phase = Math.min(1, d.t / DIG_DUR); // 0→1
+    const chop = Math.abs(Math.sin(phase * Math.PI * 2 * 2)); // 两个周期=来回挖两下
+    const tilt = Math.sin(phase * Math.PI * 2 * 2) * 0.5; // 随挖左右摆
+    const s = CELL * 0.6;
+    ctx.save();
+    ctx.globalAlpha = 1 - phase * 0.15;
+    // 泥坑底色
+    ctx.fillStyle = 'rgba(60,40,20,0.32)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + CELL * 0.18, CELL * 0.28, CELL * 0.13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 铲子：随 chop 下压 + tilt 倾斜
+    ctx.translate(x, y - CELL * 0.12 + chop * CELL * 0.22);
+    ctx.rotate(tilt);
+    if (spr) {
+      ctx.drawImage(spr, -s / 2, -s / 2, s, s);
+    } else {
+      ctx.font = `${Math.round(s)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🥄', 0, 0);
+    }
+    ctx.restore();
+  }
+}
+
 function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const bt of b.bursts) {
     const { x, y } = cellCenterPx(bt.c, bt.r);
@@ -2286,19 +2319,20 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
   ctx.stroke();
 
   const cx = panelX + panelW / 2;
+  const midY = panelY + panelH / 2; // 垂直居中锚点，避免信息靠上显空
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   ctx.fillStyle = '#b5391f';
   ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.fillText('无尽 · 试炼', cx, panelY + 26);
+  ctx.fillText('无尽 · 试炼', cx, midY - 40);
 
   ctx.fillStyle = '#5a3a12';
   ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText(`第 ${b.wave} 波`, cx, panelY + 62);
+  ctx.fillText(`第 ${b.wave} 波`, cx, midY - 2);
   ctx.fillStyle = '#8a5a2b';
   ctx.font = '16px "PingFang SC", sans-serif';
-  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, panelY + 90);
+  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, midY + 28);
 
   const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
   ctx.fillStyle = '#7a3b12';
