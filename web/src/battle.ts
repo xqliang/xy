@@ -675,6 +675,63 @@ export class Battle {
     return true;
   }
 
+  // AI 侧格到 AI 怪路的最近距离（格）——直接量 aiPath，避免镜像换算
+  private aiNearestPathDist(cell: { c: number; r: number }): number {
+    let min = Infinity;
+    for (const p of this.aiPath) {
+      if (p.r < 0 || p.r >= ROWS) continue;
+      const d = Math.hypot(p.c - cell.c, p.r - cell.r);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+
+  // AI 征兵：与玩家同生成策略（drawSummonTray + 字牌转化），用 aiRng，够桃才征
+  private aiSummon(): boolean {
+    if (this.aiPeach < this.aiSummonCost) return false;
+    this.aiPeach -= this.aiSummonCost;
+    this.aiSummonCost += TUNING.summonCostStep;
+    const types = Object.keys(UNITS) as UnitType[];
+    const firstSummon = this.aiSummonCount === 0;
+    const allOpen = this.aiLockedCells().length === 0;
+    const forceShovel = !allOpen && this.aiSummonsSinceShovel >= TUNING.shovelPityAfter;
+    const base = drawSummonTray({
+      rng: this.aiRng, unitTypes: types, draws: TUNING.traySize,
+      shovelChance: allOpen ? 0 : TUNING.shovelDrawChance,
+      maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
+      firstSummon, forceShovel,
+    });
+    this.aiSummonCount += 1;
+    if (base.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0; else this.aiSummonsSinceShovel += 1;
+    this.aiTray = base.map((tok) => {
+      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance) {
+        const w = this.aiRng.pick(WORD_POOL);
+        return { kind: 'word', char: w.char, general: w.general, tier: 1 } as TrayToken;
+      }
+      return tok;
+    });
+    return true;
+  }
+
+  // AI 击杀产桃（基础值，无 mods.killBonus/摸金/蟠桃园）
+  private creditAiKill(isBoss: boolean, isElite: boolean): void {
+    this.aiPeach += (isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0);
+  }
+
+  // AI 布阵视图（喂给共享 planAutoPlace）
+  private buildAiAutoView(): AutoPlaceView {
+    return {
+      tray: () => this.aiTray,
+      freeCells: () => this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r)),
+      diggableCells: () => this.aiLockedCells(),
+      placedUnits: () => this.aiUnits.map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
+      placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
+      nearestPathDist: (cell) => this.aiNearestPathDist(cell),
+      wordChars: (general) => generalById(general)?.chars,
+      place: (i, cell) => this.aiPlaceFromTray(i, cell),
+    };
+  }
+
   // 从候选区把第 index 个令牌落到目标格：
   // - 铲子 → 锁定的可摆放格 → 开挖解锁
   // - 兵种 → 空绿格放置；同型同级则合并升阶；非同型则替换（旧单位被换下）

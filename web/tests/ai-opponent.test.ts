@@ -1,6 +1,7 @@
 // web/tests/ai-opponent.test.ts
 import { describe, it, expect } from 'vitest';
 import { Battle } from '../src/battle';
+import { PEACH_PER_KILL } from '@core';
 
 describe('AI 落子与激活', () => {
   it('aiPlaceFromTray：铲子只挖锁定 AI 格并解锁', () => {
@@ -38,5 +39,34 @@ describe('AI 落子与激活', () => {
     const gens = b.aiActiveGenerals();
     expect(gens.length).toBe(1);
     expect(gens[0]!.def.id).toBe('wukong');
+  });
+});
+
+describe('AI 经济与征兵', () => {
+  it('AI 够桃才征兵；征后扣桃、涨价', () => {
+    const b = new Battle(3);
+    (b as any).aiPeach = 999;
+    const beforePeach = b.aiPeach;
+    const beforeCost = (b as any).aiSummonCost;
+    const ok = (b as any).aiSummon();
+    expect(ok).toBe(true);
+    expect(b.aiPeach).toBeLessThan(beforePeach);
+    expect((b as any).aiSummonCost).toBeGreaterThan(beforeCost);
+    expect(b.aiTray.length).toBeGreaterThan(0);
+  });
+
+  it('桃不足时 aiSummon 不产候选', () => {
+    const b = new Battle(3);
+    (b as any).aiPeach = 0;
+    const ok = (b as any).aiSummon();
+    expect(ok).toBe(false);
+    expect(b.aiTray.length).toBe(0);
+  });
+
+  it('AI 击杀普通怪产基础桃 PEACH_PER_KILL（无玩家加成）', () => {
+    const b = new Battle(3);
+    const before = b.aiPeach;
+    (b as any).creditAiKill(false, false);
+    expect(b.aiPeach - before).toBe(PEACH_PER_KILL);
   });
 });
