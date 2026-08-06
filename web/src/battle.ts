@@ -24,6 +24,7 @@ import { drawSummonTray } from './summon-draw';
 import { planAutoPlace, type AutoPlaceView } from './autoplace';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
+import { DEFAULT_AI_SKILL } from './ai-skill';
 import {
   COLS,
   ROWS,
@@ -346,6 +347,19 @@ export class Battle {
   shovels = TUNING.initialShovels;
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
+  // —— AI 对手真玩家化：与玩家平行的经济/候选/资源（后续 C2-C5 使用）——
+  aiPeach = INITIAL_PEACH;                 // 基础经济（不加 meta.bonusPeach）
+  private aiSummonCost = TUNING.summonCostStart; // 同玩家初始征兵成本
+  aiShovels = TUNING.initialShovels;
+  aiTray: TrayToken[] = [];
+  aiWords = new Map<string, PlacedWord>();
+  private aiSummonsSinceShovel = 0;
+  private aiSummonCount = 0;
+  private aiGeneralStates = new Map<string, GeneralState>();
+  private aiRng!: RNG;                      // 独立随机源（构造里派生）
+  private aiSummonTimer = 0;                // 距下次可征兵计时
+  aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
+
   // 道具与修正器
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalLevelDelta: 0 };
   private shovelTimer = 0; // 洛阳铲产铲计时
@@ -368,9 +382,11 @@ export class Battle {
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL) {
     this.weaponBonuses = weapons;
     this.rng = new RNG(seed);
+    this.aiRng = new RNG((seed * 2654435761 + 1013904223) >>> 0); // 派生独立流：生成策略同、结果不同
+    this.aiSkill = aiSkill;
     this.difficultyMul = difficultyMul;
     this.endless = endless;
     this.map = map;
