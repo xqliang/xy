@@ -49,7 +49,9 @@ export const TUNING = {
   monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
   monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
-  bossEveryWave: 5, // 每 5 波出一个 BOSS
+  bossEveryWave: 5, // 无尽模式：每 5 波出一个 BOSS（正常模式改用随机 BOSS 波，见 computeBossWaves）
+  bossWaveChance: 0.35, // 正常模式：第 5..winWave-1 波各自成为 BOSS 波的概率
+  bossMinBosses: 2, // 正常模式：第 5..winWave-1 波至少出现的 BOSS 次数
   bossHpMul: 14,
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
@@ -58,7 +60,7 @@ export const TUNING = {
   cavalrySpdMul: 2, // 骑兵移速倍率：比普通妖快一倍
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
-  lateWaveExtraPerWave: 3, // 每超出一波额外 +3 只（波6:+3, 波7:+6 … 波10:+15）
+  lateWaveExtraPerWave: 5, // 每超出一波额外 +5 只（越到后期越密，波6:+5 … 波12:+35）
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=6, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）
@@ -75,7 +77,7 @@ export const TUNING = {
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
-  winWave: 10, // 通关波次
+  winWave: 12, // 通关波次
   // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梯式 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
   endlessCycleStep: 1.3,
@@ -367,11 +369,15 @@ export class Battle {
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
+  private bossWaves = new Set<number>(); // 正常模式预计算的 BOSS 波集合（无尽模式不用，见 isBossWave）
+
   constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false) {
     this.weaponBonuses = weapons;
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
     this.endless = endless;
+    // 预计算 BOSS 波（正常模式）：用独立 rng，避免扰动出怪/掉落的主 rng 序列
+    if (!endless) this.bossWaves = this.computeBossWaves(new RNG((seed ^ 0x5bf03635) >>> 0));
     this.map = map;
     this.pathLen = pathTotalLen(map);
     this.slotOrder = slotUnlockOrder(map);
@@ -826,7 +832,7 @@ export class Battle {
     this.spawnTimer = 0;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次骑兵，否则普通
-    const bossWave = this.wave % TUNING.bossEveryWave === 0 || this.wave === TUNING.winWave;
+    const bossWave = this.isBossWave(this.wave);
     this.message = bossWave ? '⚠ 妖王来袭！' : this.cavalryWave ? '骑兵突袭！' : '妖怪来袭！';
     this.emit('wave');
     return true;
@@ -971,7 +977,7 @@ export class Battle {
 
   // 清波掉落神兵：基础 35%，BOSS 波必掉（对应竞品"对局随机掉落"）
   private rollWeaponDropOnClear(): void {
-    const isBossWave = this.wave % TUNING.bossEveryWave === 0 || this.wave === TUNING.winWave;
+    const isBossWave = this.isBossWave(this.wave);
     if (!isBossWave && this.rng.next() > 0.35) return;
     const id = rollWeaponDrop(this.rng.next());
     this.droppedWeapons.push(id);
@@ -984,6 +990,32 @@ export class Battle {
     if (!this.endless) return this.difficultyMul;
     const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
+  }
+
+  // 预计算正常模式的 BOSS 波：第 5..winWave-1 波各按 bossWaveChance 随机成为 BOSS 波，
+  // 保证该区间至少 bossMinBosses 个；通关波(winWave)必出 BOSS。用独立 rng，确定性可复现。
+  private computeBossWaves(rng: RNG): Set<number> {
+    const s = new Set<number>();
+    s.add(TUNING.winWave); // 通关波必出
+    const lo = 5, hi = TUNING.winWave - 1;
+    const pool: number[] = [];
+    for (let w = lo; w <= hi; w++) {
+      pool.push(w);
+      if (rng.next() < TUNING.bossWaveChance) s.add(w);
+    }
+    // 保证 [lo,hi] 至少 bossMinBosses 个 BOSS 波
+    let inRange = pool.filter((w) => s.has(w)).length;
+    const remaining = pool.filter((w) => !s.has(w));
+    while (inRange < TUNING.bossMinBosses && remaining.length > 0) {
+      s.add(remaining.splice(rng.int(remaining.length), 1)[0]!);
+      inRange++;
+    }
+    return s;
+  }
+
+  // 某波是否为 BOSS 波：无尽模式每 bossEveryWave 波，正常模式查预计算集合。
+  isBossWave(wave: number): boolean {
+    return this.endless ? wave % TUNING.bossEveryWave === 0 : this.bossWaves.has(wave);
   }
 
   // 本波出怪总数：经济基准(9+n，同时决定掉落) + 后期堆量。
@@ -1003,9 +1035,9 @@ export class Battle {
   }
 
   private spawnMonster(): void {
-    // BOSS：boss 波(每 bossEveryWave 波)的最后一只，或最终通关波的最后一只
+    // BOSS：boss 波的最后一只，或最终通关波的最后一只
     const isBoss =
-      (this.wave % TUNING.bossEveryWave === 0 || this.wave === TUNING.winWave) &&
+      this.isBossWave(this.wave) &&
       this.spawnRemaining === 1;
     // 骑兵：仅骑兵波、非 BOSS，按出场序号隔一出一 → 约占本波半数
     const spawnedIdx = this.waveMonsterCount - this.spawnRemaining; // 0-based 出场序号
