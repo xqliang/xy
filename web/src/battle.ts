@@ -825,7 +825,9 @@ export class Battle {
       this.wave >= TUNING.cavalryFromWave && this.rng.next() < TUNING.cavalryWaveChance;
     this.spawnTimer = 0;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
-    this.message = this.cavalryWave ? '骑兵突袭！' : '妖怪来袭！'; // 波次号顶部 HUD 已显示，底部不重复
+    // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次骑兵，否则普通
+    const bossWave = this.wave % TUNING.bossEveryWave === 0 || this.wave === TUNING.winWave;
+    this.message = bossWave ? '⚠ 妖王来袭！' : this.cavalryWave ? '骑兵突袭！' : '妖怪来袭！';
     this.emit('wave');
     return true;
   }
