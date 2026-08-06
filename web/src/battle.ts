@@ -1219,7 +1219,7 @@ export class Battle {
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier);
       const base = Math.floor(stat.targets);
-      const extra = this.rng.next() < stat.targets - base ? 1 : 0;
+      const extra = this.aiRng.next() < stat.targets - base ? 1 : 0; // 用 AI 独立随机流，不扰动玩家 rng
       const maxTargets = Math.max(1, base + extra);
       const inRange = this.aiMonsters
         .map((m) => {
