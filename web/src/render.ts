@@ -767,7 +767,8 @@ function drawSpawnGate(ctx: CanvasRenderingContext2D, b: Battle) {
     return path[0]!;
   };
   drawGateAt(ctx, entrance(b.map.path), b.spawnGateT, b.map.id);
-  if (!b.aiDefeated) drawGateAt(ctx, entrance(b.aiPath), b.aiSpawnGateT, b.map.id);
+  // 无尽模式无 AI 对手，AI 半场不出怪，跳过其出怪口（不做张合/不绘制）
+  if (!b.aiDefeated && !b.endless) drawGateAt(ctx, entrance(b.aiPath), b.aiSpawnGateT, b.map.id);
 }
 
 function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number }, gateT: number, id: string) {
@@ -2254,7 +2255,7 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
 
   ctx.save();
   roundRect(ctx, panelX, panelY, panelW, panelH, 14);
-  ctx.fillStyle = 'rgba(244,233,220,0.82)';
+  ctx.fillStyle = 'rgba(244,233,220,0.9)'; // 波次框背景更实（降低透明度），文字更清晰
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(122,59,18,0.5)';
