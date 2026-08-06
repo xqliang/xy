@@ -3,19 +3,21 @@ import {
   COLS,
   ROWS,
   FENCE_ROW,
-  isPathCell,
+  isEitherPathCell,
+  isPlayerCell,
   posAtDistance,
   mirrorCell,
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, unitColorOf, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
-import { UNITS, getUnitStat, damage } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
-import { sprite, unitAsset } from './assets';
+import { sprite, unitAsset, monsterSprite } from './assets';
+import { getBestWave } from './endless';
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
@@ -25,8 +27,8 @@ export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
 export const TRAY_H = 66;
-export const CTRL_Y = TRAY_Y + TRAY_H + 8; // 控制按钮行
-export const CTRL_H = 64;
+export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「营」拖令牌部署时误点征兵）
+export const CTRL_H = 80; // 行高预留：容纳更大的征兵按钮，下方 PAS 行据此下移不重叠
 export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
 export const PAS_H = 46;
 export const MSG_Y = PAS_Y + PAS_H + 16; // 提示文字行
@@ -72,13 +74,15 @@ export function getButtons(b: Battle): Button[] {
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
   const btns: Button[] = [
     { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
-    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 205, y, w: 150, h, enabled: canSummon },
+    // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
+    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
   // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
   const ACT_D = 60; // 圆直径
   const ACT_GAP = 10; // 与「征兵」按钮的间隙
-  const actX = [205 - ACT_GAP - ACT_D, 205 + 150 + ACT_GAP]; // 征兵 x=205 w=150：左侧/右侧
-  const actY = y + (h - ACT_D) / 2;
+  const SUMMON_X = 180, SUMMON_W = 200, SUMMON_H = 78; // 与上方征兵按钮保持一致
+  const actX = [SUMMON_X - ACT_GAP - ACT_D, SUMMON_X + SUMMON_W + ACT_GAP]; // 征兵左侧/右侧
+  const actY = y + (SUMMON_H - ACT_D) / 2; // 与征兵按钮垂直居中
   for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
     btns.push({ id: `act${i}`, label: '', x: actX[i]!, y: actY, w: ACT_D, h: ACT_D, enabled: true });
   }
@@ -101,6 +105,20 @@ export interface UiState {
 let hudRankLabel = '';
 export function setHudRank(label: string): void {
   hudRankLabel = label;
+}
+
+// 背景整屏渐变缓存：全屏渐变每帧重建开销大，而一局内地图主题色固定，按颜色键复用同一对象。
+// 坐标固定在逻辑空间(0..VIEW_H)，不随 DPR 变换失效，可跨帧安全复用。
+let bgGradCache: { key: string; grad: CanvasGradient } | null = null;
+function themeBgGradient(ctx: CanvasRenderingContext2D, bg0: string, bg1: string): CanvasGradient {
+  const key = `${bg0}|${bg1}`;
+  if (!bgGradCache || bgGradCache.key !== key) {
+    const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    grad.addColorStop(0, bg0);
+    grad.addColorStop(1, bg1);
+    bgGradCache = { key, grad };
+  }
+  return bgGradCache.grad;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -287,10 +305,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
     ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 淡宣纸薄纱：把写实场景压成柔和氛围底，突出扁平格子
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   } else {
-    const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-    bg.addColorStop(0, b.map.theme.bg0);
-    bg.addColorStop(1, b.map.theme.bg1);
-    ctx.fillStyle = bg;
+    ctx.fillStyle = themeBgGradient(ctx, b.map.theme.bg0, b.map.theme.bg1);
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
@@ -298,12 +313,14 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSpawnGate(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
-  drawAiSide(ctx, b);
+  if (b.endless) drawEndlessPanel(ctx, b);
+  else drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawBursts(ctx, b);
+  drawPeachFloats(ctx, b);
   drawHeroUlt(ctx, b);
   drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
@@ -364,10 +381,15 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
   ctx.lineWidth = 2.5;
   ctx.strokeStyle = qualityColor(tier);
   ctx.stroke();
-  ctx.fillStyle = '#241d14';
   ctx.font = `bold ${Math.round(s * 0.58)}px "PingFang SC", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // 金黄字：先描深棕边再填金，保证在浅宣纸底上依然清晰可读
+  ctx.lineWidth = Math.max(2, s * 0.055);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#5a3a08';
+  ctx.strokeText(char, x, y + s * 0.02);
+  ctx.fillStyle = '#f2b414';
   ctx.fillText(char, x, y + s * 0.02);
   // 阶数上标（合成为激活武将时由 showTier=false 隐藏，避免与金框整体 Lv 重复）
   if (showTier) {
@@ -425,8 +447,10 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.textBaseline = 'middle';
     ctx.fillText('营', campX + campW / 2, campY + campH / 2 + 1);
   }
-  // 5 个候选槽
-  const SLOT_STAGGER = 0.11, SLOT_DUR = 0.28;
+  // 5 个候选槽：征兵丝带瞬间出现，再从「营」端缩短变细，消于槽位后出图标
+  const HOLD = 0.01;
+  const RETRACT_STAGGER = 0.08;
+  const RETRACT_DUR = 0.09;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     // 木框凹槽（内凹口袋）：上暗下亮内凹渐变 + 深色描边 + 顶部内阴影
@@ -464,43 +488,97 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      // 征兵入场：所有令牌（含武将字牌）从「营」标处沿抛物线弧一个个"重重砸入"槽位
-      const p = Math.max(0, Math.min(1, (b.summonAnimT - i * SLOT_STAGGER) / SLOT_DUR));
-      if (p < 1) {
-        const srcX = 34, srcY = TRAY_Y - 40; // 从「营」标上方抛出
-        // 非对称时间轴：上升较缓、下落加速(重力砸落感)。apex 之后压缩时间→落得更快
-        const apex = 0.6;
-        const phase = p < apex ? (p / apex) * 0.5 : 0.5 + ((p - apex) / (1 - apex)) * 0.5;
-        const tx = srcX + (c.x - srcX) * p; // 水平匀速
-        const arc = 4 * phase * (1 - phase); // 抛物线：0→1→0
-        const ty = srcY + (c.y - srcY) * phase - arc * 70;
-        // 抛物弧拖尾（采样前几段位置连线）
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,220,140,0.45)';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let k = 0; k <= 6; k++) {
-          const pk = Math.max(0, p - k * 0.045);
-          const phk = pk < apex ? (pk / apex) * 0.5 : 0.5 + ((pk - apex) / (1 - apex)) * 0.5;
-          const kx = srcX + (c.x - srcX) * pk;
-          const ky = srcY + (c.y - srcY) * phk - 4 * phk * (1 - phk) * 70;
-          if (k === 0) ctx.moveTo(kx, ky); else ctx.lineTo(kx, ky);
-        }
-        ctx.stroke();
-        ctx.restore();
-        // 临近落地时轻微竖向压扁，强化"砸落"
-        const land = p > 0.82 ? (p - 0.82) / 0.18 : 0;
-        const sq = 1 - land * 0.18;
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.scale(1 + land * 0.12, sq);
-        drawTrayToken(ctx, token, 0, 0, (TRAY_H - 16) * (0.7 + 0.3 * p));
-        ctx.restore();
+      const retractAt = HOLD + i * RETRACT_STAGGER;
+      const t = b.summonAnimT;
+      if (t < retractAt) {
+        drawSummonRibbon(ctx, token, 0, 1, 1, c, i);
+      } else if (t < retractAt + RETRACT_DUR) {
+        const u = (t - retractAt) / RETRACT_DUR; // 0→1 从营收向槽
+        // 长度从营端吃掉，同时整体变细（丝带慢慢变小）
+        drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
         drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
       }
     }
   }
+}
+
+/** 单条平滑丝带（填充多边形，不是多段描边）：
+ * 营端细 → 槽位端粗；透明白 / 英雄淡黄白；弧高按槽位错开。
+ * start/end∈[0,1] 为路径裁剪；widthScale 整体变细。
+ */
+function drawSummonRibbon(
+  ctx: CanvasRenderingContext2D,
+  token: TrayToken,
+  start: number,
+  end: number,
+  widthScale: number,
+  dest: { x: number; y: number },
+  slotIndex: number,
+) {
+  const s0 = Math.max(0, Math.min(0.98, start));
+  const s1 = Math.max(s0 + 0.03, Math.min(1, end));
+  const srcX = 34;
+  const srcY = TRAY_Y + TRAY_H / 2;
+  const isHero = token.kind === 'word';
+  // 字牌用明显的金黄丝带（与普通兵的透明白区分）；普通兵保持淡白
+  const fill = isHero ? 'rgba(255, 200, 48, 0.42)' : 'rgba(255, 255, 255, 0.16)';
+
+  const arcH = 50 + slotIndex * 30 + Math.abs(dest.x - srcX) * 0.05;
+  const ease = (t: number) => {
+    const apex = 0.5;
+    return t < apex ? (t / apex) * 0.42 : 0.42 + ((t - apex) / (1 - apex)) * 0.58;
+  };
+  const posAt = (t: number) => {
+    const tt = Math.max(0, Math.min(1, t));
+    const ph = ease(tt);
+    return {
+      x: srcX + (dest.x - srcX) * tt,
+      y: srcY + (dest.y - srcY) * ph - 4 * ph * (1 - ph) * arcH,
+    };
+  };
+  // 半宽：营端极细，槽位端更粗
+  const halfW = (t: number) => (1.2 + 9 * Math.pow(t, 1.3)) * Math.max(0.08, widthScale);
+
+  const n = Math.max(10, Math.floor(36 * (s1 - s0)));
+  const center: { x: number; y: number }[] = [];
+  for (let i = 0; i <= n; i++) {
+    center.push(posAt(s0 + (i / n) * (s1 - s0)));
+  }
+
+  // 左右轮廓：沿切线法向偏移，拼成一条丝带多边形
+  const left: { x: number; y: number }[] = [];
+  const right: { x: number; y: number }[] = [];
+  for (let i = 0; i < center.length; i++) {
+    const p = center[i]!;
+    const prev = center[Math.max(0, i - 1)]!;
+    const next = center[Math.min(center.length - 1, i + 1)]!;
+    let tx = next.x - prev.x;
+    let ty = next.y - prev.y;
+    const len = Math.hypot(tx, ty) || 1;
+    tx /= len;
+    ty /= len;
+    const nx = -ty;
+    const ny = tx;
+    const t = s0 + (i / n) * (s1 - s0);
+    const w = halfW(t);
+    left.push({ x: p.x + nx * w, y: p.y + ny * w });
+    right.push({ x: p.x - nx * w, y: p.y - ny * w });
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(left[0]!.x, left[0]!.y);
+  for (let i = 1; i < left.length; i++) ctx.lineTo(left[i]!.x, left[i]!.y);
+  for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i]!.x, right[i]!.y);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  // 描边：字牌用较明显的金边强化"黄色丝带"观感；普通兵保持极淡白边
+  ctx.strokeStyle = isHero ? 'rgba(255,198,60,0.38)' : 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = isHero ? 1.5 : 1;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
@@ -511,18 +589,24 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
     for (let c = 0; c < COLS; c++) {
       const x = BOARD_X + c * CELL;
       const y = BOARD_Y + r * CELL;
-      const inPlayer = r >= FENCE_ROW;
-      const src = inPlayer ? { c, r } : mirrorCell({ c, r }); // AI 半场取镜像源判定类型
-      const onPath = isPathCell(b.map, src.c, src.r);
-      const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : aiUnlocked.has(`${c},${r}`);
+      // 玩家路径 ∪ AI 镜像路径（白骨岭台阶路跨半场时也能画全）
+      const onPath = isEitherPathCell(b.map, c, r);
+      const inPlayer = isPlayerCell(b.map, c, r);
+      const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : !onPath && aiUnlocked.has(`${c},${r}`);
       const ix = x + 1.5, iy = y + 1.5, iw = CELL - 3, ih = CELL - 3;
       if (onPath) {
-        // 路径格：道路色 + 黑色描边与其他块分隔（水墨勾线）
+        // 路径格：底色半透明淡化（偏灰、次要），与可放置交界的加粗黑线另画
         roundRect(ctx, ix, iy, iw, ih, 4);
+        ctx.save();
+        ctx.globalAlpha = 0.5;
         ctx.fillStyle = th.path;
         ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(30,26,20,0.7)';
+        ctx.restore();
+        // 略压一层冷灰，让路更退后
+        ctx.fillStyle = 'rgba(90,95,88,0.22)';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(30,26,20,0.45)';
         ctx.stroke();
       } else if (cellOpen) {
         // 可放置格：米白 + 内斜角高光 + 柔和投影
@@ -568,8 +652,67 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       }
     }
   }
+  drawPathDiggableBorders(ctx, b);
+  drawBoardOuterBorder(ctx);
   drawBorderMotif(ctx, b);
   drawFence(ctx, b);
+}
+
+// 棋盘最外缘黑色加粗框，把整图包起来
+function drawBoardOuterBorder(ctx: CanvasRenderingContext2D) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(20,18,14,0.92)';
+  ctx.lineWidth = 3.5;
+  ctx.lineJoin = 'round';
+  ctx.strokeRect(BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL);
+  ctx.restore();
+}
+
+// 「路径格 ↔ 可挖格」交界画黑色加粗线（含未解锁的可挖格；不含路径彼此之间）
+function drawPathDiggableBorders(ctx: CanvasRenderingContext2D, b: Battle) {
+  // 可挖：非路径的棋盘格（我方半场未开格子 + AI 半场对应格）
+  const isDiggable = (c: number, r: number): boolean => {
+    if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+    return !isEitherPathCell(b.map, c, r);
+  };
+  const edges = new Map<string, { x0: number; y0: number; x1: number; y1: number }>();
+  const add = (x0: number, y0: number, x1: number, y1: number) => {
+    const key = `${Math.min(x0, x1)},${Math.min(y0, y1)},${Math.max(x0, x1)},${Math.max(y0, y1)}`;
+    edges.set(key, { x0, y0, x1, y1 });
+  };
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!isEitherPathCell(b.map, c, r)) continue;
+      if (isDiggable(c, r - 1)) {
+        const y = BOARD_Y + r * CELL;
+        add(BOARD_X + c * CELL, y, BOARD_X + (c + 1) * CELL, y);
+      }
+      if (isDiggable(c + 1, r)) {
+        const x = BOARD_X + (c + 1) * CELL;
+        add(x, BOARD_Y + r * CELL, x, BOARD_Y + (r + 1) * CELL);
+      }
+      if (isDiggable(c, r + 1)) {
+        const y = BOARD_Y + (r + 1) * CELL;
+        add(BOARD_X + c * CELL, y, BOARD_X + (c + 1) * CELL, y);
+      }
+      if (isDiggable(c - 1, r)) {
+        const x = BOARD_X + c * CELL;
+        add(x, BOARD_Y + r * CELL, x, BOARD_Y + (r + 1) * CELL);
+      }
+    }
+  }
+  if (edges.size === 0) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(20,18,14,0.92)';
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  for (const e of edges.values()) {
+    ctx.beginPath();
+    ctx.moveTo(e.x0, e.y0);
+    ctx.lineTo(e.x1, e.y1);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // 棋盘四周的地图专属边界装饰（不同地图不同风格）
@@ -633,22 +776,23 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   const off = open * CELL * 0.34;
   ctx.save();
   if (id === 'pansidong') {
-    // 盘丝洞：两团云/丝絮分开又合拢
-    const puff = (px: number) => {
-      ctx.beginPath();
-      ctx.arc(px, y - 6, CELL * 0.16, 0, Math.PI * 2);
-      ctx.arc(px + (px < x ? 6 : -6), y + 4, CELL * 0.13, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    ctx.fillStyle = 'rgba(150,110,150,0.75)';
-    puff(x - off - CELL * 0.14);
-    puff(x + off + CELL * 0.14);
+    // 盘丝洞：两扇蛛网；gateT=0 时合拢成整网，出怪时左右拉开
+    drawPansidongWebGate(ctx, x - off, y, -1);
+    drawPansidongWebGate(ctx, x + off, y, 1);
+  } else if (id === 'baiguling') {
+    // 白骨岭：两座白骨门柱左右开合（骨节堆 + 顶颅）
+    drawBaigulingGateLeaf(ctx, x - off - CELL * 0.22, y, -1);
+    drawBaigulingGateLeaf(ctx, x + off + CELL * 0.22, y, 1);
+  } else if (id === 'huoyanshan') {
+    // 火焰山：两柱火焰门，默认合拢，出怪时左右分开
+    drawHuoyanshanFlameGate(ctx, x - off, y, -1);
+    drawHuoyanshanFlameGate(ctx, x + off, y, 1);
   } else {
-    // 火焰山/流沙河/白骨岭：两扇闸门开合
+    // 流沙河：两扇闸门开合
     const w = CELL * 0.4, h = CELL * 0.52;
     const leaf = (lx: number) => {
       roundRect(ctx, lx, y - h / 2, w, h, 5);
-      ctx.fillStyle = id === 'baiguling' ? 'rgba(110,116,98,0.85)' : id === 'liushahe' ? 'rgba(150,124,70,0.85)' : 'rgba(120,60,40,0.85)';
+      ctx.fillStyle = 'rgba(150,124,70,0.85)';
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(30,26,20,0.7)';
@@ -660,8 +804,143 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   ctx.restore();
 }
 
-// 中间栅栏：每张地图开口不同（fenceGaps）
+// 火焰山出怪口：半边火焰门柱（合拢时拼成火门，出怪时分开）
+function drawHuoyanshanFlameGate(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(side, 1);
+  const h = CELL * 0.55;
+  const w = CELL * 0.28;
+  // 炽热门框
+  ctx.fillStyle = 'rgba(80,30,18,0.85)';
+  ctx.strokeStyle = 'rgba(40,16,10,0.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2);
+  ctx.lineTo(w, -h / 2 + 4);
+  ctx.lineTo(w * 0.85, h / 2);
+  ctx.lineTo(0, h / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // 外焰
+  const flame = (ox: number, baseY: number, fh: number, fw: number, color: string) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(ox, baseY);
+    ctx.quadraticCurveTo(ox + fw * 0.15, baseY - fh * 0.45, ox + fw * 0.05, baseY - fh);
+    ctx.quadraticCurveTo(ox + fw * 0.55, baseY - fh * 0.55, ox + fw, baseY - fh * 0.15);
+    ctx.quadraticCurveTo(ox + fw * 0.45, baseY - fh * 0.05, ox, baseY);
+    ctx.closePath();
+    ctx.fill();
+  };
+  flame(2, h * 0.15, h * 0.85, w * 0.9, 'rgba(220,70,30,0.92)');
+  flame(4, h * 0.2, h * 0.65, w * 0.55, 'rgba(255,150,40,0.95)');
+  flame(6, h * 0.22, h * 0.42, w * 0.32, 'rgba(255,230,120,0.98)');
+  ctx.restore();
+}
+
+// 盘丝洞出怪口：半圆形蛛网扇叶（开合时左右分开）
+function drawPansidongWebGate(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  const R = CELL * 0.38;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(side, 1);
+  // 半圆底
+  ctx.fillStyle = 'rgba(80,45,75,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  // 放射丝
+  ctx.strokeStyle = 'rgba(245,225,240,0.95)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + (i / 4) * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+    ctx.stroke();
+  }
+  // 同心弧网
+  ctx.strokeStyle = 'rgba(220,180,210,0.9)';
+  ctx.lineWidth = 1.6;
+  for (const rr of [R * 0.35, R * 0.6, R * 0.85]) {
+    ctx.beginPath();
+    ctx.arc(0, 0, rr, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+  }
+  // 外框加粗，更易辨认
+  ctx.strokeStyle = 'rgba(160,90,150,0.95)';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2);
+  ctx.stroke();
+  // 蛛丝锚点
+  ctx.fillStyle = 'rgba(245,230,240,0.95)';
+  ctx.strokeStyle = 'rgba(120,60,110,0.85)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 白骨岭出怪闸口的一侧门柱：交错骨节立柱 + 顶上小颅骨
+function drawBaigulingGateLeaf(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: -1 | 1) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = '#efe6d8';
+  ctx.strokeStyle = 'rgba(40,36,30,0.85)';
+  ctx.lineWidth = 1.7;
+  const bone = (bx: number, by: number, w: number, h: number, rot: number) => {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.arc(w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+  // 立柱：竖向叠骨
+  bone(side * 2, CELL * 0.14, CELL * 0.14, CELL * 0.04, Math.PI / 2 + side * 0.08);
+  bone(side * -1, CELL * 0.02, CELL * 0.13, CELL * 0.038, Math.PI / 2 - side * 0.12);
+  bone(side * 3, -CELL * 0.1, CELL * 0.12, CELL * 0.036, Math.PI / 2 + side * 0.05);
+  // 斜撑交叉骨
+  bone(side * 4, CELL * 0.06, CELL * 0.11, CELL * 0.032, side * 0.7);
+  bone(side * -3, -CELL * 0.02, CELL * 0.1, CELL * 0.03, -side * 0.65);
+  // 顶颅
+  ctx.beginPath();
+  ctx.arc(0, -CELL * 0.22, CELL * 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(40,36,30,0.85)';
+  ctx.beginPath();
+  ctx.arc(-CELL * 0.035, -CELL * 0.23, CELL * 0.022, 0, Math.PI * 2);
+  ctx.arc(CELL * 0.035, -CELL * 0.23, CELL * 0.022, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭白骨堆；盘丝洞蛛丝网
 function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.map.id === 'baiguling') {
+    drawBaigulingBoneFence(ctx);
+    return;
+  }
+  if (b.map.id === 'pansidong') {
+    drawPansidongSilkFence(ctx, b);
+    return;
+  }
   const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
   const gaps = new Set(b.map.fenceGaps);
   ctx.save();
@@ -676,6 +955,163 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
     // 立柱
     ctx.fillStyle = '#5f4520';
     ctx.fillRect(x + CELL / 2 - 3, y - 12, 6, 24);
+  }
+  ctx.restore();
+}
+
+// 盘丝洞：中线蛛丝篱笆（丝线 + 蛛网结 + 小茧），无开口
+function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL;
+  const x0 = BOARD_X;
+  const x1 = BOARD_X + COLS * CELL;
+  const accent = b.map.theme.accent;
+  ctx.save();
+  // 底衬丝带
+  ctx.strokeStyle = 'rgba(120,70,110,0.35)';
+  ctx.lineWidth = CELL * 0.28;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, y);
+  ctx.lineTo(x1, y);
+  ctx.stroke();
+  // 主丝线（多股微起伏）
+  for (const dy of [-3, 0, 3]) {
+    ctx.strokeStyle = dy === 0 ? 'rgba(240,220,235,0.9)' : 'rgba(200,160,190,0.55)';
+    ctx.lineWidth = dy === 0 ? 2.2 : 1.2;
+    ctx.beginPath();
+    for (let i = 0; i <= COLS * 4; i++) {
+      const t = i / (COLS * 4);
+      const x = x0 + (x1 - x0) * t;
+      const wave = Math.sin(t * Math.PI * 8 + dy) * 2.2;
+      if (i === 0) ctx.moveTo(x, y + dy + wave);
+      else ctx.lineTo(x, y + dy + wave);
+    }
+    ctx.stroke();
+  }
+  // 每隔一段一个蛛网结 / 小茧
+  for (let c = 0; c < COLS; c++) {
+    const cx = BOARD_X + c * CELL + CELL / 2;
+    // 斜向交叉丝
+    ctx.strokeStyle = 'rgba(230,200,220,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, y - 9);
+    ctx.lineTo(cx + 10, y + 9);
+    ctx.moveTo(cx + 10, y - 9);
+    ctx.lineTo(cx - 10, y + 9);
+    ctx.stroke();
+    // 网心小环
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, y, 4.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // 小茧（偶发）
+    if (c % 2 === 0) {
+      ctx.fillStyle = 'rgba(245,230,240,0.92)';
+      ctx.strokeStyle = 'rgba(130,80,120,0.7)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.ellipse(cx, y - 8, 5.5, 7.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 茧上细丝
+      ctx.beginPath();
+      ctx.moveTo(cx - 3, y - 12);
+      ctx.quadraticCurveTo(cx, y - 8, cx + 3, y - 4);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// 白骨岭：白骨堆画在台阶分界格线上（左 r=5|6、竖 c=3|4、右 r=3|4），连续无开口
+function drawBaigulingBoneFence(ctx: CanvasRenderingContext2D) {
+  const yLeft = BOARD_Y + 6 * CELL;
+  const yRight = BOARD_Y + 4 * CELL;
+  const xStep = BOARD_X + 4 * CELL;
+  const x0 = BOARD_X;
+  const x1 = BOARD_X + COLS * CELL;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(45, 42, 36, 0.55)';
+  ctx.lineWidth = CELL * 0.38;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, yLeft);
+  ctx.lineTo(xStep, yLeft);
+  ctx.lineTo(xStep, yRight);
+  ctx.lineTo(x1, yRight);
+  ctx.stroke();
+  const step = CELL * 0.32;
+  const segs: { x0: number; y0: number; x1: number; y1: number }[] = [
+    { x0, y0: yLeft, x1: xStep, y1: yLeft },
+    { x0: xStep, y0: yLeft, x1: xStep, y1: yRight },
+    { x0: xStep, y0: yRight, x1, y1: yRight },
+  ];
+  for (const s of segs) {
+    const len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const n = Math.max(2, Math.ceil(len / step));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      drawBonePileOnLine(
+        ctx,
+        s.x0 + (s.x1 - s.x0) * t,
+        s.y0 + (s.y1 - s.y0) * t,
+        Math.atan2(s.y1 - s.y0, s.x1 - s.x0),
+        i,
+      );
+    }
+  }
+  ctx.restore();
+}
+
+// 单簇白骨堆：矢量骨节密叠成墙；精灵仅作偶发点缀（整段图标会不像栅栏）
+function drawBonePileOnLine(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, seed: number) {
+  const jitter = ((seed * 17) % 7) - 3;
+  const nx = Math.cos(ang + Math.PI / 2);
+  const ny = Math.sin(ang + Math.PI / 2);
+  const px = x + nx * jitter * 0.35;
+  const py = y + ny * jitter * 0.35;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(ang);
+  ctx.fillStyle = seed % 2 === 0 ? '#f3ebe0' : '#e8dfd0';
+  ctx.strokeStyle = 'rgba(40,36,30,0.82)';
+  ctx.lineWidth = 1.5;
+  const bone = (bx: number, by: number, w: number, h: number, rot: number) => {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.arc(w * 0.85, 0, h * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+  // 沿栅栏切向叠 2～3 根骨头 + 顶部小颅，形成矮墙截面
+  bone(-CELL * 0.12, 2, CELL * 0.16, CELL * 0.045, -0.2);
+  bone(CELL * 0.1, -1, CELL * 0.14, CELL * 0.04, 0.28);
+  bone(0, CELL * 0.06, CELL * 0.13, CELL * 0.038, 0.02);
+  ctx.beginPath();
+  ctx.arc(CELL * 0.02, -CELL * 0.08, CELL * 0.075, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  const spr = sprite('fence-baiguling');
+  if (spr && seed % 4 === 0) {
+    const size = CELL * 0.36;
+    const scale = Math.min(size / spr.width, size / spr.height);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(spr, -dw / 2, -dh * 0.85, dw, dh);
   }
   ctx.restore();
 }
@@ -750,7 +1186,7 @@ function emergeScale(t: number): number {
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, trailDir = 1) {
+function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, mapId: string, trailDir = 1) {
   const rad = rad0 * emergeScale(m.spawnT);
   // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
   const phase = m.dist * 5.2;
@@ -765,7 +1201,7 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   ctx.ellipse(x, y + rad0 * 0.82, shW, rad0 * 0.32, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  const spr = sprite(m.isBoss ? 'monster-boss' : 'monster-minion');
+  const spr = monsterSprite(mapId, m.isBoss);
   // 骑兵视觉区分：身后拖出青蓝速度线（快速冲锋感）。拖尾始终在移动的反方向：
   // trailDir=+1 表示向右移动→拖尾在左侧；trailDir=-1 表示向左移动→拖尾在右侧。
   if (m.isCavalry) {
@@ -851,7 +1287,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     // 采样前方一小段求水平朝向（骑兵拖尾方向用）：向右移=+1，向左移=-1
     const np = posAtDistance(b.map, m.dist + 0.05);
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
   }
 }
 
@@ -1157,6 +1593,40 @@ function drawUltTangseng(ctx: CanvasRenderingContext2D, x: number, y: number, p:
   }
 }
 
+// 击杀蟠桃飘字：头上 🍑+N（+N 字号更小），升空不透明，过顶后按下落进度淡出
+function drawPeachFloats(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const p of b.peachFloats) {
+    const { x, y: cy } = cellCenterPx(p.c, p.r);
+    const y = cy + p.y * CELL;
+    const fallProgress = p.y >= p.peakY ? (p.y - p.peakY) / PEACH_FLOAT_FALL : 0;
+    const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
+    const peach = '🍑';
+    const num = `+${p.amount}`;
+    const peachPx = Math.round(CELL * 0.42);
+    const numPx = Math.round(CELL * 0.28);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
+    const peachW = ctx.measureText(peach).width;
+    ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
+    const numW = ctx.measureText(num).width;
+    const totalW = peachW + numW;
+    const left = x - totalW / 2;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(20,16,12,0.85)';
+    ctx.fillStyle = '#fffef6';
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
+    ctx.strokeText(peach, left, y);
+    ctx.fillText(peach, left, y);
+    ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
+    ctx.strokeText(num, left + peachW, y);
+    ctx.fillText(num, left + peachW, y);
+    ctx.restore();
+  }
+}
+
 function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const t = performance.now() / 1000;
   for (const u of b.units.values()) {
@@ -1170,8 +1640,8 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16));
     // 攻击瞬间：字→兵器形变，朝目标出招
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
-    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身）
-    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : null;
+    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身/缠丝）
+    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : u.rangeCutT > 0 ? SKILL_META.webbind.icon : null;
     if (debuff) {
       ctx.save();
       if (u.stunT > 0) {
@@ -1298,6 +1768,20 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.restore();
 }
 
+function drawRangeRing(ctx: CanvasRenderingContext2D, x: number, y: number, rangeCells: number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, rangeCells * CELL, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(90,150,70,0.16)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(120,200,90,0.85)';
+  ctx.setLineDash([7, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.selected) return;
   const tree = b.trees.get(`${ui.selected.c},${ui.selected.r}`);
@@ -1309,16 +1793,8 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
   const stat = getUnitStat(u.type, u.tier);
   // 攻击范围环
+  drawRangeRing(ctx, x, y, stat.rge);
   ctx.save();
-  ctx.beginPath();
-  ctx.arc(x, y, stat.rge * CELL, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(90,150,70,0.16)';
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(120,200,90,0.85)';
-  ctx.setLineDash([7, 6]);
-  ctx.stroke();
-  ctx.setLineDash([]);
   // 选中格描边
   const gx = BOARD_X + u.cell.c * CELL;
   const gy = BOARD_Y + u.cell.r * CELL;
@@ -1693,6 +2169,23 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 无尽模式上半场提示文案（轮播，每数秒切换一条）。
+const ENDLESS_TIPS: string[] = [
+  '骑兵波移速翻倍——优先合成高阶弓兵远程拦截',
+  '每 5 波出 BOSS，攒好如来神掌应急',
+  '后期怪成堆，靠范围技/陨石清场',
+  '每 10 波一个难度台阶，提前囤高阶兵',
+];
+
+// 无尽历史最高波数：渲染路径每帧读 localStorage 偏重，节流缓存 ~1s（一局内该值不变）。
+let endlessBestCache = 0;
+let endlessBestCacheT = -Infinity;
+function endlessBestWaveCached(): number {
+  const t = performance.now();
+  if (t - endlessBestCacheT > 1000) { endlessBestCache = getBestWave(); endlessBestCacheT = t; }
+  return endlessBestCache;
+}
+
 // 伪竞技 AI 对手（上半场，对角唐僧）。路径用棋盘格背景表示，不再画描边线。
 function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   // AI 怪物：图标 + 血条（与玩家侧一致，尺寸略小）
@@ -1701,7 +2194,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const { x, y } = cellCenterPx(p.c, p.r);
     const np = b.aiMonsterPos({ ...m, dist: m.dist + 0.05 });
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, trailDir);
+    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
   }
   // AI 单位（上半场自动部署）
   const t = performance.now() / 1000;
@@ -1747,6 +2240,47 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(b.aiDefeated ? '对手已败' : `对手唐僧 ❤${b.aiTangsengHP}`, x, y - rad - 12);
+}
+
+// 无尽模式上半场信息面板：网格/路径已由 drawBoard 照常绘制作背景，
+// 此处在上半场（行 0..FENCE_ROW）叠一层半透明面板，展示历史统计 + 玩法提示轮播。
+function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
+  const top = cellCenterPx(0, 0).y - CELL / 2;
+  const bottom = cellCenterPx(0, FENCE_ROW).y - CELL / 2;
+  const panelX = BOARD_X + CELL * 0.4;
+  const panelW = COLS * CELL - CELL * 0.8;
+  const panelY = top + CELL * 0.3;
+  const panelH = (bottom - top) - CELL * 0.6;
+
+  ctx.save();
+  roundRect(ctx, panelX, panelY, panelW, panelH, 14);
+  ctx.fillStyle = 'rgba(244,233,220,0.82)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(122,59,18,0.5)';
+  ctx.stroke();
+
+  const cx = panelX + panelW / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#b5391f';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.fillText('无尽 · 试炼', cx, panelY + 26);
+
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = 'bold 30px "PingFang SC", sans-serif';
+  ctx.fillText(`第 ${b.wave} 波`, cx, panelY + 62);
+  ctx.fillStyle = '#8a5a2b';
+  ctx.font = '16px "PingFang SC", sans-serif';
+  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, panelY + 90);
+
+  const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
+  ctx.fillStyle = '#7a3b12';
+  ctx.font = '15px "PingFang SC", sans-serif';
+  ctx.fillText('💡 ' + tip, cx, panelY + panelH - 22);
+
+  ctx.restore();
 }
 
 // 危险提示：怪物距唐僧≤3格时，在唐僧所在格叠加红色呼吸描边 + "危险"标签（玩家/AI 两侧）
@@ -2018,6 +2552,147 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   ctx.restore();
 }
 
+// 竞品式落点瞄准：四角黄括号 + 可选淡黄底 + 空位中央「+」
+function drawAimReticle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  opts: { plus: boolean; fill?: boolean },
+) {
+  const pad = 8; // 括号离格边留白
+  const len = Math.max(7, Math.min(w, h) * 0.18);
+  const lx = x + pad;
+  const ty = y + pad;
+  const rx = x + w - pad;
+  const by = y + h - pad;
+  ctx.save();
+  if (opts.fill !== false) {
+    ctx.fillStyle = 'rgba(255, 220, 90, 0.18)';
+    ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+  }
+  ctx.strokeStyle = '#f0c83a';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'square';
+  // 左上
+  ctx.beginPath();
+  ctx.moveTo(lx, ty + len);
+  ctx.lineTo(lx, ty);
+  ctx.lineTo(lx + len, ty);
+  ctx.stroke();
+  // 右上
+  ctx.beginPath();
+  ctx.moveTo(rx - len, ty);
+  ctx.lineTo(rx, ty);
+  ctx.lineTo(rx, ty + len);
+  ctx.stroke();
+  // 左下
+  ctx.beginPath();
+  ctx.moveTo(lx, by - len);
+  ctx.lineTo(lx, by);
+  ctx.lineTo(lx + len, by);
+  ctx.stroke();
+  // 右下
+  ctx.beginPath();
+  ctx.moveTo(rx - len, by);
+  ctx.lineTo(rx, by);
+  ctx.lineTo(rx, by - len);
+  ctx.stroke();
+  if (opts.plus) {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const arm = Math.min(w, h) * 0.08; // 约为原先一半
+    ctx.strokeStyle = 'rgba(160, 130, 40, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - arm, cy);
+    ctx.lineTo(cx + arm, cy);
+    ctx.moveTo(cx, cy - arm);
+    ctx.lineTo(cx, cy + arm);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** 候选令牌拖到该棋盘格是否合法（与 placeFromTray 语义对齐） */
+function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolean {
+  const key = `${cell.c},${cell.r}`;
+  if (token.kind === 'shovel') {
+    return b.lockedCells().some((c) => c.c === cell.c && c.r === cell.r);
+  }
+  if (!b.unlockedCells().some((c) => c.c === cell.c && c.r === cell.r)) return false;
+  if (token.kind === 'word') {
+    if (b.units.has(key)) return false;
+    return true; // 空格放置 / 字牌合并或交换
+  }
+  // 兵种：不可压字牌；空格放置 / 合并 / 与兵交换
+  if (b.words.has(key)) return false;
+  return true;
+}
+
+/** 候选区内另一槽是否可作为合并目标 */
+function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean {
+  if (!b) return false;
+  if (a.kind === 'word' && b.kind === 'word') {
+    return a.char === b.char && a.tier === b.tier && b.tier < MAX_TIER;
+  }
+  if (a.kind === 'unit' && b.kind === 'unit') {
+    return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
+  }
+  return false;
+}
+
+// 托盘拖拽时：标出全部可落点（棋盘 + 可合并的候选槽）+ 源槽黑圈，对标竞品瞄准心
+function drawTrayDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.dragTrayIndex === null) return;
+  const token = b.tray[ui.dragTrayIndex];
+  if (!token) return;
+
+  // 源槽：黑圈标选中
+  {
+    const cx = TRAY_LEFT + ui.dragTrayIndex * TRAY_SLOT;
+    const x = cx + 3;
+    const y = TRAY_Y + 5;
+    const w = TRAY_SLOT - 6;
+    const h = TRAY_H - 10;
+    ctx.save();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * 0.48, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 棋盘合法格
+  const cells =
+    token.kind === 'shovel'
+      ? b.lockedCells()
+      : b.unlockedCells().filter((c) => trayTokenCanDropOnCell(b, token, c));
+  for (const cell of cells) {
+    const key = `${cell.c},${cell.r}`;
+    const empty = !b.units.has(key) && !b.words.has(key);
+    drawAimReticle(ctx, BOARD_X + cell.c * CELL, BOARD_Y + cell.r * CELL, CELL, CELL, {
+      plus: empty,
+      fill: true,
+    });
+  }
+
+  // 候选区其它已占槽：竞品会全部打黄框（合并目标更明确；不可合并时落子仍会失败提示）
+  for (let i = 0; i < TUNING.traySize; i++) {
+    if (i === ui.dragTrayIndex) continue;
+    if (!b.tray[i]) continue;
+    const cx = TRAY_LEFT + i * TRAY_SLOT;
+    const mergeOk = trayTokenCanMergeSlot(token, b.tray[i]);
+    drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
+      plus: false,
+      fill: mergeOk, // 可合并的槽加淡黄底，仅框的是「有令牌」的槽
+    });
+  }
+}
+
 function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.dragPos) return;
   // 拖拽源中心（棋盘单位 或 候选区令牌）
@@ -2049,7 +2724,11 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     }
   }
   if (!ghost) return;
-  // 目标格高亮
+
+  // 托盘拖拽：先画全部可落点瞄准标记（在 ghost 之下）
+  if (ui.dragTrayIndex !== null) drawTrayDropHints(ctx, b, ui);
+
+  // 当前悬停格加粗描边；兵种悬停合法格时实时预览攻击范围
   const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
   if (target) {
     const x = BOARD_X + target.c * CELL;
@@ -2058,6 +2737,23 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.strokeStyle = '#e8a13c';
     ctx.lineWidth = 3;
     ctx.stroke();
+
+    if (ui.dragTrayIndex !== null) {
+      const token = b.tray[ui.dragTrayIndex];
+      if (token && token.kind === 'unit' && trayTokenCanDropOnCell(b, token, target)) {
+        const center = cellCenterPx(target.c, target.r);
+        const stat = getUnitStat(token.type, token.tier);
+        drawRangeRing(ctx, center.x, center.y, stat.rge);
+      }
+    } else if (ui.dragFrom) {
+      // 棋盘内拖兵种时同样预览落点范围
+      const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+      if (u && b.unlockedCells().some((c) => c.c === target.c && c.r === target.r)) {
+        const center = cellCenterPx(target.c, target.r);
+        const stat = getUnitStat(u.type, u.tier);
+        drawRangeRing(ctx, center.x, center.y, stat.rge);
+      }
+    }
   }
   // 源→当前的虚线连接（参考原作）
   if (src) {

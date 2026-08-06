@@ -26,7 +26,6 @@ import { MAX_EQUIPPED_PASSIVES } from './passives';
 import {
   COLS,
   ROWS,
-  FENCE_ROW,
   pathTotalLen,
   posAtDistance,
   posAlong,
@@ -38,6 +37,7 @@ import {
   placeableCells,
   placeableByProximity,
   isPathCell,
+  isPlayerCell,
   MAPS,
   type GameMap,
   type Cell,
@@ -75,6 +75,9 @@ export const TUNING = {
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   winWave: 10, // 通关波次
+  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梯式 ×endlessCycleStep ——
+  endlessWavesPerCycle: 10,
+  endlessCycleStep: 1.3,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
@@ -88,6 +91,8 @@ export const TUNING = {
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
+  webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
+  webbindRangeMul: 0.5, // 缠丝期间有效射程倍率（最低 1 格，见 updateUnits）
   // —— AI 清场（AI 对手定期释放的大范围爆发，维持伪竞技对称；玩家侧无此机制）——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
   aiClearRadius: 2.5, // AI 清场作用半径（格）
@@ -98,14 +103,24 @@ export const TUNING = {
   // AI 对手每波部署的新单位数(基数 + 波次×系数)，使 AI 战力与玩家大致对称(伪竞技公平性)
   aiDeployBase: 8,
   aiDeployPerWave: 1.5,
+  aiDeployInterval: 2.2, // AI 逐个部署的间隔(秒)：模拟人手动从候选区往地图放，不再开波瞬间铺满(总量不变，只拉长过程)
 };
 
 // 怪物技能：对附近武将施加的减益类型
-export type MonsterSkill = 'stun' | 'slow' | 'weaken';
+export type MonsterSkill = 'stun' | 'slow' | 'weaken' | 'webbind';
 export const SKILL_META: Record<MonsterSkill, { name: string; color: string; icon: string }> = {
   stun: { name: '定身', color: '#ffd34d', icon: '💫' },
   slow: { name: '迟滞', color: '#5bd1ff', icon: '🐌' },
   weaken: { name: '弱身', color: '#c77dff', icon: '⬇' },
+  webbind: { name: '缠丝', color: '#b76bd6', icon: '🕸' },
+};
+
+// 每张地图的专属技能主题：该图 Boss 必带、精英小怪也带同一技能（不再随机三选一）
+const MAP_SKILL: Record<string, MonsterSkill> = {
+  huoyanshan: 'weaken', // 火焰山：烈焰灼身，攻击↓
+  liushahe: 'slow', // 流沙河：流沙裹足，出手变慢
+  baiguling: 'stun', // 白骨岭：白骨魅惑，无法出手
+  pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
 };
 
 // 候选区令牌：兵种 / 铲子 / 武将字牌（字牌带阶数，可同字同阶合并升阶）
@@ -127,6 +142,7 @@ export interface PlacedUnit {
   stunT: number; // 眩晕剩余(秒)：>0 时无法攻击
   slowT: number; // 减速剩余(秒)：>0 时冷却拉长
   weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
+  rangeCutT: number; // 缠丝剩余(秒)：>0 时有效射程削减
 }
 
 // 棋盘上的单个武将字牌（占一格，带阶数；同字同阶可合并升阶）
@@ -217,6 +233,25 @@ export interface HeroUltFx {
   critDmg?: number;      // 暴击伤害数字(crit 时飘字)
 }
 
+// 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
+export const PEACH_FLOAT_HEAD_Y = -0.55; // 相对格中心（格；负=向上）
+export const PEACH_FLOAT_RISE = 0.5;
+export const PEACH_FLOAT_FALL = 0.2;
+export const PEACH_FLOAT_GRAVITY = 6; // 格/秒²
+
+export interface PeachFloat {
+  c: number;
+  r: number;
+  amount: number;
+  y: number;
+  vy: number;
+  peakY: number;
+}
+
+export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
+  return -Math.sqrt(2 * gravity * rise);
+}
+
 interface Modifiers {
   atkMul: number;
   frqMul: number;
@@ -262,6 +297,7 @@ export class Battle {
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
+  peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -298,6 +334,9 @@ export class Battle {
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
+  // AI 逐个慢速部署：不再开波瞬间铺满，而是把本波该放的格排进队列，随后按 aiDeployInterval 一个个落子（模拟人操作）。
+  private aiDeployQueue: Cell[] = []; // 待部署的目标格（按贴路顺序）
+  private aiDeployTimer = 0; // 距下一个 AI 单位落子的倒计时（秒）
   private nextWaveTimer = 0; // 波间自动切换倒计时
 
   // 候选区（征兵产出）与铲子（开格资源）
@@ -324,12 +363,14 @@ export class Battle {
   private nextMonsterId = 1;
   private waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
+  readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = []) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false) {
     this.weaponBonuses = weapons;
     this.rng = new RNG(seed);
     this.difficultyMul = difficultyMul;
+    this.endless = endless;
     this.map = map;
     this.pathLen = pathTotalLen(map);
     this.slotOrder = slotUnlockOrder(map);
@@ -389,9 +430,9 @@ export class Battle {
     return this.unlocked.has(cellKey(c, r));
   }
 
-  // 该格是否为可摆放格（玩家半场、非路径、在网格内且解锁）
+  // 该格是否为可摆放格（玩家半场、非路径、在网格内）
   private isPlaceable(c: number, r: number): boolean {
-    return !isPathCell(this.map, c, r) && c >= 0 && c < COLS && r >= FENCE_ROW && r < ROWS;
+    return isPlayerCell(this.map, c, r);
   }
 
   unlockedCells(): Cell[] {
@@ -610,7 +651,7 @@ export class Battle {
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
       this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
@@ -627,12 +668,12 @@ export class Battle {
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+      this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
       this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
+    this.units.set(cellKey(to.c, to.r), { type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.emit('place');
@@ -768,7 +809,7 @@ export class Battle {
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
-    this.aiDeploy(); // AI 同步部署本波防御
+    if (!this.endless) this.queueAiDeploy(); // 排入本波 AI 部署量，随后在 updateAi 里按人类节奏逐个落子；无尽模式无 AI 对手
     this.status = 'playing';
     this.waveActive = true;
     this.healUsedThisWave = false;
@@ -912,7 +953,7 @@ export class Battle {
     if (this.monsters.length === 0) return;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
-    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * 3;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * 3;
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
@@ -928,6 +969,14 @@ export class Battle {
     const id = rollWeaponDrop(this.rng.next());
     this.droppedWeapons.push(id);
     this.message = `第 ${this.wave} 波已清！掉落神兵`;
+  }
+
+  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梯系数。
+  // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
+  effectiveDifficulty(wave: number = this.wave): number {
+    if (!this.endless) return this.difficultyMul;
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
   }
 
   // 本波出怪总数：经济基准(9+n，同时决定掉落) + 后期堆量。
@@ -956,12 +1005,12 @@ export class Battle {
     const isCavalry = this.cavalryWave && !isBoss && spawnedIdx % 2 === 0;
 
     let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
-    hp *= this.difficultyMul; // 境界越高妖怪越强
+    hp *= this.effectiveDifficulty(); // 境界越高妖怪越强；无尽模式再叠分圈系数
     if (isBoss) hp *= TUNING.bossHpMul; // 骑兵血量与普通妖相同，故不额外调整血量
 
     // 移速倍率：BOSS 减半、骑兵翻倍（二者互斥，BOSS 不会被判为骑兵）
     const spdMul = isBoss ? TUNING.bossSpdMul : isCavalry ? TUNING.cavalrySpdMul : 1;
-    const diffSpd = 1 + 0.1 * (this.difficultyMul - 1); // 高境界妖怪更快
+    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
 
     const skill = this.rollMonsterSkill(isBoss);
     this.monsters.push({
@@ -978,49 +1027,66 @@ export class Battle {
       castFlash: 0,
       spawnT: 0, stunT: 0, slowT: 0,
     });
-    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）
-    this.aiMonsters.push({
-      id: this.nextMonsterId++,
-      dist: this.aiEntranceDist, // 从 AI 出怪口冒出
-      hp,
-      maxHp: hp,
-      spd: TUNING.monsterSpd * diffSpd * spdMul,
-      isBoss,
-      isCavalry,
-      hitFlash: 0,
-      skill,
-      skillCd: TUNING.skillFirstDelay,
-      castFlash: 0,
-      spawnT: 0, stunT: 0, slowT: 0,
-    });
+    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）。无尽模式无对手，跳过。
+    if (!this.endless) {
+      this.aiMonsters.push({
+        id: this.nextMonsterId++,
+        dist: this.aiEntranceDist, // 从 AI 出怪口冒出
+        hp,
+        maxHp: hp,
+        spd: TUNING.monsterSpd * diffSpd * spdMul,
+        isBoss,
+        isCavalry,
+        hitFlash: 0,
+        skill,
+        skillCd: TUNING.skillFirstDelay,
+        castFlash: 0,
+        spawnT: 0, stunT: 0, slowT: 0,
+      });
+    }
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
   }
 
   // 决定怪物携带的技能：BOSS 必带（随机一种），精英按概率带，普通妖无
   private rollMonsterSkill(isBoss: boolean): MonsterSkill | null {
-    const pool: MonsterSkill[] = ['stun', 'slow', 'weaken'];
-    if (isBoss) return this.rng.pick(pool);
-    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) {
-      return this.rng.pick(pool);
-    }
+    // 技能按地图主题固定（该图 Boss 必带；精英小怪按概率带同一技能）；未配置的地图回退定身。
+    const skill = MAP_SKILL[this.map.id] ?? 'stun';
+    if (isBoss) return skill;
+    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) return skill;
     return null;
   }
 
-  // AI 自动部署：每波在上半场镜像格补兵并合成升阶（模拟一名对手玩家）
-  private aiDeploy(): void {
-    const types = Object.keys(UNITS) as UnitType[];
-    // 本波补若干 1 阶到空的 AI 格（数量随波次与难度增长，逼近玩家战力曲线并跟上高境界怪物）
-    let added = 0;
+  // AI 部署（模拟一名对手玩家）：把本波该补的格排进队列，随后由 updateAi 按 aiDeployInterval 逐个落子。
+  // 只把「当前为空且未在队列中」的镜像格计入，取前 target 个（贴路优先），保证总量与旧的一次性部署一致。
+  private queueAiDeploy(): void {
     const target = Math.round((TUNING.aiDeployBase + this.wave * TUNING.aiDeployPerWave) * this.difficultyMul);
-    for (const cell of this.aiCells) {
-      if (added >= target) break;
-      if (this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) continue;
-      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0 });
-      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入AI可放置区域
-      added++;
+    const queued = new Set(this.aiDeployQueue.map((c) => cellKey(c.c, c.r)));
+    const empties = this.aiCells.filter(
+      (c) => !queued.has(cellKey(c.c, c.r)) && !this.aiUnits.some((u) => u.cell.c === c.c && u.cell.r === c.r),
+    );
+    this.aiDeployQueue.push(...empties.slice(0, target));
+    if (this.aiDeployTimer <= 0) this.aiDeployTimer = TUNING.aiDeployInterval; // 开波后隔一个间隔再放第一个
+  }
+
+  // 逐个落子一步：到点则从队列取一格放 1 阶单位并做一次合成，模拟人「放一个、合一下」的节奏。
+  private tickAiDeploy(dt: number): void {
+    if (this.aiDeployQueue.length === 0) return;
+    this.aiDeployTimer -= dt;
+    if (this.aiDeployTimer > 0) return;
+    const cell = this.aiDeployQueue.shift()!;
+    // 该格仍为空才放置（合成不会占用空格，此处仅作保险）；消费队列以维持总量不超发。
+    if (!this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) {
+      const types = Object.keys(UNITS) as UnitType[];
+      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
+      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入 AI 可放置区域（逐步"占领"）
+      this.aiMergeUnits();
     }
-    // 合成：同型同级两两合并升阶
+    this.aiDeployTimer = TUNING.aiDeployInterval;
+  }
+
+  // AI 单位合成：同型同级两两合并升阶（放一个后调用一次）
+  private aiMergeUnits(): void {
     for (let pass = 0; pass < 10; pass++) {
       let merged = false;
       for (let i = 0; i < this.aiUnits.length && !merged; i++) {
@@ -1080,6 +1146,8 @@ export class Battle {
 
   // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
   private updateAi(dt: number): void {
+    if (this.endless) return; // 无尽模式无 AI 对手，跳过其部署/清场/推进
+    this.tickAiDeploy(dt); // AI 逐个慢速部署（模拟人手动落子，不再开波瞬间铺满）
     this.updateAiUnits(dt);
     // AI 定期清场：随境界增强以跟上高难度怪物(维持对手不被单方碾压)。就绪后带随机时机。
     if (this.aiMonsters.length > 0) {
@@ -1117,6 +1185,7 @@ export class Battle {
 
   // 对手唐僧阵亡 → 我方获胜（伪竞技对局的胜利条件之一）
   private checkOpponentDefeated(): boolean {
+    if (this.endless) return false; // 无尽模式禁用「击败对手=胜」
     if (this.aiDefeated && this.status !== 'won' && this.status !== 'lost') {
       this.status = 'won';
       this.waveActive = false;
@@ -1154,10 +1223,13 @@ export class Battle {
       if (u.stunT > 0) u.stunT = Math.max(0, u.stunT - dt);
       if (u.slowT > 0) u.slowT = Math.max(0, u.slowT - dt);
       if (u.weakenT > 0) u.weakenT = Math.max(0, u.weakenT - dt);
+      if (u.rangeCutT > 0) u.rangeCutT = Math.max(0, u.rangeCutT - dt);
       if (u.stunT > 0) continue; // 眩晕：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier); // atk/frq/rge/targets（来自 game-core）
+      // 缠丝：有效射程削减（最低 1 格），逼近战化，配合盘丝洞蛛网主题
+      const effRge = u.rangeCutT > 0 ? Math.max(1, stat.rge * TUNING.webbindRangeMul) : stat.rge;
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
@@ -1167,7 +1239,7 @@ export class Battle {
           const d = Math.hypot(p.c - u.cell.c, p.r - u.cell.r);
           return { m, d, p };
         })
-        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .filter((x) => x.d <= effRge + TUNING.rangeTolerance)
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益临时抬高攻击
@@ -1366,6 +1438,7 @@ export class Battle {
     if (skill === 'stun') u.stunT = Math.max(u.stunT, TUNING.stunDur);
     else if (skill === 'slow') u.slowT = Math.max(u.slowT, TUNING.slowDur);
     else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
+    else if (skill === 'webbind') u.rangeCutT = Math.max(u.rangeCutT, TUNING.webbindDur);
   }
 
   // 主动技能：每帧推进各槽冷却与临时增益计时。
@@ -1467,9 +1540,20 @@ export class Battle {
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         const isElite = !m.isBoss && m.skill !== null; // 精英=非BOSS但带词条(技能)
-        this.peach += (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0) + this.mods.killBonus; // 击杀产蟠桃(精英额外+10, +道具)
+        const amount =
+          (m.isBoss ? PEACH_PER_BOSS : PEACH_PER_KILL) + (isElite ? PEACH_PER_ELITE : 0) + this.mods.killBonus; // 击杀产蟠桃(精英额外+10, +道具)
+        this.peach += amount;
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({ kind: 'death', c: dp.c, r: dp.r, ttl: 0.4, maxTtl: 0.4, big: m.isBoss, color: m.isBoss ? '#ff5a8a' : '#c25a5a' });
+        const vy0 = peachFloatInitialVy();
+        this.peachFloats.push({
+          c: dp.c,
+          r: dp.r,
+          amount,
+          y: PEACH_FLOAT_HEAD_Y,
+          vy: vy0,
+          peakY: PEACH_FLOAT_HEAD_Y,
+        });
         this.emit(m.isBoss ? 'bosskill' : 'kill');
         continue;
       }
@@ -1516,6 +1600,12 @@ export class Battle {
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     for (const uf of this.heroUltFx) uf.ttl -= dt;
     this.heroUltFx = this.heroUltFx.filter((uf) => uf.ttl > 0);
+    for (const p of this.peachFloats) {
+      p.vy += PEACH_FLOAT_GRAVITY * dt;
+      p.y += p.vy * dt;
+      if (p.y < p.peakY) p.peakY = p.y;
+    }
+    this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
@@ -1558,7 +1648,7 @@ export class Battle {
         this.spawnMonster();
         this.spawnRemaining -= 1;
         // 高境界出怪更密集
-        this.spawnTimer = Math.max(0.3, TUNING.spawnInterval / (1 + 0.07 * (this.difficultyMul - 1)));
+        this.spawnTimer = Math.max(0.3, TUNING.spawnInterval / (1 + 0.07 * (this.effectiveDifficulty() - 1)));
       }
     }
     this.updateUnits(dt);
@@ -1574,7 +1664,7 @@ export class Battle {
     // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
-      if (this.wave >= TUNING.winWave) {
+      if (!this.endless && this.wave >= TUNING.winWave) {
         this.rollWeaponDropOnClear();
         this.status = 'won';
         this.emit('win');
@@ -1591,6 +1681,13 @@ export class Battle {
   // 调试/自测用：直接增蟠桃（正式玩法不暴露）
   grantPeach(n: number): void {
     this.peach += n;
+  }
+
+  // 测试辅助：立即清空当前波（清怪 + 触发清波判定）。仅供单测确定性驱动。
+  forceClearWaveForTest(): void {
+    this.monsters = [];
+    this.spawnRemaining = 0;
+    this.step(1 / 60); // 触发清波判定分支
   }
 
   // 一键布阵：把候选区令牌自动落位（铲子挖最靠前锁定格；兵种优先合成同型同级，否则放空格）。

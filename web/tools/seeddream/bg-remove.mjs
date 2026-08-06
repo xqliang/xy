@@ -9,7 +9,9 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets');
 
 // 注意：map-*.jpg 是关卡大背景（本就不透明），不参与抠图，避免被误转成透明 PNG 并删除原图。
-const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg') && !f.startsWith('map-'));
+// 可选：node bg-remove.mjs fence-baiguling.jpg — 只处理指定文件（仍排除 map-*.jpg）。
+const only = process.argv.slice(2);
+const jpgs = readdirSync(DIR).filter((f) => f.endsWith('.jpg') && !f.startsWith('map-') && (only.length === 0 || only.includes(f)));
 if (jpgs.length === 0) {
   console.log('没有 jpg 待处理');
   process.exit(0);

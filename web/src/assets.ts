@@ -13,6 +13,14 @@ export type AssetKey =
   | 'unit-archer'
   | 'monster-minion'
   | 'monster-boss'
+  | 'monster-minion-huoyanshan'
+  | 'monster-boss-huoyanshan'
+  | 'monster-minion-liushahe'
+  | 'monster-boss-liushahe'
+  | 'monster-minion-baiguling'
+  | 'monster-boss-baiguling'
+  | 'monster-minion-pansidong'
+  | 'monster-boss-pansidong'
   | 'item-shovel'
   | 'camp'
   | 'hero-wukong'
@@ -30,7 +38,8 @@ export type AssetKey =
   | 'map-huoyanshan'
   | 'map-liushahe'
   | 'map-baiguling'
-  | 'map-pansidong';
+  | 'map-pansidong'
+  | 'fence-baiguling';
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;
@@ -53,7 +62,9 @@ function loadOne(key: AssetKey): Promise<void> {
 }
 
 export async function loadAssets(): Promise<void> {
-  await Promise.all((Object.keys(ASSET_URLS) as AssetKey[]).map(loadOne));
+  // 只预载图片素材；bgm-* 等音频资源不走 <img>，由 sfx 模块按需 fetch+decode。
+  const imgKeys = (Object.keys(ASSET_URLS) as AssetKey[]).filter((k) => !k.startsWith('bgm-'));
+  await Promise.all(imgKeys.map(loadOne));
   ready = true;
   (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
 }
@@ -64,4 +75,10 @@ export function sprite(key: AssetKey): HTMLImageElement | undefined {
 
 export function unitAsset(type: UnitType): AssetKey {
   return `unit-${type}` as AssetKey;
+}
+
+// 怪物立绘按地图取专属图（monster-{role}-{mapId}），缺图回退通用 monster-{role}。
+export function monsterSprite(mapId: string, isBoss: boolean): HTMLImageElement | undefined {
+  const role = isBoss ? 'boss' : 'minion';
+  return cache[`monster-${role}-${mapId}` as AssetKey] ?? cache[`monster-${role}` as AssetKey];
 }
