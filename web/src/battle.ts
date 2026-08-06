@@ -166,7 +166,8 @@ export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
 export const PEACH_TREE_MAX_LEVEL = 5;
 export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
 
-// 武将的持续状态（按武将 id 记录，拆分再重组可延续等级/经验）
+// 武将的持续状态（按武将 id 记录，拆分再重组可延续升阶进度）
+// level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
 export interface GeneralState {
   level: number;
   exp: number;
@@ -560,7 +561,7 @@ export class Battle {
   private stateOf(id: string): GeneralState {
     let s = this.generalStates.get(id);
     if (!s) {
-      s = { level: Math.min(Battle.GENERAL_MAX_LEVEL, 1 + this.mods.generalLevelDelta), exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
+      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
       this.generalStates.set(id, s);
     }
     return s;
@@ -1297,26 +1298,34 @@ export class Battle {
     return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
   }
 
-  // 武将局内升级：每级所需经验 = 10 × 当前等级；每级 +8% 攻击（上限 10 级）
+  // 武将升阶进度：每级所需经验 = 10 × 当前等级；满条时双字各 +1 阶（上限 10 级进度）
   static readonly GENERAL_MAX_LEVEL = 10;
   static expToNext(level: number): number {
     return 10 * level;
   }
-  private gainGeneralExp(g: ActiveGeneral, amount: number): void {
+  addGeneralCombatExp(g: ActiveGeneral, amount: number): void {
     const s = g.state;
-    if (s.level >= Battle.GENERAL_MAX_LEVEL) return;
     s.exp += amount;
-    while (s.level < Battle.GENERAL_MAX_LEVEL && s.exp >= Battle.expToNext(s.level)) {
+    while (s.exp >= Battle.expToNext(s.level)) {
+      const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
+      const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
+      if (!wa || !wb) break;
+      const can = (wa.tier < MAX_TIER) || (wb.tier < MAX_TIER);
+      if (!can) break;
       s.exp -= Battle.expToNext(s.level);
-      s.level += 1;
+      if (wa.tier < MAX_TIER) wa.tier += 1;
+      if (wb.tier < MAX_TIER) wb.tier += 1;
+      s.level += 1; // 仅作下次阈值曲线，不参与攻力
       this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
+      this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
+      this.message = `${g.def.name} 升为 ${Math.min(wa.tier, wb.tier)} 阶`;
     }
   }
-  // 含品质阶与局内等级的武将实际攻击力
+  // 含品质阶的武将实际攻击力
   generalAtk(g: ActiveGeneral): number {
     const base = generalStat(g.def, g.tier).atk;
     const wb = this.weaponBonuses[g.def.id];
-    return base * (1 + 0.08 * (g.state.level - 1)) * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
+    return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
   }
 
   // 计入神兵加成的武将攻速/范围
@@ -1371,7 +1380,7 @@ export class Battle {
       }
       if (hit > 0) {
         s.firePulse = 1;
-        this.gainGeneralExp(g, dmg * hit * 0.05); // 输出转经验
+        this.addGeneralCombatExp(g, dmg * hit * 0.05); // 输出转升阶进度
       }
       s.cooldown = 1 / this.generalFrq(g);
     }
@@ -1429,7 +1438,7 @@ export class Battle {
       crit,
       critDmg,
     });
-    this.gainGeneralExp(g, 4);
+    this.addGeneralCombatExp(g, 4);
   }
 
   // 怪物施法：精英/BOSS 进场后定期对半径内武将施加减益（不改动基础数值，仅施加计时器）
