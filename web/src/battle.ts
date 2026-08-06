@@ -306,6 +306,10 @@ export class Battle {
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   digFx: { c: number; r: number; t: number }[] = []; // 铲子挖坑动画(来回两下)，t 累积秒数
+  aiDigFx: { c: number; r: number; t: number }[] = []; // AI 侧挖坑动画（对称展示，见 render）
+  // 自动布阵对"刚挖开、开格动画未完"的格做的延迟落子：先预占该格，动画结束后由 updateFx 真正落子。
+  private pendingPlace: { token: TrayToken; c: number; r: number }[] = [];
+  private aiPendingPlace: { token: TrayToken; c: number; r: number }[] = [];
   summonFlash = 0; // 征兵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -533,9 +537,9 @@ export class Battle {
     return this.words.get(cellKey(c, r));
   }
 
-  // 该格是否空闲（无兵、无字牌）
+  // 该格是否空闲（无兵、无字牌、且无延迟落子预占）
   private cellFree(c: number, r: number): boolean {
-    return !this.units.has(cellKey(c, r)) && !this.words.has(cellKey(c, r));
+    return !this.units.has(cellKey(c, r)) && !this.words.has(cellKey(c, r)) && !this.pendingPlace.some((p) => p.c === c && p.r === r);
   }
 
   // 计入道具修正后的当前征兵成本
@@ -613,9 +617,9 @@ export class Battle {
   // AI 已解锁/未解锁格（镜像玩家口径；aiCells 已按贴路近→远）
   aiUnlockedCells(): Cell[] { return this.aiCells.filter((c) => this.aiUnlocked.has(cellKey(c.c, c.r))); }
   aiLockedCells(): Cell[] { return this.aiCells.filter((c) => !this.aiUnlocked.has(cellKey(c.c, c.r))); }
-  // AI 格是否可落新棋子（无兵、无字牌）
+  // AI 格是否可落新棋子（无兵、无字牌、且无延迟落子预占）
   private aiCellFree(c: number, r: number): boolean {
-    return !this.aiUnits.some((u) => u.cell.c === c && u.cell.r === r) && !this.aiWords.has(cellKey(c, r));
+    return !this.aiUnits.some((u) => u.cell.c === c && u.cell.r === r) && !this.aiWords.has(cellKey(c, r)) && !this.aiPendingPlace.some((p) => p.c === c && p.r === r);
   }
 
   // AI 侧武将激活扫描（镜像 activeGenerals，读 aiWords + aiGeneralStates）
@@ -1798,6 +1802,9 @@ export class Battle {
     this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
     for (const d of this.digFx) d.t += dt;
     this.digFx = this.digFx.filter((d) => d.t < DIG_DUR);
+    for (const d of this.aiDigFx) d.t += dt;
+    this.aiDigFx = this.aiDigFx.filter((d) => d.t < DIG_DUR);
+    this.updatePendingPlace(); // 开格动画结束后落下预占的兵/字牌
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
@@ -1884,6 +1891,53 @@ export class Battle {
 
   // 一键布阵：把候选区令牌自动落位（铲子挖最靠前锁定格；兵种优先合成同型同级，否则放空格）。
   // 供"一键布阵"便捷按钮与自动化自测使用。委托共享策略 planAutoPlace：射程感知铺格、绝不丢弃。
+  // 自动布阵专用落子：若目标是"刚挖开、开格动画未完"的空格，则先预占、延迟到动画结束再真正落子；
+  // 铲子(挖格)与合成(落到已有兵格)保持即时。手动拖拽仍走 placeFromTray（不延迟）。
+  private autoPlaceApply(index: number, cell: Cell): boolean {
+    const token = this.tray[index];
+    if (!token) return false;
+    const animating = this.digFx.some((d) => d.c === cell.c && d.r === cell.r);
+    if (token.kind !== 'shovel' && animating && this.isUnlocked(cell.c, cell.r) && this.cellFree(cell.c, cell.r)) {
+      this.pendingPlace.push({ token, c: cell.c, r: cell.r }); // 预占：cellFree 此后视其为占用
+      this.tray.splice(index, 1);
+      return true;
+    }
+    return this.placeFromTray(index, cell);
+  }
+
+  // 延迟落子结算：预占格的开格动画结束后，真正把预占的兵/字牌落到该格（每帧由 updateFx 调用）。
+  private updatePendingPlace(): void {
+    if (this.pendingPlace.length > 0) {
+      const still: { token: TrayToken; c: number; r: number }[] = [];
+      for (const p of this.pendingPlace) {
+        if (this.digFx.some((d) => d.c === p.c && d.r === p.r)) { still.push(p); continue; } // 动画未完，继续等
+        const cell = { c: p.c, r: p.r };
+        if (p.token.kind === 'unit') {
+          this.units.set(cellKey(p.c, p.r), { type: p.token.type, tier: p.token.tier, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
+          this.emit('place');
+        } else if (p.token.kind === 'word') {
+          const w = p.token;
+          this.words.set(cellKey(p.c, p.r), { char: w.char, general: w.general, tier: w.tier, cell });
+          this.emit(this.activeGenerals().some((g) => g.def.id === w.general) ? 'general' : 'place');
+        }
+      }
+      this.pendingPlace = still;
+    }
+    if (this.aiPendingPlace.length > 0) {
+      const still: { token: TrayToken; c: number; r: number }[] = [];
+      for (const p of this.aiPendingPlace) {
+        if (this.aiDigFx.some((d) => d.c === p.c && d.r === p.r)) { still.push(p); continue; }
+        const cell = { c: p.c, r: p.r };
+        if (p.token.kind === 'unit') {
+          this.aiUnits.push({ type: p.token.type, tier: p.token.tier, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
+        } else if (p.token.kind === 'word') {
+          this.aiWords.set(cellKey(p.c, p.r), { char: p.token.char, general: p.token.general, tier: p.token.tier, cell });
+        }
+      }
+      this.aiPendingPlace = still;
+    }
+  }
+
   private buildPlayerAutoView(): AutoPlaceView {
     return {
       tray: () => this.tray,
@@ -1893,7 +1947,7 @@ export class Battle {
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       wordChars: (general) => generalById(general)?.chars,
-      place: (i, cell) => this.placeFromTray(i, cell),
+      place: (i, cell) => this.autoPlaceApply(i, cell),
       moveUnit: (from, to) => {
         const u = this.units.get(cellKey(from.c, from.r));
         if (!u) return false;
