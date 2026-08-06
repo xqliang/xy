@@ -381,53 +381,55 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
     drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
   }
 }
+// 营帐屋顶开合角度(弧度，0=闭合)：征兵时(summonAnimT 从 0 起)先逆时针掀开到 90°(竖起)，短暂保持(丝带飞出)，再顺时针合上。
+function campRoofAngle(t: number): number {
+  const OPEN_END = 0.2, HOLD_END = 0.55, CLOSE_END = 0.8, MAX = Math.PI / 2; // 最大 90°(不翻到地上)
+  if (t >= CLOSE_END) return 0; // 已合上(含 idle t=999)
+  if (t < OPEN_END) return MAX * (t / OPEN_END); // 开：0→90°
+  if (t < HOLD_END) return MAX; // 全开保持(令牌丝带飞入)
+  return MAX * (1 - (t - HOLD_END) / (CLOSE_END - HOLD_END)); // 合：90°→0
+}
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 底板：木质竖向渐变 + 描边
-  const base = ctx.createLinearGradient(0, TRAY_Y, 0, TRAY_Y + TRAY_H);
-  base.addColorStop(0, '#efe3c6');
-  base.addColorStop(1, '#d9c39a');
-  ctx.fillStyle = base;
-  roundRect(ctx, 8, TRAY_Y, VIEW_W - 16, TRAY_H, 10);
+  // 营帐：棕色屋身 + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无「营」字、无底板 bar。
+  const campX = 12, campY = TRAY_Y + 4, campW = 48, campH = TRAY_H - 8;
+  const roofH = 16; // 屋顶高
+  const bodyY = campY + roofH; // 屋身顶沿 = 屋顶铰链所在水平线
+  const bodyH = campH - roofH;
+  // —— 屋身（棕色木屋身）——
+  const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
+  wood.addColorStop(0, '#8a5626');
+  wood.addColorStop(1, '#6d431d');
+  ctx.fillStyle = wood;
+  roundRect(ctx, campX, bodyY, campW, bodyH, 5);
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = '#8a6a3a';
+  ctx.strokeStyle = '#4f3115';
   ctx.stroke();
-  // 立体倒角：顶部亮边、底部暗边
+  // —— 屋顶（手绘红顶，以底左角为铰链，逆时针=负角）——
+  const roofAng = campRoofAngle(b.summonAnimT);
+  ctx.save();
+  ctx.translate(campX, bodyY);
+  ctx.rotate(-roofAng);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(campW, 0);
+  ctx.lineTo(campW - 6, -roofH + 3);
+  ctx.lineTo(6, -roofH + 3);
+  ctx.closePath();
+  const roofGrad = ctx.createLinearGradient(0, -roofH, 0, 0);
+  roofGrad.addColorStop(0, '#c0402f');
+  roofGrad.addColorStop(1, '#9a2f22');
+  ctx.fillStyle = roofGrad;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#6f1f16';
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,220,180,0.5)'; // 屋脊高光
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255,248,225,0.55)';
   ctx.beginPath();
-  ctx.moveTo(14, TRAY_Y + 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + 2);
+  ctx.moveTo(6, -roofH + 4); ctx.lineTo(campW - 6, -roofH + 4);
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(90,60,25,0.35)';
-  ctx.beginPath();
-  ctx.moveTo(14, TRAY_Y + TRAY_H - 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + TRAY_H - 2);
-  ctx.stroke();
-  // 「营」招牌：优先用 Seedream 素材(camp)，未加载则画木牌+文字兜底
-  const campSpr = sprite('camp');
-  const campX = 12, campY = TRAY_Y + 5, campW = 46, campH = TRAY_H - 10;
-  if (campSpr) {
-    const s = Math.min(campW / campSpr.width, campH / campSpr.height); // 等比 contain
-    const dw = campSpr.width * s, dh = campSpr.height * s;
-    ctx.drawImage(campSpr, campX + (campW - dw) / 2, campY + (campH - dh) / 2, dw, dh);
-  } else {
-    const wood = ctx.createLinearGradient(0, campY, 0, campY + campH);
-    wood.addColorStop(0, '#a06a34');
-    wood.addColorStop(1, '#7d4f24');
-    ctx.fillStyle = wood;
-    roundRect(ctx, campX, campY, campW, campH, 8);
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#5f3c1b';
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,230,180,0.5)'; // 顶部高光条
-    roundRect(ctx, campX + 3, campY + 3, campW - 6, 6, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff2d8';
-    ctx.font = 'bold 24px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('营', campX + campW / 2, campY + campH / 2 + 1);
-  }
+  ctx.restore();
   // 5 个候选槽：征兵丝带瞬间出现，再从「营」端缩短变细，消于槽位后出图标
   const HOLD = 0.01;
   const RETRACT_STAGGER = 0.08;
