@@ -141,12 +141,18 @@ export function placeableByProximity(map: GameMap): Cell[] {
     .map((x) => x.cell);
 }
 
-// 阵位解锁顺序：初始 6 格（initialBlock 或贴路最近 6）在前，其余按贴路距离
+// 阵位解锁顺序：初始 6 格（initialBlock 或贴路最近 6）在前；其余（额外阵位加成才会开）
+// 按「到初始阵位块的距离」由近及远——开垦从起始区域向外生长，而非跳到贴路的远角空格。
 export function slotUnlockOrder(map: GameMap): Cell[] {
   const prox = placeableByProximity(map);
   const block = (map.initialBlock ?? prox.slice(0, 6)).filter((c) => !isPathCell(map, c.c, c.r));
   const inBlock = (c: Cell) => block.some((b) => b.c === c.c && b.r === c.r);
-  const rest = prox.filter((c) => !inBlock(c));
+  const distToBlock = (c: Cell) =>
+    Math.min(...block.map((b) => Math.hypot(b.c - c.c, b.r - c.r)));
+  // prox 已按贴路距离排序；再按到初始块的距离稳定排序，使扩展格紧贴已开垦区域。
+  const rest = prox
+    .filter((c) => !inBlock(c))
+    .sort((a, b) => distToBlock(a) - distToBlock(b));
   return [...block, ...rest];
 }
 
