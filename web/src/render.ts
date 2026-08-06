@@ -1702,7 +1702,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
 
   // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
   const pw = 194;
-  const ph = active ? 150 : 134;
+  const ph = active ? 150 : 146;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
@@ -1725,19 +1725,11 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.fillStyle = qualityColor(w.tier);
   ctx.font = 'bold 13px "PingFang SC", sans-serif';
   ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
-  // 技能（未激活时置灰并标注不生效）
+  // 技能（未激活时置灰）
   ctx.textAlign = 'left';
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
-  if (!active) {
-    ctx.fillStyle = 'rgba(255,154,106,0.85)';
-    ctx.font = '10px "PingFang SC", sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText('未激活·不生效', px + pw - 12, py + 40);
-    ctx.textAlign = 'left';
-    ctx.font = '12px "PingFang SC", sans-serif';
-  }
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
   // 属性（激活时计入等级/神兵）
