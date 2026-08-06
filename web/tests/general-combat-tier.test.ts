@@ -35,6 +35,17 @@ describe('攻击升品质阶', () => {
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(5);
   });
 
+  it('法宝符：首次激活两字各 +1 阶', () => {
+    const b = new Battle(1, 1, undefined, undefined, undefined, [], ['fabaofu']);
+    expect(b.mods.generalTierDelta).toBe(1);
+    const { a, right } = placeErlang(b, 1, 1);
+    b.activeGenerals(); // 触发首次激活升阶
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(2);
+    expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(2);
+    b.activeGenerals(); // 再次扫描不叠乘
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(2);
+  });
+
   it('generalAtk 不再吃 level 系数', () => {
     const b = new Battle(1);
     placeErlang(b, 2, 2);

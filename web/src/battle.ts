@@ -266,7 +266,7 @@ interface Modifiers {
   autoShovel: boolean; // 洛阳铲：定期产铲
   meteor: boolean; // 陨石：每波开始砸最前妖怪
   mud: boolean; // 淤泥：出怪口附近减速
-  generalLevelDelta: number; // 法宝符：所有武将初始等级 +N
+  generalTierDelta: number; // 法宝符：武将首次激活时双字品质阶 +N
 }
 
 // 局外「功德商店」买断的永久加成，开局注入本局（数值温和有上限，避免破坏塔 DPS 平衡）
@@ -349,13 +349,14 @@ export class Battle {
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // 道具与修正器
-  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalLevelDelta: 0 };
+  mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
   droppedWeapons: string[] = []; // 本局掉落的神兵（结算时入背包）
   pickedItems: string[] = [];
 
+  private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的武将 id
   private rng: RNG;
   readonly map: GameMap;
   readonly pathLen: number;
@@ -585,6 +586,13 @@ export class Battle {
       if (w.char !== def.chars[0] || right.char !== def.chars[1]) continue;
       used.add(kL);
       used.add(kR);
+      if (this.mods.generalTierDelta > 0 && !this.tierBoosted.has(def.id)) {
+        this.tierBoosted.add(def.id);
+        for (let i = 0; i < this.mods.generalTierDelta; i++) {
+          if (w.tier < MAX_TIER) w.tier += 1;
+          if (right.tier < MAX_TIER) right.tier += 1;
+        }
+      }
       out.push({
         def,
         tier: Math.min(w.tier, right.tier), // 以较弱的字为准
@@ -870,8 +878,7 @@ export class Battle {
     switch (id) {
       case 'xiandan': this.mods.atkMul += 0.15; break;
       case 'fenghuolun': this.mods.frqMul += 0.2; break;
-      // 法宝符：所有武将等级 +1（对应神兵符）
-      case 'fabaofu': this.mods.generalLevelDelta += 1; break; // 所有武将初始等级 +1（惰性应用于 stateOf）
+      case 'fabaofu': this.mods.generalTierDelta += 1; break;
       case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
       case 'mojin': this.mods.shovelPeach += 6; break;
       case 'luoyangchan': this.mods.autoShovel = true; break;

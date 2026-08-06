@@ -22,7 +22,7 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
   },
   { id: 'xiandan', name: '仙丹', icon: '💊', cost: 60, desc: '全体攻击 +15%' },
   { id: 'fenghuolun', name: '风火轮符', icon: '🌀', cost: 60, desc: '全体攻速 +20%' },
-  { id: 'fabaofu', name: '法宝符', icon: '📜', cost: 80, desc: '所有武将等级 +1' },
+  { id: 'fabaofu', name: '法宝符', icon: '📜', cost: 80, desc: '武将初始品质阶 +1' },
   { id: 'jifeng', name: '疾风咒', icon: '💨', cost: 70, desc: '全体攻速 +50%（AI 对手仅 +25%）' },
   { id: 'zhaoxian', name: '招贤榜', icon: '📋', cost: 40, desc: '武将字牌掉率 +10%' },
   { id: 'mojin', name: '摸金校尉', icon: '⛏', cost: 40, desc: '每次用铲子额外 +6 蟠桃' },
