@@ -392,10 +392,15 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
   ctx.lineWidth = 2.5;
   ctx.strokeStyle = qualityColor(tier);
   ctx.stroke();
-  ctx.fillStyle = '#241d14';
   ctx.font = `bold ${Math.round(s * 0.58)}px "PingFang SC", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // 金黄字：先描深棕边再填金，保证在浅宣纸底上依然清晰可读
+  ctx.lineWidth = Math.max(2, s * 0.055);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#5a3a08';
+  ctx.strokeText(char, x, y + s * 0.02);
+  ctx.fillStyle = '#f2b414';
   ctx.fillText(char, x, y + s * 0.02);
   // 阶数上标（合成为激活武将时由 showTier=false 隐藏，避免与金框整体 Lv 重复）
   if (showTier) {
@@ -465,7 +470,8 @@ function drawSummonRibbon(
   const srcX = 34;
   const srcY = TRAY_Y + TRAY_H / 2;
   const isHero = token.kind === 'word';
-  const fill = isHero ? 'rgba(255, 228, 140, 0.18)' : 'rgba(255, 255, 255, 0.16)';
+  // 字牌用明显的金黄丝带（与普通兵的透明白区分）；普通兵保持淡白
+  const fill = isHero ? 'rgba(255, 200, 48, 0.42)' : 'rgba(255, 255, 255, 0.16)';
 
   const arcH = 50 + slotIndex * 30 + Math.abs(dest.x - srcX) * 0.05;
   const ease = (t: number) => {
@@ -517,9 +523,9 @@ function drawSummonRibbon(
   ctx.closePath();
   ctx.fillStyle = fill;
   ctx.fill();
-  // 极淡描边，让丝带边缘更干净（不是第二条弧）
-  ctx.strokeStyle = isHero ? 'rgba(255,220,120,0.08)' : 'rgba(255,255,255,0.07)';
-  ctx.lineWidth = 1;
+  // 描边：字牌用较明显的金边强化"黄色丝带"观感；普通兵保持极淡白边
+  ctx.strokeStyle = isHero ? 'rgba(255,198,60,0.38)' : 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = isHero ? 1.5 : 1;
   ctx.stroke();
   ctx.restore();
 }
