@@ -71,6 +71,7 @@ export const TUNING = {
   shovelPityAfter: 3, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
   summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
+  summonMaxPerKeyAllOpen: 5, // 阵位全开后：铲子无用，放宽同兵种上限到 5（更快堆同型合成）
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
@@ -463,15 +464,17 @@ export class Battle {
     const avail = TUNING.traySize;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.summonCount === 0;
-    // 铲子保底：连续 shovelPityAfter 次没出铲，则本次强制出铲
-    const forceShovel = this.summonsSinceShovel >= TUNING.shovelPityAfter;
-    // 兵/铲分布：受约束（同 key ≤ summonMaxPerKey，首次保底≥4兵，可选强制出铲）
+    // 阵位是否已全部挖开：全开后铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
+    const allOpen = this.lockedCells().length === 0;
+    // 铲子保底：连续 shovelPityAfter 次没出铲则本次强制出铲——仅在仍有未挖格(空位)时才生效
+    const forceShovel = !allOpen && this.summonsSinceShovel >= TUNING.shovelPityAfter;
+    // 兵/铲分布：受约束（同 key ≤ 上限，首次保底≥4兵，可选强制出铲）
     const base = drawSummonTray({
       rng: this.rng,
       unitTypes: types,
       draws: avail,
-      shovelChance: TUNING.shovelDrawChance,
-      maxPerKey: TUNING.summonMaxPerKey,
+      shovelChance: allOpen ? 0 : TUNING.shovelDrawChance, // 全开后不再产铲
+      maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
       firstSummon,
       forceShovel,
     });
