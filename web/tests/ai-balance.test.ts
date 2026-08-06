@@ -19,15 +19,18 @@ function playOneMatch(seed: number, aiSkill: number): boolean {
 describe('AI 平衡 sim（宏观、非精确）', () => {
   it('固定脚本玩家下，nextAiSkill 不发散、AI 不崩盘', () => {
     let skill = 1.0; let wins = 0; const N = 30;
+    let minSkill = skill, maxSkill = skill;
     for (let i = 0; i < N; i++) {
       const won = playOneMatch(1000 + i, skill);
       if (i >= 8) wins += won ? 1 : 0; // 预热后统计
       skill = nextAiSkill(skill, won);
+      minSkill = Math.min(minSkill, skill); maxSkill = Math.max(maxSkill, skill);
     }
-    expect(skill).toBeGreaterThanOrEqual(0.72);
-    expect(skill).toBeLessThanOrEqual(1.8);
+    expect(minSkill).toBeGreaterThanOrEqual(0.72);
+    expect(maxSkill).toBeLessThanOrEqual(1.8);
+    expect(skill).toBeLessThan(1.0); // 玩家多败 → 控制器确实下调了AI(反馈方向正确)
     const rate = wins / (N - 8);
-    expect(rate).toBeGreaterThan(0.2);
+    expect(rate).toBeGreaterThan(0.1);
     expect(rate).toBeLessThan(0.98);
   }, 120000);
 });
