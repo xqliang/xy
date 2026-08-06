@@ -76,9 +76,9 @@ describe('endless disables opponent and win-cap', () => {
     expect(b.status).not.toBe('won');
   });
 
-  it('正常模式清空第 10 波判通关（回归保护）', () => {
+  it('正常模式清空第 12 波判通关（回归保护）', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], false);
-    for (let w = 0; w < 10; w++) {
+    for (let w = 0; w < 12; w++) {
       b.startNextWave();
       b.forceClearWaveForTest();
     }

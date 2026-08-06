@@ -1,8 +1,8 @@
 // 「神秘商人」功德商店界面：展示功德余额与可升级项 + 主动技能（每日重置）购买，点击卡片购买，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
-import { UPGRADES, levelOf, RARITY_COLOR, type MeritState } from './merit';
-import { ACTIVE_SKILLS, MAX_EQUIPPED_ACTIVES } from './actives';
-import { PASSIVE_SKILLS, MAX_EQUIPPED_PASSIVES } from './passives';
+import { UPGRADES, levelOf, upgradeById, RARITY_COLOR, type MeritState } from './merit';
+import { ACTIVE_SKILLS, MAX_EQUIPPED_ACTIVES, activeById } from './actives';
+import { PASSIVE_SKILLS, MAX_EQUIPPED_PASSIVES, passiveById } from './passives';
 import { isEquipped, isPassiveEquipped, type LoadoutState } from './loadout';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -34,7 +34,7 @@ function cardRect(i: number): { x: number; y: number } {
 }
 
 // 主动技能区（功德升级卡片下方）：紧凑卡片
-const ACT_CARD_H = 72;
+const ACT_CARD_H = 90;
 const ACT_TOP = GRID_TOP + Math.ceil(UPGRADES.length / COLS_N) * (CARD_H + GAP) + 30;
 function activeCardRect(i: number): { x: number; y: number } {
   const col = i % COLS_N;
@@ -165,21 +165,21 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillStyle = '#fff6e6';
     ctx.fillText(act.icon, x + 12, y + 12);
     ctx.font = 'bold 18px "PingFang SC", sans-serif';
-    ctx.fillText(act.name, x + 52, y + 12);
+    ctx.fillText(act.name, x + 52, y + 14);
     ctx.fillStyle = 'rgba(255,240,210,0.8)';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(act.desc, x + 52, y + 36);
+    ctx.fillText(fitText(ctx, act.desc, CARD_W - 64), x + 52, y + 40);
     // 购买/已装备条
     const bw = CARD_W - 24;
-    const by = y + ACT_CARD_H - 26;
-    roundRect(ctx, x + 12, by, bw, 20, 7);
+    const by = y + ACT_CARD_H - 30;
+    roundRect(ctx, x + 12, by, bw, 22, 7);
     ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 10);
+    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 11);
   }
 
   // —— 被动技能区（每日重置）——
@@ -205,20 +205,20 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillStyle = '#fff6e6';
     ctx.fillText(pas.icon, x + 12, y + 12);
     ctx.font = 'bold 18px "PingFang SC", sans-serif';
-    ctx.fillText(pas.name, x + 52, y + 12);
+    ctx.fillText(pas.name, x + 52, y + 14);
     ctx.fillStyle = 'rgba(255,240,210,0.8)';
-    ctx.font = '11px "PingFang SC", sans-serif';
-    ctx.fillText(pas.desc.length > 22 ? pas.desc.slice(0, 22) + '…' : pas.desc, x + 52, y + 36);
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(fitText(ctx, pas.desc, CARD_W - 64), x + 52, y + 40);
     const bw = CARD_W - 24;
-    const by = y + ACT_CARD_H - 26;
-    roundRect(ctx, x + 12, by, bw, 20, 7);
+    const by = y + ACT_CARD_H - 30;
+    roundRect(ctx, x + 12, by, bw, 22, 7);
     ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 10);
+    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 11);
   }
 
   // —— 结束滚动内容 ——
@@ -254,5 +254,232 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillStyle = '#ffd76a';
     ctx.font = '14px "PingFang SC", sans-serif';
     ctx.fillText(toast, VIEW_W / 2, VIEW_H - 8);
+  }
+}
+
+// ———————————————————————————————————————————————————————————
+// 商品详情 / 购买二次确认弹窗
+// 交互流程：点击任意商品卡片 → 打开 detail 弹窗（完整使用说明 + 花费）→
+// 点「购买」→ 切到 confirm 阶段显示「确认扣除 N 功德」→ 点「确认」才真正扣费。
+// ———————————————————————————————————————————————————————————
+
+export type ShopKind = 'buy' | 'buyActive' | 'buyPassive';
+export interface ShopPopupState {
+  kind: ShopKind;
+  id: string;
+  phase: 'detail' | 'confirm';
+}
+// 弹窗点击命中结果：action=点购买(detail→confirm)；confirm=确认扣费；cancel=取消回退；
+// close=关闭；outside=点弹窗外空白(关闭)；null=点在弹窗内的非按钮区(吞掉本次点击)
+export type ShopPopupHit = 'action' | 'confirm' | 'cancel' | 'close' | 'outside' | null;
+
+// 弹窗几何（屏幕居中，固定尺寸；不随商城滚动）
+const PW = 400;
+const PH = 300;
+const PX = (VIEW_W - PW) / 2;
+const PY = (VIEW_H - PH) / 2;
+const PAD = 22;
+const CLOSE_R = { x: PX + PW - 40, y: PY + 14, w: 26, h: 26 };
+const ACTION_R = { x: PX + PAD, y: PY + PH - 62, w: PW - PAD * 2, h: 44 }; // detail 阶段整条购买按钮
+const CANCEL_R = { x: PX + PAD, y: PY + PH - 62, w: (PW - PAD * 2 - 12) / 2, h: 44 }; // confirm 阶段左：取消
+const CONFIRM_R = { x: PX + PW / 2 + 6, y: PY + PH - 62, w: (PW - PAD * 2 - 12) / 2, h: 44 }; // confirm 阶段右：确认
+
+function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+// 单行截断到最大宽度，超出用省略号（卡片内简介用；完整说明看详情弹窗）
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s + '…';
+}
+
+// 按最大宽度做逐字符换行（中英文混排友好），支持显式 \n
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const ch of text) {
+    if (ch === '\n') { lines.push(line); line = ''; continue; }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// 汇总某商品的展示信息（名称/图标/色/副标题/使用说明/花费/是否可购买/按钮文案）
+interface PopupInfo {
+  icon: string; name: string; color: string; sub: string;
+  usage: string; cost: number; canBuy: boolean; blockLabel: string;
+}
+function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: LoadoutState): PopupInfo | null {
+  if (kind === 'buy') {
+    const up = upgradeById(id);
+    if (!up) return null;
+    const lv = levelOf(merit, id);
+    const maxed = lv >= up.maxLevel;
+    const cost = up.cost(lv);
+    const usage = maxed
+      ? '已达最高等级，无需继续购买。'
+      : `永久成长：每局开局自动注入本局，可累计升级。\n下一级效果：${up.desc(lv)}`;
+    return {
+      icon: up.icon, name: up.name, color: RARITY_COLOR[up.rarity],
+      sub: `${up.rarity} · Lv.${lv}/${up.maxLevel}`,
+      usage, cost,
+      canBuy: !maxed && merit.merit >= cost,
+      blockLabel: maxed ? '已满级' : merit.merit >= cost ? '' : '功德不足',
+    };
+  }
+  if (kind === 'buyActive') {
+    const act = activeById(id);
+    if (!act) return null;
+    const equipped = isEquipped(loadout, id);
+    const usage = `${act.desc}。\n战斗中点击技能图标手动释放，冷却 ${act.cd}s。每日重置，最多装备 ${MAX_EQUIPPED_ACTIVES} 个。`;
+    return {
+      icon: act.icon, name: act.name, color: '#6ab0ff',
+      sub: `主动技能 · CD ${act.cd}s`,
+      usage, cost: act.cost,
+      canBuy: !equipped && merit.merit >= act.cost,
+      blockLabel: equipped ? '已装备' : merit.merit >= act.cost ? '' : '功德不足',
+    };
+  }
+  const pas = passiveById(id);
+  if (!pas) return null;
+  const equipped = isPassiveEquipped(loadout, id);
+  const usage = `${pas.desc}。\n被动技能：购买后当日生效，开局自动注入本局。每日重置，最多装备 ${MAX_EQUIPPED_PASSIVES} 个。`;
+  return {
+    icon: pas.icon, name: pas.name, color: '#7ec46a',
+    sub: '被动技能 · 每日生效',
+    usage, cost: pas.cost,
+    canBuy: !equipped && merit.merit >= pas.cost,
+    blockLabel: equipped ? '已装备' : merit.merit >= pas.cost ? '' : '功德不足',
+  };
+}
+
+export function shopPopupHitAt(x: number, y: number, popup: ShopPopupState): ShopPopupHit {
+  if (inRect(x, y, CLOSE_R)) return 'close';
+  if (popup.phase === 'detail') {
+    if (inRect(x, y, ACTION_R)) return 'action';
+  } else {
+    if (inRect(x, y, CANCEL_R)) return 'cancel';
+    if (inRect(x, y, CONFIRM_R)) return 'confirm';
+  }
+  // 点在弹窗框内的非按钮区：吞掉，不关闭；点框外空白：关闭
+  if (x >= PX && x <= PX + PW && y >= PY && y <= PY + PH) return null;
+  return 'outside';
+}
+
+export function drawShopPopup(
+  ctx: CanvasRenderingContext2D,
+  popup: ShopPopupState,
+  merit: MeritState,
+  loadout: LoadoutState,
+): void {
+  const info = popupInfo(popup.kind, popup.id, merit, loadout);
+  if (!info) return;
+
+  // 半透明遮罩（点击框外关闭）
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 弹窗底板
+  roundRect(ctx, PX, PY, PW, PH, 14);
+  ctx.fillStyle = '#241d38';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = info.color;
+  ctx.stroke();
+
+  // 标题：图标 + 名称 + 副标题
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = '32px sans-serif';
+  ctx.fillText(info.icon, PX + PAD, PY + 20);
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.fillText(info.name, PX + PAD + 44, PY + 22);
+  ctx.fillStyle = info.color;
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(info.sub, PX + PAD + 44, PY + 50);
+
+  // 关闭按钮（✕）
+  roundRect(ctx, CLOSE_R.x, CLOSE_R.y, CLOSE_R.w, CLOSE_R.h, 7);
+  ctx.fillStyle = '#3a3350';
+  ctx.fill();
+  ctx.fillStyle = '#d8c8f0';
+  ctx.font = 'bold 16px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2 + 1);
+
+  // 分隔线
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PX + PAD, PY + 76);
+  ctx.lineTo(PX + PW - PAD, PY + 76);
+  ctx.stroke();
+
+  // 使用说明（换行）
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,240,210,0.9)';
+  ctx.font = '15px "PingFang SC", sans-serif';
+  const lines = wrapText(ctx, info.usage, PW - PAD * 2);
+  let ty = PY + 90;
+  for (const ln of lines) { ctx.fillText(ln, PX + PAD, ty); ty += 24; }
+
+  // 花费 + 余额（仅详情阶段；确认阶段用问句展示花费，避免重叠）
+  if (popup.phase === 'detail') {
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 15px "PingFang SC", sans-serif';
+    ctx.fillText(`花费 ${info.cost} 功德`, PX + PAD, PY + PH - 96);
+    ctx.fillStyle = 'rgba(224,200,255,0.85)';
+    ctx.font = '13px "PingFang SC", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`余额 ${merit.merit}`, PX + PW - PAD, PY + PH - 94);
+  }
+
+  // 底部动作区
+  if (popup.phase === 'detail') {
+    // 单条购买按钮（不可购买时置灰并显示原因）
+    roundRect(ctx, ACTION_R.x, ACTION_R.y, ACTION_R.w, ACTION_R.h, 10);
+    ctx.fillStyle = info.canBuy ? '#c8792b' : '#4a3a30';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = info.canBuy ? '#fff6e6' : '#9a8a7a';
+    ctx.font = 'bold 17px "PingFang SC", sans-serif';
+    const label = info.canBuy ? `购买 · ${info.cost} 功德` : info.blockLabel || '无法购买';
+    ctx.fillText(label, ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
+  } else {
+    // 确认阶段：问句（含花费与余额）+ 取消/确认
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#fff6e6';
+    ctx.font = '15px "PingFang SC", sans-serif';
+    ctx.fillText(`确认扣除 ${info.cost} 功德购买「${info.name}」？`, VIEW_W / 2, PY + PH - 92);
+    ctx.fillStyle = 'rgba(224,200,255,0.8)';
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(`余额 ${merit.merit} → ${merit.merit - info.cost}`, VIEW_W / 2, PY + PH - 72);
+    // 取消
+    roundRect(ctx, CANCEL_R.x, CANCEL_R.y, CANCEL_R.w, CANCEL_R.h, 10);
+    ctx.fillStyle = '#4a4460';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e0d8f0';
+    ctx.font = 'bold 16px "PingFang SC", sans-serif';
+    ctx.fillText('取消', CANCEL_R.x + CANCEL_R.w / 2, CANCEL_R.y + CANCEL_R.h / 2);
+    // 确认
+    roundRect(ctx, CONFIRM_R.x, CONFIRM_R.y, CONFIRM_R.w, CONFIRM_R.h, 10);
+    ctx.fillStyle = '#c8792b';
+    ctx.fill();
+    ctx.fillStyle = '#fff6e6';
+    ctx.font = 'bold 16px "PingFang SC", sans-serif';
+    ctx.fillText('确认扣费', CONFIRM_R.x + CONFIRM_R.w / 2, CONFIRM_R.y + CONFIRM_R.h / 2);
   }
 }

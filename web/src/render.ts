@@ -10,7 +10,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
@@ -26,7 +26,7 @@ export const BOARD_X = Math.round((VIEW_W - CELL * COLS) / 2);
 export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
-export const TRAY_H = 66;
+export const TRAY_H = 78; // 候选区行高（放大：候选槽≈地图格子大小）
 export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「营」拖令牌部署时误点征兵）
 export const CTRL_H = 80; // 行高预留：容纳更大的征兵按钮，下方 PAS 行据此下移不重叠
 export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
@@ -72,8 +72,10 @@ export function getButtons(b: Battle): Button[] {
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
   // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，左端「布阵」，
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
+  const trayRightX = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 8; // 候选槽右侧
   const btns: Button[] = [
-    { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
+    // 布阵：移到候选区(tray)右端，与候选槽同高，便于拿到令牌后就近一键落位
+    { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: !trayEmpty },
     // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
@@ -86,9 +88,11 @@ export function getButtons(b: Battle): Button[] {
   for (let i = 0; i < b.activeSlots.length && i < 2; i++) {
     btns.push({ id: `act${i}`, label: '', x: actX[i]!, y: actY, w: ACT_D, h: ACT_D, enabled: true });
   }
-  // 被动/强化技能行：每个已携带道具一格，可点击查看详情/进度
+  // 被动/强化技能行：居中显示，每个已携带道具一格，可点击查看详情/进度
+  const pasPitch = PAS_H + 6;
+  const pasStartX = (VIEW_W - (b.pickedItems.length * pasPitch - 6)) / 2;
   for (let i = 0; i < b.pickedItems.length; i++) {
-    btns.push({ id: `pas${i}`, label: '', x: 12 + i * (PAS_H + 6), y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
+    btns.push({ id: `pas${i}`, label: '', x: pasStartX + i * pasPitch, y: PAS_Y, w: PAS_H, h: PAS_H, enabled: true });
   }
   return btns;
 }
@@ -310,6 +314,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
+  drawDigFx(ctx, b);
   drawBursts(ctx, b);
   drawPeachFloats(ctx, b);
   drawHeroUlt(ctx, b);
@@ -327,8 +332,8 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
 }
 
 // —— 候选区（征兵产出，手工拖到棋盘）——
-const TRAY_LEFT = 64; // 左侧留给"营"标
-const TRAY_SLOT = 66;
+const TRAY_LEFT = 80; // 左侧留给"营"标（与候选槽拉开更大间距）
+const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）
 export function trayIndexAt(x: number, y: number): number | null {
   if (y < TRAY_Y || y > TRAY_Y + TRAY_H) return null;
   const i = Math.floor((x - TRAY_LEFT) / TRAY_SLOT);
@@ -381,53 +386,77 @@ function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number,
     drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
   }
 }
+// 营帐屋顶开合角度(弧度，0=闭合)：征兵时(summonAnimT 从 0 起)先逆时针掀开到 90°(竖起)，短暂保持(丝带飞出)，再顺时针合上。
+function campRoofAngle(t: number): number {
+  const OPEN_END = 0.05, HOLD_END = 0.1375, CLOSE_END = 0.2, MAX = Math.PI / 2; // 最大90°；开合再加快1倍(总时长~0.2s)
+  if (t >= CLOSE_END) return 0; // 已合上(含 idle t=999)
+  if (t < OPEN_END) return MAX * (t / OPEN_END); // 开：0→90°
+  if (t < HOLD_END) return MAX; // 全开保持(令牌丝带飞入)
+  return MAX * (1 - (t - HOLD_END) / (CLOSE_END - HOLD_END)); // 合：90°→0
+}
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 底板：木质竖向渐变 + 描边
-  const base = ctx.createLinearGradient(0, TRAY_Y, 0, TRAY_Y + TRAY_H);
-  base.addColorStop(0, '#efe3c6');
-  base.addColorStop(1, '#d9c39a');
-  ctx.fillStyle = base;
-  roundRect(ctx, 8, TRAY_Y, VIEW_W - 16, TRAY_H, 10);
+  // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
+  const campX = 12, campY = TRAY_Y + 4, campW = 48, campH = TRAY_H - 8;
+  const roofH = 16; // 屋顶高
+  const bodyY = campY + roofH; // 屋身顶沿 = 屋顶铰链所在水平线
+  const bodyH = campH - roofH;
+  // —— 屋身（棕色木屋身 + 「营」字）——
+  const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
+  wood.addColorStop(0, '#8a5626');
+  wood.addColorStop(1, '#6d431d');
+  ctx.fillStyle = wood;
+  roundRect(ctx, campX, bodyY, campW, bodyH, 5);
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = '#8a6a3a';
+  ctx.strokeStyle = '#4f3115';
   ctx.stroke();
-  // 立体倒角：顶部亮边、底部暗边
+  ctx.fillStyle = '#fff2d8';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('营', campX + campW / 2, bodyY + bodyH / 2 + 1);
+  // —— 屋顶（手绘红顶，以底左角为铰链，逆时针=负角）——
+  const roofAng = campRoofAngle(b.summonAnimT);
+  ctx.save();
+  ctx.translate(campX, bodyY);
+  ctx.rotate(-roofAng);
+  // 梯形屋顶：檐口(底)最宽并向两侧外挑(比屋身宽)，屋脊(顶)略内收
+  const EAVE = 6; // 屋檐外挑量(比屋身两侧各宽出)
+  const RIDGE_INSET = 6; // 屋脊比檐口内收
+  ctx.beginPath();
+  ctx.moveTo(-EAVE, 0);
+  ctx.lineTo(campW + EAVE, 0);
+  ctx.lineTo(campW - RIDGE_INSET, -roofH);
+  ctx.lineTo(RIDGE_INSET, -roofH);
+  ctx.closePath();
+  const roofGrad = ctx.createLinearGradient(0, -roofH, 0, 0);
+  roofGrad.addColorStop(0, '#c0402f');
+  roofGrad.addColorStop(1, '#9a2f22');
+  ctx.fillStyle = roofGrad;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#6f1f16';
+  ctx.stroke();
+  // 瓦垄：几条竖向瓦线(屋脊→檐口)
+  ctx.strokeStyle = 'rgba(90,20,15,0.5)';
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255,248,225,0.55)';
-  ctx.beginPath();
-  ctx.moveTo(14, TRAY_Y + 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + 2);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(90,60,25,0.35)';
-  ctx.beginPath();
-  ctx.moveTo(14, TRAY_Y + TRAY_H - 2); ctx.lineTo(VIEW_W - 14, TRAY_Y + TRAY_H - 2);
-  ctx.stroke();
-  // 「营」招牌：优先用 Seedream 素材(camp)，未加载则画木牌+文字兜底
-  const campSpr = sprite('camp');
-  const campX = 12, campY = TRAY_Y + 5, campW = 46, campH = TRAY_H - 10;
-  if (campSpr) {
-    const s = Math.min(campW / campSpr.width, campH / campSpr.height); // 等比 contain
-    const dw = campSpr.width * s, dh = campSpr.height * s;
-    ctx.drawImage(campSpr, campX + (campW - dw) / 2, campY + (campH - dh) / 2, dw, dh);
-  } else {
-    const wood = ctx.createLinearGradient(0, campY, 0, campY + campH);
-    wood.addColorStop(0, '#a06a34');
-    wood.addColorStop(1, '#7d4f24');
-    ctx.fillStyle = wood;
-    roundRect(ctx, campX, campY, campW, campH, 8);
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#5f3c1b';
+  const TILES = 5;
+  for (let k = 1; k < TILES; k++) {
+    const f = k / TILES;
+    const topX = RIDGE_INSET + (campW - 2 * RIDGE_INSET) * f;
+    const botX = -EAVE + (campW + 2 * EAVE) * f;
+    ctx.beginPath();
+    ctx.moveTo(topX, -roofH + 2);
+    ctx.lineTo(botX, -1);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(255,230,180,0.5)'; // 顶部高光条
-    roundRect(ctx, campX + 3, campY + 3, campW - 6, 6, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff2d8';
-    ctx.font = 'bold 24px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('营', campX + campW / 2, campY + campH / 2 + 1);
   }
+  // 屋脊高光
+  ctx.strokeStyle = 'rgba(255,220,180,0.55)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(RIDGE_INSET, -roofH + 2); ctx.lineTo(campW - RIDGE_INSET, -roofH + 2);
+  ctx.stroke();
+  ctx.restore();
   // 5 个候选槽：征兵丝带瞬间出现，再从「营」端缩短变细，消于槽位后出图标
   const HOLD = 0.01;
   const RETRACT_STAGGER = 0.08;
@@ -1300,6 +1329,36 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 // 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
+function drawDigFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const spr = sprite('item-shovel');
+  for (const d of b.digFx) {
+    const { x, y } = cellCenterPx(d.c, d.r);
+    const phase = Math.min(1, d.t / DIG_DUR); // 0→1
+    const chop = Math.abs(Math.sin(phase * Math.PI * 2 * 2)); // 两个周期=来回挖两下
+    const tilt = Math.sin(phase * Math.PI * 2 * 2) * 0.5; // 随挖左右摆
+    const s = CELL * 0.6;
+    ctx.save();
+    ctx.globalAlpha = 1 - phase * 0.15;
+    // 泥坑底色
+    ctx.fillStyle = 'rgba(60,40,20,0.32)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + CELL * 0.18, CELL * 0.28, CELL * 0.13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 铲子：随 chop 下压 + tilt 倾斜
+    ctx.translate(x, y - CELL * 0.12 + chop * CELL * 0.22);
+    ctx.rotate(tilt);
+    if (spr) {
+      ctx.drawImage(spr, -s / 2, -s / 2, s, s);
+    } else {
+      ctx.font = `${Math.round(s)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🥄', 0, 0);
+    }
+    ctx.restore();
+  }
+}
+
 function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const bt of b.bursts) {
     const { x, y } = cellCenterPx(bt.c, bt.r);
@@ -1702,7 +1761,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
 
   // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
   const pw = 194;
-  const ph = active ? 150 : 134;
+  const ph = active ? 150 : 146;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
@@ -1725,19 +1784,11 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.fillStyle = qualityColor(w.tier);
   ctx.font = 'bold 13px "PingFang SC", sans-serif';
   ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
-  // 技能（未激活时置灰并标注不生效）
+  // 技能（未激活时置灰）
   ctx.textAlign = 'left';
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
-  if (!active) {
-    ctx.fillStyle = 'rgba(255,154,106,0.85)';
-    ctx.font = '10px "PingFang SC", sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText('未激活·不生效', px + pw - 12, py + 40);
-    ctx.textAlign = 'left';
-    ctx.font = '12px "PingFang SC", sans-serif';
-  }
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
   // 属性（激活时计入等级/神兵）
@@ -1766,11 +1817,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   }
   // 底部状态提示
   ctx.textAlign = 'left';
-  if (active) {
-    ctx.fillStyle = '#7ec46a';
-    ctx.font = 'bold 12px "PingFang SC", sans-serif';
-    ctx.fillText('✓ 已激活（金框生效）', px + 12, py + ph - 12);
-  } else {
+  if (!active) {
     const other = def.chars.find((c) => c !== w.char) ?? '';
     ctx.fillStyle = '#ff9a6a';
     ctx.font = '12px "PingFang SC", sans-serif';
@@ -2000,12 +2047,6 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
     ctx.globalAlpha = 1;
-    // 名号（框上方小标，去掉 Lv 等级样式）
-    ctx.fillStyle = '#7a4a10';
-    ctx.font = `bold 11px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`${g.def.name}`, x + w / 2, y - 1);
     // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
@@ -2278,19 +2319,20 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
   ctx.stroke();
 
   const cx = panelX + panelW / 2;
+  const midY = panelY + panelH / 2; // 垂直居中锚点，避免信息靠上显空
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   ctx.fillStyle = '#b5391f';
   ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.fillText('无尽 · 试炼', cx, panelY + 26);
+  ctx.fillText('无尽 · 试炼', cx, midY - 40);
 
   ctx.fillStyle = '#5a3a12';
   ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText(`第 ${b.wave} 波`, cx, panelY + 62);
+  ctx.fillText(`第 ${b.wave} 波`, cx, midY - 2);
   ctx.fillStyle = '#8a5a2b';
   ctx.font = '16px "PingFang SC", sans-serif';
-  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, panelY + 90);
+  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, midY + 28);
 
   const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
   ctx.fillStyle = '#7a3b12';

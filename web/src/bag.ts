@@ -1,8 +1,8 @@
 // 武器背包：展示已获得的神兵（品质/加成/专属武将），可切换装备（最多 3 件）。
 import { VIEW_W, VIEW_H } from './render';
 import {
-  WEAPONS, weaponQualityName, weaponQualityColor, weaponBonus, STAT_LABEL,
-  MAX_EQUIPPED, type BagState,
+  WEAPONS, weaponById, weaponQualityName, weaponQualityColor, weaponBonus, STAT_LABEL,
+  MAX_EQUIPPED, MAX_WEAPON_TIER, type BagState,
 } from './weapons';
 import { generalById } from './generals';
 
@@ -104,4 +104,117 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
     ctx.font = '15px "PingFang SC", sans-serif';
     ctx.fillText(toast, VIEW_W / 2, VIEW_H - 26);
   }
+}
+
+// ———————————————————————————————————————————————————————————
+// 神兵详情 tips 弹窗：点击背包行打开，展示完整说明 + 装备/卸下按钮
+// ———————————————————————————————————————————————————————————
+
+export type BagPopupHit = 'toggle' | 'close' | 'outside' | null;
+
+const PW = 400;
+const PH = 300;
+const PX = (VIEW_W - PW) / 2;
+const PY = (VIEW_H - PH) / 2;
+const PAD = 22;
+const CLOSE_R = { x: PX + PW - 40, y: PY + 14, w: 26, h: 26 };
+const ACTION_R = { x: PX + PAD, y: PY + PH - 60, w: PW - PAD * 2, h: 44 };
+
+function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const ch of text) {
+    if (ch === '\n') { lines.push(line); line = ''; continue; }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+export function bagPopupHitAt(x: number, y: number): BagPopupHit {
+  if (inRect(x, y, CLOSE_R)) return 'close';
+  if (inRect(x, y, ACTION_R)) return 'toggle';
+  if (x >= PX && x <= PX + PW && y >= PY && y <= PY + PH) return null; // 框内非按钮：吞掉
+  return 'outside';
+}
+
+export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: string): void {
+  const w = weaponById(id);
+  if (!w) return;
+  const tier = bag.owned[id] ?? 0;
+  const has = tier > 0;
+  const on = bag.equipped.includes(id);
+  const gname = generalById(w.general)?.name ?? '';
+  const color = has ? weaponQualityColor(tier) : '#7a7466';
+
+  // 遮罩
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 底板
+  roundRect(ctx, PX, PY, PW, PH, 14);
+  ctx.fillStyle = '#2a2418';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+
+  // 标题
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.fillText(w.name, PX + PAD, PY + 22);
+  ctx.fillStyle = color;
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(has ? `${weaponQualityName(tier)}阶 · 专属「${gname}」` : `未获得 · 专属「${gname}」`, PX + PAD, PY + 52);
+
+  // 关闭
+  roundRect(ctx, CLOSE_R.x, CLOSE_R.y, CLOSE_R.w, CLOSE_R.h, 7);
+  ctx.fillStyle = '#3f3a24';
+  ctx.fill();
+  ctx.fillStyle = '#e8dcc0';
+  ctx.font = 'bold 16px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2 + 1);
+
+  // 分隔线
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PX + PAD, PY + 76);
+  ctx.lineTo(PX + PW - PAD, PY + 76);
+  ctx.stroke();
+
+  // 说明：定位 + 当前加成 + 满阶加成 + 获取方式
+  const curBonus = has ? Math.round(weaponBonus(tier) * 100) : 0;
+  const maxBonus = Math.round(weaponBonus(MAX_WEAPON_TIER) * 100);
+  const usage =
+    `专属「${gname}」神兵，装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
+    (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} +${curBonus}%（金阶满 +${maxBonus}%）。\n`
+         : `尚未获得。获得后可装备：${STAT_LABEL[w.stat]} 随品质提升（金阶满 +${maxBonus}%）。\n`) +
+    `对局中随机掉落，重复掉落自动升品质；背包最多同时装备 ${MAX_EQUIPPED} 件。`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,240,210,0.9)';
+  ctx.font = '15px "PingFang SC", sans-serif';
+  let ty = PY + 90;
+  for (const ln of wrapText(ctx, usage, PW - PAD * 2)) { ctx.fillText(ln, PX + PAD, ty); ty += 24; }
+
+  // 动作按钮：装备 / 已装备(卸下) / 未获得
+  roundRect(ctx, ACTION_R.x, ACTION_R.y, ACTION_R.w, ACTION_R.h, 10);
+  ctx.fillStyle = !has ? '#3a3428' : on ? '#4a4534' : '#c8792b';
+  ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = !has ? '#6a6250' : '#fff6e6';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText(!has ? '未获得' : on ? '已装备（点击卸下）' : '装备', ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
 }
