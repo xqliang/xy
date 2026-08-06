@@ -46,6 +46,12 @@ class FakeView implements AutoPlaceView {
     if (!this.unlocked.has(k) || this.unitsMap.has(k)) return false;
     this.wordsMap.set(k, { char: t.char, general: t.general, cell: to }); this.trayArr.splice(index, 1); return true;
   }
+  moveUnit(from: Cell, to: Cell): boolean {
+    const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
+    const u = this.unitsMap.get(kf); if (!u) return false;
+    if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
+    this.unitsMap.delete(kf); u.cell = to; this.unitsMap.set(kt, u); return true;
+  }
 }
 const rng = () => 0; // 恒 0：从不触发次优、farthest 取确定分支
 
@@ -99,4 +105,27 @@ it('pSubOptimal=1 时会选非最优格（覆盖次优分支，但仍不丢弃/�
   const r = (() => { let s = 1; return () => { s = (s * 48271) % 2147483647; return s / 2147483647; }; })();
   planAutoPlace(v, { rng: r, pSubOptimal: 1 });
   expect(v.placedUnits().length).toBe(1);
+});
+
+it('救援式重排：远程兵占着近格挡住短兵 → 挪远程兵到远格、腾近格给短兵', () => {
+  // 已解锁近格(0,0 r=0) 被 archer 占；远格(0,3 r=3) 空。tray 有 monkey(rge1) 够不着远格。
+  // 期望：archer 挪到 0,3，monkey 落到 0,0。
+  const v = new FakeView([{ kind: 'unit', type: 'monkey', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
+  v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
+  expect(byCell.get('0,0')).toBe('monkey'); // 近格腾给短兵
+  expect(byCell.get('0,3')).toBe('archer'); // 远程兵挪到远格
+  expect(v.tray().length).toBe(0);          // 不丢弃
+});
+
+it('救援不误伤：不把射程更短的占位兵从近格赶走（占位兵射程<待放兵才不挪）', () => {
+  // 近格(0,0)被 monkey(rge1)占；远格(0,3)空。tray 是 cavalry(rge1.5)，够不着远格。
+  // cavalry 射程 > 占位 monkey，若挪走 monkey 反而把更该待在近格的短兵赶走 → 规则拒绝，cavalry 保留。
+  const v = new FakeView([{ kind: 'unit', type: 'cavalry', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
+  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
+  expect(byCell.get('0,0')).toBe('monkey'); // 短兵稳守近格，不被赶走
+  expect(v.tray().length).toBe(1);          // cavalry 够不着，保留（不丢弃、不硬塞）
 });

@@ -734,6 +734,13 @@ export class Battle {
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.aiPlaceFromTray(i, cell),
+      moveUnit: (from, to) => {
+        const u = this.aiUnits.find((x) => x.cell.c === from.c && x.cell.r === from.r);
+        if (!u) return false;
+        if (!this.aiUnlocked.has(cellKey(to.c, to.r)) || !this.aiCellFree(to.c, to.r)) return false;
+        u.cell = { c: to.c, r: to.r };
+        return true;
+      },
     };
   }
 
@@ -1887,6 +1894,15 @@ export class Battle {
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.placeFromTray(i, cell),
+      moveUnit: (from, to) => {
+        const u = this.units.get(cellKey(from.c, from.r));
+        if (!u) return false;
+        if (!this.isUnlocked(to.c, to.r) || !this.cellFree(to.c, to.r)) return false;
+        this.units.delete(cellKey(from.c, from.r));
+        u.cell = { c: to.c, r: to.r };
+        this.units.set(cellKey(to.c, to.r), u);
+        return true;
+      },
     };
   }
 

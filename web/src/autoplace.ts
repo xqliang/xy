@@ -23,6 +23,7 @@ export interface AutoPlaceView {
   nearestPathDist(cell: Cell): number;      // 格到怪路的最近距（格）
   wordChars(general: string): readonly [string, string] | undefined; // 连读顺序 [左,右]
   place(trayIndex: number, cell: Cell): boolean; // 执行落子（挖/放/合成/激活由宿主完成）
+  moveUnit(from: Cell, to: Cell): boolean;  // 把已上场单位从 from 挪到 to（宿主判可行性/是否需等动画；不可行返回 false）
 }
 
 export interface AutoPlaceOpts {
@@ -76,6 +77,27 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         ? reach[Math.floor(opts.rng() * reach.length)]!
         : reach.reduce((best, c) => (view.nearestPathDist(c) > view.nearestPathDist(best) ? c : best), reach[0]!);
       if (view.place(i, cell)) return true;
+    }
+    // 5) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
+    //    且该占位兵能挪到更远的可达空格 → 挪走占位兵、腾出近格给短兵。尽量少扰动现有布局。
+    for (const { t, i } of unitIdx) {
+      const rge = getUnitStat(t.type, t.tier).rge;
+      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步4已放），跳过
+      for (const occ of view.placedUnits()) {
+        if (view.nearestPathDist(occ.cell) > rge + tol) continue; // 占位兵不在短兵可达格，挪它无益
+        const occRge = getUnitStat(occ.type, occ.tier).rge;
+        if (occRge < rge) continue; // 只把射程≥的兵往外挪（更适合远格）
+        let dest: Cell | undefined; // 占位兵能去的、最远的空格；且不再占用短兵可达的近格
+        for (const c of free) {
+          if (view.nearestPathDist(c) > occRge + tol) continue; // 占位兵够不着
+          if (view.nearestPathDist(c) <= rge + tol) continue;   // 别又占短兵能用的近格
+          if (!dest || view.nearestPathDist(c) > view.nearestPathDist(dest)) dest = c;
+        }
+        if (dest && view.moveUnit(occ.cell, dest)) {
+          view.place(i, occ.cell); // 腾出的近格放短兵
+          return true;
+        }
+      }
     }
     return false; // 无可推进动作
   }
