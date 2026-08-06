@@ -605,6 +605,76 @@ export class Battle {
     return out;
   }
 
+  // AI 已解锁/未解锁格（镜像玩家口径；aiCells 已按贴路近→远）
+  aiUnlockedCells(): Cell[] { return this.aiCells.filter((c) => this.aiUnlocked.has(cellKey(c.c, c.r))); }
+  aiLockedCells(): Cell[] { return this.aiCells.filter((c) => !this.aiUnlocked.has(cellKey(c.c, c.r))); }
+  // AI 格是否可落新棋子（无兵、无字牌）
+  private aiCellFree(c: number, r: number): boolean {
+    return !this.aiUnits.some((u) => u.cell.c === c && u.cell.r === r) && !this.aiWords.has(cellKey(c, r));
+  }
+
+  // AI 侧武将激活扫描（镜像 activeGenerals，读 aiWords + aiGeneralStates）
+  aiActiveGenerals(): ActiveGeneral[] {
+    const out: ActiveGeneral[] = [];
+    const used = new Set<string>();
+    for (const w of this.aiWords.values()) {
+      const kL = cellKey(w.cell.c, w.cell.r);
+      if (used.has(kL)) continue;
+      const right = this.aiWords.get(cellKey(w.cell.c + 1, w.cell.r));
+      if (!right) continue;
+      const kR = cellKey(right.cell.c, right.cell.r);
+      if (used.has(kR) || right.general !== w.general) continue;
+      const def = generalById(w.general);
+      if (!def || w.char !== def.chars[0] || right.char !== def.chars[1]) continue;
+      used.add(kL); used.add(kR);
+      let s = this.aiGeneralStates.get(def.id);
+      if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
+      out.push({ def, tier: Math.min(w.tier, right.tier), cells: [w.cell, right.cell], state: s });
+    }
+    return out;
+  }
+
+  // AI 落子入口（planAutoPlace 会调用的子集：shovel / unit(place|merge) / word(place|merge)）
+  aiPlaceFromTray(index: number, to: Cell): boolean {
+    const token = this.aiTray[index];
+    if (!token) return false;
+    const k = cellKey(to.c, to.r);
+    if (token.kind === 'shovel') {
+      if (this.aiUnlocked.has(k)) return false;
+      if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false; // 只挖 AI 可摆放格
+      this.aiUnlocked.add(k);
+      this.aiTray.splice(index, 1);
+      return true;
+    }
+    if (!this.aiUnlocked.has(k)) return false;
+    if (token.kind === 'word') {
+      const exist = this.aiWords.get(k);
+      if (exist) {
+        if (exist.char === token.char && exist.tier === token.tier && exist.tier < MAX_TIER) { exist.tier += 1; this.aiTray.splice(index, 1); return true; }
+        return false;
+      }
+      if (!this.aiCellFree(to.c, to.r)) return false;
+      this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+      this.aiTray.splice(index, 1);
+      return true;
+    }
+    // unit
+    const ex = this.aiUnits.find((u) => u.cell.c === to.c && u.cell.r === to.r);
+    if (ex) {
+      if (canMerge({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier })) {
+        const m = mergeUnits({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier });
+        ex.type = m.type; ex.tier = m.tier; ex.cooldown = 0;
+        this.aiTray.splice(index, 1);
+        return true;
+      }
+      return false;
+    }
+    if (!this.aiCellFree(to.c, to.r)) return false;
+    this.aiUnits.push({ type: token.type, tier: token.tier, cell: { c: to.c, r: to.r }, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
+    this.aiTray.splice(index, 1);
+    return true;
+  }
+
   // 从候选区把第 index 个令牌落到目标格：
   // - 铲子 → 锁定的可摆放格 → 开挖解锁
   // - 兵种 → 空绿格放置；同型同级则合并升阶；非同型则替换（旧单位被换下）
