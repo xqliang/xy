@@ -24,7 +24,7 @@ import { drawSummonTray } from './summon-draw';
 import { planAutoPlace, type AutoPlaceView } from './autoplace';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
-import { DEFAULT_AI_SKILL } from './ai-skill';
+import { DEFAULT_AI_SKILL, skillToKnobs } from './ai-skill';
 import {
   COLS,
   ROWS,
@@ -315,7 +315,6 @@ export class Battle {
   frqBuffT = 0; frqBuffMul = 1; // 风火轮：全体攻速临时增益
   ultFlash = 0; // AOE 技能(紧箍咒/陨石)释放特效计时(秒)
   ultCenter: { c: number; r: number } | null = null; // AOE 爆心（渲染用）
-  aiHeroEnergy = 0; // AI 清场能量（对称：AI 也有定期清场，维持伪竞技公平）
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
@@ -337,9 +336,6 @@ export class Battle {
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
-  // AI 逐个慢速部署：不再开波瞬间铺满，而是把本波该放的格排进队列，随后按 aiDeployInterval 一个个落子（模拟人操作）。
-  private aiDeployQueue: Cell[] = []; // 待部署的目标格（按贴路顺序）
-  private aiDeployTimer = 0; // 距下一个 AI 单位落子的倒计时（秒）
   private nextWaveTimer = 0; // 波间自动切换倒计时
 
   // 候选区（征兵产出）与铲子（开格资源）
@@ -969,7 +965,6 @@ export class Battle {
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
-    if (!this.endless) this.queueAiDeploy(); // 排入本波 AI 部署量，随后在 updateAi 里按人类节奏逐个落子；无尽模式无 AI 对手
     this.status = 'playing';
     this.waveActive = true;
     this.healUsedThisWave = false;
@@ -1217,55 +1212,6 @@ export class Battle {
     return null;
   }
 
-  // AI 部署（模拟一名对手玩家）：把本波该补的格排进队列，随后由 updateAi 按 aiDeployInterval 逐个落子。
-  // 只把「当前为空且未在队列中」的镜像格计入，取前 target 个（贴路优先），保证总量与旧的一次性部署一致。
-  private queueAiDeploy(): void {
-    const target = Math.round((TUNING.aiDeployBase + this.wave * TUNING.aiDeployPerWave) * this.difficultyMul);
-    const queued = new Set(this.aiDeployQueue.map((c) => cellKey(c.c, c.r)));
-    const empties = this.aiCells.filter(
-      (c) => !queued.has(cellKey(c.c, c.r)) && !this.aiUnits.some((u) => u.cell.c === c.c && u.cell.r === c.r),
-    );
-    this.aiDeployQueue.push(...empties.slice(0, target));
-    if (this.aiDeployTimer <= 0) this.aiDeployTimer = TUNING.aiDeployInterval; // 开波后隔一个间隔再放第一个
-  }
-
-  // 逐个落子一步：到点则从队列取一格放 1 阶单位并做一次合成，模拟人「放一个、合一下」的节奏。
-  private tickAiDeploy(dt: number): void {
-    if (this.aiDeployQueue.length === 0) return;
-    this.aiDeployTimer -= dt;
-    if (this.aiDeployTimer > 0) return;
-    const cell = this.aiDeployQueue.shift()!;
-    // 该格仍为空才放置（合成不会占用空格，此处仅作保险）；消费队列以维持总量不超发。
-    if (!this.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) {
-      const types = Object.keys(UNITS) as UnitType[];
-      this.aiUnits.push({ type: this.rng.pick(types), tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0 });
-      this.aiUnlocked.add(cellKey(cell.c, cell.r)); // 部署到的格纳入 AI 可放置区域（逐步"占领"）
-      this.aiMergeUnits();
-    }
-    this.aiDeployTimer = TUNING.aiDeployInterval;
-  }
-
-  // AI 单位合成：同型同级两两合并升阶（放一个后调用一次）
-  private aiMergeUnits(): void {
-    for (let pass = 0; pass < 10; pass++) {
-      let merged = false;
-      for (let i = 0; i < this.aiUnits.length && !merged; i++) {
-        for (let j = i + 1; j < this.aiUnits.length; j++) {
-          const a = this.aiUnits[i]!;
-          const b = this.aiUnits[j]!;
-          if (a.type === b.type && a.tier === b.tier && a.tier < MAX_TIER) {
-            b.tier += 1;
-            b.cooldown = 0;
-            this.aiUnits.splice(i, 1);
-            merged = true;
-            break;
-          }
-        }
-      }
-      if (!merged) break;
-    }
-  }
-
   // AI 单位攻击 AI 怪（与玩家同一套战斗数值，无道具加成、不产特效）
   private updateAiUnits(dt: number): void {
     for (const u of this.aiUnits) {
@@ -1338,38 +1284,31 @@ export class Battle {
     }
   }
 
-  // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
+  // AI 侧推进：真玩家循环（征兵节奏→共享布阵→单位/武将攻击→怪物推进/漏怪扣血/击杀产桃）
   private updateAi(dt: number): void {
-    if (this.endless) return; // 无尽模式无 AI 对手，跳过其部署/清场/推进
-    this.tickAiDeploy(dt); // AI 逐个慢速部署（模拟人手动落子，不再开波瞬间铺满）
-    this.updateAiUnits(dt);
-    // AI 定期清场：随境界增强以跟上高难度怪物(维持对手不被单方碾压)。就绪后带随机时机。
-    if (this.aiMonsters.length > 0) {
-      this.aiHeroEnergy = Math.min(1, this.aiHeroEnergy + dt / (TUNING.aiClearChargeTime * 1.4) * this.difficultyMul);
-      if (this.aiHeroEnergy >= 1 && this.rng.next() < dt * 0.6) {
-        let front = this.aiMonsters[0]!;
-        for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
-        const center = posAlong(this.aiPath, front.dist);
-        const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * TUNING.aiClearDmgMul * 0.7 * this.difficultyMul;
-        for (const m of this.aiMonsters) {
-          const p = posAlong(this.aiPath, m.dist);
-          if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.aiClearRadius) { m.hp -= dmg; m.hitFlash = 0.15; }
-        }
-        this.aiHeroEnergy = 0;
+    if (this.endless) return; // 无尽模式无 AI 对手
+    const knobs = skillToKnobs(this.aiSkill);
+    // 1) 征兵节奏：到点且够桃则征一次，随后共享布阵
+    this.aiSummonTimer -= dt;
+    if (this.aiSummonTimer <= 0) {
+      this.aiSummonTimer = knobs.summonInterval;
+      if (this.aiSummon()) {
+        planAutoPlace(this.buildAiAutoView(), { rng: () => this.aiRng.next(), pSubOptimal: knobs.pSubOptimal });
       }
     }
+    // 2) 战斗：AI 兵 + AI 武将攻击 aiMonsters
+    this.updateAiUnits(dt);
+    this.updateAiGenerals(dt);
+    // 3) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
       m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
-      if (m.hp <= 0) continue;
+      if (m.hp <= 0) { this.creditAiKill(m.isBoss, !!m.skill); continue; } // 击杀产桃（精英近似：带技能怪）
       m.dist += m.spd * dt;
       if (m.dist >= this.aiPathLen) {
         this.aiTangsengHP -= 1;
-        if (this.aiTangsengHP <= 0) {
-          this.aiTangsengHP = 0;
-          this.aiDefeated = true;
-        }
+        if (this.aiTangsengHP <= 0) { this.aiTangsengHP = 0; this.aiDefeated = true; }
         continue;
       }
       survivors.push(m);

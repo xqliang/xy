@@ -70,3 +70,19 @@ describe('AI 经济与征兵', () => {
     expect(b.aiPeach - before).toBe(PEACH_PER_KILL);
   });
 });
+
+describe('updateAi 真玩家循环', () => {
+  it('推进若干秒后，AI 会征兵→布阵→出现 aiUnits（无凭空铺兵、无清场字段）', () => {
+    const b = new Battle(7);
+    (b as any).aiPeach = 999;
+    for (let t = 0; t < 200; t++) (b as any).updateAi(0.1); // 20s
+    expect(b.aiUnits.length).toBeGreaterThan(0);
+    for (const u of b.aiUnits) expect(b.aiUnlocked.has(`${u.cell.c},${u.cell.r}`)).toBe(true);
+  });
+
+  it('无尽模式不驱动 AI', () => {
+    const b = new Battle(7, 1, undefined, undefined, undefined, undefined, undefined, true);
+    for (let t = 0; t < 100; t++) (b as any).updateAi(0.1);
+    expect(b.aiUnits.length).toBe(0);
+  });
+});
