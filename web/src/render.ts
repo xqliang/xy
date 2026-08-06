@@ -478,7 +478,8 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         // 长度从营端吃掉，同时整体变细（丝带慢慢变小）
         drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
-        drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
+        const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+        drawTrayToken(ctx, token, c.x, c.y, tokenSize);
       }
     }
   }
@@ -1746,7 +1747,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
         ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
         ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
         ['范围', b.generalRge(active).toFixed(1)],
-        ['等级', `Lv.${active.state.level}`],
+        ['品质阶', String(active.tier)],
       ]
     : [
         ['基础攻击', def.atk.toFixed(1)],
@@ -2009,13 +2010,6 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
-    // 经验条
-    const need = 10 * g.state.level;
-    const pct = Math.max(0, Math.min(1, g.state.exp / need));
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(x + 4, y + h - 4, w - 8, 3);
-    ctx.fillStyle = '#7ec46a';
-    ctx.fillRect(x + 4, y + h - 4, (w - 8) * pct, 3);
     ctx.restore();
   }
 }
@@ -2737,7 +2731,8 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[ui.dragTrayIndex];
     if (token) {
       src = traySlotCenter(ui.dragTrayIndex);
-      ghost = () => drawTrayToken(ctx, token, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.7);
+      const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+      ghost = () => drawTrayToken(ctx, token, ui.dragPos!.x, ui.dragPos!.y, tokenSize);
     }
   }
   if (!ghost) return;
