@@ -37,7 +37,8 @@ export type AssetKey =
   | 'map-huoyanshan'
   | 'map-liushahe'
   | 'map-baiguling'
-  | 'map-pansidong';
+  | 'map-pansidong'
+  | 'fence-baiguling';
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;

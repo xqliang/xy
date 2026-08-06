@@ -33,6 +33,24 @@ export function isPathCell(map: GameMap, c: number, r: number): boolean {
   return map.path.some((p) => p.c === c && p.r === r);
 }
 
+// 玩家路径或其 180° 镜像（AI 路径）上的格子——两方都不可放置
+export function isEitherPathCell(map: GameMap, c: number, r: number): boolean {
+  if (isPathCell(map, c, r)) return true;
+  const m = mirrorCell({ c, r });
+  return isPathCell(map, m.c, m.r);
+}
+
+// 该格是否属于玩家可放置半场（非任一侧路径）。默认下半场 r>=FENCE_ROW；白骨岭为台阶分界。
+export function isPlayerCell(map: GameMap, c: number, r: number): boolean {
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+  if (isEitherPathCell(map, c, r)) return false;
+  if (map.id === 'baiguling') {
+    const fenceR = c <= 3 ? 5 : 3; // 左 4 列路径在 r=5，右 4 列在 r=3
+    return r > fenceR;
+  }
+  return r >= FENCE_ROW;
+}
+
 export function pathSegments(map: GameMap): { from: Cell; to: Cell; len: number }[] {
   return segmentsOf(map.path);
 }
@@ -99,9 +117,9 @@ export function posAtDistance(map: GameMap, dist: number): { c: number; r: numbe
 
 export function placeableCells(map: GameMap): Cell[] {
   const cells: Cell[] = [];
-  for (let r = FENCE_ROW; r < ROWS; r++) { // 仅玩家半场（下 5 行）
+  for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (!isPathCell(map, c, r)) cells.push({ c, r });
+      if (isPlayerCell(map, c, r)) cells.push({ c, r });
     }
   }
   return cells;
@@ -138,14 +156,24 @@ export const MAPS: GameMap[] = [
     id: 'huoyanshan',
     name: '火焰山',
     theme: { bg0: '#f2e0cc', bg1: '#e6c39a', cellUnlocked: '#f7f1e6', cellLocked: '#bda284', path: '#cf8a55', hud: '#e8c39a', accent: '#c8792b' },
+    // 虎牢关截图为上半场：AI 唐僧(1,5)、出口(8,5)（1起算）→ 代码 AI (0,4)/(7,4)
+    // AI：右缘↑含第3行第8列 → 第2行第6–8列左行 → 蛇形至唐僧；第3行第5–7列为可放格
+    // 我方为 180° 镜像
     path: [
-      { c: -1, r: 5 }, { c: 0, r: 5 }, { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 6, r: 5 }, { c: 7, r: 5 },
-      { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 },
-      { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
+      { c: -1, r: 5 }, { c: 0, r: 5 },
+      { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 0, r: 8 }, // 左缘下行（镜像右缘上行）
+      { c: 1, r: 8 }, { c: 2, r: 8 }, { c: 3, r: 8 }, // 右行（镜像 AI 第2行第6–8列路径）
+      { c: 3, r: 9 }, { c: 4, r: 9 }, { c: 5, r: 9 }, // 底边
+      { c: 5, r: 8 }, { c: 6, r: 8 }, { c: 7, r: 8 }, // 右行
+      { c: 7, r: 7 }, { c: 7, r: 6 }, { c: 7, r: 5 }, // 右缘上行至唐僧
     ],
-    tangseng: { c: 0, r: 9 },
-    initialBlock: [{ c: 1, r: 6 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }],
-    fenceGaps: [3, 4],
+    tangseng: { c: 7, r: 5 },
+    // 竞品初始槽 4,3–6,4；含 AI 第3行第5–6列（镜像为 c=2..3,r=7）
+    initialBlock: [
+      { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 },
+      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+    ],
+    fenceGaps: [], // 半场内蛇形，不穿中线栅栏
   },
   {
     id: 'liushahe',
@@ -164,25 +192,44 @@ export const MAPS: GameMap[] = [
     id: 'baiguling',
     name: '白骨岭',
     theme: { bg0: '#e2e5dc', bg1: '#c6cabd', cellUnlocked: '#f4f6ee', cellLocked: '#a6b199', path: '#98a08a', hud: '#c8ccbf', accent: '#6d7c5b' },
+    // 巨鹿式：路径贴着台阶白骨栅栏的我方外侧走（不穿栅栏）
+    // 栅栏线：左 r=5|6、竖 c=3|4、右 r=3|4；我方走 r=6 / c=4 / r=4
     path: [
-      { c: -1, r: 6 }, { c: 0, r: 6 }, { c: 0, r: 7 }, { c: 1, r: 7 }, { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 }, { c: 5, r: 7 }, { c: 6, r: 7 }, { c: 7, r: 7 },
-      { c: 7, r: 8 }, { c: 7, r: 9 }, { c: 6, r: 9 }, { c: 5, r: 9 }, { c: 4, r: 9 }, { c: 3, r: 9 }, { c: 2, r: 9 }, { c: 1, r: 9 }, { c: 0, r: 9 },
+      { c: -1, r: 9 }, { c: 0, r: 9 }, { c: 0, r: 8 }, { c: 0, r: 7 }, { c: 0, r: 6 }, // 左下角出怪，沿左缘上行至栅栏下
+      { c: 1, r: 6 }, { c: 2, r: 6 }, { c: 3, r: 6 }, // 贴左段栅栏（我方侧）
+      { c: 4, r: 6 }, { c: 4, r: 5 }, { c: 4, r: 4 }, // 拐角外侧上行，贴竖段栅栏（我方侧）
+      { c: 5, r: 4 }, { c: 6, r: 4 }, { c: 7, r: 4 }, // 贴右段栅栏（我方侧）
+      { c: 7, r: 5 }, { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 }, // 右缘下行至唐僧
     ],
-    tangseng: { c: 0, r: 9 },
-    initialBlock: [{ c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }],
-    fenceGaps: [0, 1],
+    tangseng: { c: 7, r: 9 },
+    initialBlock: [
+      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+      { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
+    ],
+    fenceGaps: [], // 台阶白骨堆栅栏无开口
   },
   {
     id: 'pansidong',
     name: '盘丝洞',
     theme: { bg0: '#ecd8e2', bg1: '#d3b0c4', cellUnlocked: '#f8f0f4', cellLocked: '#c2a2b4', path: '#bd8ca6', hud: '#d6b3c6', accent: '#a85a86' },
+    // 云梦泽式（对齐截图箭头；路径贴中线栅栏两侧，不穿越）：
+    // 我方：左下出怪 → 左缘↑ → 第6行右行 → 上一步 → 第5行右行 → 右缘↓ → 右下唐僧
+    // AI：右上出怪 → 右缘↓ → 第3行左行 → 下一步 → 第4行左行 → 左缘↑ → 左上唐僧
+    // 栅栏在 r=4|5；我方走 r>=5，AI 走 r<=4
     path: [
-      { c: 8, r: 6 }, { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 6, r: 7 }, { c: 5, r: 7 }, { c: 4, r: 7 }, { c: 3, r: 7 }, { c: 2, r: 7 }, { c: 1, r: 7 }, { c: 0, r: 7 },
-      { c: 0, r: 8 }, { c: 0, r: 9 }, { c: 1, r: 9 }, { c: 2, r: 9 }, { c: 3, r: 9 }, { c: 4, r: 9 }, { c: 5, r: 9 }, { c: 6, r: 9 }, { c: 7, r: 9 },
+      { c: -1, r: 9 }, { c: 0, r: 9 }, { c: 0, r: 8 }, { c: 0, r: 7 }, { c: 0, r: 6 }, // 左下出怪，左缘上行至第6行
+      { c: 1, r: 6 }, { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 }, // 第6行向右（栅栏我方外侧）
+      { c: 4, r: 5 }, // 上台阶（仍在我方半场）
+      { c: 5, r: 5 }, { c: 6, r: 5 }, { c: 7, r: 5 }, // 第5行向右（贴栅栏我方侧）
+      { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 }, // 右缘下行至唐僧
     ],
     tangseng: { c: 7, r: 9 },
-    initialBlock: [{ c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 3, r: 6 }, { c: 4, r: 6 }, { c: 5, r: 6 }],
-    fenceGaps: [6, 7],
+    // 竞品初始槽 1起算 (4,2)-(6,3) 在上方；我方写镜像底侧
+    initialBlock: [
+      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+      { c: 2, r: 8 }, { c: 3, r: 8 }, { c: 4, r: 8 },
+    ],
+    fenceGaps: [], // 中带连续分隔，无开口
   },
 ];
 
