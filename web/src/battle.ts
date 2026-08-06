@@ -1304,6 +1304,40 @@ export class Battle {
     }
   }
 
+  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分，但用基础数值
+  //（无武器加成 / 无 this.mods / 无羁绊），且无玩家专属副作用（不产 bursts/emit/exp）。
+  // 主动技能（眩晕/治疗等）本阶段有意不镜像——仅基础普攻。对 this.aiMonsters 造成伤害。
+  private updateAiGenerals(dt: number): void {
+    for (const g of this.aiActiveGenerals()) {
+      const stat = generalStat(g.def, g.tier);
+      const s = g.state;
+      const ax = (g.cells[0].c + g.cells[1].c) / 2;
+      const ay = (g.cells[0].r + g.cells[1].r) / 2;
+      const inRange = this.aiMonsters
+        .map((m) => {
+          const p = posAlong(this.aiPath, m.dist);
+          return { m, d: Math.hypot(p.c - ax, p.r - ay), p };
+        })
+        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .sort((a, b) => b.m.dist - a.m.dist);
+      s.cooldown -= dt;
+      if (s.cooldown > 0 || inRange.length === 0) continue;
+      const base = Math.floor(stat.targets);
+      const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
+      const maxTargets = Math.max(1, base + extra);
+      const dmg = damage(stat.atk); // 基础，无 bond/weapon/mods
+      let hit = 0;
+      for (const t of inRange) {
+        if (hit >= maxTargets) break;
+        t.m.hp -= dmg;
+        t.m.hitFlash = 0.12;
+        this.fx.push({ from: { c: ax, r: ay }, to: t.p, ttl: 0.16, maxTtl: 0.16, color: qualityColor(g.tier) });
+        hit++;
+      }
+      s.cooldown = 1 / stat.frq;
+    }
+  }
+
   // AI 侧推进：单位攻击 + 怪物移动 + 漏怪扣血
   private updateAi(dt: number): void {
     if (this.endless) return; // 无尽模式无 AI 对手，跳过其部署/清场/推进
