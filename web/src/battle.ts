@@ -70,6 +70,7 @@ export const TUNING = {
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
   shovelPityAfter: 3, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
+  wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
   summonMaxPerKeyAllOpen: 5, // 阵位全开后：铲子无用，放宽同兵种上限到 5（更快堆同型合成）
   traySize: 5, // 候选区容量
@@ -287,6 +288,7 @@ export class Battle {
   summonCost = TUNING.summonCostStart;
   summonCount = 0;
   private summonsSinceShovel = 0; // 距上次出铲经过的征兵次数（铲子保底计数）
+  private summonsSinceWord = 0; // 距上次出字经过的征兵次数（字牌保底计数）
 
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
@@ -483,6 +485,7 @@ export class Battle {
     if (base.some((t) => t.kind === 'shovel')) this.summonsSinceShovel = 0;
     else this.summonsSinceShovel += 1;
     // 非首次征兵：按字牌掉率把部分「兵」槽转成武将字牌（首次保底不转，维持≥4兵）
+    const forceWord = !firstSummon && this.summonsSinceWord >= TUNING.wordPityAfter;
     const draws: TrayToken[] = base.map((tok) => {
       if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus) {
         const w = this.rng.pick(WORD_POOL);
@@ -490,7 +493,16 @@ export class Battle {
       }
       return tok;
     });
+    if (forceWord && !draws.some((t) => t.kind === 'word')) {
+      const idx = draws.findIndex((t) => t.kind === 'unit');
+      if (idx >= 0) {
+        const w = this.rng.pick(WORD_POOL);
+        draws[idx] = { kind: 'word', char: w.char, general: w.general, tier: 1 };
+      }
+    }
     this.tray = draws;
+    if (draws.some((t) => t.kind === 'word')) this.summonsSinceWord = 0;
+    else if (!firstSummon) this.summonsSinceWord += 1;
     this.message = '把兵拖到绿格；两个同将字牌可凑成武将（占两格）';
     return true;
   }
@@ -509,6 +521,11 @@ export class Battle {
   effectiveSummonCost(): number {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
+
+  /** 测试钩子：将字牌保底计数设为阈值，便于单测触发 forceWord */
+  forceWordPityForTest(): void { this.summonsSinceWord = TUNING.wordPityAfter; }
+  /** 测试钩子：将铲子保底计数设为阈值，便于单测触发 forceShovel */
+  forceShovelPityForTest(): void { this.summonsSinceShovel = TUNING.shovelPityAfter; }
 
   // 候选区内合并：兵种同型同级升阶；字牌同字同阶升阶。
   mergeTrayTokens(from: number, to: number): boolean {
