@@ -72,7 +72,7 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null, activePopup: null, activePopupUntil: 0 };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
@@ -223,8 +223,8 @@ function handleButton(x: number, y: number): boolean {
       if (!btn.enabled) return true;
       if (btn.id === 'summon') battle.summon();
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
-      else if (btn.id === 'act0') battle.triggerActive(0);
-      else if (btn.id === 'act1') battle.triggerActive(1);
+      else if (btn.id === 'act0') { if (battle.activeSlots[0]?.ready) battle.triggerActive(0); else { ui.activePopup = 0; ui.activePopupUntil = performance.now() + 2500; } }
+      else if (btn.id === 'act1') { if (battle.activeSlots[1]?.ready) battle.triggerActive(1); else { ui.activePopup = 1; ui.activePopupUntil = performance.now() + 2500; } }
       else if (btn.id.startsWith('pas')) ui.passivePopup = Number(btn.id.slice(3)); // 点击被动图标看详情
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;

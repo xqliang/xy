@@ -103,6 +103,8 @@ export interface UiState {
   dragPos: { x: number; y: number } | null;
   selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
+  activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
+  activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
 }
 
 // HUD 显示的境界名（由 main 设置）
@@ -327,6 +329,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActiveIcons(ctx, b);
   drawPassiveRow(ctx, b);
   drawPassivePopup(ctx, b, ui);
+  drawActivePopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
 }
@@ -2569,6 +2572,36 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.fillRect(btn.x + 4, by, (btn.w - 8) * Math.max(0, Math.min(1, prog.ratio)), 3);
     }
   }
+}
+
+// 主动技能介绍弹窗：CD 中点击技能图标时展示（就绪时点击是释放，不弹），定时自动淡出
+function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.activePopup === null || performance.now() > ui.activePopupUntil) return;
+  const slot = b.activeSlots[ui.activePopup];
+  if (!slot) return;
+  const def = activeById(slot.id);
+  if (!def) return;
+  const w = 264, h = 108;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  ctx.save();
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fillStyle = 'rgba(30,24,18,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = '#6ab0ff'; // 主动技能=蓝框
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + 16, y + 12);
+  ctx.fillStyle = '#8fd3ff';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(`冷却 ${def.cd}s · 冷却中 ${Math.ceil(slot.cd)}s`, x + 16, y + 40);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(def.desc, x + 16, y + 66);
+  ctx.restore();
 }
 
 // 被动/强化道具详情弹窗（点击图标后显示；点任意处关闭）
