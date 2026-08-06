@@ -26,7 +26,7 @@ export const BOARD_X = Math.round((VIEW_W - CELL * COLS) / 2);
 export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
-export const TRAY_H = 66;
+export const TRAY_H = 78; // 候选区行高（放大：候选槽≈地图格子大小）
 export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「营」拖令牌部署时误点征兵）
 export const CTRL_H = 80; // 行高预留：容纳更大的征兵按钮，下方 PAS 行据此下移不重叠
 export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
@@ -72,8 +72,10 @@ export function getButtons(b: Battle): Button[] {
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
   // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，左端「布阵」，
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
+  const trayRightX = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 8; // 候选槽右侧
   const btns: Button[] = [
-    { id: 'autoplace', label: '布阵', x: 12, y, w: 56, h, enabled: !trayEmpty },
+    // 布阵：移到候选区(tray)右端，与候选槽同高，便于拿到令牌后就近一键落位
+    { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: !trayEmpty },
     // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
@@ -327,8 +329,8 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
 }
 
 // —— 候选区（征兵产出，手工拖到棋盘）——
-const TRAY_LEFT = 64; // 左侧留给"营"标
-const TRAY_SLOT = 66;
+const TRAY_LEFT = 80; // 左侧留给"营"标（与候选槽拉开更大间距）
+const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）
 export function trayIndexAt(x: number, y: number): number | null {
   if (y < TRAY_Y || y > TRAY_Y + TRAY_H) return null;
   const i = Math.floor((x - TRAY_LEFT) / TRAY_SLOT);
@@ -1782,11 +1784,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   }
   // 底部状态提示
   ctx.textAlign = 'left';
-  if (active) {
-    ctx.fillStyle = '#7ec46a';
-    ctx.font = 'bold 12px "PingFang SC", sans-serif';
-    ctx.fillText('✓ 已激活（金框生效）', px + 12, py + ph - 12);
-  } else {
+  if (!active) {
     const other = def.chars.find((c) => c !== w.char) ?? '';
     ctx.fillStyle = '#ff9a6a';
     ctx.font = '12px "PingFang SC", sans-serif';
@@ -2016,12 +2014,6 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
     ctx.globalAlpha = 1;
-    // 名号（框上方小标，去掉 Lv 等级样式）
-    ctx.fillStyle = '#7a4a10';
-    ctx.font = `bold 11px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`${g.def.name}`, x + w / 2, y - 1);
     // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
