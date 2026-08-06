@@ -3,7 +3,6 @@ import {
   COLS,
   ROWS,
   FENCE_ROW,
-  isPathCell,
   isEitherPathCell,
   isPlayerCell,
   posAtDistance,
