@@ -28,6 +28,7 @@ import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagSta
 import { initAudio, playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
+import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
 
 const canvas = getGameCanvas();
 const ctx = canvas.getContext('2d')!;
@@ -63,7 +64,7 @@ let shopScrollY = 0;
 let shopPointerActive = false;
 let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
 let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives);
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
@@ -73,7 +74,7 @@ const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, select
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn);
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, loadAiSkill());
   endHandled = false;
   endlessResult = null;
 }
@@ -427,6 +428,8 @@ function frame(now: number): void {
         screen = 'settle';
       } else {
         const won = battle.status === 'won';
+        // 跨局自适应：按本局胜负把 AI 强度朝 70% 目标微调并持久化（仅非无尽局）
+        saveAiSkill(nextAiSkill(loadAiSkill(), won));
         const change = won ? recordWin(rank) : recordLose(rank);
         rank = change.state;
         const gain = meritReward(won, battle.wave);
@@ -514,7 +517,7 @@ const hook: GameHook = {
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false);
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, loadAiSkill());
     endHandled = false;
     endlessResult = null;
     screen = 'battle';
