@@ -29,3 +29,20 @@ describe('挖格后延迟落子（玩家侧）', () => {
     expect(b.pendingPlace.length).toBe(0);
   });
 });
+
+describe('挖格后延迟落子（AI 侧，对称）', () => {
+  it('AI 刚挖开的格延迟落子，开格动画结束后由 updateFx 落下', () => {
+    const b = new Battle(1) as any;
+    const cell = b.aiUnlockedCells()[0];
+    b.aiDigFx.push({ c: cell.c, r: cell.r, t: 0 });
+    b.aiTray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    const ok = b.aiAutoPlaceApply(0, cell);
+    expect(ok).toBe(true);
+    expect(b.aiUnits.some((u: any) => u.cell.c === cell.c && u.cell.r === cell.r)).toBe(false);
+    expect(b.aiPendingPlace.length).toBe(1);
+    expect(b.aiCellFree(cell.c, cell.r)).toBe(false);
+    b.step(DIG_DUR + 0.1);
+    expect(b.aiUnits.some((u: any) => u.cell.c === cell.c && u.cell.r === cell.r)).toBe(true);
+    expect(b.aiPendingPlace.length).toBe(0);
+  });
+});

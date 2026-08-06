@@ -316,7 +316,8 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
-  drawDigFx(ctx, b);
+  drawDigFx(ctx, b.digFx);
+  drawDigFx(ctx, b.aiDigFx);
   drawBursts(ctx, b);
   drawPeachFloats(ctx, b);
   drawHeroUlt(ctx, b);
@@ -1332,9 +1333,9 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 // 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
-function drawDigFx(ctx: CanvasRenderingContext2D, b: Battle) {
+function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number; t: number }[]) {
   const spr = sprite('item-shovel');
-  for (const d of b.digFx) {
+  for (const d of fxList) {
     const { x, y } = cellCenterPx(d.c, d.r);
     const phase = Math.min(1, d.t / DIG_DUR); // 0→1
     const chop = Math.abs(Math.sin(phase * Math.PI * 2 * 2)); // 两个周期=来回挖两下

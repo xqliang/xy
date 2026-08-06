@@ -652,6 +652,7 @@ export class Battle {
       if (this.aiUnlocked.has(k)) return false;
       if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false; // 只挖 AI 可摆放格
       this.aiUnlocked.add(k);
+      this.aiDigFx.push({ c: to.c, r: to.r, t: 0 }); // 开格动画（对称展示；延迟落子据此判定）
       this.aiTray.splice(index, 1);
       return true;
     }
@@ -728,6 +729,19 @@ export class Battle {
   }
 
   // AI 布阵视图（喂给共享 planAutoPlace）
+  // AI 自动布阵专用落子：镜像玩家 autoPlaceApply——刚挖开、开格动画未完的空格延迟落子（预占）。
+  private aiAutoPlaceApply(index: number, cell: Cell): boolean {
+    const token = this.aiTray[index];
+    if (!token) return false;
+    const animating = this.aiDigFx.some((d) => d.c === cell.c && d.r === cell.r);
+    if (token.kind !== 'shovel' && animating && this.aiUnlocked.has(cellKey(cell.c, cell.r)) && this.aiCellFree(cell.c, cell.r)) {
+      this.aiPendingPlace.push({ token, c: cell.c, r: cell.r });
+      this.aiTray.splice(index, 1);
+      return true;
+    }
+    return this.aiPlaceFromTray(index, cell);
+  }
+
   private buildAiAutoView(): AutoPlaceView {
     return {
       tray: () => this.aiTray,
@@ -737,7 +751,7 @@ export class Battle {
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       wordChars: (general) => generalById(general)?.chars,
-      place: (i, cell) => this.aiPlaceFromTray(i, cell),
+      place: (i, cell) => this.aiAutoPlaceApply(i, cell),
       moveUnit: (from, to) => {
         const u = this.aiUnits.find((x) => x.cell.c === from.c && x.cell.r === from.r);
         if (!u) return false;
