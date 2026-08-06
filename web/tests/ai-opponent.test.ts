@@ -26,12 +26,17 @@ describe('AI 落子与激活', () => {
 
   it('aiActiveGenerals：同将两字连读相邻则激活', () => {
     const b = new Battle(1);
-    const a = b.aiUnlockedCells()[0]!;
-    const right = b.aiUnlockedCells().find((c) => c.r === a.r && c.c === a.c + 1);
-    if (!right) return; // 该地图无横向相邻已解锁格则跳过（不算失败）
-    b.aiWords.set(`${a.c},${a.r}`, { char: '悟', general: 'wukong', tier: 1, cell: a });
-    b.aiWords.set(`${right.c},${right.r}`, { char: '空', general: 'wukong', tier: 1, cell: right });
-    expect(b.aiActiveGenerals().length).toBe(1);
-    expect(b.aiActiveGenerals()[0]!.def.id).toBe('wukong');
+    const cells = b.aiUnlockedCells();
+    let left: { c: number; r: number } | undefined, right: { c: number; r: number } | undefined;
+    for (const l of cells) {
+      const r = cells.find((c) => c.r === l.r && c.c === l.c + 1);
+      if (r) { left = l; right = r; break; }
+    }
+    expect(left && right).toBeTruthy(); // seed-1 地图应存在左右相邻对
+    b.aiWords.set(`${left!.c},${left!.r}`, { char: '悟', general: 'wukong', tier: 1, cell: left! });
+    b.aiWords.set(`${right!.c},${right!.r}`, { char: '空', general: 'wukong', tier: 1, cell: right! });
+    const gens = b.aiActiveGenerals();
+    expect(gens.length).toBe(1);
+    expect(gens[0]!.def.id).toBe('wukong');
   });
 });
