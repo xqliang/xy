@@ -10,7 +10,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, unitColorOf, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, qualityColor, qualityName } from './generals';
@@ -133,24 +133,13 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 
 function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number) {
   const s = size;
-  const color = unitColorOf(type);
-  // 底座：类型色圆角背景 + 描边，保证辨识度
-  roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
-  const grad = ctx.createLinearGradient(x, y - s / 2, x, y + s / 2);
-  grad.addColorStop(0, shade(color, 0.05));
-  grad.addColorStop(1, shade(color, -0.5));
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = shade(color, 0.2);
-  ctx.stroke();
-
+  // 不再画类型色底座：棋盘格与托盘都直接用透明立绘，无背景色
   const spr = sprite(unitAsset(type));
   if (spr) {
-    // 立绘按 contain 缩放居中
-    const pad = s * 0.05;
-    const box = s - pad * 2;
-    const scale = Math.min(box / spr.width, box / spr.height);
+    // 立绘按 contain 缩放居中，铺满整格；各类型内容留白不同，按系数微调视觉大小
+    const typeScale = type === 'monkey' ? 1.15 : type === 'archer' || type === 'spear' ? 1.05 : 1; // 棍×1.15 / 射手·矛×1.05 / 骑手×1
+    const box = s;
+    const scale = Math.min(box / spr.width, box / spr.height) * typeScale;
     const dw = spr.width * scale;
     const dh = spr.height * scale;
     ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
@@ -281,16 +270,6 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       break;
     }
   }
-}
-
-function shade(hex: string, amt: number): string {
-  const h = hex.replace('#', '');
-  const n = parseInt(h, 16);
-  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  r = Math.max(0, Math.min(255, Math.round(r * (1 + amt))));
-  g = Math.max(0, Math.min(255, Math.round(g * (1 + amt))));
-  b = Math.max(0, Math.min(255, Math.round(b * (1 + amt))));
-  return `rgb(${r},${g},${b})`;
 }
 
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
@@ -593,20 +572,20 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       const onPath = isEitherPathCell(b.map, c, r);
       const inPlayer = isPlayerCell(b.map, c, r);
       const cellOpen = inPlayer ? unlocked.has(`${c},${r}`) : !onPath && aiUnlocked.has(`${c},${r}`);
-      const ix = x + 1.5, iy = y + 1.5, iw = CELL - 3, ih = CELL - 3;
+      const ix = x, iy = y, iw = CELL, ih = CELL; // 紧凑：格子铺满、相邻边贴合无空白
       if (onPath) {
-        // 路径格：底色半透明淡化（偏灰、次要），与可放置交界的加粗黑线另画
-        roundRect(ctx, ix, iy, iw, ih, 4);
+        // 路径格：半透明浅色走道——透出下方背景图，仍明显比未开垦深色地更亮
+        roundRect(ctx, ix, iy, iw, ih, 2);
         ctx.save();
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 0.5; // 路面半透明，透出背景
+        ctx.fillStyle = th.cellUnlocked;
+        ctx.fill();
+        ctx.globalAlpha = 0.3;
         ctx.fillStyle = th.path;
         ctx.fill();
         ctx.restore();
-        // 略压一层冷灰，让路更退后
-        ctx.fillStyle = 'rgba(90,95,88,0.22)';
-        ctx.fill();
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = 'rgba(30,26,20,0.45)';
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(90,72,42,0.4)';
         ctx.stroke();
       } else if (cellOpen) {
         // 可放置格：米白 + 内斜角高光 + 柔和投影
@@ -614,7 +593,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
         ctx.shadowColor = 'rgba(60,50,35,0.28)';
         ctx.shadowBlur = 4;
         ctx.shadowOffsetY = 2;
-        roundRect(ctx, ix, iy, iw, ih, 5);
+        roundRect(ctx, ix, iy, iw, ih, 2);
         ctx.fillStyle = th.cellUnlocked;
         ctx.fill();
         ctx.restore();
@@ -626,18 +605,20 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
         ctx.beginPath(); ctx.moveTo(ix + 4, iy + ih - 1.5); ctx.lineTo(ix + iw - 4, iy + ih - 1.5); ctx.stroke();
         ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(70,60,45,0.35)';
-        roundRect(ctx, ix, iy, iw, ih, 5); ctx.stroke();
+        roundRect(ctx, ix, iy, iw, ih, 2); ctx.stroke();
       } else {
-        // 不可放置格：同色系中间调 + 细点纹理 + 内边阴影
-        roundRect(ctx, ix, iy, iw, ih, 4);
+        // 不可放置格（未开垦）：主题深色调 + 强压深棕 → 全图最暗档，与浅色路径拉开对比
+        roundRect(ctx, ix, iy, iw, ih, 2);
         ctx.fillStyle = th.cellLocked;
+        ctx.fill();
+        ctx.fillStyle = 'rgba(28,20,10,0.34)';
         ctx.fill();
         // 内边阴影
         ctx.save();
         ctx.clip();
         ctx.strokeStyle = 'rgba(40,45,35,0.28)';
         ctx.lineWidth = 3;
-        roundRect(ctx, ix + 1, iy + 1, iw - 2, ih - 2, 4); ctx.stroke();
+        roundRect(ctx, ix + 1, iy + 1, iw - 2, ih - 2, 2); ctx.stroke();
         // 细点纹理（确定性散点，随格坐标变化）
         ctx.fillStyle = 'rgba(50,55,42,0.28)';
         for (let k = 0; k < 5; k++) {
@@ -648,7 +629,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
         ctx.restore();
         ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(40,36,30,0.3)';
-        roundRect(ctx, ix, iy, iw, ih, 4); ctx.stroke();
+        roundRect(ctx, ix, iy, iw, ih, 2); ctx.stroke();
       }
     }
   }
@@ -942,6 +923,10 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
     drawPansidongSilkFence(ctx, b);
     return;
   }
+  if (b.map.id === 'liushahe') {
+    drawLiushaheWaterFence(ctx, b);
+    return;
+  }
   const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
   const gaps = new Set(b.map.fenceGaps);
   ctx.save();
@@ -957,6 +942,26 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = '#5f4520';
     ctx.fillRect(x + CELL / 2 - 3, y - 12, 6, 24);
   }
+  ctx.restore();
+}
+
+// 流沙河：用 Seedream 生成的"浪花条"贴图一片一片平铺满整条中线栅栏，严格隔断上下半场
+function drawLiushaheWaterFence(ctx: CanvasRenderingContext2D, _b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL; // 栅栏线
+  const spr = sprite('fence-liushahe');
+  if (!spr || !spr.width) {
+    // 素材未就绪时回退：一条纯色水带，避免出现空栅栏（不留缺口）
+    ctx.save();
+    ctx.fillStyle = 'rgba(60,120,140,0.92)';
+    ctx.fillRect(BOARD_X, y - CELL * 0.22, COLS * CELL, CELL * 0.44);
+    ctx.restore();
+    return;
+  }
+  const boardW = COLS * CELL;
+  // 单向浪花条：整条横铺满栅栏（同朝向、不翻转），严格隔断上下半场、不留缺口
+  const drawH = CELL * 1.5; // 河带高度（略压扁，避免过高）
+  ctx.save();
+  ctx.drawImage(spr, BOARD_X, y - drawH / 2, boardW, drawH);
   ctx.restore();
 }
 

@@ -13,8 +13,9 @@ const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new'
 const page = await browser.newPage();
 await page.setViewport({ width: 560, height: 1010, deviceScaleFactor: 2 });
 
+const PORT = process.env.PORT || 5180;
 for (const id of MAPS) {
-  await page.goto(`http://127.0.0.1:5180/?map=${id}`, { waitUntil: 'networkidle0' });
+  await page.goto(`http://127.0.0.1:${PORT}/?map=${id}`, { waitUntil: 'networkidle0' });
   await page.waitForFunction('window.__game && window.__game.snapshot');
   await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
   // 布几个兵展示
