@@ -175,16 +175,21 @@ it('铲子加权：同贴路距时优先挖靠近出口的格', () => {
   expect(v.diggable.some((c) => c.c === 4)).toBe(true); // 远处未挖
 });
 
-it('digPriorityScore：三边>两边>一边>未贴路；未贴按离路距；再叠加出口', () => {
-  expect(digPriorityScore(3, 0, 9)).toBeLessThan(digPriorityScore(2, 0, 0));
-  expect(digPriorityScore(2, 0, 9)).toBeLessThan(digPriorityScore(1, 0, 0));
-  expect(digPriorityScore(1, 0, 9)).toBeLessThan(digPriorityScore(0, 1, 0));
-  expect(digPriorityScore(0, 1, 0)).toBeLessThan(digPriorityScore(0, 3, 0));
-  expect(digPriorityScore(1, 0, 1)).toBeLessThan(digPriorityScore(1, 0, 3));
+it('digPriorityScore：1格优先于远距三边；0格≈2格；同距贴边多更好；出口微调', () => {
+  // 一边但离路1格 << 三边但离路4格
+  expect(digPriorityScore(1, 1, 5)).toBeLessThan(digPriorityScore(3, 4, 0));
+  // 0格与2格同档（差仅来自贴边/出口）
+  expect(Math.abs(digPriorityScore(0, 0, 0) - digPriorityScore(0, 2, 0))).toBeLessThan(0.01);
+  // 同为1格：三边优于一边
+  expect(digPriorityScore(3, 1, 0)).toBeLessThan(digPriorityScore(1, 1, 0));
+  // 同贴边同距离：更近出口更好
+  expect(digPriorityScore(1, 1, 1)).toBeLessThan(digPriorityScore(1, 1, 3));
+  // 1格优于2格（利于就近输出）
+  expect(digPriorityScore(1, 1, 0)).toBeLessThan(digPriorityScore(1, 2, 0));
 });
 
-it('铲子优先挖贴路边数更多的格', () => {
-  // FakeView：r=1 一边贴路；r=3 未贴。应挖一边贴路格
+it('铲子优先挖离路约1格的格（优于更远格）', () => {
+  // FakeView：r=nearestPathDist；r=1 一边贴路；r=3 更远。应挖 r=1
   const v = new FakeView([{ kind: 'shovel' }], [], [{ c: 2, r: 3 }, { c: 2, r: 1 }]);
   planAutoPlace(v, { rng });
   expect(v.freeCells().some((c) => c.r === 1)).toBe(true);

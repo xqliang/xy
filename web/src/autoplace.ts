@@ -55,22 +55,33 @@ export interface AutoPlaceOpts {
 }
 
 /**
- * 洛阳铲挖格优先级（分越低越优先）：
- * 1) 贴路边数：三边 > 两边 > 一边 > 未贴路
- * 2) 未贴路时按离路最近距离
+ * 洛阳铲挖格优先级（分越低越优先），服务「就近部署持续输出」：
+ * 1) 离路距离：约 1 格最优；0 格与 2 格接近；更远惩罚递增（远距三边也不压过近距一边）
+ * 2) 同距离档内：贴路边数越多越好（弱权重）
  * 3) 再叠加离出怪口距离
  */
-export const DIG_PATH_WEIGHT = 1;
+export const DIG_DIST_WEIGHT = 10;
+export const DIG_TOUCH_WEIGHT = 1;
 export const DIG_EXIT_WEIGHT = 1;
-/** 贴路边数档位间距（保证边数差压过距离/出口微调） */
-export const DIG_TOUCH_BAND = 100;
+
+/** 离路距离惩罚：~1 格=0；~0 与 ~2 格同档；更远线性加重 */
+export function digPathDistPenalty(pathDist: number): number {
+  const d = Math.max(0, pathDist);
+  if (d > 0.5 && d <= 1.5) return 0; // 约 1 格：贴路外侧，近战/中距最好开火位
+  if (d <= 0.5) return 1;             // 约 0 格
+  if (d <= 2.5) return 1;             // 约 2 格（与 0 格同权）
+  return 1 + (d - 2.5);               // 更远
+}
 
 export function digPriorityScore(touchSides: number, pathDist: number, exitDist: number): number {
   const sides = Math.max(0, Math.min(4, Math.floor(touchSides)));
-  // 3边→1、2边→2、1边→3、未贴→4（越小越好）
-  const band = sides > 0 ? 4 - sides : 4;
-  const distPart = sides > 0 ? 0 : DIG_PATH_WEIGHT * Math.max(0, pathDist);
-  return band * DIG_TOUCH_BAND + distPart + DIG_EXIT_WEIGHT * Math.max(0, exitDist);
+  // 贴边越多分越低；权重远小于距离档，避免「远端三边」压过「近端一边」
+  const touchPart = DIG_TOUCH_WEIGHT * (4 - sides);
+  return (
+    DIG_DIST_WEIGHT * digPathDistPenalty(pathDist) +
+    touchPart +
+    DIG_EXIT_WEIGHT * Math.max(0, exitDist)
+  );
 }
 
 /**
@@ -214,7 +225,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return view.swapUnits(best.hi.cell, best.lo.cell);
   }
 
-  /** 可挖格：贴路边数优先（三边>两边>一边>未贴），未贴按离路距，再叠加近出口 */
+  /** 可挖格：离路~1格优先，贴边数弱加权，再叠加近出口 */
   function sortedDigTargets(): Cell[] {
     return view.diggableCells().slice().sort((a, b) => {
       const sa = digPriorityScore(view.pathTouchSides(a), view.nearestPathDist(a), view.exitDist(a));
