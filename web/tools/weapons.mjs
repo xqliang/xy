@@ -26,10 +26,10 @@ const res = await page.evaluate(async ()=>{
   // 加成生效：装备如意金箍棒(范围)后，大圣范围应变大
   g.restart(5,1); g.enterBattle(); b=g.battle;
   const cells=b.unlockedCells(); const a=cells[0], nb={c:a.c+1,r:a.r};
-  b.words.set(`${a.c},${a.r}`,{char:'大',general:'wukong',tier:1,cell:a});
-  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'wukong',tier:1,cell:nb});
+  b.words.set(`${a.c},${a.r}`,{char:'大',general:'dasheng',tier:1,cell:a});
+  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'dasheng',tier:1,cell:nb});
   const ag=b.activeGenerals()[0];
-  r.weaponBonusesInjected = JSON.stringify(b.weaponBonuses.wukong||null);
+  r.weaponBonusesInjected = JSON.stringify(b.weaponBonuses.dasheng||null);
   r.rgeWithWeapon = +b.generalRge(ag).toFixed(3);
   return r;
 });

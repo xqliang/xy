@@ -16,8 +16,8 @@ const res = await page.evaluate(()=>{
   const cells=b.unlockedCells();
   // 手工放置：大(c) 与 圣(c+1) 相邻 → 应激活大圣；再放一个孤立的"八"→ 不应激活
   const a=cells[0], nb={c:a.c+1,r:a.r};
-  b.words.set(`${a.c},${a.r}`,{char:'大',general:'wukong',tier:1,cell:a});
-  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'wukong',tier:1,cell:nb});
+  b.words.set(`${a.c},${a.r}`,{char:'大',general:'dasheng',tier:1,cell:a});
+  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'dasheng',tier:1,cell:nb});
   const lone=cells.find(x=>x.c!==a.c&&x.c!==nb.c);
   b.words.set(`${lone.c},${lone.r}`,{char:'八',general:'bajie',tier:1,cell:lone});
   const before=b.activeGenerals().map(x=>x.def.name);

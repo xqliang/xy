@@ -456,12 +456,12 @@ it('棋盘已有可配对两字（general 不同）时优先迁到相邻激活',
   // 「大」hint 大圣、「蟒」hint 大蟒 —— 按字匹配应组成大蟒
   const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 1, r: 2 }]);
   v.wordChars = (g: string) => {
-    if (g === 'wukong') return ['大', '圣'] as const;
-    if (g === 'wuneng') return ['大', '蟒'] as const;
+    if (g === 'dasheng') return ['大', '圣'] as const;
+    if (g === 'damang') return ['大', '蟒'] as const;
     return undefined;
   };
-  v.wordsMap.set('0,2', { char: '大', general: 'wukong', cell: { c: 0, r: 2 }, tier: 1 });
-  v.wordsMap.set('3,2', { char: '蟒', general: 'wuneng', cell: { c: 3, r: 2 }, tier: 1 });
+  v.wordsMap.set('0,2', { char: '大', general: 'dasheng', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('3,2', { char: '蟒', general: 'damang', cell: { c: 3, r: 2 }, tier: 1 });
   v.unlocked.add('0,2');
   v.unlocked.add('3,2');
   planAutoPlace(v, { rng });

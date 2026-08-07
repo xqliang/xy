@@ -10,7 +10,7 @@ describe('大招类型派生 ultTypeOf', () => {
   });
 
   it('其余技能类型 = 群攻 aoe', () => {
-    for (const id of ['wukong', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'bailong']) {
+    for (const id of ['dasheng', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'bailong']) {
       const def = GENERALS.find((g) => g.id === id)!;
       expect(ultTypeOf(def)).toBe('aoe');
     }

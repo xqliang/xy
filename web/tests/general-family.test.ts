@@ -41,8 +41,8 @@ describe('门派配置', () => {
   });
 
   it('按左右字序匹配；共享字可组成不同武将', () => {
-    expect(matchGeneral('大', '圣')?.id).toBe('wukong');
-    expect(matchGeneral('大', '蟒')?.id).toBe('wuneng');
+    expect(matchGeneral('大', '圣')?.id).toBe('dasheng');
+    expect(matchGeneral('大', '蟒')?.id).toBe('damang');
     expect(matchGeneral('圣', '大')).toBeUndefined();
     expect(partnerChars('白').sort()).toEqual(['骨', '龙'].sort());
     expect(generalsWithChar('牛').map((g) => g.id).sort()).toEqual(['niumowang', 'niulang', 'qingniu'].sort());

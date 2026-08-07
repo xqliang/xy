@@ -31,8 +31,8 @@ export interface WeaponDef {
 
 // 每位武将一件专属神兵（与 GENERALS 一一对应）
 export const WEAPONS: WeaponDef[] = [
-  { id: 'jingubang', name: '如意金箍棒', general: 'wukong', stat: 'rge' },
-  { id: 'xiaodingpa', name: '小钉耙', general: 'wuneng', stat: 'atk' },
+  { id: 'jingubang', name: '如意金箍棒', general: 'dasheng', stat: 'rge' },
+  { id: 'xiaodingpa', name: '小钉耙', general: 'damang', stat: 'atk' },
   { id: 'sanjianliangrendao', name: '三尖两刃刀', general: 'erlang', stat: 'atk' },
   { id: 'zhiyunjian', name: '织云箭', general: 'niulang', stat: 'frq' },
   { id: 'huojianqiang', name: '火尖枪', general: 'nezha', stat: 'frq' },

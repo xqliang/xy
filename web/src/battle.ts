@@ -1865,7 +1865,7 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
-        const isStaff = g.def.id === 'wukong';
+        const isStaff = g.def.id === 'dasheng';
         const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
         this.fx.push({
           from: { c: ax, r: ay },
@@ -2101,7 +2101,7 @@ export class Battle {
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
         // 悟空普攻：复用原棍兵金箍棒旋转特效；其余武将仍用短线弹道
-        const isStaff = g.def.id === 'wukong';
+        const isStaff = g.def.id === 'dasheng';
         const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
         this.fx.push({
           from: { c: ax, r: ay },

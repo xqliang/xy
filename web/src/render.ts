@@ -2034,7 +2034,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
       case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier); break;
       // —— 群攻 ——
-      case 'wukong': drawUltWukong(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R); break;
       case 'honghaier': drawUltHonghaier(ctx, x, y, prog, fade, f.tier, R); break;
       case 'bajie': drawUltBajie(ctx, x, y, prog, fade, f.tier, R); break;
       case 'tieshan': drawUltTieshan(ctx, x, y, prog, fade, f.tier, R); break;
@@ -2114,7 +2114,7 @@ function drawUltErlang(ctx: CanvasRenderingContext2D, x: number, y: number, p: n
 
 // —— 输出群攻 ——
 // 悟空 金箍棒大范围横扫：原棍兵旋转残影特效放大版 + 扇形扫掠
-function drawUltWukong(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+function drawUltDasheng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
   const sweep = easeOut(p);
   const a0 = -Math.PI * 0.9, a1 = a0 + Math.PI * 1.8 * sweep;
   const rad = R * 0.9;
