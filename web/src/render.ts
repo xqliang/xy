@@ -913,29 +913,36 @@ function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: numb
   return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
 }
 
-// 开局唐僧归位前：在出怪口沿行进方向循环播放三个箭头，提示怪物走向
+// 开局唐僧归位前：三箭头接力循环——半透明自格边出现 → 前移变实 → 下一箭在起点接力
 function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.introDone) return;
   if (b.status !== 'ready' && b.status !== 'playing') return;
   const drawOn = (path: { c: number; r: number }[]) => {
     const info = pathEntranceDir(path);
     if (!info) return;
-    const { x, y } = cellCenterPx(info.c, info.r);
-    const ang = Math.atan2(info.dr, info.dc);
-    const size = CELL * 0.48; // 约半格
-    const step = CELL * 0.42; // 三箭头沿路间距
-    const t = performance.now() / 1000;
-    const beat = Math.floor(t * 2.4) % 3; // 约 0.42s 一拍，三箭轮亮
+    const { x: cx, y: cy } = cellCenterPx(info.c, info.r);
+    // 起点：第 2 格朝向出口的那条边（中心沿反方向退半格），避免压闸门
+    const sx = cx - info.dc * CELL * 0.5;
+    const sy = cy - info.dr * CELL * 0.5;
+    const travel = CELL * 1.7; // 单箭行程（约两格），三箭相位差 1/3 形成接力
+    const period = 2.5; // 秒：一箭从出现到淡出
+    const t = performance.now() / 1000 / period;
+    const size = CELL * 0.48;
     ctx.save();
     for (let i = 0; i < 3; i++) {
-      // 锚在第 2 格中心，三箭沿路向前排布（不再往回偏到出口）
-      const along = i * step;
-      const ax = x + info.dc * along;
-      const ay = y + info.dr * along;
-      const lit = i === beat;
-      const alpha = lit ? 0.95 : 0.28;
+      // i=0 领先；每隔 1/3 周期下一箭在起点半透明出现
+      const phase = ((t - i / 3) % 1 + 1) % 1;
+      const along = phase * travel;
+      const ax = sx + info.dc * along;
+      const ay = sy + info.dr * along;
+      // 半透明出场 → 前移变实 → 末端淡出，循环无缝
+      let alpha: number;
+      if (phase < 0.28) alpha = 0.4 + (phase / 0.28) * 0.55;
+      else if (phase < 0.72) alpha = 0.95;
+      else alpha = 0.95 * (1 - (phase - 0.72) / 0.28);
+      if (alpha < 0.04) continue;
       ctx.globalAlpha = alpha;
-      drawPathChevron(ctx, ax, ay, ang, size, lit);
+      drawPathChevron(ctx, ax, ay, Math.atan2(info.dr, info.dc), size, alpha > 0.7);
     }
     ctx.restore();
   };
@@ -943,7 +950,7 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
   if (!b.aiDefeated && !b.endless) drawOn(b.aiPath);
 }
 
-/** 半格大小的空心箭头（> 形），沿 ang 朝向 */
+/** 半格大小的空心箭头（> 形），沿 ang 朝向；lit 时加亮描边与光晕 */
 function drawPathChevron(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, size: number, lit: boolean) {
   const arm = size * 0.42;
   ctx.save();
