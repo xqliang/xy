@@ -887,17 +887,30 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   ctx.restore();
 }
 
-/** 路径首个在网格内的格，以及朝下一格的单位方向（用于出怪指引箭头） */
+/** 出怪指引：从路径「出口后第 2 个在网格内的点」起画，避免与闸门重叠 */
 function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: number; dc: number; dr: number } | null {
+  let firstInGrid = -1;
   for (let i = 0; i < path.length; i++) {
     const p = path[i]!;
-    if (p.c < 0 || p.c >= COLS || p.r < 0 || p.r >= ROWS) continue;
-    const next = path[i + 1];
-    if (!next) return { c: p.c, r: p.r, dc: 1, dr: 0 };
-    const len = Math.hypot(next.c - p.c, next.r - p.r) || 1;
-    return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
+    if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) {
+      firstInGrid = i;
+      break;
+    }
   }
-  return null;
+  if (firstInGrid < 0) return null;
+  // 第 2 格：出口下一格；若路径过短则退回出口格
+  const startIdx = firstInGrid + 1 < path.length ? firstInGrid + 1 : firstInGrid;
+  const p = path[startIdx]!;
+  const next = path[startIdx + 1];
+  if (!next) {
+    // 已是末点：用「上一格→本格」方向兜底
+    const prev = path[startIdx - 1];
+    if (!prev) return { c: p.c, r: p.r, dc: 1, dr: 0 };
+    const len = Math.hypot(p.c - prev.c, p.r - prev.r) || 1;
+    return { c: p.c, r: p.r, dc: (p.c - prev.c) / len, dr: (p.r - prev.r) / len };
+  }
+  const len = Math.hypot(next.c - p.c, next.r - p.r) || 1;
+  return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
 }
 
 // 开局唐僧归位前：在出怪口沿行进方向循环播放三个箭头，提示怪物走向
@@ -915,7 +928,8 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
     const beat = Math.floor(t * 2.4) % 3; // 约 0.42s 一拍，三箭轮亮
     ctx.save();
     for (let i = 0; i < 3; i++) {
-      const along = (i - 0.2) * step;
+      // 锚在第 2 格中心，三箭沿路向前排布（不再往回偏到出口）
+      const along = i * step;
       const ax = x + info.dc * along;
       const ay = y + info.dr * along;
       const lit = i === beat;
