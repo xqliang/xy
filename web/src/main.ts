@@ -10,6 +10,9 @@ import {
   VIEW_H,
   hitPauseBtn,
   hitPauseContinue,
+  hitMonsterAt,
+  isPlayerTangsengCell,
+  isAiTangsengCell,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -41,6 +44,37 @@ function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolea
   );
   if (!g) return false;
   return g.cells.some((cc) => cc.c === target.c && cc.r === target.r);
+}
+
+function isSameAiSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
+  if (!selected) return false;
+  if (selected.c === target.c && selected.r === target.r) return true;
+  const g = b.aiActiveGenerals().find((ag) =>
+    ag.cells.some((cc) => cc.c === selected.c && cc.r === selected.r),
+  );
+  if (!g) return false;
+  return g.cells.some((cc) => cc.c === target.c && cc.r === target.r);
+}
+
+function aiOccupies(b: Battle, cell: Cell): boolean {
+  if (b.aiUnits.some((u) => u.cell.c === cell.c && u.cell.r === cell.r)) return true;
+  return b.aiWords.has(`${cell.c},${cell.r}`);
+}
+
+function isSameTangsengSelection(b: Battle, selected: Cell | null, target: Cell, side: 'player' | 'ai'): boolean {
+  if (!selected) return false;
+  const hit = side === 'player' ? isPlayerTangsengCell : isAiTangsengCell;
+  return hit(b, selected) && hit(b, target);
+}
+
+function clearBoardSelect(): void {
+  ui.selected = null;
+  ui.selectedMonster = null;
+}
+
+function selectBoardCell(cell: Cell): void {
+  ui.selectedMonster = null;
+  ui.selected = { c: cell.c, r: cell.r };
 }
 
 const canvas = getGameCanvas();
@@ -88,7 +122,7 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
@@ -314,7 +348,7 @@ function onPointerDown(e: PointerEvent) {
   if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {
     playSfx('click');
     ui.paused = true;
-    ui.selected = null;
+    clearBoardSelect();
     ui.dragFrom = null;
     ui.dragTrayIndex = null;
     ui.dragPos = null;
@@ -322,24 +356,48 @@ function onPointerDown(e: PointerEvent) {
   }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
-  if (handleButton(x, y)) { ui.selected = null; return; }
+  if (handleButton(x, y)) { clearBoardSelect(); return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
   if (ti !== null && battle.tray[ti]) {
-    ui.selected = null;
+    clearBoardSelect();
     ui.dragTrayIndex = ti;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  // 棋盘拖拽（兵/武将字牌/桃树：重新布阵、合成、移动）或点击选中查看信息
+  // 双方妖怪（含妖王/小 Boss/精英/骑兵）：优先点选查看 tips
+  const monHit = hitMonsterAt(battle, x, y);
+  if (monHit) {
+    const same = ui.selectedMonster?.side === monHit.side && ui.selectedMonster.id === monHit.id;
+    ui.selected = null;
+    ui.selectedMonster = same ? null : monHit;
+    return;
+  }
+  // AI 半场单位/字牌/唐僧：点击查看范围与 tips（不可拖拽）
   const cell = pxToCell(x, y);
+  if (cell && (aiOccupies(battle, cell) || isAiTangsengCell(battle, cell))) {
+    const same = isAiTangsengCell(battle, cell)
+      ? isSameTangsengSelection(battle, ui.selected, cell, 'ai')
+      : isSameAiSelection(battle, ui.selected, cell);
+    if (same) clearBoardSelect();
+    else selectBoardCell(cell);
+    return;
+  }
+  // 我方唐僧：点击查看 tips（不可拖拽）
+  if (cell && isPlayerTangsengCell(battle, cell)) {
+    const same = isSameTangsengSelection(battle, ui.selected, cell, 'player');
+    if (same) clearBoardSelect();
+    else selectBoardCell(cell);
+    return;
+  }
+  // 棋盘拖拽（兵/武将字牌/桃树：重新布阵、合成、移动）或点击选中查看信息
   if (cell && (battle.units.has(`${cell.c},${cell.r}`) || battle.words.has(`${cell.c},${cell.r}`) || battle.trees.has(`${cell.c},${cell.r}`))) {
     ui.dragFrom = cell;
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
   } else {
-    ui.selected = null; // 点击空白处取消选中
+    clearBoardSelect(); // 点击空白处取消选中
   }
 }
 canvas.addEventListener('pointerdown', (e) => { onPointerDown(e); scheduleFrame(); });
@@ -405,10 +463,11 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
         // 已激活武将：点左右任一格都视为同一选中态（双字同时选中）
         const same = isSameSelection(battle, ui.selected, target);
-        ui.selected = same ? null : { c: target.c, r: target.r };
+        if (same) clearBoardSelect();
+        else selectBoardCell(target);
       } else {
         battle.dragBoard(ui.dragFrom, target);
-        ui.selected = null;
+        clearBoardSelect();
       }
     }
   }
@@ -595,7 +654,11 @@ const hook: GameHook = {
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),
-  select: (cell: Cell | null) => { ui.selected = cell; draw(ctx, battle, ui); },
+  select: (cell: Cell | null) => {
+    ui.selectedMonster = null;
+    ui.selected = cell;
+    draw(ctx, battle, ui);
+  },
   enterBattle: () => { screen = 'battle'; scheduleFrame(); },
   openShop: () => { shopScrollY = 0; shopPopup = null; screen = 'shop'; scheduleFrame(); },
   openCodex: () => { screen = 'codex'; scheduleFrame(); },

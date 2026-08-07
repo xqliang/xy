@@ -12,10 +12,10 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
+import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -104,6 +104,7 @@ export interface UiState {
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
   selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
+  selectedMonster: { side: 'player' | 'ai'; id: number } | null; // 点击选中的妖怪（按 id，可跨格移动）
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
@@ -320,7 +321,7 @@ function monsterStatusItems(m: {
   slowT: number;
   hasteT: number;
   healFlash: number;
-}): { icon: string; color: string }[] {
+}): { icon: string; color: string; name: string }[] {
   const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal'];
   const on: Record<MonsterStatusId, boolean> = {
     stun: m.stunT > 0,
@@ -2402,10 +2403,20 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 
 // 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
 // 点击字牌：高亮该字牌；若已激活则双字同时选中，并画攻击范围与武将信息面板
-function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: string; general: string; tier: number; cell: { c: number; r: number } }) {
+// panelHalf: tips 放哪半场（选中玩家单位→ai 半场；选中 AI 单位→player 半场，避免挡范围环）
+// fromAi: 读 AI 侧激活武将与基础数值（AI 无玩家神兵/功德加成）
+function drawWordSelection(
+  ctx: CanvasRenderingContext2D,
+  b: Battle,
+  w: { char: string; general: string; tier: number; cell: { c: number; r: number } },
+  panelHalf: 'ai' | 'player' = 'ai',
+  fromAi = false,
+) {
   const def = generalById(w.general);
   if (!def) return;
-  const active = b.activeGenerals().find((g) => g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r));
+  const active = (fromAi ? b.aiActiveGenerals() : b.activeGenerals()).find((g) =>
+    g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r),
+  );
   ctx.save();
   // 选中格金边：已激活则左右两字同时描边
   const selCells = active ? active.cells : [w.cell];
@@ -2422,9 +2433,10 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
     const ax = (active.cells[0].c + active.cells[1].c) / 2;
     const ay = (active.cells[0].r + active.cells[1].r) / 2;
     const { x, y } = cellCenterPx(ax, ay);
+    const rge = fromAi ? generalStat(def, active.tier).rge : b.generalRge(active);
     ctx.beginPath();
     // 半径含半格(rge+0.5)，与命中判定「圆与方格相交」及兵种范围环显示一致
-    ctx.arc(x, y, (b.generalRge(active) + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
+    ctx.arc(x, y, (rge + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(240,185,60,0.12)';
     ctx.fill();
     ctx.lineWidth = 2;
@@ -2435,11 +2447,11 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   }
   ctx.restore();
 
-  // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
+  // 信息面板：放在另一半场中央，避免遮住攻击范围环
   const pw = 194;
   const ph = active ? 150 : 146;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
-  const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
+  const py = infoPanelTop(ph, panelHalf);
   ctx.save();
   // 整体放大信息面板（含底板与文字），围绕面板中心缩放、保持居中
   const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
@@ -2467,14 +2479,24 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
-  // 属性（激活时计入等级/神兵）
+  // 属性（激活时计入等级/神兵；AI 侧用基础数值）
   const rows: [string, string][] = active
-    ? [
-        ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
-        ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
-        ['范围', b.generalRge(active).toFixed(1)],
-        ['等级', `Lv.${active.state.level}`],
-      ]
+    ? fromAi
+      ? (() => {
+          const st = generalStat(def, active.tier);
+          return [
+            ['攻击力', damage(st.atk).toFixed(2)],
+            ['攻速', `${st.frq.toFixed(2)}/s`],
+            ['范围', st.rge.toFixed(1)],
+            ['等级', `Lv.${active.state.level}`],
+          ];
+        })()
+      : [
+          ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
+          ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
+          ['范围', b.generalRge(active).toFixed(1)],
+          ['等级', `Lv.${active.state.level}`],
+        ]
     : [
         ['基础攻击', def.atk.toFixed(1)],
         ['攻速', `${def.frq.toFixed(1)}/s`],
@@ -2519,41 +2541,271 @@ function drawRangeRing(ctx: CanvasRenderingContext2D, x: number, y: number, rang
   ctx.restore();
 }
 
+/** 点击是否命中我方唐僧（归位格或入场途中当前格） */
+export function isPlayerTangsengCell(b: Battle, cell: Cell): boolean {
+  const home = b.map.tangseng;
+  if (home.c === cell.c && home.r === cell.r) return true;
+  const pos = b.tangsengRenderPos();
+  return pos.c === cell.c && pos.r === cell.r;
+}
+
+/** 点击是否命中 AI 唐僧（无尽模式无对手） */
+export function isAiTangsengCell(b: Battle, cell: Cell): boolean {
+  if (b.endless) return false;
+  const home = b.aiTangseng;
+  if (home.c === cell.c && home.r === cell.r) return true;
+  const pos = b.aiTangsengRenderPos();
+  return pos.c === cell.c && pos.r === cell.r;
+}
+
+/** 妖怪点击命中半径（略大于立绘，便于点选） */
+function monsterHitRad(m: Monster): number {
+  const base = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
+  return base * 1.35;
+}
+
+/** 像素命中双方妖怪：取最近者；无尽模式无 AI 怪 */
+export function hitMonsterAt(b: Battle, x: number, y: number): { side: 'player' | 'ai'; id: number } | null {
+  let bestId = -1;
+  let bestSide: 'player' | 'ai' = 'player';
+  let bestD2 = Infinity;
+  const consider = (m: Monster, side: 'player' | 'ai') => {
+    const p = side === 'player' ? posAtDistance(b.map, m.dist) : b.aiMonsterPos(m);
+    const { x: mx, y: my } = cellCenterPx(p.c, p.r);
+    const rad = monsterHitRad(m);
+    const d2 = (x - mx) * (x - mx) + (y - my) * (y - my);
+    if (d2 > rad * rad || d2 >= bestD2) return;
+    bestD2 = d2;
+    bestId = m.id;
+    bestSide = side;
+  };
+  for (const m of b.monsters) consider(m, 'player');
+  if (!b.endless) for (const m of b.aiMonsters) consider(m, 'ai');
+  if (bestId < 0) return null;
+  return { side: bestSide, id: bestId };
+}
+
+function monsterKindLabel(m: Monster): string {
+  if (m.isBoss) return '妖王';
+  if (m.isMiniBoss && m.miniBossKind) return MINI_BOSS_META[m.miniBossKind].name;
+  if (m.isCavalry) return '骑兵妖';
+  if (m.skill) return '精英妖';
+  return '小妖';
+}
+
 function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.selectedMonster) {
+    drawMonsterSelection(ctx, b, ui.selectedMonster);
+    return;
+  }
   if (!ui.selected) return;
+  // 唐僧优先：路径终点格上可能无单位，但仍可查看 tips
+  if (isPlayerTangsengCell(b, ui.selected)) { drawTangsengSelection(ctx, b, 'player'); return; }
+  if (isAiTangsengCell(b, ui.selected)) { drawTangsengSelection(ctx, b, 'ai'); return; }
   const tree = b.trees.get(`${ui.selected.c},${ui.selected.r}`);
   if (tree) { drawTreeSelection(ctx, b, tree); return; }
   const w = b.words.get(`${ui.selected.c},${ui.selected.r}`);
-  if (w) { drawWordSelection(ctx, b, w); return; }
+  if (w) { drawWordSelection(ctx, b, w, 'ai'); return; }
   const u = b.units.get(`${ui.selected.c},${ui.selected.r}`);
-  if (!u) return;
-  const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-  const stat = getUnitStat(u.type, u.tier);
-  // 攻击范围环
-  drawRangeRing(ctx, x, y, stat.rge);
+  if (u) {
+    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    const stat = getUnitStat(u.type, u.tier);
+    drawRangeRing(ctx, x, y, stat.rge);
+    ctx.save();
+    const gx = BOARD_X + u.cell.c * CELL;
+    const gy = BOARD_Y + u.cell.r * CELL;
+    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffe08a';
+    ctx.stroke();
+    ctx.restore();
+    // 玩家单位：面板放 AI 半场，避免挡自己的范围环
+    drawUnitInfoPanel(ctx, u.type, u.tier, 'ai');
+    return;
+  }
+  // AI 侧单位 / 字牌
+  const aiU = b.aiUnits.find((x) => x.cell.c === ui.selected!.c && x.cell.r === ui.selected!.r);
+  if (aiU) {
+    const { x, y } = cellCenterPx(aiU.cell.c, aiU.cell.r);
+    const stat = getUnitStat(aiU.type, aiU.tier);
+    drawRangeRing(ctx, x, y, stat.rge);
+    ctx.save();
+    const gx = BOARD_X + aiU.cell.c * CELL;
+    const gy = BOARD_Y + aiU.cell.r * CELL;
+    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffe08a';
+    ctx.stroke();
+    ctx.restore();
+    // AI 单位：面板放玩家半场，避免挡 AI 侧范围环
+    drawUnitInfoPanel(ctx, aiU.type, aiU.tier, 'player');
+    return;
+  }
+  const aiW = b.aiWords.get(`${ui.selected.c},${ui.selected.r}`);
+  if (aiW) { drawWordSelection(ctx, b, aiW, 'player', true); return; }
+}
+
+/** 选中妖怪：金色描边环 + tips（血量/种类/技能/状态） */
+function drawMonsterSelection(
+  ctx: CanvasRenderingContext2D,
+  b: Battle,
+  sel: { side: 'player' | 'ai'; id: number },
+) {
+  const list = sel.side === 'player' ? b.monsters : b.aiMonsters;
+  const m = list.find((x) => x.id === sel.id);
+  if (!m) return;
+  const p = sel.side === 'player' ? posAtDistance(b.map, m.dist) : b.aiMonsterPos(m);
+  const { x, y } = cellCenterPx(p.c, p.r);
+  const rad = monsterHitRad(m) / 1.35;
   ctx.save();
-  // 选中格描边
-  const gx = BOARD_X + u.cell.c * CELL;
-  const gy = BOARD_Y + u.cell.r * CELL;
+  ctx.beginPath();
+  ctx.arc(x, y, rad + 6, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffe08a';
+  ctx.stroke();
+  ctx.restore();
+
+  const mini = m.isMiniBoss && m.miniBossKind ? MINI_BOSS_META[m.miniBossKind] : null;
+  const skill = m.skill ? SKILL_META[m.skill] : null;
+  const statuses = monsterStatusItems(m);
+  const panelHalf: 'ai' | 'player' = sel.side === 'player' ? 'ai' : 'player';
+  const pw = 200;
+  const ph = mini || skill || statuses.length > 0 ? 148 : 118;
+  const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
+  const py = infoPanelTop(ph, panelHalf);
+  ctx.save();
+  const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
+  ctx.translate(pcx, pcy); ctx.scale(K, K); ctx.translate(-pcx, -pcy);
+  roundRect(ctx, px, py, pw, ph, 10);
+  ctx.fillStyle = 'rgba(28,22,14,0.94)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = m.isBoss ? '#ff5a8a' : mini ? mini.color : skill ? skill.color : '#c8792b';
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText(monsterKindLabel(m), px + 12, py + 18);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = sel.side === 'player' ? '#9ad8ff' : '#ff9a6a';
+  ctx.font = 'bold 13px "PingFang SC", sans-serif';
+  ctx.fillText(sel.side === 'player' ? '我方路' : '对方路', px + pw - 12, py + 18);
+
+  const rows: [string, string][] = [
+    ['生命', `${Math.ceil(m.hp)} / ${Math.ceil(m.maxHp)}`],
+    ['移速', `${m.spd.toFixed(2)} 格/s`],
+  ];
+  if (mini) {
+    rows.push(['光环', `${mini.skillName}·${mini.desc}`]);
+  } else if (skill) {
+    rows.push(['技能', `${skill.icon}${skill.name}`]);
+  } else {
+    rows.push(['技能', '无']);
+  }
+  if (m.isCavalry) rows.push(['特性', '骑兵·移速翻倍']);
+  if (statuses.length > 0) {
+    rows.push(['状态', statuses.map((s) => `${s.icon}${s.name}`).join(' ')]);
+  }
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ry = py + 42;
+  for (const [k, v] of rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillText(k, px + 12, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff6e6';
+    // 长文案略缩，避免溢出面板
+    const shown = v.length > 14 ? `${v.slice(0, 13)}…` : v;
+    ctx.fillText(shown, px + pw - 12, ry);
+    ry += 17;
+  }
+  ctx.restore();
+}
+
+/** 选中唐僧：高亮当前所在格 + tips（无攻击范围） */
+function drawTangsengSelection(ctx: CanvasRenderingContext2D, b: Battle, side: 'player' | 'ai') {
+  const pos = side === 'player' ? b.tangsengRenderPos() : b.aiTangsengRenderPos();
+  const hp = side === 'player' ? b.tangsengHP : b.aiTangsengHP;
+  const defeated = side === 'ai' && b.aiDefeated;
+  const panelHalf: 'ai' | 'player' = side === 'player' ? 'ai' : 'player';
+
+  ctx.save();
+  const gx = BOARD_X + pos.c * CELL;
+  const gy = BOARD_Y + pos.r * CELL;
   roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#ffe08a';
   ctx.stroke();
   ctx.restore();
 
-  // 信息面板：名称/等级 + 攻击力/攻速/范围/目标/法宝
-  drawUnitInfoPanel(ctx, u.type, u.tier);
+  const pw = 194;
+  const ph = 118;
+  const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
+  const py = infoPanelTop(ph, panelHalf);
+  ctx.save();
+  const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
+  ctx.translate(pcx, pcy); ctx.scale(K, K); ctx.translate(-pcx, -pcy);
+  roundRect(ctx, px, py, pw, ph, 10);
+  ctx.fillStyle = 'rgba(28,22,14,0.94)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#f0b93c';
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText('唐僧', px + 12, py + 18);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = side === 'player' ? '#9ad8ff' : '#ff9a6a';
+  ctx.font = 'bold 13px "PingFang SC", sans-serif';
+  ctx.fillText(side === 'player' ? '我方' : '对方', px + pw - 12, py + 18);
+  const rows: [string, string][] = [
+    ['生命', defeated ? '已败' : side === 'player' ? `❤ ${hp} / ${b.tangsengMaxHP}` : `❤ ${hp}`],
+    ['身份', '取经目标'],
+    ['规则', '妖怪抵达扣 1 心'],
+  ];
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ry = py + 44;
+  for (const [k, v] of rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillText(k, px + 12, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff6e6';
+    ctx.fillText(v, px + pw - 12, ry);
+    ry += 18;
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,240,210,0.55)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(side === 'player' ? '心尽则取经失败' : '对方心尽则我方获胜', px + 12, py + ph - 14);
+  ctx.restore();
 }
 
-// 单位信息面板：固定显示在 AI 半场(行 0..FENCE_ROW)中央，避免遮住玩家半场部署单位的攻击范围环。
+/** tips 面板顶边：AI 半场中央 / 玩家半场中央，避免挡对应侧的范围环 */
+function infoPanelTop(ph: number, panelHalf: 'ai' | 'player'): number {
+  if (panelHalf === 'ai') {
+    return BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
+  }
+  return BOARD_Y + ((FENCE_ROW + ROWS) * CELL) / 2 - ph / 2;
+}
+
+// 单位信息面板：默认 AI 半场中央；选中 AI 单位时改放玩家半场。
 // 供选中棋盘单位、以及 tray 按住武器令牌时复用。
-function drawUnitInfoPanel(ctx: CanvasRenderingContext2D, type: UnitType, tier: number) {
+function drawUnitInfoPanel(
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  tier: number,
+  panelHalf: 'ai' | 'player' = 'ai',
+) {
   const cfg = UNITS[type];
   const stat = getUnitStat(type, tier);
   const pw = 176;
   const ph = 120;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
-  const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
+  const py = infoPanelTop(ph, panelHalf);
   ctx.save();
   // 整体放大信息面板（含底板与文字），围绕面板中心缩放、保持居中
   const K = 1.4, pcx = px + pw / 2, pcy = py + ph / 2;
@@ -2983,6 +3235,8 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.66 });
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, u.firePulse, u.combo);
   }
+  // AI 字牌 / 激活武将（与玩家侧 drawGenerals 同视觉，便于点击查看范围与 tips）
+  drawAiGenerals(ctx, b);
   // 对手终点：唐僧立绘（无底座 + 头顶心数，与我方一致）
   const tp = b.aiTangsengRenderPos();
   const { x, y } = cellCenterPx(tp.c, tp.r);
@@ -2990,6 +3244,40 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     rad: CELL * 0.42,
     defeated: b.aiDefeated,
   });
+}
+
+/** AI 半场字牌与激活武将金框（镜像 drawGenerals，无拖拽隐藏） */
+function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
+  const activeTier = new Map<string, number>();
+  for (const g of b.aiActiveGenerals()) {
+    for (const c of g.cells) activeTier.set(`${c.c},${c.r}`, g.tier);
+  }
+  for (const w of b.aiWords.values()) {
+    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
+    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
+    const key = `${w.cell.c},${w.cell.r}`;
+    const qTier = activeTier.get(key) ?? 0;
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
+  }
+  for (const g of b.aiActiveGenerals()) {
+    const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
+    const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
+    const x = Math.min(a.x, z.x) - CELL / 2 + 2;
+    const y = Math.min(a.y, z.y) - CELL / 2 + 2;
+    const w = Math.abs(z.x - a.x) + CELL - 4;
+    const h = CELL - 4;
+    ctx.save();
+    const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
+    ctx.globalAlpha = Math.min(1, glow);
+    ctx.strokeStyle = g.tier >= 2 ? qualityColor(g.tier) : '#f0b93c';
+    ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    const sTile = CELL * 0.78;
+    drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
+    ctx.restore();
+  }
 }
 
 // 无尽模式上半场信息面板：网格/路径已由 drawBoard 照常绘制作背景，
