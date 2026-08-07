@@ -8,7 +8,7 @@ describe('挖格后延迟落子（玩家侧）', () => {
     const b = new Battle(1) as any;
     const cell = b.unlockedCells()[0];
     b.digFx.push({ c: cell.c, r: cell.r, t: 0 }); // 模拟该格刚挖开、动画进行中
-    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     const ok = b.autoPlaceApply(0, cell);
     expect(ok).toBe(true);
     expect(b.units.has(`${cell.c},${cell.r}`)).toBe(false); // 尚未落下
@@ -22,7 +22,7 @@ describe('挖格后延迟落子（玩家侧）', () => {
   it('目标格无开格动画 → 即时落子（不延迟）', () => {
     const b = new Battle(1) as any;
     const cell = b.unlockedCells()[0];
-    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     const ok = b.autoPlaceApply(0, cell);
     expect(ok).toBe(true);
     expect(b.units.has(`${cell.c},${cell.r}`)).toBe(true);
@@ -35,7 +35,7 @@ describe('挖格后延迟落子（AI 侧，对称）', () => {
     const b = new Battle(1) as any;
     const cell = b.aiUnlockedCells()[0];
     b.aiDigFx.push({ c: cell.c, r: cell.r, t: 0 });
-    b.aiTray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.aiTray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     const ok = b.aiAutoPlaceApply(0, cell);
     expect(ok).toBe(true);
     expect(b.aiUnits.some((u: any) => u.cell.c === cell.c && u.cell.r === cell.r)).toBe(false);

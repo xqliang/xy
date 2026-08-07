@@ -14,7 +14,7 @@ describe('武器落位朝向出怪口', () => {
     const map = MAPS[0]!;
     const b = new Battle(1, 1, map);
     const cell = b.unlockedCells()[0]!;
-    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     const u = b.units.get(`${cell.c},${cell.r}`)!;
     expect(u.fireDir).toBeDefined();

@@ -32,18 +32,18 @@ describe('Battle.placeFromTray', () => {
   it('swaps with a different unit on an unlocked cell', () => {
     const b = new Battle(1);
     const cell = b.unlockedCells()[0]!;
-    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('monkey', 1, { c: cell.c, r: cell.r }));
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('dao', 1, { c: cell.c, r: cell.r }));
     b.tray = [{ kind: 'unit', type: 'spear', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.type).toBe('spear');
-    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'monkey', tier: 1 });
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'dao', tier: 1 });
   });
 
   it('merges same type and tier', () => {
     const b = new Battle(1);
     const cell = b.unlockedCells()[0]!;
-    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('monkey', 1, { c: cell.c, r: cell.r }));
-    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('dao', 1, { c: cell.c, r: cell.r }));
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.tier).toBe(2);
     expect(b.tray).toHaveLength(0);

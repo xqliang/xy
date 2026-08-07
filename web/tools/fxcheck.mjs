@@ -25,8 +25,8 @@ await page.evaluate(() => {
     b.fx.push({ from, to, ttl: maxTtl * (1 - prog), maxTtl, color: '#7ec46a', wtype, tier });
   };
   // 每种兵器：tier1 一行、tier5 下一行；cavalry 用 prog0.65 看命中环，其余 0.45
-  const rows = { monkey: [5, 6], spear: [7, 8], cavalry: [9, 9], archer: [5, 6] };
-  push('monkey', 1, 5, 0.45); push('monkey', 5, 6, 0.45);
+  const rows = { dao: [5, 6], spear: [7, 8], cavalry: [9, 9], archer: [5, 6] };
+  push('dao', 1, 5, 0.45); push('dao', 5, 6, 0.45);
   push('spear', 1, 7, 0.45); push('spear', 5, 8, 0.45);
   push('archer', 1, 9, 0.45); push('archer', 5, 9, 0.45);
   void rows;

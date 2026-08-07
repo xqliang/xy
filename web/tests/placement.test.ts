@@ -16,14 +16,14 @@ describe('tray 放置：字↔兵可交换', () => {
   it('字牌落到有兵的格 → 交换：字上板、兵回候选槽', () => {
     const b = new Battle(1);
     const cell = b.unlockedCells()[0]!;
-    b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     const g = GENERALS[0]!;
     b.tray = [{ kind: 'word', char: g.chars[0]!, general: g.id, tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.words.has(`${cell.c},${cell.r}`)).toBe(true);
     expect(b.units.has(`${cell.c},${cell.r}`)).toBe(false);
-    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'monkey', tier: 1 });
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'dao', tier: 1 });
   });
 
   it('兵落到有字牌的格 → 交换：兵上板、字回候选槽', () => {

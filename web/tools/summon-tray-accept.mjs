@@ -97,7 +97,7 @@ try {
     g.enterBattle();
     const cell = g.battle.unlockedCells()[0];
     g.battle.units.set(`${cell.c},${cell.r}`, {
-      type: 'monkey',
+      type: 'dao',
       tier: 1,
       cell: { c: cell.c, r: cell.r },
       cooldown: 0,
@@ -122,7 +122,7 @@ try {
   });
   check(
     '4. placeFromTray swap different types',
-    swap.ok && swap.boardType === 'spear' && swap.trayType === 'monkey',
+    swap.ok && swap.boardType === 'spear' && swap.trayType === 'dao',
     JSON.stringify(swap),
   );
 
@@ -133,7 +133,7 @@ try {
     g.enterBattle();
     const cell = g.battle.unlockedCells()[0];
     g.battle.units.set(`${cell.c},${cell.r}`, {
-      type: 'monkey',
+      type: 'dao',
       tier: 1,
       cell: { c: cell.c, r: cell.r },
       cooldown: 0,
@@ -145,7 +145,7 @@ try {
       rangeCutT: 0,
       knockdownT: 0,
     });
-    g.battle.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+    g.battle.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     const ok = g.placeFromTray(0, cell);
     const onBoard = g.battle.units.get(`${cell.c},${cell.r}`);
     return {

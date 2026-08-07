@@ -10,12 +10,12 @@ const r = await page.evaluate(() => {
   const g = window.__game; g.restart(3); g.enterBattle();
   const b = g.battle;
   const cells = b.unlockedCells();
-  for (const c of cells) b.units.set(`${c.c},${c.r}`, { type:'monkey', tier:1, cell:c, cooldown:0, firePulse:0, stunT:0, slowT:0, weakenT:0 });
+  for (const c of cells) b.units.set(`${c.c},${c.r}`, { type:'dao', tier:1, cell:c, cooldown:0, firePulse:0, stunT:0, slowT:0, weakenT:0 });
   g.wave();
   let hitObserved = 0;
   for (let i=0;i<600;i++){ g.step(1/30); for(const m of b.monsters){ if(m.hitFlash>0){hitObserved++; break;} } if(hitObserved>0) break; }
-  return { hitObserved, monkeys: [...b.units.values()].filter(u=>u.type==='monkey').length };
+  return { hitObserved, monkeys: [...b.units.values()].filter(u=>u.type==='dao').length };
 });
-console.log('monkey test:', JSON.stringify(r));
+console.log('dao test:', JSON.stringify(r));
 console.log('errors:', logs.join('\n')||'(none)');
 await browser.close();

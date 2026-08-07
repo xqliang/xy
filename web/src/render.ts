@@ -39,7 +39,7 @@ export const MSG_Y = PAS_Y + PAS_H + 16; // 提示文字行
 export const VIEW_H = MSG_Y + 18;
 
 const UNIT_LABEL: Record<UnitType, string> = {
-  monkey: '刀',
+  dao: '刀',
   spear: '枪',
   cavalry: '骑',
   archer: '弓',
@@ -340,7 +340,7 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
   const spr = sprite(unitAsset(type));
   if (spr) {
     // 立绘按 contain 缩放居中，铺满整格；各类型内容留白不同，按系数微调视觉大小
-    const typeScale = type === 'monkey' ? 1.06 : type === 'archer' ? 1.09 : type === 'spear' ? 1.08 : 1; // 刀×1.06 / 射手×1.09 / 矛×1.08 / 骑手×1
+    const typeScale = type === 'dao' ? 1.06 : type === 'archer' ? 1.1 : type === 'spear' ? 1.08 : 1; // 刀×1.06 / 射手×1.10 / 矛×1.08 / 骑手×1
     const box = s;
     const scale = Math.min(box / spr.width, box / spr.height) * typeScale;
     const dw = spr.width * scale;
@@ -396,7 +396,7 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.lineJoin = 'round';
   drawWeaponGlyph(ctx, type, s, pulse, combo, tier);
   // 朝向箭头（刀/骑不出箭头，避免抢戏）
-  if (type !== 'monkey' && type !== 'cavalry') {
+  if (type !== 'dao' && type !== 'cavalry') {
     ctx.globalAlpha = Math.min(0.85, pulse * 1.1);
     ctx.strokeStyle = '#2a2018';
     ctx.lineWidth = 2;
@@ -1707,7 +1707,7 @@ function drawTangsengHearts(
   }
 }
 
-/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；头顶按心数画 ❤（每行最多 3） */
+/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；脚底椭圆阴影；头顶按心数画 ❤（每行最多 3） */
 function drawTangsengFigure(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1717,6 +1717,7 @@ function drawTangsengFigure(
 ) {
   const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
   const defeated = opts?.defeated ?? false;
+  drawGroundShadow(ctx, x, y + rad * 0.22, rad * 0.72, defeated ? 0.16 : 0.26);
   const spr = sprite('tangseng');
   let headTop = y - rad;
   if (spr) {
@@ -1851,16 +1852,23 @@ function drawMonsterAt(
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
     ctx.drawImage(spr, x - (spr.width * scale) / 2, cy - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+  } else if (!m.isBoss && !m.isMiniBoss) {
+    // 小妖立绘未加载时用汉字「妖」兜底（与铲子「铲」同口径）
+    ctx.fillStyle = '#7a2b2b';
+    ctx.font = `bold ${Math.round(rad * 1.6)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('妖', x, cy);
   } else {
     ctx.beginPath();
     ctx.arc(x, cy, rad, 0, Math.PI * 2);
-    ctx.fillStyle = m.isBoss ? '#b02a5b' : m.isMiniBoss ? '#b05a2a' : '#7a2b2b';
+    ctx.fillStyle = m.isBoss ? '#b02a5b' : '#b05a2a';
     ctx.fill();
   }
   // 墨风血条：深墨底条 + 朱红填充
   const bw = rad0 * 2;
   const hpPct = Math.max(0, m.hp / m.maxHp);
-  const by = y - rad0 - 10;
+  const by = y - rad0 - 5;
   ctx.save();
   ctx.strokeStyle = 'rgba(28,24,20,0.85)';
   ctx.lineCap = 'round';
@@ -2972,7 +2980,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const qTier = activeTier.get(key) ?? 0;
     drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
   }
-  // 再给「左右紧邻同将」的激活武将套金框（框色随品质阶微变，仍偏金以示激活）
+  // 再给「左右紧邻同将」的激活武将套品质色框（框色随阶：琥珀→绿→蓝→紫→橙）
   for (const g of b.activeGenerals()) {
     const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
     const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
@@ -2981,10 +2989,10 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const w = Math.abs(z.x - a.x) + CELL - 4;
     const h = CELL - 4;
     ctx.save();
-    // 激活框 + 释放技能时更亮；高阶用品质色描边
+    // 激活框 + 释放技能时更亮；描边用品质色
     const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
     ctx.globalAlpha = Math.min(1, glow);
-    ctx.strokeStyle = g.tier >= 2 ? qualityColor(g.tier) : '#f0b93c';
+    ctx.strokeStyle = qualityColor(g.tier);
     ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
@@ -3050,7 +3058,7 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.restore();
         break;
       }
-      case 'monkey': {
+      case 'dao': {
         // 柄在攻击者一侧，尖朝怪挥砍；只看左右，不看上下
         const seed = ((f.from.c * 13 + f.from.r * 29) ^ (tier * 7)) | 0;
         const lane = (seed % 5) - 2;
@@ -3278,7 +3286,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.save();
     const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
     ctx.globalAlpha = Math.min(1, glow);
-    ctx.strokeStyle = g.tier >= 2 ? qualityColor(g.tier) : '#f0b93c';
+    ctx.strokeStyle = qualityColor(g.tier);
     ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();

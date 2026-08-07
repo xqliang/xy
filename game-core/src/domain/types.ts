@@ -1,6 +1,6 @@
 // 四类基础兵种（西游披皮 → 原作对应）
-// monkey=刀兵(刀) / spear=枪天兵(枪) / cavalry=天马骑兵(骑) / archer=神箭手(弓)
-export type UnitType = 'monkey' | 'spear' | 'cavalry' | 'archer';
+// dao=刀兵(刀) / spear=枪天兵(枪) / cavalry=天马骑兵(骑) / archer=神箭手(弓)
+export type UnitType = 'dao' | 'spear' | 'cavalry' | 'archer';
 
 export interface UnitConfig {
   type: UnitType;

@@ -129,7 +129,7 @@ const rng = () => 0; // 恒 0：从不触发次优
 
 it('不丢弃：无位可放的令牌保留在 tray', () => {
   const v = new FakeView(
-    [{ kind: 'unit', type: 'monkey', tier: 1 }, { kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ kind: 'unit', type: 'dao', tier: 1 }, { kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 0, r: 0 }],
   );
   planAutoPlace(v, { rng });
@@ -139,19 +139,19 @@ it('不丢弃：无位可放的令牌保留在 tray', () => {
 
 it('射程感知：短兵占近格，弓箭手占远格', () => {
   const v = new FakeView(
-    [{ kind: 'unit', type: 'archer', tier: 1 }, { kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ kind: 'unit', type: 'archer', tier: 1 }, { kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 0, r: 3 }],
   );
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
-  expect(byCell.get('0,0')).toBe('monkey');
+  expect(byCell.get('0,0')).toBe('dao');
   expect(byCell.get('0,3')).toBe('archer');
 });
 
 it('近战贴路：可达格中优先 pathCover 高（近路）的格', () => {
-  // monkey rge=1：r=0 覆盖代理更高 → 落 (0,0)
+  // dao rge=1：r=0 覆盖代理更高 → 落 (0,0)
   const v = new FakeView(
-    [{ kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 0, r: 1 }],
   );
   planAutoPlace(v, { rng });
@@ -162,7 +162,7 @@ it('近战贴路：可达格中优先 pathCover 高（近路）的格', () => {
 it('pathCover 同分时优先近出口', () => {
   // FakeView pathCover 只看 r；两格同 r=0 覆盖相同 → 出口加权选 c=0
   const v = new FakeView(
-    [{ kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 3, r: 0 }, { c: 0, r: 0 }],
   );
   planAutoPlace(v, { rng });
@@ -228,7 +228,7 @@ it('铲子优先挖离路约1格的格（优于更远格）', () => {
 });
 
 it('够不着(仅远格 + 无同阶合成)则保留在 tray，不浪费格', () => {
-  const v = new FakeView([{ kind: 'unit', type: 'monkey', tier: 1 }], [{ c: 0, r: 3 }]);
+  const v = new FakeView([{ kind: 'unit', type: 'dao', tier: 1 }], [{ c: 0, r: 3 }]);
   planAutoPlace(v, { rng });
   expect(v.tray().length).toBe(1);
   expect(v.placedUnits().length).toBe(0);
@@ -259,13 +259,13 @@ it('singleWordScore：远路近唐僧分更高', () => {
 
 it('激活武将：邻格被武器占时可挪开再落字', () => {
   // 「大」在 (1,0)；最优对为 (0,0)-(1,0)。可把「大」迁到 (0,0)，「圣」落 (1,0)；
-  // 若落在 (1,0)-(2,0) 则需挪开 (2,0) 的 monkey。
+  // 若落在 (1,0)-(2,0) 则需挪开 (2,0) 的 dao。
   const v = new FakeView(
     [{ kind: 'word', char: '圣', general: 'g', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }],
   );
   v.wordsMap.set('1,0', { char: '大', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
-  v.unitsMap.set('2,0', { type: 'monkey', tier: 1, cell: { c: 2, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'dao', tier: 1, cell: { c: 2, r: 0 } });
   planAutoPlace(v, { rng });
   const byChar = new Map(v.placedWords().map((w) => [w.char, w.cell]));
   expect(byChar.get('大')).toEqual({ c: 0, r: 0 });
@@ -342,38 +342,38 @@ it('pSubOptimal=1 时会选非最优格（覆盖次优分支，但仍不丢弃/�
 });
 
 it('救援式重排：远程兵占着近格挡住短兵 → 挪远程兵到远格、腾近格给短兵', () => {
-  // 已解锁近格(0,0 r=0) 被 archer 占；远格(0,3 r=3) 空。tray 有 monkey(rge1) 够不着远格。
-  // 期望：archer 挪到 0,3，monkey 落到 0,0。
-  const v = new FakeView([{ kind: 'unit', type: 'monkey', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
+  // 已解锁近格(0,0 r=0) 被 archer 占；远格(0,3 r=3) 空。tray 有 dao(rge1) 够不着远格。
+  // 期望：archer 挪到 0,3，dao 落到 0,0。
+  const v = new FakeView([{ kind: 'unit', type: 'dao', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
   v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
-  expect(byCell.get('0,0')).toBe('monkey'); // 近格腾给短兵
+  expect(byCell.get('0,0')).toBe('dao'); // 近格腾给短兵
   expect(byCell.get('0,3')).toBe('archer'); // 远程兵挪到远格
   expect(v.tray().length).toBe(0);          // 不丢弃
 });
 
 it('救援不误伤：不把射程更短的占位兵从近格赶走（占位兵射程<待放兵才不挪）', () => {
-  // 近格(0,0)被 monkey(rge1)占；远格(0,3)空。tray 是 cavalry(rge1.5)，够不着远格。
-  // cavalry 射程 > 占位 monkey，若挪走 monkey 反而把更该待在近格的短兵赶走 → 规则拒绝，cavalry 保留。
+  // 近格(0,0)被 dao(rge1)占；远格(0,3)空。tray 是 cavalry(rge1.5)，够不着远格。
+  // cavalry 射程 > 占位 dao，若挪走 dao 反而把更该待在近格的短兵赶走 → 规则拒绝，cavalry 保留。
   const v = new FakeView([{ kind: 'unit', type: 'cavalry', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
-  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
-  expect(byCell.get('0,0')).toBe('monkey'); // 短兵稳守近格，不被赶走
+  expect(byCell.get('0,0')).toBe('dao'); // 短兵稳守近格，不被赶走
   expect(v.tray().length).toBe(1);          // cavalry 够不着，保留（不丢弃、不硬塞）
 });
 
 it('满槽：tray 两枚同阶可合且合后能上棋盘再合 → 先 tray 合再落到棋盘', () => {
-  // 棋盘满：一格被 monkey T2 占。tray 两枚 monkey T1 → 合为 T2 → 再与棋盘 T2 合成 T3
+  // 棋盘满：一格被 dao T2 占。tray 两枚 dao T1 → 合为 T2 → 再与棋盘 T2 合成 T3
   const v = new FakeView(
     [
-      { kind: 'unit', type: 'monkey', tier: 1 },
-      { kind: 'unit', type: 'monkey', tier: 1 },
+      { kind: 'unit', type: 'dao', tier: 1 },
+      { kind: 'unit', type: 'dao', tier: 1 },
     ],
     [{ c: 0, r: 0 }],
   );
-  v.unitsMap.set('0,0', { type: 'monkey', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('0,0', { type: 'dao', tier: 2, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   expect(v.tray().length).toBe(0);
   expect(v.placedUnits().length).toBe(1);
@@ -381,17 +381,17 @@ it('满槽：tray 两枚同阶可合且合后能上棋盘再合 → 先 tray 合
 });
 
 it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位落 tray', () => {
-  // 两格都占满：近路(0,0)与远路(0,2) 各一只 monkey T1；tray 一只 archer
-  // 应合两 monkey，保留近路（pathCover 更大），腾出远格放 archer
+  // 两格都占满：近路(0,0)与远路(0,2) 各一只 dao T1；tray 一只 archer
+  // 应合两 dao，保留近路（pathCover 更大），腾出远格放 archer
   const v = new FakeView(
     [{ kind: 'unit', type: 'archer', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 0, r: 2 }],
   );
-  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
-  v.unitsMap.set('0,2', { type: 'monkey', tier: 1, cell: { c: 0, r: 2 } });
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('0,2', { type: 'dao', tier: 1, cell: { c: 0, r: 2 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
-  expect(byCell.get('0,0')?.type).toBe('monkey');
+  expect(byCell.get('0,0')?.type).toBe('dao');
   expect(byCell.get('0,0')?.tier).toBe(2); // 保留近路并升阶
   expect(byCell.get('0,2')?.type).toBe('archer'); // 腾位放 tray
   expect(v.tray().length).toBe(0);
@@ -420,9 +420,9 @@ it('空位更优时已上场枪会迁到近出口空格', () => {
 it('刀在右侧、左侧近出口空着时应迁到左侧（结合射程与出口）', () => {
   // 两格同离路 r=0；出口在 c=0 → 刀应占 (0,0) 而非 (1,0)
   const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }]);
-  v.unitsMap.set('1,0', { type: 'monkey', tier: 2, cell: { c: 1, r: 0 } });
+  v.unitsMap.set('1,0', { type: 'dao', tier: 2, cell: { c: 1, r: 0 } });
   planAutoPlace(v, { rng });
-  const knife = v.placedUnits().find((u) => u.type === 'monkey');
+  const knife = v.placedUnits().find((u) => u.type === 'dao');
   expect(knife?.cell).toEqual({ c: 0, r: 0 });
 });
 
@@ -432,11 +432,11 @@ it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
     [{ kind: 'unit', type: 'archer', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 5, r: 0 }],
   );
-  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
-  v.unitsMap.set('5,0', { type: 'monkey', tier: 1, cell: { c: 5, r: 0 } });
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
-  expect(byCell.get('0,0')?.type).toBe('monkey');
+  expect(byCell.get('0,0')?.type).toBe('dao');
   expect(byCell.get('0,0')?.tier).toBe(2);
   expect(byCell.get('5,0')?.type).toBe('archer');
 });
@@ -444,8 +444,8 @@ it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
 it('高阶同型可与占更好位的低阶交换座位', () => {
   // T2 在较差格 r=1，T1 在更好格 r=0 → 交换后 T2 占 r=0
   const v = new FakeView([], [{ c: 0, r: 0 }, { c: 0, r: 1 }]);
-  v.unitsMap.set('0,1', { type: 'monkey', tier: 2, cell: { c: 0, r: 1 } });
-  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('0,1', { type: 'dao', tier: 2, cell: { c: 0, r: 1 } });
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
   expect(byCell.get('0,0')?.tier).toBe(2);

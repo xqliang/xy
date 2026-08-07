@@ -49,7 +49,7 @@ describe('estimateOptimalBoardPower', () => {
 
   it('重排后短射程兵也能打到路，DPS 计入被动乘区', () => {
     const units = [
-      { type: 'monkey' as const, tier: 2 },
+      { type: 'dao' as const, tier: 2 },
       { type: 'archer' as const, tier: 2 },
     ];
     const atkMul = 1.15;
@@ -65,7 +65,7 @@ describe('estimateOptimalBoardPower', () => {
       atkMul,
       frqMul,
     });
-    const m = getUnitStat('monkey', 2);
+    const m = getUnitStat('dao', 2);
     const a = getUnitStat('archer', 2);
     const expected =
       m.atk * atkMul * m.frq * frqMul * m.targets +

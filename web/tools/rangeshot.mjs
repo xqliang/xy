@@ -23,7 +23,7 @@ const geo = await page.evaluate(() => {
     const cells = g.battle.unlockedCells();
     for (let i = 0; i < g.battle.tray.length && !placed; i++) {
       const t = g.battle.tray[i];
-      if (t && t.kind === 'unit' && t.type === 'monkey') {
+      if (t && t.kind === 'unit' && t.type === 'dao') {
         for (const c of cells) {
           const key = `${c.c},${c.r}`;
           if (!g.battle.units.has(key) && !g.battle.words.has(key) && g.placeFromTray(i, c)) { placed = { c, type: t.type }; break; }

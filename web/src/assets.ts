@@ -76,6 +76,8 @@ export function sprite(key: AssetKey): HTMLImageElement | undefined {
 }
 
 export function unitAsset(type: UnitType): AssetKey {
+  // 刀兵 id 为 dao，立绘文件仍为历史名 unit-monkey
+  if (type === 'dao') return 'unit-monkey';
   return `unit-${type}` as AssetKey;
 }
 

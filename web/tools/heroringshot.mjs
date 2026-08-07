@@ -16,7 +16,7 @@ await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).ca
 const a = await page.evaluate(() => {
   const g = window.__game; g.restart(5, 1); g.enterBattle();
   const cell = g.battle.unlockedCells()[0];
-  g.battle.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
+  g.battle.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
   g.placeFromTray(0, cell);
   g.select(cell);
   return { cell };

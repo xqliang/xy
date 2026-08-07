@@ -14,13 +14,13 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
-const UNIT_ORDER: UnitType[] = ['monkey', 'spear', 'cavalry', 'archer'];
+const UNIT_ORDER: UnitType[] = ['dao', 'spear', 'cavalry', 'archer'];
 
 export function codexHitBack(x: number, y: number): boolean {
   return x >= BACK.x && x <= BACK.x + BACK.w && y >= BACK.y && y <= BACK.y + BACK.h;
 }
 
-const UNIT_COLOR: Record<UnitType, string> = { monkey: '#ff9a3c', spear: '#5bd1ff', cavalry: '#7dff8a', archer: '#c79bff' };
+const UNIT_COLOR: Record<UnitType, string> = { dao: '#ff9a3c', spear: '#5bd1ff', cavalry: '#7dff8a', archer: '#c79bff' };
 
 export function drawCodex(ctx: CanvasRenderingContext2D): void {
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);

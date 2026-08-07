@@ -67,7 +67,7 @@ describe('mini-boss spawn & skills', () => {
       const dc = Math.min(...map.path.map((p) => Math.hypot(p.c - c.c, p.r - c.r)));
       return da - dc;
     })[0]!;
-    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('monkey', 1, { c: cell.c, r: cell.r }));
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('dao', 1, { c: cell.c, r: cell.r }));
     const near = map.path.reduce((best, p) => {
       const d = Math.hypot(p.c - cell.c, p.r - cell.r);
       return d < best.d ? { p, d } : best;

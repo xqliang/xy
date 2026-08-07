@@ -1946,7 +1946,7 @@ export class Battle {
 
   private unitColor(type: UnitType): string {
     switch (type) {
-      case 'monkey': return '#ff9a3c';
+      case 'dao': return '#ff9a3c';
       case 'spear': return '#5bd1ff';
       case 'cavalry': return '#7dff8a';
       case 'archer': return '#c79bff';
@@ -1956,7 +1956,7 @@ export class Battle {
   /** 兵种攻击特效时长：骑基础再慢一倍(1.2s)，随阶加快；其它约 0.3s 起 */
   private attackFxTtl(type: UnitType, tier: number): number {
     if (type === 'cavalry') return 1.2 / (1 + (tier - 1) * 0.22);
-    if (type === 'monkey') return 0.2 + (tier - 1) * 0.02; // 刀砍更快一截
+    if (type === 'dao') return 0.2 + (tier - 1) * 0.02; // 刀砍更快一截
     return 0.3 + (tier - 1) * 0.04;
   }
 
@@ -2748,7 +2748,7 @@ export class Battle {
 // 供渲染层取色
 export function unitColorOf(type: UnitType): string {
   switch (type) {
-    case 'monkey': return '#ff9a3c';
+    case 'dao': return '#ff9a3c';
     case 'spear': return '#5bd1ff';
     case 'cavalry': return '#7dff8a';
     case 'archer': return '#c79bff';
