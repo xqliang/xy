@@ -338,7 +338,7 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
   const spr = sprite(unitAsset(type));
   if (spr) {
     // 立绘按 contain 缩放居中，铺满整格；各类型内容留白不同，按系数微调视觉大小
-    const typeScale = type === 'monkey' ? 1.18 : type === 'archer' ? 1.1 : type === 'spear' ? 1.05 : 1; // 刀×1.18 / 射手×1.1 / 矛×1.05 / 骑手×1
+    const typeScale = type === 'monkey' ? 1 : type === 'archer' ? 1.08 : type === 'spear' ? 1.07 : 1; // 刀×1 / 射手×1.08 / 矛×1.07 / 骑手×1
     const box = s;
     const scale = Math.min(box / spr.width, box / spr.height) * typeScale;
     const dw = spr.width * scale;
@@ -1708,7 +1708,7 @@ function drawTangsengHearts(
   }
 }
 
-/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；头顶按心数画 ❤（每行最多 3） */
+/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；脚底椭圆阴影；头顶按心数画 ❤（每行最多 3） */
 function drawTangsengFigure(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1717,6 +1717,8 @@ function drawTangsengFigure(
   opts?: { rad?: number; defeated?: boolean },
 ) {
   const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
+  const defeated = opts?.defeated ?? false;
+  drawGroundShadow(ctx, x, y + rad * 0.22, rad * 0.72, defeated ? 0.16 : 0.26);
   const spr = sprite('tangseng');
   let headTop = y - rad;
   if (spr) {
@@ -1733,12 +1735,13 @@ function drawTangsengFigure(
     ctx.textBaseline = 'middle';
     ctx.fillText('唐', x, y);
   }
-  drawTangsengHearts(ctx, x, headTop, hp, opts?.defeated ?? false);
+  drawTangsengHearts(ctx, x, headTop, hp, defeated);
 }
 
 function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   const pos = b.tangsengRenderPos();
   const { x, y } = cellCenterPx(pos.c, pos.r);
+  drawGroundShadow(ctx, x, y, CELL * 0.28, 0.26);
   drawTangsengFigure(ctx, x, y, b.tangsengHP);
 }
 
@@ -2355,7 +2358,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const fallen = u.knockdownT > 0;
     // 地面阴影（贴格底，不随 bob/开火上跳，与怪物同风格）
-    drawGroundShadow(ctx, x, y, CELL * 0.34, fallen ? 0.18 : 0.28);
+    drawGroundShadow(ctx, x, y, CELL * 0.28, fallen ? 0.18 : 0.28);
     // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来（倒下时停 bob）
     const bob = fallen ? 0 : Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     // 开火脉冲：放大 + 上跳
@@ -3229,7 +3232,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   const t = performance.now() / 1000;
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.3, 0.26);
+    drawGroundShadow(ctx, x, y, CELL * 0.26, 0.26);
     const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.1;
     const uy = y - u.firePulse * 3 + bob;
     drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.66 });
