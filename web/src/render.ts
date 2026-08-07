@@ -5,12 +5,14 @@ import {
   FENCE_ROW,
   isEitherPathCell,
   isPlayerCell,
+  aiHalfSafeRows,
   posAtDistance,
   posAlong,
   lenOf,
   mirrorCell,
   placeableCells,
   type Cell,
+  type GameMap,
 } from './board';
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster } from './battle';
 import { passiveById } from './passives';
@@ -3283,44 +3285,106 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 无尽模式上半场信息面板：网格/路径已由 drawBoard 照常绘制作背景，
-// 此处在上半场（行 0..FENCE_ROW）叠一层半透明面板，展示历史统计 + 玩法提示轮播。
+/** 无尽 AI 半场裁切路径（普通图矩形；白骨岭台阶）。 */
+function clipAiHalfPath(ctx: CanvasRenderingContext2D, map: GameMap): void {
+  ctx.beginPath();
+  if (map.id === 'baiguling') {
+    const x0 = BOARD_X;
+    const xMid = BOARD_X + 4 * CELL;
+    const x1 = BOARD_X + COLS * CELL;
+    const y0 = BOARD_Y;
+    const yRight = BOARD_Y + 4 * CELL; // 右列 r<=3
+    const yLeft = BOARD_Y + 6 * CELL; // 左列 r<=5
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y0);
+    ctx.lineTo(x1, yRight);
+    ctx.lineTo(xMid, yRight);
+    ctx.lineTo(xMid, yLeft);
+    ctx.lineTo(x0, yLeft);
+    ctx.closePath();
+  } else {
+    ctx.rect(BOARD_X, BOARD_Y, COLS * CELL, FENCE_ROW * CELL);
+  }
+}
+
+// 离屏缓冲：先拷贝 AI 区再模糊，避免 filter 直接糊主画布。
+let endlessFrostScratch: HTMLCanvasElement | null = null;
+function endlessFrostScratchCanvas(w: number, h: number): HTMLCanvasElement {
+  if (!endlessFrostScratch) endlessFrostScratch = document.createElement('canvas');
+  if (endlessFrostScratch.width !== w || endlessFrostScratch.height !== h) {
+    endlessFrostScratch.width = w;
+    endlessFrostScratch.height = h;
+  }
+  return endlessFrostScratch;
+}
+
+/** 无尽：按地图形状给整块 AI 半场铺毛玻璃蒙层。 */
+function drawEndlessFrost(ctx: CanvasRenderingContext2D, map: GameMap): void {
+  const w = COLS * CELL;
+  const h = map.id === 'baiguling' ? 6 * CELL : FENCE_ROW * CELL;
+  const scratch = endlessFrostScratchCanvas(w, h);
+  const sctx = scratch.getContext('2d');
+  if (!sctx) return;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, w, h);
+  // 主画布带 dpr transform，从 bitmap 取样须用物理像素矩形
+  const m = ctx.getTransform();
+  const sx = BOARD_X * m.a + m.e;
+  const sy = BOARD_Y * m.d + m.f;
+  const sw = w * m.a;
+  const sh = h * m.d;
+  sctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, w, h);
+
+  ctx.save();
+  clipAiHalfPath(ctx, map);
+  ctx.clip();
+  // 毛玻璃：模糊底图 + 宣纸色薄纱
+  ctx.filter = 'blur(5px)';
+  ctx.drawImage(scratch, BOARD_X, BOARD_Y, w, h);
+  ctx.filter = 'none';
+  ctx.fillStyle = 'rgba(244,233,220,0.42)';
+  ctx.fillRect(BOARD_X, BOARD_Y, w, h);
+  ctx.restore();
+}
+
+// 无尽模式：AI 半场毛玻璃 + 居中 3 行高波次卡片（网格/路径已由 drawBoard 绘制）。
 function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
-  const top = cellCenterPx(0, 0).y - CELL / 2;
-  const bottom = cellCenterPx(0, FENCE_ROW).y - CELL / 2;
-  const panelX = BOARD_X + CELL * 0.4;
+  drawEndlessFrost(ctx, b.map);
+
+  const safeH = aiHalfSafeRows(b.map) * CELL;
+  const panelH = CELL * 3;
   const panelW = COLS * CELL - CELL * 0.8;
-  const panelY = top + CELL * 0.3;
-  const panelH = (bottom - top) - CELL * 0.6;
+  const panelX = BOARD_X + CELL * 0.4;
+  const panelY = BOARD_Y + (safeH - panelH) / 2;
 
   ctx.save();
   roundRect(ctx, panelX, panelY, panelW, panelH, 14);
-  ctx.fillStyle = 'rgba(244,233,220,1)'; // 波次框背景不透明，文字更清晰
+  ctx.fillStyle = 'rgba(244,233,220,0.96)';
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(122,59,18,0.5)';
   ctx.stroke();
 
   const cx = panelX + panelW / 2;
-  const midY = panelY + panelH / 2; // 垂直居中锚点，避免信息靠上显空
+  const midY = panelY + panelH / 2;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   ctx.fillStyle = '#b5391f';
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.fillText('无尽 · 试炼', cx, midY - 40);
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText('无尽 · 试炼', cx, midY - 36);
 
   ctx.fillStyle = '#5a3a12';
-  ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText(`第 ${b.wave} 波`, cx, midY - 2);
+  ctx.font = 'bold 26px "PingFang SC", sans-serif';
+  ctx.fillText(`第 ${b.wave} 波`, cx, midY - 4);
   ctx.fillStyle = '#8a5a2b';
-  ctx.font = '16px "PingFang SC", sans-serif';
-  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, midY + 28);
+  ctx.font = '14px "PingFang SC", sans-serif';
+  ctx.fillText(`历史最高：第 ${endlessBestWaveCached()} 波`, cx, midY + 26);
 
   const tip = ENDLESS_TIPS[Math.floor(performance.now() / 4000) % ENDLESS_TIPS.length]!;
   ctx.fillStyle = '#7a3b12';
-  ctx.font = '15px "PingFang SC", sans-serif';
-  ctx.fillText('💡 ' + tip, cx, panelY + panelH - 22);
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText('💡 ' + tip, cx, panelY + panelH - 18);
 
   ctx.restore();
 }

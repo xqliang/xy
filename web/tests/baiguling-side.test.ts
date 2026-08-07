@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapById, isPlayerCell, isPathCell, slotUnlockOrder, mirrorCell, mirrorPath } from '../src/board';
+import { mapById, isPlayerCell, isPathCell, slotUnlockOrder, mirrorCell, mirrorPath, isAiHalfCell, aiHalfSafeRows } from '../src/board';
 
 describe('baiguling side', () => {
   const m = mapById('baiguling');
@@ -38,6 +38,14 @@ describe('baiguling side', () => {
     expect(isPlayerCell(m, 5, 4)).toBe(false); // 通路
     expect(isPlayerCell(m, 5, 5)).toBe(true);
     expect(isPlayerCell(m, 5, 2)).toBe(false);
+  });
+
+  it('AI 半场为台阶形；安全行数=右侧 4 行', () => {
+    expect(isAiHalfCell(m, 0, 5)).toBe(true);
+    expect(isAiHalfCell(m, 0, 6)).toBe(false);
+    expect(isAiHalfCell(m, 5, 3)).toBe(true);
+    expect(isAiHalfCell(m, 5, 4)).toBe(false);
+    expect(aiHalfSafeRows(m)).toBe(4);
   });
 
   it('path not player', () => {

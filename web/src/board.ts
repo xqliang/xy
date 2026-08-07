@@ -40,15 +40,32 @@ export function isEitherPathCell(map: GameMap, c: number, r: number): boolean {
   return isPathCell(map, m.c, m.r);
 }
 
+// 白骨岭台阶栅栏：左 4 列在 r=5|6，右 4 列在 r=3|4（返回该列「栅栏上沿」行号）。
+export function baigulingFenceRow(c: number): number {
+  return c <= 3 ? 5 : 3;
+}
+
 // 该格是否属于玩家可放置半场（非任一侧路径）。默认下半场 r>=FENCE_ROW；白骨岭为台阶分界。
 export function isPlayerCell(map: GameMap, c: number, r: number): boolean {
   if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
   if (isEitherPathCell(map, c, r)) return false;
   if (map.id === 'baiguling') {
-    const fenceR = c <= 3 ? 5 : 3; // 左 4 列路径在 r=5，右 4 列在 r=3
-    return r > fenceR;
+    return r > baigulingFenceRow(c);
   }
   return r >= FENCE_ROW;
+}
+
+/** 该格是否在 AI 半场（栅栏对手一侧，含路径格）。无尽蒙层按此形状裁切。 */
+export function isAiHalfCell(map: GameMap, c: number, r: number): boolean {
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return false;
+  if (map.id === 'baiguling') return r <= baigulingFenceRow(c);
+  return r < FENCE_ROW;
+}
+
+/** AI 半场各列共有的行数（无尽波次弹窗垂直居中用，避免白骨岭右侧溢出）。 */
+export function aiHalfSafeRows(map: GameMap): number {
+  if (map.id === 'baiguling') return baigulingFenceRow(COLS - 1) + 1; // 右列 r<=3 → 4 行
+  return FENCE_ROW;
 }
 
 export function pathSegments(map: GameMap): { from: Cell; to: Cell; len: number }[] {
