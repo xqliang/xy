@@ -4,13 +4,15 @@ import { GENERALS, hintGeneralForChar, partnerChars, type GeneralDef } from './g
 
 export const PAIR_PITY_AFTER = 4;
 
-/** 非配对时：已拥有字的权重倍率（尽量不重复） */
+/** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
 /** 配对字相对基础权重的倍率 */
 export const PARTNER_BOOST = 12;
 /** 无配对需求时，满5 相对满3 的额外倍率（叠在 phaseWeight 之上） */
 export const HIGH_TIER_BIAS = 1.75;
 export const LOW_TIER_BIAS = 0.65;
+/** 每多出现 1 次，权重乘以该系数（配对缺口字不受此打压） */
+export const OCCURRENCE_DECAY = 0.55;
 
 /** 波段对满3/满5的相对权重（需压过满3基础 weight≈3、满5≈1 的差距） */
 export function phaseWeight(wave: number, maxTier: 3 | 5): number {
@@ -68,11 +70,16 @@ export function collectOrphanChars(
   return orphans;
 }
 
+function charCountOf(counts: ReadonlyMap<string, number> | undefined, char: string): number {
+  return counts?.get(char) ?? 0;
+}
+
 function buildWeightedEntries(
   wave: number,
   orphanChars: string[],
   trayCharsAlready: string[],
   ownedChars: string[],
+  charCounts?: ReadonlyMap<string, number>,
 ): { char: string; general: string; w: number }[] {
   const needed = new Set(pendingPartnerChars(orphanChars, trayCharsAlready));
   const owned = new Set([...ownedChars, ...orphanChars, ...trayCharsAlready]);
@@ -87,8 +94,13 @@ function buildWeightedEntries(
       const isPartner = needed.has(c);
       // 配对最优先；无配对时偏向满5 高级字
       let mult = isPartner ? PARTNER_BOOST : g.maxTier === 5 ? HIGH_TIER_BIAS : LOW_TIER_BIAS;
-      // 已有字尽量不重复（配对缺口本身不会在 tray 里，owned 里的孤儿字也不该再抽）
-      if (owned.has(c) && !isPartner) mult *= DUP_WEIGHT;
+      const count = charCountOf(charCounts, c);
+      if (!isPartner && count > 0) {
+        // 出现次数越多，后续再抽到的概率越低
+        mult *= OCCURRENCE_DECAY ** count;
+      } else if (owned.has(c) && !isPartner) {
+        mult *= DUP_WEIGHT;
+      }
       const w = base * mult;
       if (!seen.has(c)) {
         seen.add(c);
@@ -130,6 +142,7 @@ export function pickWordChar(
   trayCharsAlready: string[],
   forcePartner: boolean,
   ownedChars: string[] = [],
+  charCounts?: ReadonlyMap<string, number>,
 ): WordPick {
   if (forcePartner) {
     const need = pendingPartnerChars(orphanChars, trayCharsAlready);
@@ -138,7 +151,10 @@ export function pickWordChar(
       return { char, general: hintGeneralForChar(char) };
     }
   }
-  return pickFromWeighted(rng, buildWeightedEntries(wave, orphanChars, trayCharsAlready, ownedChars));
+  return pickFromWeighted(
+    rng,
+    buildWeightedEntries(wave, orphanChars, trayCharsAlready, ownedChars, charCounts),
+  );
 }
 
 /** 统计用：给定波次下满3/满5 字的期望权重比（测试） */

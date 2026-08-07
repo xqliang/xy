@@ -13,11 +13,11 @@ await page.waitForFunction('window.__assetsReady===true',{timeout:15000}).catch(
 await page.evaluate(()=>{
   const g=window.__game; g.restart(5,1); g.enterBattle(); const b=g.battle;
   const cells=b.unlockedCells(); const a=cells[0], nb={c:a.c+1,r:a.r};
-  b.words.set(`${a.c},${a.r}`,{char:'悟',general:'wukong',tier:2,cell:a});
-  b.words.set(`${nb.c},${nb.r}`,{char:'空',general:'wukong',tier:1,cell:nb}); // 激活(取较小阶=1)
+  b.words.set(`${a.c},${a.r}`,{char:'大',general:'wukong',tier:2,cell:a});
+  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'wukong',tier:1,cell:nb}); // 激活(取较小阶=1)
   const lone=cells.find(x=>x.c!==a.c&&x.c!==nb.c&&x.r===a.r+1)||cells[3];
   b.words.set(`${lone.c},${lone.r}`,{char:'八',general:'bajie',tier:1,cell:lone}); // 未激活
-  g.select(a); // 选中已激活的"悟"
+  g.select(a); // 选中已激活的"大"
 });
 await new Promise(r=>setTimeout(r,120));
 await page.screenshot({ path: path.join(OUT,'wordpanel-active.png') });

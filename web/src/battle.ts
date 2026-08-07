@@ -412,6 +412,8 @@ export class Battle {
   private summonsSinceShovel = 0; // 距上次出铲经过的征兵次数（铲子保底计数）
   private summonsSinceWord = 0; // 距上次出字经过的征兵次数（字牌保底计数）
   private summonsSincePair = 0; // 距上次补上孤儿配对经过的征兵次数（半对保底）
+  /** 本局各字累计出现次数（棋盘实例 + 历次征兵抽字），用于后续抽字概率打压 */
+  private wordCharCounts = new Map<string, number>();
 
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
@@ -479,7 +481,8 @@ export class Battle {
   aiWords = new Map<string, PlacedWord>();
   private aiSummonsSinceShovel = 0;
   private aiSummonsSinceWord = 0; // AI 字牌保底计数（镜像 summonsSinceWord）
-  private aiSummonsSincePair = 0; // AI 半对保底计数（镜像 summonsSincePair）
+  private aiSummonsSincePair = 0;
+  private aiWordCharCounts = new Map<string, number>(); // AI 字出现次数（抽字打压）
   private aiSummonCount = 0;
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
@@ -661,8 +664,10 @@ export class Battle {
         trayWordsSoFar,
         forcePair,
         ownedBoard,
+        this.wordDrawCounts(),
       );
       trayWordsSoFar.push(w.char);
+      this.bumpWordCharCount(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
@@ -740,6 +745,31 @@ export class Battle {
   /** 棋盘已有全部字（含已激活），抽字去重用 */
   private boardWordCharsNow(): string[] {
     return [...this.words.values()].map((w) => w.char);
+  }
+
+  /** 抽字用：历次抽字计数 + 当前棋盘各字实例数 */
+  private wordDrawCounts(): Map<string, number> {
+    const m = new Map(this.wordCharCounts);
+    for (const w of this.words.values()) {
+      m.set(w.char, (m.get(w.char) ?? 0) + 1);
+    }
+    return m;
+  }
+
+  private bumpWordCharCount(char: string): void {
+    this.wordCharCounts.set(char, (this.wordCharCounts.get(char) ?? 0) + 1);
+  }
+
+  private aiWordDrawCounts(): Map<string, number> {
+    const m = new Map(this.aiWordCharCounts);
+    for (const w of this.aiWords.values()) {
+      m.set(w.char, (m.get(w.char) ?? 0) + 1);
+    }
+    return m;
+  }
+
+  private bumpAiWordCharCount(char: string): void {
+    this.aiWordCharCounts.set(char, (this.aiWordCharCounts.get(char) ?? 0) + 1);
   }
 
   // 候选区内合并：仅兵种同型同级升阶；字牌禁止互相合并。
@@ -946,8 +976,10 @@ export class Battle {
         trayWordsSoFar,
         forcePair,
         ownedBoard,
+        this.aiWordDrawCounts(),
       );
       trayWordsSoFar.push(w.char);
+      this.bumpAiWordCharCount(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
@@ -1978,7 +2010,7 @@ export class Battle {
     }
   }
 
-  // 羁绊：悟空激活 → 全队攻击加成（对应竞品 赵云+阿斗 羁绊）
+  // 羁绊：大圣激活 → 全队攻击加成（对应竞品 赵云+阿斗 羁绊）
   bondActive(): boolean {
     return this.activeGenerals().some((g) => g.def.id === BOND_GENERAL);
   }

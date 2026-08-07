@@ -5,6 +5,7 @@
 // 武将：激活落位按 placeCellScore 最大化，可挪开普通武器；单字优先远离路径、靠近唐僧。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
+import { matchGeneral } from './generals';
 
 export interface Cell { c: number; r: number; }
 
@@ -149,6 +150,33 @@ export function singleWordScore(pathDist: number, tangDist: number): number {
 function cellKey(c: Cell): string { return `${c.c},${c.r}`; }
 function sameCell(a: Cell, b: Cell): boolean { return a.c === b.c && a.r === b.r; }
 
+/** 两字能否按序组成武将（与 activeGenerals 的 matchGeneral 口径一致） */
+function pairDefForChars(a: string, b: string) {
+  return matchGeneral(a, b) ?? matchGeneral(b, a);
+}
+
+/** 解析可激活字对：优先 matchGeneral，否则回退 token 上的 general（测试/同将 hint） */
+function resolveHeroPair(
+  charA: string,
+  charB: string,
+  view: AutoPlaceView,
+  generalHint?: string,
+): { chars: readonly [string, string]; general: string } | undefined {
+  const def = pairDefForChars(charA, charB);
+  if (def) return { chars: def.chars, general: def.id };
+  if (generalHint) {
+    const chars = view.wordChars(generalHint);
+    if (chars && chars.includes(charA) && chars.includes(charB) && charA !== charB) {
+      return { chars, general: generalHint };
+    }
+  }
+  return undefined;
+}
+
+function isCharPartner(charA: string, charB: string, view: AutoPlaceView, generalHint?: string): boolean {
+  return !!resolveHeroPair(charA, charB, view, generalHint);
+}
+
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   const tol = opts.rangeTolerance ?? 0.5;
   const pSub = opts.pSubOptimal ?? 0;
@@ -187,7 +215,9 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
-    // 2) 字牌：能激活则按武将 placeCellScore 选双格（可挪武器）；单字远离路径、靠近唐僧
+    // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
+    if (!subopt() && tryPairBoardOrphans()) return true;
+    // 2b) 字牌：能激活则按武将 placeCellScore 选双格（可挪武器）；单字远离路径、靠近唐僧
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (tryPlaceWord(i, t)) return true;
@@ -429,25 +459,90 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const cell = free[0];
       return !!(cell && view.place(i, cell));
     }
-    const chars = view.wordChars(t.general);
-    if (!chars) return placeSingleWord(i);
 
     const tray = view.tray();
     let partnerJ = -1;
+    let partnerChar: string | undefined;
+    let partnerGeneral: string | undefined;
     for (let j = 0; j < tray.length; j++) {
       if (j === i) continue;
       const x = tray[j]!;
-      if (x.kind === 'word' && x.general === t.general && x.char !== t.char) {
+      if (x.kind === 'word' && isCharPartner(t.char, x.char, view, t.general === x.general ? t.general : undefined)) {
         partnerJ = j;
+        partnerChar = x.char;
+        partnerGeneral = x.general;
         break;
       }
     }
-    const boardMate = view.placedWords().find((w) => w.general === t.general && w.char !== t.char) ?? null;
+    const boardMate = view.placedWords().find(
+      (w) => !view.isActiveHeroCell(w.cell) && isCharPartner(t.char, w.char, view, t.general === w.general ? t.general : undefined),
+    ) ?? null;
 
-    if (boardMate || partnerJ >= 0) {
-      if (tryActivateHero(i, t, chars, boardMate, partnerJ)) return true;
+    const pair = boardMate
+      ? resolveHeroPair(t.char, boardMate.char, view, t.general === boardMate.general ? t.general : undefined)
+      : partnerChar
+        ? resolveHeroPair(t.char, partnerChar, view, t.general === partnerGeneral ? t.general : undefined)
+        : undefined;
+    if (pair && (boardMate || partnerJ >= 0)) {
+      if (tryActivateHero(i, t, pair.chars, pair.general, boardMate, partnerJ)) return true;
     }
     return placeSingleWord(i);
+  }
+
+  /** 棋盘上已有可配对两字但未相邻 → 迁到 pathCover 最高的左右邻格对 */
+  function tryPairBoardOrphans(): boolean {
+    const orphans = view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
+    type Cand = { left: PlacedWordLite; right: PlacedWordLite; general: string; score: number };
+    let best: Cand | null = null;
+
+    for (let i = 0; i < orphans.length; i++) {
+      for (let j = i + 1; j < orphans.length; j++) {
+        const a = orphans[i]!;
+        const b = orphans[j]!;
+        const def = pairDefForChars(a.char, b.char);
+        if (!def) continue;
+        const left = a.char === def.chars[0] ? a : b.char === def.chars[0] ? b : null;
+        const right = a.char === def.chars[1] ? a : b.char === def.chars[1] ? b : null;
+        if (!left || !right) continue;
+        if (sameCell(right.cell, { c: left.cell.c + 1, r: left.cell.r })) continue;
+
+        const tier = Math.max(left.tier ?? 1, right.tier ?? 1);
+        const pairs = rankedHeroPairs(def.id, tier);
+        if (pairs.length === 0) continue;
+        const score = pairs[0]!.score;
+        if (!best || score > best.score) best = { left, right, general: def.id, score };
+      }
+    }
+    if (!best) return false;
+    return moveBoardPairToActivate(best.left, best.right, best.general);
+  }
+
+  function findWordByChar(char: string): PlacedWordLite | undefined {
+    return view.placedWords().find((w) => w.char === char);
+  }
+
+  function moveBoardPairToActivate(leftW: PlacedWordLite, rightW: PlacedWordLite, general: string): boolean {
+    const tier = Math.max(leftW.tier ?? 1, rightW.tier ?? 1);
+    for (const { left, right } of rankedHeroPairs(general, tier)) {
+      if (view.isActiveHeroCell(left) || view.isActiveHeroCell(right)) continue;
+      const reserved = new Set([cellKey(left), cellKey(right)]);
+
+      const lw0 = findWordByChar(leftW.char);
+      const rw0 = findWordByChar(rightW.char);
+      if (!lw0 || !rw0) return false;
+      if (!clearForHero(left, reserved, sameCell(lw0.cell, left) ? lw0 : null)) continue;
+      if (!clearForHero(right, reserved, sameCell(rw0.cell, right) ? rw0 : null)) continue;
+
+      const lw = findWordByChar(leftW.char);
+      const rw = findWordByChar(rightW.char);
+      if (!lw || !rw) continue;
+      if (!sameCell(lw.cell, left) && !view.moveWord(lw.cell, left)) continue;
+      const rw2 = findWordByChar(rightW.char);
+      if (!rw2) continue;
+      if (!sameCell(rw2.cell, right) && !view.moveWord(rw2.cell, right)) continue;
+      return true;
+    }
+    return false;
   }
 
   /** 单字：远离路径 + 靠近唐僧 */
@@ -470,11 +565,12 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     _trayI: number,
     t: Extract<PlaceToken, { kind: 'word' }>,
     chars: readonly [string, string],
+    general: string,
     boardMate: PlacedWordLite | null,
     partnerJ: number,
   ): boolean {
     const tier = Math.max(t.tier, boardMate?.tier ?? t.tier);
-    const pairs = rankedHeroPairs(t.general, tier);
+    const pairs = rankedHeroPairs(general, tier);
 
     for (const { left, right } of pairs) {
       // —— 候选区已有配对字：两字一起落到最优对 ——
@@ -485,12 +581,12 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         const leftChar = chars[0];
         const rightChar = chars[1];
         const trayNow = view.tray();
-        const leftIdx = trayNow.findIndex((x) => x.kind === 'word' && x.char === leftChar && x.general === t.general);
-        const rightIdx0 = trayNow.findIndex((x) => x.kind === 'word' && x.char === rightChar && x.general === t.general);
+        const leftIdx = trayNow.findIndex((x) => x.kind === 'word' && x.char === leftChar);
+        const rightIdx0 = trayNow.findIndex((x) => x.kind === 'word' && x.char === rightChar);
         if (leftIdx < 0 || rightIdx0 < 0) continue;
         if (!view.place(leftIdx, left)) continue;
         const trayAfter = view.tray();
-        const rightIdx = trayAfter.findIndex((x) => x.kind === 'word' && x.char === rightChar && x.general === t.general);
+        const rightIdx = trayAfter.findIndex((x) => x.kind === 'word' && x.char === rightChar);
         if (rightIdx < 0) return true;
         if (view.place(rightIdx, right)) return true;
         return true;
@@ -525,7 +621,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         // 3) 腾 tray 落点（伴侣旧格现已空，可作为 extraFree）
         if (!clearForHero(needTray, reserved, null, [mateOld])) continue;
         const idx = view.tray().findIndex(
-          (x) => x.kind === 'word' && x.char === t.char && x.general === t.general && x.tier === t.tier,
+          (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
         );
         if (idx < 0) continue;
         if (view.place(idx, needTray)) return true;

@@ -451,3 +451,40 @@ it('高阶同型可与占更好位的低阶交换座位', () => {
   expect(byCell.get('0,0')?.tier).toBe(2);
   expect(byCell.get('0,1')?.tier).toBe(1);
 });
+
+it('棋盘已有可配对两字（general 不同）时优先迁到相邻激活', () => {
+  // 「大」hint 大圣、「蟒」hint 大蟒 —— 按字匹配应组成大蟒
+  const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 1, r: 2 }]);
+  v.wordChars = (g: string) => {
+    if (g === 'wukong') return ['大', '圣'] as const;
+    if (g === 'wuneng') return ['大', '蟒'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,2', { char: '大', general: 'wukong', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('3,2', { char: '蟒', general: 'wuneng', cell: { c: 3, r: 2 }, tier: 1 });
+  v.unlocked.add('0,2');
+  v.unlocked.add('3,2');
+  planAutoPlace(v, { rng });
+  const da = v.placedWords().find((w) => w.char === '大');
+  const mang = v.placedWords().find((w) => w.char === '蟒');
+  expect(da?.cell).toEqual({ c: 0, r: 0 });
+  expect(mang?.cell).toEqual({ c: 1, r: 0 });
+});
+
+it('棋盘孤儿梵+音（general 不同）一键布阵时优先凑对', () => {
+  const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }]);
+  v.wordChars = (g: string) => {
+    if (g === 'fanyin') return ['梵', '音'] as const;
+    if (g === 'guanyin') return ['观', '音'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,2', { char: '梵', general: 'fanyin', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('2,2', { char: '音', general: 'guanyin', cell: { c: 2, r: 2 }, tier: 1 });
+  v.unlocked.add('0,2');
+  v.unlocked.add('2,2');
+  planAutoPlace(v, { rng });
+  const fan = v.placedWords().find((w) => w.char === '梵');
+  const yin = v.placedWords().find((w) => w.char === '音');
+  expect(fan?.cell).toEqual({ c: 0, r: 0 });
+  expect(yin?.cell).toEqual({ c: 1, r: 0 });
+});

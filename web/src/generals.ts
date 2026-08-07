@@ -41,13 +41,13 @@ export interface GeneralDef {
 }
 
 export const GENERALS: GeneralDef[] = [
-  // ——— 悟：快攻贯穿 ———
-  { id: 'wukong', name: '悟空', chars: ['悟', '空'], role: '输出', rank: 'T0', skill: 'burst',
+  // ——— 大：快攻贯穿 ———
+  { id: 'wukong', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',
     skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
-    maxTier: 5, atkStyle: '快攻贯穿', family: '悟' },
-  { id: 'wuneng', name: '悟能', chars: ['悟', '能'], role: '过渡', rank: 'T2', skill: 'burst',
+    maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
+  { id: 'wuneng', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
     skillName: '钉耙小扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 1.8, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-bajie',
-    maxTier: 3, atkStyle: '快攻贯穿', family: '悟' },
+    maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
 
   // ——— 郎：远程暴击 ———
   { id: 'erlang', name: '二郎', chars: ['二', '郎'], role: '输出', rank: 'T1', skill: 'ranged',
@@ -172,7 +172,7 @@ export function generalPOW(def: GeneralDef, tier: number): number {
   return s.atk * s.frq * s.rge * s.targets;
 }
 
-// 羁绊：悟空上场 → 全队攻击 +12%
+// 羁绊：大圣上场 → 全队攻击 +12%
 export const BOND_GENERAL = 'wukong';
 export const BOND_NAME = '大圣护法';
 export const BOND_ATK_BONUS = 0.12;

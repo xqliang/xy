@@ -34,8 +34,8 @@ describe('AI 落子与激活', () => {
       if (r) { left = l; right = r; break; }
     }
     expect(left && right).toBeTruthy(); // seed-1 地图应存在左右相邻对
-    b.aiWords.set(`${left!.c},${left!.r}`, { char: '悟', general: 'wukong', tier: 1, cell: left! });
-    b.aiWords.set(`${right!.c},${right!.r}`, { char: '空', general: 'wukong', tier: 1, cell: right! });
+    b.aiWords.set(`${left!.c},${left!.r}`, { char: '大', general: 'wukong', tier: 1, cell: left! });
+    b.aiWords.set(`${right!.c},${right!.r}`, { char: '圣', general: 'wukong', tier: 1, cell: right! });
     const gens = b.aiActiveGenerals();
     expect(gens.length).toBe(1);
     expect(gens[0]!.def.id).toBe('wukong');

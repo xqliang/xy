@@ -32,34 +32,45 @@ describe('征兵阶段权重', () => {
 
   it('孤儿补缺：forcePartner 只出配对字', () => {
     const rng = new FakeRng([0, 0.5, 0.9]);
-    const pick = pickWordChar(rng, 3, ['悟'], [], true);
-    expect(neededPartnerChars(['悟'])).toEqual(expect.arrayContaining(['空', '能']));
-    expect(['空', '能']).toContain(pick.char);
+    const pick = pickWordChar(rng, 3, ['大'], [], true);
+    expect(neededPartnerChars(['大'])).toEqual(expect.arrayContaining(['圣', '蟒']));
+    expect(['圣', '蟒']).toContain(pick.char);
   });
 
   it('有孤儿时 pendingPartner 排除本盘已抽到的配对字', () => {
-    expect(pendingPartnerChars(['悟'], ['空'])).toEqual(expect.arrayContaining(['能']));
-    expect(pendingPartnerChars(['悟'], ['空'])).not.toContain('空');
+    expect(pendingPartnerChars(['大'], ['圣'])).toEqual(expect.arrayContaining(['蟒']));
+    expect(pendingPartnerChars(['大'], ['圣'])).not.toContain('圣');
   });
 
-  it('尽量不抽已拥有字：已有「悟」时加权抽其它字', () => {
+  it('尽量不抽已拥有字：已有「大」时加权抽其它字', () => {
     let dup = 0;
     for (let i = 0; i < 200; i++) {
       const rng = new FakeRng([i / 200, 0.3, 0.7]);
-      const pick = pickWordChar(rng, 5, [], [], false, ['悟']);
-      if (pick.char === '悟') dup++;
+      const pick = pickWordChar(rng, 5, [], [], false, ['大']);
+      if (pick.char === '大') dup++;
     }
     expect(dup).toBeLessThan(15);
   });
 
-  it('本盘不抽重复配对字：tray 已有「空」则不再抽「空」', () => {
+  it('本盘不抽重复配对字：tray 已有「圣」则不再抽「圣」', () => {
     let dup = 0;
     for (let i = 0; i < 200; i++) {
       const rng = new FakeRng([i / 200]);
-      const pick = pickWordChar(rng, 5, ['悟'], ['空'], false, ['悟']);
-      if (pick.char === '空') dup++;
+      const pick = pickWordChar(rng, 5, ['大'], ['圣'], false, ['大']);
+      if (pick.char === '圣') dup++;
     }
     expect(dup).toBe(0);
+  });
+
+  it('出现次数越多，后续抽到同字的概率越低', () => {
+    const counts = new Map<string, number>([['小', 4]]);
+    let xiao = 0;
+    for (let i = 0; i < 300; i++) {
+      const rng = new FakeRng([i / 300, 0.2]);
+      const pick = pickWordChar(rng, 5, [], [], false, [], counts);
+      if (pick.char === '小') xiao++;
+    }
+    expect(xiao).toBeLessThan(20);
   });
 });
 
@@ -81,8 +92,8 @@ describe('半对保底 N=4', () => {
     b.wave = 3;
     const cell = b.unlockedCells()[0]!;
     b.words.set(`${cell.c},${cell.r}`, {
-      char: '悟',
-      general: hintGeneralForChar('悟'),
+      char: '大',
+      general: hintGeneralForChar('大'),
       tier: 1,
       cell,
     });
@@ -93,6 +104,6 @@ describe('半对保底 N=4', () => {
     const words = b.tray.filter((t) => t.kind === 'word');
     expect(words.length).toBeGreaterThanOrEqual(1);
     const chars = words.map((t) => (t.kind === 'word' ? t.char : ''));
-    expect(chars.some((c) => c === '空' || c === '能')).toBe(true);
+    expect(chars.some((c) => c === '圣' || c === '蟒')).toBe(true);
   });
 });

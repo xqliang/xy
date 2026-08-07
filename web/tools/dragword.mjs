@@ -15,19 +15,19 @@ const res = await page.evaluate(()=>{
   g.restart(5,1); g.enterBattle();
   const cells=b.unlockedCells();
   const a=cells[0], far=cells[4];
-  // 放 悟 在 a，空 在远处 → 未激活
-  b.words.set(`${a.c},${a.r}`,{char:'悟',general:'wukong',tier:1,cell:a});
-  b.words.set(`${far.c},${far.r}`,{char:'空',general:'wukong',tier:1,cell:far});
+  // 放 大 在 a，圣 在远处 → 未激活
+  b.words.set(`${a.c},${a.r}`,{char:'大',general:'wukong',tier:1,cell:a});
+  b.words.set(`${far.c},${far.r}`,{char:'圣',general:'wukong',tier:1,cell:far});
   const step1 = b.activeGenerals().length;
-  // 拖 空 到 悟 右边 → 应激活
+  // 拖 圣 到 大 右边 → 应激活
   const nb={c:a.c+1,r:a.r};
   const moved = b.dragBoard(far, nb);
   const step2 = b.activeGenerals().map(x=>x.def.name);
-  // 再把 空 拖走 → 应拆分
+  // 再把 圣 拖走 → 应拆分
   const split = b.dragBoard(nb, far);
   const step3 = b.activeGenerals().length;
-  // 同字同阶升阶：再放一个 悟 拖到 悟 上
-  b.words.set(`${far.c},${far.r}`,{char:'悟',general:'wukong',tier:1,cell:far});
+  // 同字同阶升阶：再放一个 大 拖到 大 上
+  b.words.set(`${far.c},${far.r}`,{char:'大',general:'wukong',tier:1,cell:far});
   b.dragBoard(far, a);
   const tierAfter = b.words.get(`${a.c},${a.r}`).tier;
   return { step1_notAdjacent:step1, moved, step2_activated:step2, split, step3_afterSplit:step3, tierAfterMerge:tierAfter, msg:b.message };

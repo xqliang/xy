@@ -23,11 +23,11 @@ const res = await page.evaluate(async ()=>{
   g.grantWeapon('huojianqiang'); g.grantWeapon('jiuchidingba'); g.grantWeapon('bajiaoshan');
   const bag=JSON.parse(localStorage.getItem('dasheng.bag'));
   r.jingubangTier = bag.owned['jingubang']; r.equippedCount = bag.equipped.length; r.owned = Object.keys(bag.owned).length;
-  // 加成生效：装备如意金箍棒(范围)后，悟空范围应变大
+  // 加成生效：装备如意金箍棒(范围)后，大圣范围应变大
   g.restart(5,1); g.enterBattle(); b=g.battle;
   const cells=b.unlockedCells(); const a=cells[0], nb={c:a.c+1,r:a.r};
-  b.words.set(`${a.c},${a.r}`,{char:'悟',general:'wukong',tier:1,cell:a});
-  b.words.set(`${nb.c},${nb.r}`,{char:'空',general:'wukong',tier:1,cell:nb});
+  b.words.set(`${a.c},${a.r}`,{char:'大',general:'wukong',tier:1,cell:a});
+  b.words.set(`${nb.c},${nb.r}`,{char:'圣',general:'wukong',tier:1,cell:nb});
   const ag=b.activeGenerals()[0];
   r.weaponBonusesInjected = JSON.stringify(b.weaponBonuses.wukong||null);
   r.rgeWithWeapon = +b.generalRge(ag).toFixed(3);
