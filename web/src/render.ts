@@ -1680,7 +1680,7 @@ function drawTangsengHearts(
   if (defeated) {
     ctx.fillStyle = '#9a9a9a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText('已败', cx, headTop - 6);
+    ctx.fillText('已败', cx, headTop - 1);
     return;
   }
   const n = Math.max(0, Math.floor(hp));
@@ -1691,12 +1691,12 @@ function drawTangsengHearts(
   const colGap = fontPx * 0.95;
   ctx.font = `${fontPx}px sans-serif`;
   ctx.fillStyle = '#e03030';
-  // 自头顶向上堆叠：先排最靠近头顶的一行（最多 3 心）
+  // 自头顶向上堆叠：先排最靠近头顶的一行（最多 3 心）；整体略下移贴近立绘
   let remaining = n;
   let row = 0;
   while (remaining > 0) {
     const count = Math.min(perRow, remaining);
-    const rowY = headTop - 4 - row * rowGap;
+    const rowY = headTop + 1 - row * rowGap;
     const totalW = (count - 1) * colGap;
     const startX = cx - totalW / 2;
     for (let i = 0; i < count; i++) {
