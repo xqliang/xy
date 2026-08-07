@@ -5,6 +5,8 @@ import {
   digPriorityScore,
   mergeKeepScore,
   placeCellScore,
+  seatScore,
+  placeExitWeight,
   singleWordScore,
   type AutoPlaceView,
   type PlaceToken,
@@ -395,13 +397,15 @@ it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位�
   expect(v.tray().length).toBe(0);
 });
 
-it('mergeKeepScore / placeCellScore：近出口优先（可压过小幅覆盖差）', () => {
+it('mergeKeepScore / placeCellScore / seatScore：近出口 + 短射程更看重贴口', () => {
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3, 4));
-  // 出口更近可扳回略低的覆盖
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3.5, 5));
   expect(placeCellScore(5, 0)).toBeGreaterThan(placeCellScore(5.5, 2));
-  // 近出口可压过可观覆盖差（1.5 权重下：贴口 8 分 > 远端 exit4 的 11 覆盖）
   expect(placeCellScore(8, 1)).toBeGreaterThan(placeCellScore(11, 4));
+  // 刀(rge=1)出口权重大于弓(rge=3)
+  expect(placeExitWeight(1)).toBeGreaterThan(placeExitWeight(3));
+  // 同覆盖同离路：刀更偏好贴口格
+  expect(seatScore(8, 1, 1, 1)).toBeGreaterThan(seatScore(8, 4, 1, 1));
 });
 
 it('空位更优时已上场枪会迁到近出口空格', () => {
@@ -411,6 +415,15 @@ it('空位更优时已上场枪会迁到近出口空格', () => {
   planAutoPlace(v, { rng });
   const spear = v.placedUnits().find((u) => u.type === 'spear');
   expect(spear?.cell).toEqual({ c: 0, r: 0 });
+});
+
+it('刀在右侧、左侧近出口空着时应迁到左侧（结合射程与出口）', () => {
+  // 两格同离路 r=0；出口在 c=0 → 刀应占 (0,0) 而非 (1,0)
+  const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }]);
+  v.unitsMap.set('1,0', { type: 'monkey', tier: 2, cell: { c: 1, r: 0 } });
+  planAutoPlace(v, { rng });
+  const knife = v.placedUnits().find((u) => u.type === 'monkey');
+  expect(knife?.cell).toEqual({ c: 0, r: 0 });
 });
 
 it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {

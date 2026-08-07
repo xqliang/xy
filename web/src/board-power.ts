@@ -227,8 +227,8 @@ function planOptimalUnitPlacement(input: BoardPowerInput, tol: number): PlacedAt
       const bestCov = pathCoverageLen(
         input.map, input.entranceDist, input.pathLen, best.c, best.r, stat.rge, tol,
       );
-      const s = placeCellScore(cov, Math.hypot(c.c - gate.c, c.r - gate.r));
-      const bs = placeCellScore(bestCov, Math.hypot(best.c - gate.c, best.r - gate.r));
+      const s = placeCellScore(cov, Math.hypot(c.c - gate.c, c.r - gate.r), stat.rge, input.nearestPathDist(c));
+      const bs = placeCellScore(bestCov, Math.hypot(best.c - gate.c, best.r - gate.r), stat.rge, input.nearestPathDist(best));
       return s > bs ? c : best;
     }, reach[0]!);
     const idx = cells.findIndex((c) => c.c === cell.c && c.r === cell.r);

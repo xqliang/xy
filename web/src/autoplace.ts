@@ -98,18 +98,44 @@ export function digPriorityScore(
 }
 
 /**
- * 落位/保留格评分（分越高越优先）：pathCover 为主，靠近出怪口线性加优先级。
- * 每靠近出口 1 格 ≈ 等效 +MERGE_EXIT_WEIGHT 路径覆盖（近出口可压过可观覆盖差）。
+ * 落位/保留格评分：pathCover 为主，并按「射程 + 离出怪口 + 离路」综合。
+ * 短射程更看重近出口、贴路；长射程相对更吃覆盖。
  */
-export const MERGE_EXIT_WEIGHT = 1.5;
+export const MERGE_EXIT_WEIGHT = 1;
 
-export function mergeKeepScore(pathCover: number, exitDist: number): number {
-  return pathCover - MERGE_EXIT_WEIGHT * Math.max(0, exitDist);
+/** 出口权重随射程放大：刀(rge1) > 枪(2) > 弓(3) */
+export function placeExitWeight(rge: number): number {
+  return MERGE_EXIT_WEIGHT * (1 + 0.6 * Math.max(0, 3 - rge));
 }
 
-/** 落位评分：路径覆盖 + 近出口优先（与棋盘合保留格同一口径） */
-export function placeCellScore(pathCover: number, exitDist: number): number {
-  return mergeKeepScore(pathCover, exitDist);
+/**
+ * 座位综合分（越高越优先）。
+ * @param pathDist 离路距离：短兵略偏好更近（仍须在射程内才可选）
+ */
+export function seatScore(
+  pathCover: number,
+  exitDist: number,
+  pathDist: number,
+  rge: number,
+): number {
+  const exitW = placeExitWeight(rge);
+  const pathW = 0.4 * Math.max(0.4, 3.5 - rge);
+  return pathCover - exitW * Math.max(0, exitDist) - pathW * Math.max(0, pathDist);
+}
+
+/** 棋盘合保留：不计离路细项时的简化分（兼容旧口径） */
+export function mergeKeepScore(pathCover: number, exitDist: number, rge = 2): number {
+  return seatScore(pathCover, exitDist, 0, rge);
+}
+
+/** 落位评分：默认 rge=2；传入 pathDist/rge 时与 seatScore 同口径 */
+export function placeCellScore(
+  pathCover: number,
+  exitDist: number,
+  rge = 2,
+  pathDist = 0,
+): number {
+  return seatScore(pathCover, exitDist, pathDist, rge);
 }
 
 /** 单字落位：远离路径、靠近唐僧（分越高越好） */
@@ -132,13 +158,20 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     if (!step()) break; // 一整轮找不到可执行动作 → 停（剩余令牌保留在 tray）
   }
 
-  /** 可达格中选 pathCover+近出口评分最高者（短兵先占位，避免远程抢近路甜区） */
+  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路 */
+  function scoreCell(cell: Cell, type: UnitType, tier: number): number {
+    const rge = getUnitStat(type, tier).rge;
+    return seatScore(
+      view.pathCover(cell, type, tier),
+      view.exitDist(cell),
+      view.nearestPathDist(cell),
+      rge,
+    );
+  }
+
+  /** 可达格中选座位分最高者（短兵先占位，避免远程抢近路甜区） */
   function pickReachCell(reach: Cell[], type: UnitType, tier: number): Cell {
-    return reach.reduce((best, c) => {
-      const s = placeCellScore(view.pathCover(c, type, tier), view.exitDist(c));
-      const bs = placeCellScore(view.pathCover(best, type, tier), view.exitDist(best));
-      return s > bs ? c : best;
-    }, reach[0]!);
+    return reach.reduce((best, c) => (scoreCell(c, type, tier) > scoreCell(best, type, tier) ? c : best), reach[0]!);
   }
 
   function step(): boolean {
@@ -194,7 +227,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         for (const c of free) {
           if (view.nearestPathDist(c) > occRge + tol) continue; // 占位兵够不着
           if (view.nearestPathDist(c) <= rge + tol) continue;   // 别又占短兵能用的近格
-          const sc = placeCellScore(view.pathCover(c, occ.type, occ.tier), view.exitDist(c));
+          const sc = scoreCell(c, occ.type, occ.tier);
           if (!dest || sc > destScore) { dest = c; destScore = sc; }
         }
         if (dest && view.moveUnit(occ.cell, dest)) {
@@ -232,8 +265,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         // 互换后双方仍须够得着路（同型射程通常相同，仍做校验）
         if (view.nearestPathDist(lo.cell) > rge + tol) continue;
         if (view.nearestPathDist(hi.cell) > getUnitStat(lo.type, lo.tier).rge + tol) continue;
-        const scoreNow = placeCellScore(view.pathCover(hi.cell, hi.type, hi.tier), view.exitDist(hi.cell));
-        const scoreBetter = placeCellScore(view.pathCover(lo.cell, hi.type, hi.tier), view.exitDist(lo.cell));
+        const scoreNow = scoreCell(hi.cell, hi.type, hi.tier);
+        const scoreBetter = scoreCell(lo.cell, hi.type, hi.tier);
         const gain = scoreBetter - scoreNow;
         if (gain <= 0) continue;
         if (!best || gain > best.gain) best = { hi, lo, gain };
@@ -244,8 +277,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   }
 
   /**
-   * 已上场单位迁到评分更高的空位（挖开近出口空格后补位）。
-   * 同收益时优先迁短射程（近战/枪更需要贴口）。
+   * 已上场单位迁到座位分更高的空位（结合射程、离出怪口、离路）。
+   * 只往更好处迁；同收益优先短射程。
    */
   function tryRelocateToBetterFreeSeats(): boolean {
     const free = view.freeCells();
@@ -253,10 +286,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     let best: { from: Cell; to: Cell; gain: number; rge: number } | null = null;
     for (const u of view.placedUnits()) {
       const rge = getUnitStat(u.type, u.tier).rge;
-      const scoreNow = placeCellScore(view.pathCover(u.cell, u.type, u.tier), view.exitDist(u.cell));
+      const scoreNow = scoreCell(u.cell, u.type, u.tier);
       for (const c of free) {
         if (view.nearestPathDist(c) > rge + tol) continue;
-        const score = placeCellScore(view.pathCover(c, u.type, u.tier), view.exitDist(c));
+        const score = scoreCell(c, u.type, u.tier);
         const gain = score - scoreNow;
         if (gain <= 0.05) continue;
         if (
@@ -294,7 +327,9 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     const ay = (left.r + right.r) / 2;
     const cover = view.pathCoverAt(ax, ay, view.generalRge(general, tier));
     const exit = (view.exitDist(left) + view.exitDist(right)) / 2;
-    return placeCellScore(cover, exit);
+    const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
+    const rge = view.generalRge(general, tier);
+    return seatScore(cover, exit, pathD, rge);
   }
 
   /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
@@ -541,8 +576,16 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       for (let j = i + 1; j < placed.length; j++) {
         const b = placed[j]!;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
-        const scoreA = mergeKeepScore(view.pathCover(a.cell, a.type, a.tier), view.exitDist(a.cell));
-        const scoreB = mergeKeepScore(view.pathCover(b.cell, b.type, b.tier), view.exitDist(b.cell));
+        const scoreA = mergeKeepScore(
+          view.pathCover(a.cell, a.type, a.tier),
+          view.exitDist(a.cell),
+          getUnitStat(a.type, a.tier).rge,
+        );
+        const scoreB = mergeKeepScore(
+          view.pathCover(b.cell, b.type, b.tier),
+          view.exitDist(b.cell),
+          getUnitStat(b.type, b.tier).rge,
+        );
         const keep = scoreA >= scoreB ? a : b;
         const drop = keep === a ? b : a;
         const keepScore = Math.max(scoreA, scoreB);
