@@ -2,6 +2,7 @@
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
+// 武将：激活落位按 placeCellScore 最大化，可挪开普通武器；单字优先远离路径、靠近唐僧。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
 
@@ -13,7 +14,7 @@ export type PlaceToken =
   | { kind: 'word'; char: string; general: string; tier: number };
 
 export interface PlacedUnitLite { type: UnitType; tier: number; cell: Cell; }
-export interface PlacedWordLite { char: string; general: string; cell: Cell; }
+export interface PlacedWordLite { char: string; general: string; cell: Cell; tier?: number }
 
 export interface AutoPlaceView {
   tray(): PlaceToken[];                     // 当前候选（随 place 变化，每步重读）
@@ -24,11 +25,21 @@ export interface AutoPlaceView {
   nearestPathDist(cell: Cell): number;      // 格到怪路的最近距（格）
   /** 格到怪物出口（路径首个在网格内的点）的距离 */
   exitDist(cell: Cell): number;
+  /** 格到唐僧的距离 */
+  tangsengDist(cell: Cell): number;
   /** 该格兵种攻击圆覆盖的怪物路径长度（越大越好） */
   pathCover(cell: Cell, type: UnitType, tier: number): number;
+  /** 任意攻击圆心 + 射程的路径覆盖（武将用双格中点） */
+  pathCoverAt(ax: number, ay: number, rge: number): number;
+  /** 武将有效射程（含神兵等） */
+  generalRge(general: string, tier: number): number;
   wordChars(general: string): readonly [string, string] | undefined; // 连读顺序 [左,右]
   place(trayIndex: number, cell: Cell): boolean; // 执行落子（挖/放/合成/激活由宿主完成）
   moveUnit(from: Cell, to: Cell): boolean;  // 把已上场单位从 from 挪到空 to
+  /** 交换两格已上场单位位置（用于高阶抢占低阶更好座位） */
+  swapUnits(a: Cell, b: Cell): boolean;
+  /** 把已上场字牌挪到空 to（不与其他字/兵重叠） */
+  moveWord(from: Cell, to: Cell): boolean;
   /** 候选区内两枚同型同阶兵合成（升阶留在 to 下标；from 被移除） */
   mergeTray(from: number, to: number): boolean;
   /** 棋盘两兵合成：from 并入 to（保留 to 格，升阶） */
@@ -59,6 +70,22 @@ export function mergeKeepScore(pathCover: number, exitDist: number): number {
   return pathCover + MERGE_EXIT_WEIGHT / (1 + Math.max(0, exitDist));
 }
 
+/** 落位评分：路径覆盖为主，近出口加权（与棋盘合保留格同一口径） */
+export function placeCellScore(pathCover: number, exitDist: number): number {
+  return mergeKeepScore(pathCover, exitDist);
+}
+
+/** 单字落位：远离路径、靠近唐僧（分越高越好） */
+export const SINGLE_WORD_PATH_WEIGHT = 1;
+export const SINGLE_WORD_TANG_WEIGHT = 1.25;
+
+export function singleWordScore(pathDist: number, tangDist: number): number {
+  return SINGLE_WORD_PATH_WEIGHT * pathDist - SINGLE_WORD_TANG_WEIGHT * Math.max(0, tangDist);
+}
+
+function cellKey(c: Cell): string { return `${c.c},${c.r}`; }
+function sameCell(a: Cell, b: Cell): boolean { return a.c === b.c && a.r === b.r; }
+
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   const tol = opts.rangeTolerance ?? 0.5;
   const pSub = opts.pSubOptimal ?? 0;
@@ -66,6 +93,15 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   let guard = 0;
   while (guard++ < 500) {
     if (!step()) break; // 一整轮找不到可执行动作 → 停（剩余令牌保留在 tray）
+  }
+
+  /** 可达格中选 pathCover+近出口评分最高者（短兵先占位，避免远程抢近路甜区） */
+  function pickReachCell(reach: Cell[], type: UnitType, tier: number): Cell {
+    return reach.reduce((best, c) => {
+      const s = placeCellScore(view.pathCover(c, type, tier), view.exitDist(c));
+      const bs = placeCellScore(view.pathCover(best, type, tier), view.exitDist(best));
+      return s > bs ? c : best;
+    }, reach[0]!);
   }
 
   function step(): boolean {
@@ -78,11 +114,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
-    // 2) 字牌：优先放到能与同将另一字连读相邻的格以激活；否则任意空格
+    // 2) 字牌：能激活则按武将 placeCellScore 选双格（可挪武器）；单字远离路径、靠近唐僧
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
-      const cell = planWordCell(t);
-      if (cell && view.place(i, cell)) return true;
+      if (tryPlaceWord(i, t)) return true;
     }
     // 3) 兵种合成：同型同阶 → 合成升阶（"合成英雄"/升级武器）
     for (let i = 0; i < tray.length; i++) {
@@ -90,7 +125,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && !subopt()) { if (view.place(i, mate.cell)) return true; }
     }
-    // 4) 射程感知铺格：短射程兵优先，放进"可达且最远"的空格
+    // 4) 射程感知铺格：短射程先占位；各自在可达格中选 pathCover（+近出口）最大的格。
     const free = view.freeCells();
     const unitIdx = tray
       .map((t, i) => ({ t, i }))
@@ -102,7 +137,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       if (reach.length === 0) continue;
       const cell = subopt()
         ? reach[Math.floor(opts.rng() * reach.length)]!
-        : reach.reduce((best, c) => (view.nearestPathDist(c) > view.nearestPathDist(best) ? c : best), reach[0]!);
+        : pickReachCell(reach, t.type, t.tier);
       if (view.place(i, cell)) return true;
     }
     // 5) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
@@ -114,11 +149,13 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         if (view.nearestPathDist(occ.cell) > rge + tol) continue; // 占位兵不在短兵可达格，挪它无益
         const occRge = getUnitStat(occ.type, occ.tier).rge;
         if (occRge < rge) continue; // 只把射程≥的兵往外挪（更适合远格）
-        let dest: Cell | undefined; // 占位兵能去的、最远的空格；且不再占用短兵可达的近格
+        let dest: Cell | undefined;
+        let destScore = -Infinity;
         for (const c of free) {
           if (view.nearestPathDist(c) > occRge + tol) continue; // 占位兵够不着
           if (view.nearestPathDist(c) <= rge + tol) continue;   // 别又占短兵能用的近格
-          if (!dest || view.nearestPathDist(c) > view.nearestPathDist(dest)) dest = c;
+          const sc = placeCellScore(view.pathCover(c, occ.type, occ.tier), view.exitDist(c));
+          if (!dest || sc > destScore) { dest = c; destScore = sc; }
         }
         if (dest && view.moveUnit(occ.cell, dest)) {
           view.place(i, occ.cell); // 腾出的近格放短兵
@@ -126,12 +163,42 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         }
       }
     }
+    // 5b) 高阶同型抢座：若低阶同类占着 placeCellScore 更高的格，与高阶交换
+    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
     // 6–7) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
       if (tryBoardMergeThenPlace()) return true;
     }
     return false; // 无可推进动作
+  }
+
+  /**
+   * 同型异阶：高阶单位若当前格评分低于某低阶同类所在格（按高阶自身 pathCover 计），则交换。
+   * 合成升阶后让高阶占输出更好的座位。
+   */
+  function trySwapHigherTierToBetterSeats(): boolean {
+    const units = view.placedUnits();
+    let best: { hi: PlacedUnitLite; lo: PlacedUnitLite; gain: number } | null = null;
+    for (let i = 0; i < units.length; i++) {
+      const hi = units[i]!;
+      for (let j = 0; j < units.length; j++) {
+        if (i === j) continue;
+        const lo = units[j]!;
+        if (hi.type !== lo.type || hi.tier <= lo.tier) continue;
+        const rge = getUnitStat(hi.type, hi.tier).rge;
+        // 互换后双方仍须够得着路（同型射程通常相同，仍做校验）
+        if (view.nearestPathDist(lo.cell) > rge + tol) continue;
+        if (view.nearestPathDist(hi.cell) > getUnitStat(lo.type, lo.tier).rge + tol) continue;
+        const scoreNow = placeCellScore(view.pathCover(hi.cell, hi.type, hi.tier), view.exitDist(hi.cell));
+        const scoreBetter = placeCellScore(view.pathCover(lo.cell, hi.type, hi.tier), view.exitDist(lo.cell));
+        const gain = scoreBetter - scoreNow;
+        if (gain <= 0) continue;
+        if (!best || gain > best.gain) best = { hi, lo, gain };
+      }
+    }
+    if (!best) return false;
+    return view.swapUnits(best.hi.cell, best.lo.cell);
   }
 
   /** 可挖格按「贴路 + 近出口」加权排序（低分优先） */
@@ -141,6 +208,165 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const sb = digPriorityScore(view.nearestPathDist(b), view.exitDist(b));
       return sa - sb || a.r - b.r || a.c - b.c;
     });
+  }
+
+  function unlockedCells(): Cell[] {
+    const m = new Map<string, Cell>();
+    for (const c of view.freeCells()) m.set(cellKey(c), c);
+    for (const u of view.placedUnits()) m.set(cellKey(u.cell), u.cell);
+    for (const w of view.placedWords()) m.set(cellKey(w.cell), w.cell);
+    return [...m.values()];
+  }
+
+  function heroPairScore(left: Cell, right: Cell, general: string, tier: number): number {
+    const ax = (left.c + right.c) / 2;
+    const ay = (left.r + right.r) / 2;
+    const cover = view.pathCoverAt(ax, ay, view.generalRge(general, tier));
+    const exit = (view.exitDist(left) + view.exitDist(right)) / 2;
+    return placeCellScore(cover, exit);
+  }
+
+  /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
+  function rankedHeroPairs(general: string, tier: number): { left: Cell; right: Cell; score: number }[] {
+    const cells = unlockedCells();
+    const byKey = new Map(cells.map((c) => [cellKey(c), c]));
+    const out: { left: Cell; right: Cell; score: number }[] = [];
+    for (const left of cells) {
+      const right = byKey.get(`${left.c + 1},${left.r}`);
+      if (!right) continue;
+      out.push({ left, right, score: heroPairScore(left, right, general, tier) });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out;
+  }
+
+  /**
+   * 把 cell 上的普通武器挪到 reserved 之外的空格（优先可达且 placeCellScore 高）。
+   * 目标格有其他字牌则失败；空则成功。
+   */
+  function clearUnitFrom(cell: Cell, reserved: Set<string>): boolean {
+    if (view.placedWords().some((w) => sameCell(w.cell, cell))) return false;
+    const u = view.placedUnits().find((x) => sameCell(x.cell, cell));
+    if (!u) return true;
+    const free = view.freeCells().filter((c) => !reserved.has(cellKey(c)) && !sameCell(c, cell));
+    const rge = getUnitStat(u.type, u.tier).rge;
+    const inRange = free.filter((c) => view.nearestPathDist(c) <= rge + tol);
+    const pool = inRange.length > 0 ? inRange : free;
+    if (pool.length === 0) return false;
+    const dest = pickReachCell(pool, u.type, u.tier);
+    return view.moveUnit(u.cell, dest);
+  }
+
+  function wordAt(cell: Cell): PlacedWordLite | undefined {
+    return view.placedWords().find((w) => sameCell(w.cell, cell));
+  }
+
+  function tryPlaceWord(i: number, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    const free = view.freeCells();
+    if (free.length === 0 && view.placedUnits().length === 0) return false;
+    if (subopt()) {
+      const cell = free[0];
+      return !!(cell && view.place(i, cell));
+    }
+    const chars = view.wordChars(t.general);
+    if (!chars) return placeSingleWord(i);
+
+    const tray = view.tray();
+    let partnerJ = -1;
+    for (let j = 0; j < tray.length; j++) {
+      if (j === i) continue;
+      const x = tray[j]!;
+      if (x.kind === 'word' && x.general === t.general && x.char !== t.char) {
+        partnerJ = j;
+        break;
+      }
+    }
+    const boardMate = view.placedWords().find((w) => w.general === t.general && w.char !== t.char) ?? null;
+
+    if (boardMate || partnerJ >= 0) {
+      if (tryActivateHero(i, t, chars, boardMate, partnerJ)) return true;
+    }
+    return placeSingleWord(i);
+  }
+
+  /** 单字：远离路径 + 靠近唐僧 */
+  function placeSingleWord(i: number): boolean {
+    const free = view.freeCells();
+    if (free.length === 0) return false;
+    const cell = free.reduce((best, c) => {
+      const s = singleWordScore(view.nearestPathDist(c), view.tangsengDist(c));
+      const bs = singleWordScore(view.nearestPathDist(best), view.tangsengDist(best));
+      return s > bs ? c : best;
+    }, free[0]!);
+    return view.place(i, cell);
+  }
+
+  /**
+   * 激活武将：在已解锁格中选 placeCellScore 最高的左右邻格；
+   * 目标格上的普通武器可挪走；棋盘上的伴侣字可迁到对位。
+   */
+  function tryActivateHero(
+    _trayI: number,
+    t: Extract<PlaceToken, { kind: 'word' }>,
+    chars: readonly [string, string],
+    boardMate: PlacedWordLite | null,
+    partnerJ: number,
+  ): boolean {
+    const tier = Math.max(t.tier, boardMate?.tier ?? t.tier);
+    const pairs = rankedHeroPairs(t.general, tier);
+
+    for (const { left, right } of pairs) {
+      // —— 候选区已有配对字：两字一起落到最优对 ——
+      if (!boardMate && partnerJ >= 0) {
+        const reserved = new Set([cellKey(left), cellKey(right)]);
+        if (wordAt(left) || wordAt(right)) continue;
+        if (!clearUnitFrom(left, reserved) || !clearUnitFrom(right, reserved)) continue;
+        // 先放左侧字再放右侧字（下标随 splice 变化）
+        const leftChar = chars[0];
+        const rightChar = chars[1];
+        const trayNow = view.tray();
+        const leftIdx = trayNow.findIndex((x) => x.kind === 'word' && x.char === leftChar && x.general === t.general);
+        const rightIdx0 = trayNow.findIndex((x) => x.kind === 'word' && x.char === rightChar && x.general === t.general);
+        if (leftIdx < 0 || rightIdx0 < 0) continue;
+        if (!view.place(leftIdx, left)) continue;
+        const trayAfter = view.tray();
+        const rightIdx = trayAfter.findIndex((x) => x.kind === 'word' && x.char === rightChar && x.general === t.general);
+        if (rightIdx < 0) return true; // 左已落，右偶发消失也算推进
+        if (view.place(rightIdx, right)) return true;
+        return true;
+      }
+
+      // —— 棋盘已有伴侣：迁伴侣到对位（如需），清 tray 格武器后落子 ——
+      if (boardMate) {
+        const mateIsLeftChar = boardMate.char === chars[0];
+        // token 必须是另一半
+        if (mateIsLeftChar && t.char !== chars[1]) continue;
+        if (!mateIsLeftChar && t.char !== chars[0]) continue;
+        const needMate = mateIsLeftChar ? left : right;
+        const needTray = mateIsLeftChar ? right : left;
+
+        const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
+        // 伴侣目标格被其他字占 → 跳过
+        const wMate = wordAt(needMate);
+        if (wMate && !(wMate.char === boardMate.char && wMate.general === boardMate.general)) continue;
+        const wTray = wordAt(needTray);
+        if (wTray) continue;
+
+        if (!sameCell(boardMate.cell, needMate)) {
+          if (!clearUnitFrom(needMate, reserved)) continue;
+          // 若伴侣还在 needTray 上（对调），先清 needTray 再迁
+          if (sameCell(boardMate.cell, needTray) && !clearUnitFrom(needTray, reserved)) continue;
+          if (!view.moveWord(boardMate.cell, needMate)) continue;
+        }
+        if (!clearUnitFrom(needTray, reserved)) continue;
+        const idx = view.tray().findIndex(
+          (x) => x.kind === 'word' && x.char === t.char && x.general === t.general && x.tier === t.tier,
+        );
+        if (idx < 0) continue;
+        if (view.place(idx, needTray)) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -209,19 +435,5 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       view.place(candidates[0]!.i, freed);
     }
     return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
-  }
-
-  function planWordCell(t: Extract<PlaceToken, { kind: 'word' }>): Cell | undefined {
-    const chars = view.wordChars(t.general);
-    const free = view.freeCells();
-    const mates = view.placedWords().filter((w) => w.general === t.general && w.char !== t.char);
-    if (chars && mates.length && !subopt()) {
-      const mate = mates[0]!;
-      const tokenIsLeft = t.char === chars[0];
-      const wantC = tokenIsLeft ? mate.cell.c - 1 : mate.cell.c + 1;
-      const hit = free.find((c) => c.r === mate.cell.r && c.c === wantC);
-      if (hit) return hit;
-    }
-    return free[0]; // 退化：任意空格（不丢弃）
   }
 }

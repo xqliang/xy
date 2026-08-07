@@ -956,18 +956,18 @@ export class Battle {
       freeCells: () => this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r)),
       diggableCells: () => this.aiLockedCells(),
       placedUnits: () => this.aiUnits.map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
-      placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
+      placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
-        const step = 0.25;
-        let covered = 0;
-        for (let d = this.aiEntranceDist; d < this.aiPathLen; d += step) {
-          const p = posAlong(this.aiPath, d);
-          if (inAttackRange(cell.c, cell.r, rge, p)) covered += step;
-        }
-        return covered;
+        return this.aiPathCoverAt(cell.c, cell.r, rge);
+      },
+      pathCoverAt: (ax, ay, rge) => this.aiPathCoverAt(ax, ay, rge),
+      generalRge: (general, tier) => {
+        const def = generalById(general);
+        return def ? generalStat(def, tier).rge : 2;
       },
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.aiAutoPlaceApply(i, cell),
@@ -978,9 +978,38 @@ export class Battle {
         u.cell = { c: to.c, r: to.r };
         return true;
       },
+      swapUnits: (a, b) => {
+        const ua = this.aiUnits.find((x) => x.cell.c === a.c && x.cell.r === a.r);
+        const ub = this.aiUnits.find((x) => x.cell.c === b.c && x.cell.r === b.r);
+        if (!ua || !ub) return false;
+        ua.cell = { c: b.c, r: b.r };
+        ub.cell = { c: a.c, r: a.r };
+        return true;
+      },
+      moveWord: (from, to) => {
+        const kFrom = cellKey(from.c, from.r);
+        const kTo = cellKey(to.c, to.r);
+        const w = this.aiWords.get(kFrom);
+        if (!w) return false;
+        if (!this.aiUnlocked.has(kTo) || !this.aiCellFree(to.c, to.r)) return false;
+        this.aiWords.delete(kFrom);
+        w.cell = { c: to.c, r: to.r };
+        this.aiWords.set(kTo, w);
+        return true;
+      },
       mergeTray: (from, to) => this.aiMergeTrayTokens(from, to),
       mergeBoard: (from, to) => this.aiMergeBoardUnits(from, to),
     };
+  }
+
+  private aiPathCoverAt(ax: number, ay: number, rge: number): number {
+    const step = 0.25;
+    let covered = 0;
+    for (let d = this.aiEntranceDist; d < this.aiPathLen; d += step) {
+      const p = posAlong(this.aiPath, d);
+      if (inAttackRange(ax, ay, rge, p)) covered += step;
+    }
+    return covered;
   }
 
   /** 格到路径「出怪口」（首个在网格内的点）的欧氏距离 */
@@ -2427,11 +2456,20 @@ export class Battle {
       freeCells: () => this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)),
       diggableCells: () => this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))),
       placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
-      placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
+      placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
+      pathCoverAt: (ax, ay, rge) =>
+        pathCoverageLen(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
+      generalRge: (general, tier) => {
+        const def = generalById(general);
+        if (!def) return 2;
+        const wb = this.weaponBonuses[def.id];
+        return generalStat(def, tier).rge * (1 + (wb?.rge ?? 0));
+      },
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.autoPlaceApply(i, cell),
       moveUnit: (from, to) => {
@@ -2441,6 +2479,31 @@ export class Battle {
         this.units.delete(cellKey(from.c, from.r));
         u.cell = { c: to.c, r: to.r };
         this.units.set(cellKey(to.c, to.r), u);
+        return true;
+      },
+      swapUnits: (a, b) => {
+        const ka = cellKey(a.c, a.r);
+        const kb = cellKey(b.c, b.r);
+        const ua = this.units.get(ka);
+        const ub = this.units.get(kb);
+        if (!ua || !ub) return false;
+        this.units.delete(ka);
+        this.units.delete(kb);
+        ua.cell = { c: b.c, r: b.r };
+        ub.cell = { c: a.c, r: a.r };
+        this.units.set(kb, ua);
+        this.units.set(ka, ub);
+        return true;
+      },
+      moveWord: (from, to) => {
+        const kFrom = cellKey(from.c, from.r);
+        const kTo = cellKey(to.c, to.r);
+        const w = this.words.get(kFrom);
+        if (!w) return false;
+        if (!this.isUnlocked(to.c, to.r) || !this.cellFree(to.c, to.r)) return false;
+        this.words.delete(kFrom);
+        w.cell = { c: to.c, r: to.r };
+        this.words.set(kTo, w);
         return true;
       },
       mergeTray: (from, to) => this.mergeTrayTokens(from, to),

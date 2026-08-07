@@ -1,15 +1,25 @@
 // web/tests/autoplace.test.ts
 import { it, expect } from 'vitest';
-import { planAutoPlace, digPriorityScore, mergeKeepScore, type AutoPlaceView, type PlaceToken, type Cell } from '../src/autoplace';
+import {
+  planAutoPlace,
+  digPriorityScore,
+  mergeKeepScore,
+  singleWordScore,
+  type AutoPlaceView,
+  type PlaceToken,
+  type Cell,
+} from '../src/autoplace';
 import { getUnitStat } from '@core';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
+// 唐僧在 (7,5)：单字偏好高 r（远路）且靠近 (7,5)
 class FakeView implements AutoPlaceView {
   trayArr: PlaceToken[];
   unlocked = new Set<string>();      // "c,r"
   unitsMap = new Map<string, { type: any; tier: number; cell: Cell }>();
-  wordsMap = new Map<string, { char: string; general: string; cell: Cell }>();
+  wordsMap = new Map<string, { char: string; general: string; cell: Cell; tier: number }>();
   diggable: Cell[];
+  generalRgeVal = 2;
   private key(c: number, r: number) { return `${c},${r}`; }
   constructor(tray: PlaceToken[], unlocked: Cell[], diggable: Cell[] = []) {
     this.trayArr = tray.slice();
@@ -27,10 +37,15 @@ class FakeView implements AutoPlaceView {
   placedWords() { return [...this.wordsMap.values()]; }
   nearestPathDist(cell: Cell) { return cell.r; } // 行号=离路距
   exitDist(cell: Cell) { return cell.c; } // 列号=离出口距（出口在 c=0）
+  tangsengDist(cell: Cell) { return Math.hypot(cell.c - 7, cell.r - 5); }
   pathCover(cell: Cell, type: any, tier: number) {
-    // 覆盖代理：射程能打到的「路段裕量」——近路格更大
     return Math.max(0, getUnitStat(type, tier).rge - this.nearestPathDist(cell) + 1);
   }
+  pathCoverAt(ax: number, ay: number, rge: number) {
+    // 中点越靠近路(ay 小)且越靠近出口(ax 小)覆盖越高
+    return Math.max(0, rge - ay + 1) + Math.max(0, 3 - ax) * 0.1;
+  }
+  generalRge(_general: string, _tier: number) { return this.generalRgeVal; }
   wordChars(general: string) { return general === 'g' ? (['大', '圣'] as const) : undefined; }
   place(index: number, to: Cell): boolean {
     const t = this.trayArr[index]; if (!t) return false;
@@ -49,13 +64,28 @@ class FakeView implements AutoPlaceView {
     const ex = this.wordsMap.get(k);
     if (ex) { if (ex.char === t.char) { this.trayArr.splice(index, 1); return true; } return false; }
     if (!this.unlocked.has(k) || this.unitsMap.has(k)) return false;
-    this.wordsMap.set(k, { char: t.char, general: t.general, cell: to }); this.trayArr.splice(index, 1); return true;
+    this.wordsMap.set(k, { char: t.char, general: t.general, cell: to, tier: t.tier }); this.trayArr.splice(index, 1); return true;
   }
   moveUnit(from: Cell, to: Cell): boolean {
     const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
     const u = this.unitsMap.get(kf); if (!u) return false;
     if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
     this.unitsMap.delete(kf); u.cell = to; this.unitsMap.set(kt, u); return true;
+  }
+  swapUnits(a: Cell, b: Cell): boolean {
+    const ka = this.key(a.c, a.r), kb = this.key(b.c, b.r);
+    const ua = this.unitsMap.get(ka), ub = this.unitsMap.get(kb);
+    if (!ua || !ub) return false;
+    this.unitsMap.delete(ka); this.unitsMap.delete(kb);
+    ua.cell = b; ub.cell = a;
+    this.unitsMap.set(kb, ua); this.unitsMap.set(ka, ub);
+    return true;
+  }
+  moveWord(from: Cell, to: Cell): boolean {
+    const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
+    const w = this.wordsMap.get(kf); if (!w) return false;
+    if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
+    this.wordsMap.delete(kf); w.cell = to; this.wordsMap.set(kt, w); return true;
   }
   mergeTray(from: number, to: number): boolean {
     if (from === to) return false;
@@ -75,7 +105,7 @@ class FakeView implements AutoPlaceView {
     return true;
   }
 }
-const rng = () => 0; // 恒 0：从不触发次优、farthest 取确定分支
+const rng = () => 0; // 恒 0：从不触发次优
 
 it('不丢弃：无位可放的令牌保留在 tray', () => {
   const v = new FakeView(
@@ -96,6 +126,37 @@ it('射程感知：短兵占近格，弓箭手占远格', () => {
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
   expect(byCell.get('0,0')).toBe('monkey');
   expect(byCell.get('0,3')).toBe('archer');
+});
+
+it('近战贴路：可达格中优先 pathCover 高（近路）的格', () => {
+  // monkey rge=1：r=0 覆盖代理更高 → 落 (0,0)
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 0, r: 1 }],
+  );
+  planAutoPlace(v, { rng });
+  expect(v.placedUnits()[0]!.cell).toEqual({ c: 0, r: 0 });
+  expect(v.freeCells().some((c) => c.r === 1)).toBe(true);
+});
+
+it('pathCover 同分时优先近出口', () => {
+  // FakeView pathCover 只看 r；两格同 r=0 覆盖相同 → 出口加权选 c=0
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'monkey', tier: 1 }],
+    [{ c: 3, r: 0 }, { c: 0, r: 0 }],
+  );
+  planAutoPlace(v, { rng });
+  expect(v.placedUnits()[0]!.cell).toEqual({ c: 0, r: 0 });
+});
+
+it('枪优先高覆盖且近出口：覆盖相同时不落远处', () => {
+  // spear 可达两格；FakeView 同 r → 同 cover，应选近出口 (0,1) 而非 (4,1)
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'spear', tier: 1 }],
+    [{ c: 4, r: 1 }, { c: 0, r: 1 }],
+  );
+  planAutoPlace(v, { rng });
+  expect(v.placedUnits()[0]!.cell).toEqual({ c: 0, r: 1 });
 });
 
 it('铲子优先挖最近锁定格', () => {
@@ -126,10 +187,57 @@ it('够不着(仅远格 + 无同阶合成)则保留在 tray，不浪费格', () 
 
 it('字牌按连读顺序放到能激活的相邻格', () => {
   const v = new FakeView([{ kind: 'word', char: '圣', general: 'g', tier: 1 }], [{ c: 2, r: 0 }]);
-  v.wordsMap.set('1,0', { char: '大', general: 'g', cell: { c: 1, r: 0 } });
+  v.wordsMap.set('1,0', { char: '大', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
   v.unlocked.add('1,0');
   planAutoPlace(v, { rng });
   expect(v.placedWords().some((w) => w.char === '圣' && w.cell.c === 2 && w.cell.r === 0)).toBe(true);
+});
+
+it('单字优先远离路径且靠近唐僧', () => {
+  // 唐僧 (7,5)；远路高 r、近唐僧 → 应选 (7,4) 而非贴路 (0,0)
+  const v = new FakeView(
+    [{ kind: 'word', char: '大', general: 'g', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 7, r: 4 }],
+  );
+  planAutoPlace(v, { rng });
+  expect(v.placedWords()[0]!.cell).toEqual({ c: 7, r: 4 });
+});
+
+it('singleWordScore：远路近唐僧分更高', () => {
+  expect(singleWordScore(3, 1)).toBeGreaterThan(singleWordScore(1, 1));
+  expect(singleWordScore(2, 1)).toBeGreaterThan(singleWordScore(2, 4));
+});
+
+it('激活武将：邻格被武器占时可挪开再落字', () => {
+  // 「大」在 (1,0)；「圣」应对 (2,0) 但被 monkey 占 → 挪 monkey 到 (0,0) 后激活
+  const v = new FakeView(
+    [{ kind: 'word', char: '圣', general: 'g', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }],
+  );
+  v.wordsMap.set('1,0', { char: '大', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
+  v.unitsMap.set('2,0', { type: 'monkey', tier: 1, cell: { c: 2, r: 0 } });
+  planAutoPlace(v, { rng });
+  expect(v.placedWords().some((w) => w.char === '圣' && w.cell.c === 2 && w.cell.r === 0)).toBe(true);
+  expect(v.unitsMap.has('2,0')).toBe(false);
+  expect(v.placedUnits().length).toBe(1); // 武器被挪走而非丢弃
+});
+
+it('tray 双字：落到 pathCover 更高的邻格对', () => {
+  // 两对邻格：(0,2)-(1,2) 与 (0,0)-(1,0)；FakeView 中 ay 更小覆盖更高 → 落在 r=0
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '大', general: 'g', tier: 1 },
+      { kind: 'word', char: '圣', general: 'g', tier: 1 },
+    ],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 1, r: 2 }],
+  );
+  planAutoPlace(v, { rng });
+  const words = v.placedWords();
+  expect(words).toHaveLength(2);
+  expect(words.every((w) => w.cell.r === 0)).toBe(true);
+  const byChar = new Map(words.map((w) => [w.char, w.cell]));
+  expect(byChar.get('大')).toEqual({ c: 0, r: 0 });
+  expect(byChar.get('圣')).toEqual({ c: 1, r: 0 });
 });
 
 it('pSubOptimal=1 时会选非最优格（覆盖次优分支，但仍不丢弃/不越界）', () => {
@@ -217,4 +325,15 @@ it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
   expect(byCell.get('0,0')?.type).toBe('monkey');
   expect(byCell.get('0,0')?.tier).toBe(2);
   expect(byCell.get('5,0')?.type).toBe('archer');
+});
+
+it('高阶同型可与占更好位的低阶交换座位', () => {
+  // T2 在较差格 r=1，T1 在更好格 r=0 → 交换后 T2 占 r=0
+  const v = new FakeView([], [{ c: 0, r: 0 }, { c: 0, r: 1 }]);
+  v.unitsMap.set('0,1', { type: 'monkey', tier: 2, cell: { c: 0, r: 1 } });
+  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
+  expect(byCell.get('0,0')?.tier).toBe(2);
+  expect(byCell.get('0,1')?.tier).toBe(1);
 });
