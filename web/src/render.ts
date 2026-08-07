@@ -162,6 +162,80 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/** 确定性伪随机 0..1（开垦格纹理用，同格稳定） */
+function cellHash01(c: number, r: number, salt: number): number {
+  let x = (c * 374761393 + r * 668265263 + salt * 982451653) | 0;
+  x = Math.imul(x ^ (x >>> 13), 1274126177);
+  return ((x >>> 0) % 10000) / 10000;
+}
+
+/**
+ * 已开垦白格：米白底 + 随机浅淡水斑（软边椭圆晕），轻薄不抢戏。
+ */
+function drawUnlockedCellFace(
+  ctx: CanvasRenderingContext2D,
+  ix: number,
+  iy: number,
+  iw: number,
+  ih: number,
+  c: number,
+  r: number,
+  baseColor: string,
+) {
+  ctx.save();
+  roundRect(ctx, ix, iy, iw, ih, 2);
+  ctx.clip();
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(ix, iy, iw, ih);
+
+  // 每格 2～5 块水斑，位置/大小/深浅都随机但同格稳定
+  const n = 2 + Math.floor(cellHash01(c, r, 3) * 4);
+  for (let k = 0; k < n; k++) {
+    const px = ix + 4 + cellHash01(c, r, 10 + k * 7) * (iw - 8);
+    const py = iy + 4 + cellHash01(c, r, 20 + k * 7) * (ih - 8);
+    // 扁椭圆水渍，略旋转
+    const rx = 3 + cellHash01(c, r, 30 + k * 7) * Math.min(iw, ih) * 0.28;
+    const ry = rx * (0.45 + cellHash01(c, r, 40 + k * 7) * 0.55);
+    const ang = cellHash01(c, r, 50 + k * 7) * Math.PI;
+    const a = 0.07 + cellHash01(c, r, 60 + k * 7) * 0.1; // 稍加重一点
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(ang);
+    ctx.scale(1, Math.max(0.35, ry / rx));
+    const g = ctx.createRadialGradient(0, 0, rx * 0.15, 0, 0, rx);
+    g.addColorStop(0, `rgba(135,128,115,${a})`);
+    g.addColorStop(0.55, `rgba(145,138,125,${a * 0.55})`);
+    g.addColorStop(1, 'rgba(150,142,130,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 再撒几滴更小的浅渍
+  const m = 1 + Math.floor(cellHash01(c, r, 70) * 3);
+  for (let k = 0; k < m; k++) {
+    const px = ix + 5 + cellHash01(c, r, 80 + k * 5) * (iw - 10);
+    const py = iy + 5 + cellHash01(c, r, 90 + k * 5) * (ih - 10);
+    const rad = 1.2 + cellHash01(c, r, 100 + k * 5) * 2.8;
+    const a = 0.05 + cellHash01(c, r, 110 + k * 5) * 0.07;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+    g.addColorStop(0, `rgba(130,124,112,${a})`);
+    g.addColorStop(1, 'rgba(130,124,112,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, py, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(90,82,70,0.16)';
+  roundRect(ctx, ix, iy, iw, ih, 2);
+  ctx.stroke();
+}
+
 // 统一的右上角阶数：无底色，仅描边 + 金字，避免压住立绘/字牌
 function drawTierBadge(ctx: CanvasRenderingContext2D, nx: number, ny: number, tier: number, fontPx: number) {
   ctx.save();
@@ -927,24 +1001,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
         ctx.strokeStyle = 'rgba(90,72,42,0.4)';
         ctx.stroke();
       } else if (cellOpen) {
-        // 可放置格：米白 + 内斜角高光 + 柔和投影
-        ctx.save();
-        ctx.shadowColor = 'rgba(60,50,35,0.28)';
-        ctx.shadowBlur = 4;
-        ctx.shadowOffsetY = 2;
-        roundRect(ctx, ix, iy, iw, ih, 2);
-        ctx.fillStyle = th.cellUnlocked;
-        ctx.fill();
-        ctx.restore();
-        // 顶部高光 + 底部内阴影（斜角立体感）
-        ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(ix + 4, iy + 2); ctx.lineTo(ix + iw - 4, iy + 2); ctx.stroke();
-        ctx.strokeStyle = 'rgba(120,105,80,0.35)';
-        ctx.beginPath(); ctx.moveTo(ix + 4, iy + ih - 1.5); ctx.lineTo(ix + iw - 4, iy + ih - 1.5); ctx.stroke();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(70,60,45,0.35)';
-        roundRect(ctx, ix, iy, iw, ih, 2); ctx.stroke();
+        drawUnlockedCellFace(ctx, ix, iy, iw, ih, c, r, th.cellUnlocked);
       } else {
         // 不可放置格（未开垦）：主题深色调 + 强压深棕 → 全图最暗档，与浅色路径拉开对比
         roundRect(ctx, ix, iy, iw, ih, 2);
