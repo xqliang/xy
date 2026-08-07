@@ -1,6 +1,6 @@
 // web/tests/autoplace.test.ts
-import { describe, it, expect } from 'vitest';
-import { planAutoPlace, type AutoPlaceView, type PlaceToken, type Cell } from '../src/autoplace';
+import { it, expect } from 'vitest';
+import { planAutoPlace, digPriorityScore, type AutoPlaceView, type PlaceToken, type Cell } from '../src/autoplace';
 import { getUnitStat } from '@core';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
@@ -26,6 +26,11 @@ class FakeView implements AutoPlaceView {
   placedUnits() { return [...this.unitsMap.values()]; }
   placedWords() { return [...this.wordsMap.values()]; }
   nearestPathDist(cell: Cell) { return cell.r; } // 行号=离路距
+  exitDist(cell: Cell) { return cell.c; } // 列号=离出口距（出口在 c=0）
+  pathCover(cell: Cell, type: any, tier: number) {
+    // 覆盖代理：射程能打到的「路段裕量」——近路格更大
+    return Math.max(0, getUnitStat(type, tier).rge - this.nearestPathDist(cell) + 1);
+  }
   wordChars(general: string) { return general === 'g' ? (['大', '圣'] as const) : undefined; }
   place(index: number, to: Cell): boolean {
     const t = this.trayArr[index]; if (!t) return false;
@@ -51,6 +56,23 @@ class FakeView implements AutoPlaceView {
     const u = this.unitsMap.get(kf); if (!u) return false;
     if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
     this.unitsMap.delete(kf); u.cell = to; this.unitsMap.set(kt, u); return true;
+  }
+  mergeTray(from: number, to: number): boolean {
+    if (from === to) return false;
+    const a = this.trayArr[from], b = this.trayArr[to];
+    if (!a || !b || a.kind !== 'unit' || b.kind !== 'unit') return false;
+    if (a.type !== b.type || a.tier !== b.tier) return false;
+    this.trayArr[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+    this.trayArr.splice(from, 1);
+    return true;
+  }
+  mergeBoard(from: Cell, to: Cell): boolean {
+    const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
+    const a = this.unitsMap.get(kf), b = this.unitsMap.get(kt);
+    if (!a || !b || a.type !== b.type || a.tier !== b.tier) return false;
+    b.tier += 1;
+    this.unitsMap.delete(kf);
+    return true;
   }
 }
 const rng = () => 0; // 恒 0：从不触发次优、farthest 取确定分支
@@ -80,6 +102,19 @@ it('铲子优先挖最近锁定格', () => {
   const v = new FakeView([{ kind: 'shovel' }], [], [{ c: 0, r: 0 }, { c: 0, r: 5 }]);
   planAutoPlace(v, { rng });
   expect(v.freeCells().some((c) => c.r === 0)).toBe(true);
+});
+
+it('铲子加权：同贴路距时优先挖靠近出口的格', () => {
+  // 两格都贴路(r=0)；出口在 c=0 → 应挖 (0,0) 而非 (4,0)
+  const v = new FakeView([{ kind: 'shovel' }], [], [{ c: 4, r: 0 }, { c: 0, r: 0 }]);
+  planAutoPlace(v, { rng });
+  expect(v.freeCells().some((c) => c.c === 0 && c.r === 0)).toBe(true);
+  expect(v.diggable.some((c) => c.c === 4)).toBe(true); // 远处未挖
+});
+
+it('digPriorityScore：贴路近 + 出口近 → 分更低', () => {
+  expect(digPriorityScore(1, 1)).toBeLessThan(digPriorityScore(2, 1));
+  expect(digPriorityScore(1, 1)).toBeLessThan(digPriorityScore(1, 3));
 });
 
 it('够不着(仅远格 + 无同阶合成)则保留在 tray，不浪费格', () => {
@@ -128,4 +163,37 @@ it('救援不误伤：不把射程更短的占位兵从近格赶走（占位兵�
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
   expect(byCell.get('0,0')).toBe('monkey'); // 短兵稳守近格，不被赶走
   expect(v.tray().length).toBe(1);          // cavalry 够不着，保留（不丢弃、不硬塞）
+});
+
+it('满槽：tray 两枚同阶可合且合后能上棋盘再合 → 先 tray 合再落到棋盘', () => {
+  // 棋盘满：一格被 monkey T2 占。tray 两枚 monkey T1 → 合为 T2 → 再与棋盘 T2 合成 T3
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'monkey', tier: 1 },
+      { kind: 'unit', type: 'monkey', tier: 1 },
+    ],
+    [{ c: 0, r: 0 }],
+  );
+  v.unitsMap.set('0,0', { type: 'monkey', tier: 2, cell: { c: 0, r: 0 } });
+  planAutoPlace(v, { rng });
+  expect(v.tray().length).toBe(0);
+  expect(v.placedUnits().length).toBe(1);
+  expect(v.placedUnits()[0]!.tier).toBe(3);
+});
+
+it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位落 tray', () => {
+  // 两格都占满：近路(0,0)与远路(0,2) 各一只 monkey T1；tray 一只 archer
+  // 应合两 monkey，保留近路（pathCover 更大），腾出远格放 archer
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'archer', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 0, r: 2 }],
+  );
+  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('0,2', { type: 'monkey', tier: 1, cell: { c: 0, r: 2 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
+  expect(byCell.get('0,0')?.type).toBe('monkey');
+  expect(byCell.get('0,0')?.tier).toBe(2); // 保留近路并升阶
+  expect(byCell.get('0,2')?.type).toBe('archer'); // 腾位放 tray
+  expect(v.tray().length).toBe(0);
 });

@@ -38,6 +38,7 @@ import { drawSummonTray } from './summon-draw';
 import { planAutoPlace, type AutoPlaceView } from './autoplace';
 import {
   estimateOptimalBoardPower,
+  pathCoverageLen,
   planWavePressure,
   type BoardPowerResult,
   type PressurePlan,
@@ -957,6 +958,17 @@ export class Battle {
       placedUnits: () => this.aiUnits.map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      pathCover: (cell, type, tier) => {
+        const rge = getUnitStat(type, tier).rge;
+        const step = 0.25;
+        let covered = 0;
+        for (let d = this.aiEntranceDist; d < this.aiPathLen; d += step) {
+          const p = posAlong(this.aiPath, d);
+          if (inAttackRange(cell.c, cell.r, rge, p)) covered += step;
+        }
+        return covered;
+      },
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.aiAutoPlaceApply(i, cell),
       moveUnit: (from, to) => {
@@ -966,7 +978,47 @@ export class Battle {
         u.cell = { c: to.c, r: to.r };
         return true;
       },
+      mergeTray: (from, to) => this.aiMergeTrayTokens(from, to),
+      mergeBoard: (from, to) => this.aiMergeBoardUnits(from, to),
     };
+  }
+
+  /** 格到路径「出怪口」（首个在网格内的点）的欧氏距离 */
+  private distToPathEntrance(path: { c: number; r: number }[], cell: { c: number; r: number }): number {
+    let gate: { c: number; r: number } | null = null;
+    for (const p of path) {
+      if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) { gate = p; break; }
+    }
+    if (!gate) gate = path[0] ?? { c: 0, r: 0 };
+    return Math.hypot(cell.c - gate.c, cell.r - gate.r);
+  }
+
+  /** AI 候选区同型同阶合成（镜像 mergeTrayTokens） */
+  private aiMergeTrayTokens(from: number, to: number): boolean {
+    if (from === to) return false;
+    const a = this.aiTray[from];
+    const b = this.aiTray[to];
+    if (!a || !b || a.kind !== 'unit' || b.kind !== 'unit') return false;
+    if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
+    this.aiTray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+    this.aiTray.splice(from, 1);
+    return true;
+  }
+
+  /** AI 棋盘同型同阶合成：from 并入 to */
+  private aiMergeBoardUnits(from: Cell, to: Cell): boolean {
+    const ai = this.aiUnits.findIndex((u) => u.cell.c === from.c && u.cell.r === from.r);
+    const bi = this.aiUnits.findIndex((u) => u.cell.c === to.c && u.cell.r === to.r);
+    if (ai < 0 || bi < 0 || ai === bi) return false;
+    const a = this.aiUnits[ai]!;
+    const b = this.aiUnits[bi]!;
+    if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
+    const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
+    b.type = merged.type;
+    b.tier = merged.tier;
+    b.cooldown = 0;
+    this.aiUnits.splice(ai, 1);
+    return true;
   }
 
   // 从候选区把第 index 个令牌落到目标格：
@@ -2377,6 +2429,9 @@ export class Battle {
       placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      pathCover: (cell, type, tier) =>
+        pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.autoPlaceApply(i, cell),
       moveUnit: (from, to) => {
@@ -2386,6 +2441,19 @@ export class Battle {
         this.units.delete(cellKey(from.c, from.r));
         u.cell = { c: to.c, r: to.r };
         this.units.set(cellKey(to.c, to.r), u);
+        return true;
+      },
+      mergeTray: (from, to) => this.mergeTrayTokens(from, to),
+      mergeBoard: (from, to) => {
+        const a = this.units.get(cellKey(from.c, from.r));
+        const b = this.units.get(cellKey(to.c, to.r));
+        if (!a || !b) return false;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
+        const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
+        this.units.set(cellKey(to.c, to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.delete(cellKey(from.c, from.r));
+        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
+        this.emit('merge');
         return true;
       },
     };

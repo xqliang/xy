@@ -1,8 +1,9 @@
 // web/src/autoplace.ts
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
+// 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留路径覆盖更大者）腾位再落子。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
-import { getUnitStat, type UnitType } from '@core';
+import { canMerge, getUnitStat, type UnitType } from '@core';
 
 export interface Cell { c: number; r: number; }
 
@@ -17,19 +18,35 @@ export interface PlacedWordLite { char: string; general: string; cell: Cell; }
 export interface AutoPlaceView {
   tray(): PlaceToken[];                     // 当前候选（随 place 变化，每步重读）
   freeCells(): Cell[];                      // 已解锁且空闲，按贴路近→远
-  diggableCells(): Cell[];                  // 未解锁可开挖（无桃树），按贴路近→远
+  diggableCells(): Cell[];                  // 未解锁可开挖（无桃树）
   placedUnits(): PlacedUnitLite[];
   placedWords(): PlacedWordLite[];
   nearestPathDist(cell: Cell): number;      // 格到怪路的最近距（格）
+  /** 格到怪物出口（路径首个在网格内的点）的距离 */
+  exitDist(cell: Cell): number;
+  /** 该格兵种攻击圆覆盖的怪物路径长度（越大越好） */
+  pathCover(cell: Cell, type: UnitType, tier: number): number;
   wordChars(general: string): readonly [string, string] | undefined; // 连读顺序 [左,右]
   place(trayIndex: number, cell: Cell): boolean; // 执行落子（挖/放/合成/激活由宿主完成）
-  moveUnit(from: Cell, to: Cell): boolean;  // 把已上场单位从 from 挪到 to（宿主判可行性/是否需等动画；不可行返回 false）
+  moveUnit(from: Cell, to: Cell): boolean;  // 把已上场单位从 from 挪到空 to
+  /** 候选区内两枚同型同阶兵合成（升阶留在 to 下标；from 被移除） */
+  mergeTray(from: number, to: number): boolean;
+  /** 棋盘两兵合成：from 并入 to（保留 to 格，升阶） */
+  mergeBoard(from: Cell, to: Cell): boolean;
 }
 
 export interface AutoPlaceOpts {
   rng: () => number;       // [0,1)
   pSubOptimal?: number;    // 次优概率，默认 0（恒最优）
   rangeTolerance?: number; // 默认 0.5，与战斗判定一致
+}
+
+/** 洛阳铲挖格加权：贴路 + 靠近出怪口（分越低越优先） */
+export const DIG_PATH_WEIGHT = 1;
+export const DIG_EXIT_WEIGHT = 1.25;
+
+export function digPriorityScore(pathDist: number, exitDist: number): number {
+  return DIG_PATH_WEIGHT * pathDist + DIG_EXIT_WEIGHT * exitDist;
 }
 
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
@@ -43,10 +60,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
 
   function step(): boolean {
     const tray = view.tray();
-    // 1) 铲子：挖最优(最近)锁定格；次优时挖较后一格
+    // 1) 铲子：挖「贴路 + 近出口」加权最优格；次优时挖较后一格
     for (let i = 0; i < tray.length; i++) {
       if (tray[i]!.kind !== 'shovel') continue;
-      const digs = view.diggableCells();
+      const digs = sortedDigTargets();
       if (digs.length === 0) continue; // 无处可挖：保留，扫下一个
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
@@ -99,7 +116,89 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         }
       }
     }
+    // 6–7) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
+    if (view.freeCells().length === 0) {
+      if (tryTrayMergeOntoBoard()) return true;
+      if (tryBoardMergeThenPlace()) return true;
+    }
     return false; // 无可推进动作
+  }
+
+  /** 可挖格按「贴路 + 近出口」加权排序（低分优先） */
+  function sortedDigTargets(): Cell[] {
+    return view.diggableCells().slice().sort((a, b) => {
+      const sa = digPriorityScore(view.nearestPathDist(a), view.exitDist(a));
+      const sb = digPriorityScore(view.nearestPathDist(b), view.exitDist(b));
+      return sa - sb || a.r - b.r || a.c - b.c;
+    });
+  }
+
+  /**
+   * 满槽：tray 内有同型同阶可合，且合后（升一阶）能在棋盘上找到同型同阶再合 →
+   * 先 tray 合成，再落到棋盘合。
+   */
+  function tryTrayMergeOntoBoard(): boolean {
+    if (subopt()) return false;
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const a = tray[i]!;
+      if (a.kind !== 'unit') continue;
+      for (let j = i + 1; j < tray.length; j++) {
+        const b = tray[j]!;
+        if (b.kind !== 'unit') continue;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
+        const upTier = a.tier + 1;
+        const mate = view.placedUnits().find((u) => u.type === a.type && u.tier === upTier);
+        if (!mate) continue;
+        // 合到棋盘还要求升阶后未满级（canMerge 同阶 < MAX）
+        if (!canMerge({ type: a.type, tier: upTier }, { type: mate.type, tier: mate.tier })) continue;
+        // mergeTray 会 splice 掉 from；to 在 from 之后时下标前移 1
+        if (!view.mergeTray(i, j)) continue;
+        const upIdx = i < j ? j - 1 : j;
+        if (view.place(upIdx, mate.cell)) return true;
+        return true; // tray 已合，即使 place 失败也算推进（避免死循环重合）
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 满槽且 tray 无「合后再上棋盘」：在棋盘找同型同阶合，
+   * 保留 pathCover 更大的格，腾出另一格后从 tray 放武器进去。
+   */
+  function tryBoardMergeThenPlace(): boolean {
+    if (subopt()) return false;
+    const placed = view.placedUnits();
+    let best: { drop: Cell; keep: Cell; keepCover: number } | null = null;
+    for (let i = 0; i < placed.length; i++) {
+      const a = placed[i]!;
+      for (let j = i + 1; j < placed.length; j++) {
+        const b = placed[j]!;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
+        const coverA = view.pathCover(a.cell, a.type, a.tier);
+        const coverB = view.pathCover(b.cell, b.type, b.tier);
+        const keep = coverA >= coverB ? a : b;
+        const drop = keep === a ? b : a;
+        const keepCover = Math.max(coverA, coverB);
+        if (!best || keepCover > best.keepCover) {
+          best = { drop: drop.cell, keep: keep.cell, keepCover };
+        }
+      }
+    }
+    if (!best) return false;
+    if (!view.mergeBoard(best.drop, best.keep)) return false;
+    // 腾出的格：优先放「能打到路」的最短射程兵
+    const freed = best.drop;
+    const tray = view.tray();
+    const candidates = tray
+      .map((t, i) => ({ t, i }))
+      .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
+      .filter(({ t }) => view.nearestPathDist(freed) <= getUnitStat(t.type, t.tier).rge + tol)
+      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
+    if (candidates.length > 0) {
+      view.place(candidates[0]!.i, freed);
+    }
+    return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
   }
 
   function planWordCell(t: Extract<PlaceToken, { kind: 'word' }>): Cell | undefined {
