@@ -1756,7 +1756,8 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
     const ay = (active.cells[0].r + active.cells[1].r) / 2;
     const { x, y } = cellCenterPx(ax, ay);
     ctx.beginPath();
-    ctx.arc(x, y, b.generalRge(active) * CELL, 0, Math.PI * 2);
+    // 半径含半格(rge+0.5)，与命中判定「圆与方格相交」及兵种范围环显示一致
+    ctx.arc(x, y, (b.generalRge(active) + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(240,185,60,0.12)';
     ctx.fill();
     ctx.lineWidth = 2;
