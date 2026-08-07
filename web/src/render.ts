@@ -110,10 +110,10 @@ export interface UiState {
   paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
 }
 
-/** 地图左上角暂停按钮几何（逻辑坐标） */
-export const PAUSE_BTN = { pad: 6, s: 34 };
+/** HUD 左上角暂停按钮：蟠桃数字前方（不压地图，避免挡英雄操作） */
+export const PAUSE_BTN = { x: 10, s: 32 };
 export function pauseBtnRect(): { x: number; y: number; w: number; h: number } {
-  return { x: BOARD_X + PAUSE_BTN.pad, y: BOARD_Y + PAUSE_BTN.pad, w: PAUSE_BTN.s, h: PAUSE_BTN.s };
+  return { x: PAUSE_BTN.x, y: (HUD_H - PAUSE_BTN.s) / 2, w: PAUSE_BTN.s, h: PAUSE_BTN.s };
 }
 
 /** 暂停弹窗「继续游戏」按钮几何 */
@@ -2580,11 +2580,14 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
   ctx.fillStyle = 'rgba(90,70,40,0.3)';
   ctx.fillRect(0, HUD_H - 2, VIEW_W, 2);
+  // 蟠桃在暂停钮右侧，避免与 ‖ 重叠
+  const pauseR = pauseBtnRect();
+  const peachX = pauseR.x + pauseR.w + 10;
   ctx.fillStyle = '#7a3b12';
   ctx.font = 'bold 24px "PingFang SC", sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`🍑 ${b.peach}`, 20, HUD_H / 2);
+  ctx.fillText(`🍑 ${b.peach}`, peachX, HUD_H / 2);
   // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
@@ -2600,19 +2603,19 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);
 }
 
-// 地图左上角：播放器风格暂停按钮（两竖条）
+// HUD 左上角（桃前）：播放器风格暂停按钮（两竖条）
 function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.status !== 'ready' && b.status !== 'playing') return;
   const r = pauseBtnRect();
   ctx.save();
   roundRect(ctx, r.x, r.y, r.w, r.h, 8);
-  ctx.fillStyle = 'rgba(28, 22, 16, 0.72)';
+  ctx.fillStyle = 'rgba(90, 58, 28, 0.55)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 236, 190, 0.55)';
+  ctx.strokeStyle = 'rgba(90, 58, 28, 0.75)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
   // ‖ 暂停图标
-  const barW = 5;
+  const barW = 4.5;
   const barH = r.h * 0.42;
   const gap = 5;
   const cx = r.x + r.w / 2;
