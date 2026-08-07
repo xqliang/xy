@@ -5,11 +5,12 @@ import {
   estimateOptimalBoardPower,
   planWavePressure,
   planSpawnInterval,
+  spawnBatchCap,
   PRESSURE_RATIO,
   PRESSURE_WINDOW_SEC,
   PRESSURE_FROM_WAVE,
-  SPAWN_INTERVAL_WAVE_DECAY,
   SPAWN_INTERVAL_MIN,
+  SPAWN_BATCH_CAP_MAX,
   ENTRANCE_ZONE_LEN,
 } from '../src/board-power';
 import { Battle, TUNING } from '../src/battle';
@@ -102,38 +103,39 @@ describe('estimateOptimalBoardPower', () => {
   });
 });
 
+describe('spawnBatchCap', () => {
+  it('第 4 波前为 1，之后随波次升高至封顶（无尽可到 10）', () => {
+    expect(spawnBatchCap(1)).toBe(1);
+    expect(spawnBatchCap(PRESSURE_FROM_WAVE - 1)).toBe(1);
+    expect(spawnBatchCap(4)).toBe(2);
+    expect(spawnBatchCap(5)).toBe(2);
+    expect(spawnBatchCap(6)).toBe(3);
+    expect(spawnBatchCap(12)).toBe(6); // 正常通关波仍未封顶
+    expect(spawnBatchCap(20)).toBe(SPAWN_BATCH_CAP_MAX);
+    expect(spawnBatchCap(99)).toBe(SPAWN_BATCH_CAP_MAX);
+  });
+});
+
 describe('planSpawnInterval', () => {
   const base = 1.25;
 
-  it('第 4 波前保持基础间隔（仅难度加速）', () => {
-    const itv = planSpawnInterval({
+  it('无门口秒杀时保持基础间隔（仅难度加速），不再每波衰减', () => {
+    const itv3 = planSpawnInterval({
       wave: 3,
       baseInterval: base,
       monsterSpd: 0.68,
       normalHp: 80,
       entranceDps: 0,
     });
-    expect(itv).toBeCloseTo(base, 5);
-  });
-
-  it('第 4 波起随波次逐渐缩短间隔', () => {
-    const w4 = planSpawnInterval({
-      wave: 4,
-      baseInterval: base,
-      monsterSpd: 0.68,
-      normalHp: 200,
-      entranceDps: 0,
-    });
-    const w8 = planSpawnInterval({
+    const itv8 = planSpawnInterval({
       wave: 8,
       baseInterval: base,
       monsterSpd: 0.68,
       normalHp: 200,
       entranceDps: 0,
     });
-    expect(w4).toBeCloseTo(base, 5);
-    expect(w8).toBeCloseTo(base * Math.pow(SPAWN_INTERVAL_WAVE_DECAY, 4), 5);
-    expect(w8).toBeLessThan(w4);
+    expect(itv3).toBeCloseTo(base, 5);
+    expect(itv8).toBeCloseTo(base, 5);
   });
 
   it('门口 DPS 能秒杀时进一步压间隔，且不低于下限', () => {
@@ -221,7 +223,7 @@ describe('planWavePressure', () => {
     expect(p.count).toBe(20);
   });
 
-  it('后期波次出怪间隔短于前期', () => {
+  it('无门口秒杀时后期与前期出怪间隔一致（叠怪靠批次）', () => {
     const early = planWavePressure({
       wave: 4,
       baselineCount: 13,
@@ -240,7 +242,7 @@ describe('planWavePressure', () => {
       power,
       ...spawnOpts,
     });
-    expect(late.spawnInterval).toBeLessThan(early.spawnInterval);
+    expect(late.spawnInterval).toBeCloseTo(early.spawnInterval, 5);
   });
 });
 
@@ -282,6 +284,33 @@ describe('Battle 接入压力规划', () => {
     expect(b.snapshot().optimalDps).toBeGreaterThan(0);
     expect(b.snapshot().spawnInterval!).toBeLessThanOrEqual(TUNING.spawnInterval);
     expect(b.snapshot().spawnInterval!).toBeGreaterThanOrEqual(TUNING.spawnIntervalMin);
+  });
+
+  it('第 4 波起单次可叠多只，多出怪在门口后方半格内', () => {
+    const b = new Battle(11);
+    (b as unknown as { wave: number }).wave = 7;
+    (b as unknown as { waveActive: boolean }).waveActive = false;
+    (b as unknown as { status: string }).status = 'ready';
+    (b as unknown as { introDone: boolean }).introDone = true;
+    expect(b.startNextWave()).toBe(true);
+    expect(b.wave).toBe(8);
+    expect(spawnBatchCap(8)).toBeGreaterThan(1);
+    const entrance = (b as unknown as { entranceDist: number }).entranceDist;
+    (b as unknown as { spawnTimer: number }).spawnTimer = 0;
+    const dt = 1 / 240;
+    b.step(dt);
+    expect(b.monsters.length).toBeGreaterThanOrEqual(1);
+    expect(b.monsters.length).toBeLessThanOrEqual(spawnBatchCap(8));
+    // 同帧会前进 spd*dt，故允许略超出口；多出怪起点应在 [入口-0.5, 入口]
+    const maxAhead = TUNING.monsterSpd * 1.5 * dt + 1e-6;
+    for (const m of b.monsters) {
+      expect(m.dist).toBeLessThanOrEqual(entrance + maxAhead);
+      expect(m.dist).toBeGreaterThanOrEqual(entrance - 0.5 - 1e-9);
+    }
+    if (b.monsters.length > 1) {
+      const spreads = b.monsters.map((m) => m.dist);
+      expect(Math.max(...spreads) - Math.min(...spreads)).toBeLessThanOrEqual(0.5 + maxAhead);
+    }
   });
 
   it('蛛网被动降低 Boss 移速 → 同输出全路伤害更高', () => {

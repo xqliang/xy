@@ -40,6 +40,8 @@ import {
   estimateOptimalBoardPower,
   pathCoverageLen,
   planWavePressure,
+  spawnBatchCap,
+  SPAWN_DIST_JITTER,
   type BoardPowerResult,
   type PressurePlan,
 } from './board-power';
@@ -90,7 +92,7 @@ export const TUNING = {
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
-  spawnInterval: 1.25, // 秒/只（基础出怪节奏；第 4 波起再缩短）
+  spawnInterval: 1.25, // 秒/批（基础出怪节奏；同批可随机 1..N 只）
   spawnIntervalMin: 0.35, // 出怪间隔下限
   summonCostStart: 10, // 首次征兵成本
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
@@ -1616,7 +1618,7 @@ export class Battle {
     });
   }
 
-  /** 本波出怪间隔：优先用压力方案（第 4 波起加快 + 门口防秒） */
+  /** 本波出怪间隔：优先用压力方案（基础节奏 + 门口防秒）；叠怪靠随机批次 */
   private currentSpawnInterval(): number {
     if (this.wavePressure && this.wavePressure.spawnInterval > 0) {
       return this.wavePressure.spawnInterval;
@@ -1627,7 +1629,8 @@ export class Battle {
     );
   }
 
-  private spawnMonster(): void {
+  /** @param distOffset 相对出怪口沿路偏移（负值=尚未走到门口，用于同批错位） */
+  private spawnMonster(distOffset = 0): void {
     // BOSS：boss 波的最后一只，或最终通关波的最后一只
     const isBoss =
       this.isBossWave(this.wave) &&
@@ -1686,12 +1689,13 @@ export class Battle {
       hasteT: 0,
       healFlash: 0,
     });
+    const off = Math.min(0, distOffset);
     this.monsters.push(
-      makeOne(this.entranceDist, TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul),
+      makeOne(this.entranceDist + off, TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul),
     );
     // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）。无尽模式无对手，跳过。
     if (!this.endless) {
-      this.aiMonsters.push(makeOne(this.aiEntranceDist, TUNING.monsterSpd * diffSpd * spdMul));
+      this.aiMonsters.push(makeOne(this.aiEntranceDist + off, TUNING.monsterSpd * diffSpd * spdMul));
     }
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
@@ -2407,13 +2411,17 @@ export class Battle {
       this.updateFx(dt);
       return;
     }
-    // 生成妖怪
+    // 生成妖怪：每次随机 1..N 只（N 随波次升高）；多出的怪在门口后方半格内错位
     if (this.spawnRemaining > 0) {
       this.spawnTimer -= dt;
       if (this.spawnTimer <= 0) {
-        this.spawnMonster();
-        this.spawnRemaining -= 1;
-        // 第 4 波起逐渐加快；门口 DPS 过高时再压间隔，避免门口灭队
+        const cap = spawnBatchCap(this.wave);
+        const n = Math.min(this.spawnRemaining, 1 + this.rng.int(cap));
+        for (let i = 0; i < n; i++) {
+          const offset = i === 0 ? 0 : -this.rng.next() * SPAWN_DIST_JITTER;
+          this.spawnMonster(offset);
+          this.spawnRemaining -= 1;
+        }
         this.spawnTimer = this.currentSpawnInterval();
       }
     }

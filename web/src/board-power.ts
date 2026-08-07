@@ -1,6 +1,6 @@
 // 战场最优输出估算：按当前地图把已上场兵种重排到可达格，
 // 综合攻速/范围/伤害/目标数（含被动乘区）得到最优 DPS，
-// 并据此按约 70% 压力推算 Boss 血量与第 4 波起的出怪数。
+// 并据此按约 70% 压力推算 Boss 血量与第 4 波起的出怪数 / 叠怪批次。
 import { getUnitStat, type UnitType } from '@core';
 import { posAtDistance, type Cell, type GameMap, COLS, ROWS } from './board';
 import { placeCellScore } from './autoplace';
@@ -9,16 +9,27 @@ import { placeCellScore } from './autoplace';
 export const PRESSURE_RATIO = 0.7;
 /** 压力窗口（秒）：用窗口内产出血量 vs 武器输出比来调数量 */
 export const PRESSURE_WINDOW_SEC = 10;
-/** 第几波起按最优输出抬高出怪数 / 加快出怪频率（此前只用基准） */
+/** 第几波起按最优输出抬高出怪数 / 允许单次叠多只（此前只用基准） */
 export const PRESSURE_FROM_WAVE = 4;
 /** 门口路段长度（格）：用于判断会不会在出怪口被秒 */
 export const ENTRANCE_ZONE_LEN = 2.5;
-/** 第 PRESSURE_FROM_WAVE 波起，每波出怪间隔再 × 该系数（逐渐加快） */
-export const SPAWN_INTERVAL_WAVE_DECAY = 0.85;
 /** 出怪间隔下限（秒） */
 export const SPAWN_INTERVAL_MIN = 0.35;
 /** 门口段集火伤害超过怪血该比例时，视为会门口灭队 → 加快叠怪 */
 export const GATE_WIPE_HP_RATIO = 0.85;
+/** 同批「多出」的怪相对出怪口沿路后退的最大格数（随机落在 [-jitter, 0]） */
+export const SPAWN_DIST_JITTER = 0.5;
+/** 单次出怪批次上限封顶（无尽后期仍需继续叠怪，不宜过早封死） */
+export const SPAWN_BATCH_CAP_MAX = 10;
+
+/**
+ * 单次出怪批次上限 N（实际出 1..N 随机）：前期 1，第 PRESSURE_FROM_WAVE 波起随波次升高。
+ * 波 4–5 → 2，6–7 → 3，…，约波 20 起封顶 10。
+ */
+export function spawnBatchCap(wave: number): number {
+  if (wave < PRESSURE_FROM_WAVE) return 1;
+  return Math.min(SPAWN_BATCH_CAP_MAX, 2 + Math.floor((wave - PRESSURE_FROM_WAVE) / 2));
+}
 
 const PATH_SAMPLE_STEP = 0.25;
 const DEFAULT_RANGE_TOL = 0.5;
@@ -258,36 +269,30 @@ export interface PressurePlan {
   bossHp: number | null;
   optimalDps: number;
   trashBudget: number;
-  /** 本波出怪间隔（秒）；第 4 波起逐渐加快，并保证门口叠得过集火 */
+  /** 本波出怪间隔（秒）；基础节奏 + 门口防秒压间隔（叠怪密度见 spawnBatchCap） */
   spawnInterval: number;
 }
 
 /**
- * 第 fromWave 波起逐渐缩短间隔；若门口段集火能秒杀单怪，再按叠怪需要压间隔，
- * 避免一出门就被清光。
+ * 出怪间隔：保持基础节奏（不再每波 ×0.85）；若门口段集火能秒杀单怪，
+ * 再按叠怪需要压间隔，避免一出门就被清光。后期密度改由随机 1..N 批出承担。
  */
 export function planSpawnInterval(input: {
-  wave: number;
+  wave: number; // 保留供调用方传入；间隔不再随波次衰减
   baseInterval: number;
   monsterSpd: number;
   normalHp: number;
   entranceDps: number;
   difficultySpawnFactor?: number;
-  fromWave?: number;
   minInterval?: number;
-  waveDecay?: number;
   entranceZoneLen?: number;
 }): number {
-  const fromWave = input.fromWave ?? PRESSURE_FROM_WAVE;
+  void input.wave;
   const minItv = input.minInterval ?? SPAWN_INTERVAL_MIN;
-  const decay = input.waveDecay ?? SPAWN_INTERVAL_WAVE_DECAY;
   const zoneLen = input.entranceZoneLen ?? ENTRANCE_ZONE_LEN;
   const diffFactor = Math.max(1, input.difficultySpawnFactor ?? 1);
 
   let itv = input.baseInterval / diffFactor;
-  if (input.wave >= fromWave) {
-    itv *= Math.pow(decay, input.wave - fromWave);
-  }
 
   // 门口不灭：门口段走完时间内的集火伤害若接近/超过怪血，则加快出怪叠压
   const spd = Math.max(0.05, input.monsterSpd);
@@ -307,7 +312,7 @@ export function planSpawnInterval(input: {
  * - Boss 血 ≈ 全路集火伤害 × pressure（走完路约 70% 血量压力）
  * - 第 fromWave 波起：窗口内总血预算 = dps × window × pressure；
  *   有 Boss 时先扣 Boss 血，剩余预算给小怪；数量不低于 baseline。
- * - 出怪间隔：同波次起逐渐加快，并按门口 DPS 防止门口灭队。
+ * - 出怪间隔：基础节奏 + 门口 DPS 防灭队；同批随机 1..N 叠怪见 spawnBatchCap。
  */
 export function planWavePressure(input: PressurePlanInput): PressurePlan {
   const ratio = input.pressureRatio ?? PRESSURE_RATIO;
@@ -324,7 +329,6 @@ export function planWavePressure(input: PressurePlanInput): PressurePlan {
     normalHp,
     entranceDps: power.entranceDps,
     difficultySpawnFactor: input.difficultySpawnFactor,
-    fromWave,
     minInterval: input.minSpawnInterval,
   });
 
