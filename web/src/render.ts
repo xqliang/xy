@@ -107,6 +107,29 @@ export interface UiState {
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
+  paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
+}
+
+/** 地图左上角暂停按钮几何（逻辑坐标） */
+export const PAUSE_BTN = { pad: 6, s: 34 };
+export function pauseBtnRect(): { x: number; y: number; w: number; h: number } {
+  return { x: BOARD_X + PAUSE_BTN.pad, y: BOARD_Y + PAUSE_BTN.pad, w: PAUSE_BTN.s, h: PAUSE_BTN.s };
+}
+
+/** 暂停弹窗「继续游戏」按钮几何 */
+export function pauseContinueRect(): { x: number; y: number; w: number; h: number } {
+  const w = 220, h = 48;
+  return { x: (VIEW_W - w) / 2, y: VIEW_H / 2 + 18, w, h };
+}
+
+export function hitPauseBtn(x: number, y: number): boolean {
+  const r = pauseBtnRect();
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+export function hitPauseContinue(x: number, y: number): boolean {
+  const r = pauseContinueRect();
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
 // HUD 显示的境界名（由 main 设置）
@@ -310,6 +333,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
 
   drawBoard(ctx, b, ui);
   drawSpawnGate(ctx, b);
+  drawSpawnDirectionHints(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   if (b.endless) drawEndlessPanel(ctx, b);
@@ -331,10 +355,12 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawButtons(ctx, b);
   drawActiveIcons(ctx, b);
   drawPassiveRow(ctx, b);
+  drawPauseBtn(ctx, b);
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
+  if (ui.paused) drawPauseOverlay(ctx, b);
 }
 
 // —— 候选区（征兵产出，手工拖到棋盘）——
@@ -376,18 +402,53 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
   }
 }
 
-// 武将字牌：去掉宣纸底/边框，直接画金黄墨字（深棕描边保证清晰）+ 右上角统一阶数徽标
-function drawWordTile(ctx: CanvasRenderingContext2D, char: string, tier: number, x: number, y: number, s: number, showTier = true) {
-  ctx.font = `bold ${Math.round(s * 0.62)}px "PingFang SC", serif`;
+// 武将字牌：未激活用金黄墨字；双字合成激活后按品质色填字，并随阶数加粗加大。
+// qualityTier>0 表示已激活武将整体阶（白绿蓝紫橙），驱动颜色与笔画粗细。
+function drawWordTile(
+  ctx: CanvasRenderingContext2D,
+  char: string,
+  tier: number,
+  x: number,
+  y: number,
+  s: number,
+  showTier = true,
+  qualityTier = 0,
+) {
+  const active = qualityTier > 0;
+  const q = active ? Math.max(1, Math.min(MAX_TIER, qualityTier)) : 1;
+  // 激活后随阶略放大字号；描边加粗让字形「越升越沉」
+  const fontScale = active ? 0.58 + (q - 1) * 0.04 : 0.62;
+  const strokeW = active
+    ? Math.max(2.8, s * (0.065 + (q - 1) * 0.022))
+    : Math.max(2.5, s * 0.07);
+  ctx.font = `bold ${Math.round(s * fontScale)}px "PingFang SC", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // 金黄字：先描深棕边再填金，无底框也能在各种格底上清晰可读
-  ctx.lineWidth = Math.max(2.5, s * 0.07);
+  ctx.lineWidth = strokeW;
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#5a3a08';
-  ctx.strokeText(char, x, y + s * 0.02);
-  ctx.fillStyle = '#f2b414';
-  ctx.fillText(char, x, y + s * 0.02);
+  const ty = y + s * 0.02;
+  if (active) {
+    // 深描边保可读；填充用品质色（白/绿/蓝/紫/橙）
+    ctx.strokeStyle = '#2a2014';
+    ctx.strokeText(char, x, ty);
+    // 高阶再叠一层略偏外的描边，视觉更「粗」
+    if (q >= 3) {
+      ctx.lineWidth = strokeW * 0.45;
+      ctx.strokeStyle = qualityColor(q);
+      ctx.globalAlpha = 0.35;
+      ctx.strokeText(char, x, ty);
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = strokeW;
+    }
+    ctx.fillStyle = qualityColor(q);
+    ctx.fillText(char, x, ty);
+  } else {
+    // 未激活：金黄字 + 深棕描边
+    ctx.strokeStyle = '#5a3a08';
+    ctx.strokeText(char, x, ty);
+    ctx.fillStyle = '#f2b414';
+    ctx.fillText(char, x, ty);
+  }
   // 阶数徽标（合成为激活武将时由 showTier=false 隐藏，改由武将整体阶数在右上角显示）
   if (showTier) {
     drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
@@ -823,6 +884,68 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
     leaf(x - off - w);
     leaf(x + off);
   }
+  ctx.restore();
+}
+
+/** 路径首个在网格内的格，以及朝下一格的单位方向（用于出怪指引箭头） */
+function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: number; dc: number; dr: number } | null {
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
+    if (p.c < 0 || p.c >= COLS || p.r < 0 || p.r >= ROWS) continue;
+    const next = path[i + 1];
+    if (!next) return { c: p.c, r: p.r, dc: 1, dr: 0 };
+    const len = Math.hypot(next.c - p.c, next.r - p.r) || 1;
+    return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
+  }
+  return null;
+}
+
+// 开局唐僧归位前：在出怪口沿行进方向循环播放三个箭头，提示怪物走向
+function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.introDone) return;
+  if (b.status !== 'ready' && b.status !== 'playing') return;
+  const drawOn = (path: { c: number; r: number }[]) => {
+    const info = pathEntranceDir(path);
+    if (!info) return;
+    const { x, y } = cellCenterPx(info.c, info.r);
+    const ang = Math.atan2(info.dr, info.dc);
+    const size = CELL * 0.48; // 约半格
+    const step = CELL * 0.42; // 三箭头沿路间距
+    const t = performance.now() / 1000;
+    const beat = Math.floor(t * 2.4) % 3; // 约 0.42s 一拍，三箭轮亮
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const along = (i - 0.2) * step;
+      const ax = x + info.dc * along;
+      const ay = y + info.dr * along;
+      const lit = i === beat;
+      const alpha = lit ? 0.95 : 0.28;
+      ctx.globalAlpha = alpha;
+      drawPathChevron(ctx, ax, ay, ang, size, lit);
+    }
+    ctx.restore();
+  };
+  drawOn(b.map.path);
+  if (!b.aiDefeated && !b.endless) drawOn(b.aiPath);
+}
+
+/** 半格大小的空心箭头（> 形），沿 ang 朝向 */
+function drawPathChevron(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, size: number, lit: boolean) {
+  const arm = size * 0.42;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = lit ? '#ffe27a' : '#e8c878';
+  ctx.lineWidth = lit ? 4.5 : 3.2;
+  ctx.shadowColor = lit ? 'rgba(255, 210, 80, 0.85)' : 'transparent';
+  ctx.shadowBlur = lit ? 8 : 0;
+  ctx.beginPath();
+  ctx.moveTo(-arm * 0.35, -arm);
+  ctx.lineTo(arm * 0.55, 0);
+  ctx.lineTo(-arm * 0.35, arm);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -2040,16 +2163,20 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
 function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 已激活武将占用的格 → 抹掉单字阶数上标（只保留金框上方整体 Lv）
-  const activeCells = new Set<string>();
-  for (const g of b.activeGenerals()) for (const c of g.cells) activeCells.add(`${c.c},${c.r}`);
+  // 已激活武将占用的格 → 抹掉单字阶数上标（只保留金框上方整体 Lv）；并记下整体阶供字色/加粗
+  const activeTier = new Map<string, number>();
+  for (const g of b.activeGenerals()) {
+    for (const c of g.cells) activeTier.set(`${c.c},${c.r}`, g.tier);
+  }
   // 先画所有字牌（拖拽中的源格隐藏）
   for (const w of b.words.values()) {
     if (ui.dragFrom && ui.dragFrom.c === w.cell.c && ui.dragFrom.r === w.cell.r) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, !activeCells.has(`${w.cell.c},${w.cell.r}`));
+    const key = `${w.cell.c},${w.cell.r}`;
+    const qTier = activeTier.get(key) ?? 0;
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
   }
-  // 再给「左右紧邻同将」的激活武将套金框
+  // 再给「左右紧邻同将」的激活武将套金框（框色随品质阶微变，仍偏金以示激活）
   for (const g of b.activeGenerals()) {
     const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
     const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
@@ -2058,11 +2185,11 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const w = Math.abs(z.x - a.x) + CELL - 4;
     const h = CELL - 4;
     ctx.save();
-    // 金框（激活标识）+ 释放技能时更亮
+    // 激活框 + 释放技能时更亮；高阶用品质色描边
     const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
     ctx.globalAlpha = Math.min(1, glow);
-    ctx.strokeStyle = '#f0b93c';
-    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = g.tier >= 2 ? qualityColor(g.tier) : '#f0b93c';
+    ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -2473,6 +2600,62 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);
 }
 
+// 地图左上角：播放器风格暂停按钮（两竖条）
+function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.status !== 'ready' && b.status !== 'playing') return;
+  const r = pauseBtnRect();
+  ctx.save();
+  roundRect(ctx, r.x, r.y, r.w, r.h, 8);
+  ctx.fillStyle = 'rgba(28, 22, 16, 0.72)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 236, 190, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // ‖ 暂停图标
+  const barW = 5;
+  const barH = r.h * 0.42;
+  const gap = 5;
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  ctx.fillStyle = '#fff6e6';
+  roundRect(ctx, cx - gap / 2 - barW, cy - barH / 2, barW, barH, 1.5);
+  ctx.fill();
+  roundRect(ctx, cx + gap / 2, cy - barH / 2, barW, barH, 1.5);
+  ctx.fill();
+  ctx.restore();
+}
+
+// 暂停遮罩 +「当前已暂停」提示 + 继续按钮
+function drawPauseOverlay(ctx: CanvasRenderingContext2D, b: Battle) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(12, 10, 8, 0.58)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  const pw = 300, ph = 168;
+  const px = (VIEW_W - pw) / 2, py = VIEW_H / 2 - ph / 2 - 10;
+  roundRect(ctx, px, py, pw, ph, 14);
+  ctx.fillStyle = 'rgba(36, 28, 20, 0.96)';
+  ctx.fill();
+  ctx.strokeStyle = b.map.theme.accent;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.fillText('游戏已暂停', VIEW_W / 2, py + 48);
+  ctx.fillStyle = 'rgba(255,246,230,0.65)';
+  ctx.font = '14px "PingFang SC", sans-serif';
+  ctx.fillText('当前暂停游戏中', VIEW_W / 2, py + 78);
+  const btn = pauseContinueRect();
+  roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
+  ctx.fillStyle = b.map.theme.accent;
+  ctx.fill();
+  ctx.fillStyle = '#fff8e8';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText('继续游戏', btn.x + btn.w / 2, btn.y + btn.h / 2);
+  ctx.restore();
+}
+
 function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const btn of getButtons(b)) {
     // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
@@ -2850,7 +3033,15 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       const w = b.words.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
       if (w) {
         src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);
-        ghost = () => drawWordTile(ctx, w.char, w.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.74);
+        // 拖拽中若仍属激活武将，保持品质色与加粗
+        let qTier = 0;
+        for (const g of b.activeGenerals()) {
+          if (g.cells.some((c) => c.c === ui.dragFrom!.c && c.r === ui.dragFrom!.r)) {
+            qTier = g.tier;
+            break;
+          }
+        }
+        ghost = () => drawWordTile(ctx, w.char, w.tier, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.74, qTier === 0, qTier);
       } else {
         const t = b.trees.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
         if (t) {

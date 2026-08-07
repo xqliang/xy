@@ -8,6 +8,8 @@ import {
   setHudRank,
   VIEW_W,
   VIEW_H,
+  hitPauseBtn,
+  hitPauseContinue,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -72,13 +74,14 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null, activePopup: null, activePopupUntil: 0 };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
   battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, loadAiSkill());
   endHandled = false;
   endlessResult = null;
+  ui.paused = false;
 }
 
 function handleMenu(x: number, y: number) {
@@ -286,6 +289,23 @@ function onPointerDown(e: PointerEvent) {
     }
     return;
   }
+  // —— 局内暂停：弹窗打开时只处理「继续」；点暂停钮进入暂停 —— //
+  if (ui.paused) {
+    if (hitPauseContinue(x, y)) {
+      playSfx('click');
+      ui.paused = false;
+    }
+    return;
+  }
+  if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {
+    playSfx('click');
+    ui.paused = true;
+    ui.selected = null;
+    ui.dragFrom = null;
+    ui.dragTrayIndex = null;
+    ui.dragPos = null;
+    return;
+  }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
   if (handleButton(x, y)) { ui.selected = null; return; }
@@ -376,9 +396,9 @@ function scheduleFrame(): void {
   if (rafId === null) rafId = requestAnimationFrame(frame);
 }
 
-// 当前界面是否需要连续动画：战斗一直跑；结算仅在星级动画播放期间跑；其余静态界面画完即停。
+// 当前界面是否需要连续动画：战斗一直跑（暂停时停表但仍需箭头等静态可停）；结算仅在星级动画播放期间跑。
 function needsContinuousLoop(): boolean {
-  if (screen === 'battle') return true;
+  if (screen === 'battle') return !ui.paused;
   if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart);
   return false;
 }
@@ -423,7 +443,7 @@ function frame(now: number): void {
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
   } else {
     // —— 战斗 —— //
-    battle.step(dt);
+    if (!ui.paused) battle.step(dt);
     startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
     // 播放引擎发出的音效事件
     if (battle.sfxEvents.length) {
