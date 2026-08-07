@@ -18,7 +18,7 @@ import { loadAssets } from './assets';
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
-import { loadStamina, addStamina, spendStamina, type Stamina } from './stamina';
+import { loadStamina, addStamina, spendStamina, syncStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import { loadLoadout, buyActive, buyPassive, type LoadoutState } from './loadout';
@@ -107,7 +107,7 @@ function handleMenu(x: number, y: number) {
   if (id === 'start') {
     const r = spendStamina(stamina);
     if (!r.ok) {
-      menuToast = '体力不足！看广告或分享补充';
+      menuToast = '体力不足（需 5 点）！看广告或分享补充';
       return;
     }
     stamina = r.state;
@@ -418,6 +418,7 @@ function frame(now: number): void {
   if (screen === 'menu') startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
   if (screen === 'menu') {
+    stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
     drawMenu(ctx, {
       rankLevel: rank.level,
       rankName: rankName(rank.level),

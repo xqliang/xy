@@ -1,7 +1,7 @@
 // 主菜单渲染 + 按钮命中。参考原作首页：标题/军衔星级/体力/开始游戏/排行榜/武器背包。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
-import { STAMINA_MAX } from './stamina';
+import { STAMINA_MAX, STAMINA_COST } from './stamina';
 
 export interface MenuButton {
   id: string;
@@ -179,7 +179,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const label =
-      b.id === 'start' ? '开始游戏 ⚡1' :
+      b.id === 'start' ? `开始游戏 ⚡${STAMINA_COST}` :
       b.id === 'ad' ? '📺 体力+10' :
       b.id === 'share' ? '↗ 分享+5' :
       b.id === 'shop' ? '🛒 神秘商人' :
