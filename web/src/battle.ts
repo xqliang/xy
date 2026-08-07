@@ -1401,11 +1401,11 @@ export class Battle {
 
   // 危险提示：任一怪物距唐僧（沿路剩余）≤3 格
   dangerNear(): boolean {
-    for (const m of this.monsters) if (this.pathLen - m.dist <= 3) return true;
+    for (const m of this.monsters) if (this.pathLen - m.dist <= 4) return true;
     return false;
   }
   aiDangerNear(): boolean {
-    for (const m of this.aiMonsters) if (this.aiPathLen - m.dist <= 3) return true;
+    for (const m of this.aiMonsters) if (this.aiPathLen - m.dist <= 4) return true;
     return false;
   }
 

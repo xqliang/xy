@@ -6,6 +6,8 @@ import {
   isEitherPathCell,
   isPlayerCell,
   posAtDistance,
+  posAlong,
+  lenOf,
   mirrorCell,
   placeableCells,
   type Cell,
@@ -369,7 +371,8 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
   } else if (token.kind === 'word') {
     drawWordTile(ctx, token.char, token.tier, x, y, s);
   } else {
-    drawUnit(ctx, token.type, token.tier, x, y, s);
+    // 立绘尺寸与地图上单位保持一致(同用 CELL*0.72)，避免 tray 里显得更大
+    drawUnit(ctx, token.type, token.tier, x, y, CELL * 0.72);
   }
 }
 
@@ -402,8 +405,9 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
   const campX = 12, campY = TRAY_Y + 4, campW = 48, campH = TRAY_H - 8;
   const roofH = 16; // 屋顶高
-  const bodyY = campY + roofH; // 屋身顶沿 = 屋顶铰链所在水平线
-  const bodyH = campH - roofH;
+  const BODY_SHRINK = 6; // 棕色屋身减矮量(底部对齐，整体降低不再显高)
+  const bodyH = campH - roofH - BODY_SHRINK;
+  const bodyY = campY + roofH + BODY_SHRINK; // 屋身顶沿 = 屋顶铰链所在水平线(整体下移，底部保持贴合)
   // —— 屋身（棕色木屋身 + 「营」字）——
   const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
   wood.addColorStop(0, '#8a5626');
@@ -1833,7 +1837,9 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
 function drawRangeRing(ctx: CanvasRenderingContext2D, x: number, y: number, rangeCells: number) {
   ctx.save();
   ctx.beginPath();
-  ctx.arc(x, y, rangeCells * CELL, 0, Math.PI * 2);
+  // 显示半径 = (基础射程 + 命中宽容) * CELL，与战斗判定 (d <= rge + rangeTolerance) 完全一致。
+  // 否则 rge=1 的近战只画到相邻格中心(半格)，实际能打到相邻格(含斜角≈1.414)，显示会偏小。
+  ctx.arc(x, y, (rangeCells + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(90,150,70,0.16)';
   ctx.fill();
   ctx.lineWidth = 2;
@@ -1867,10 +1873,16 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.restore();
 
   // 信息面板：名称/等级 + 攻击力/攻速/范围/目标/法宝
-  const cfg = UNITS[u.type];
+  drawUnitInfoPanel(ctx, u.type, u.tier);
+}
+
+// 单位信息面板：固定显示在 AI 半场(行 0..FENCE_ROW)中央，避免遮住玩家半场部署单位的攻击范围环。
+// 供选中棋盘单位、以及 tray 按住武器令牌时复用。
+function drawUnitInfoPanel(ctx: CanvasRenderingContext2D, type: UnitType, tier: number) {
+  const cfg = UNITS[type];
+  const stat = getUnitStat(type, tier);
   const pw = 176;
   const ph = 120;
-  // 固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住玩家半场部署单位的攻击范围环
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
@@ -1892,7 +1904,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 14px "PingFang SC", sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillText(`Lv.${u.tier}`, px + pw - 12, py + 18);
+  ctx.fillText(`Lv.${tier}`, px + pw - 12, py + 18);
   // 属性行
   const rows: [string, string][] = [
     ['攻击力', damage(stat.atk).toFixed(2)],
@@ -2346,36 +2358,64 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
   ctx.restore();
 }
 
-// 危险提示：怪物距唐僧≤3格时，在唐僧所在格叠加红色呼吸描边 + "危险"标签（玩家/AI 两侧）
+// 危险提示：怪物距唐僧≤4格时，唐僧格红色呼吸描边 + 在路径上(离唐僧1格、朝向来敌处)显示红色「危险」标签(大小呼吸+重影抖动，营造紧张感)
 function drawDanger(ctx: CanvasRenderingContext2D, b: Battle) {
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 140);
-  const mark = (cx: number, cy: number) => {
+  const now = performance.now();
+  const pulse = 0.5 + 0.5 * Math.sin(now / 140); // 0..1 呼吸
+  // 目标格红色呼吸描边(高亮唐僧所在格)
+  const markBox = (cx: number, cy: number) => {
     const gx = BOARD_X + cx * CELL;
     const gy = BOARD_Y + cy * CELL;
     ctx.save();
-    ctx.globalAlpha = 0.35 + 0.4 * pulse;
+    ctx.globalAlpha = 0.3 + 0.35 * pulse;
     ctx.strokeStyle = '#ff3b3b';
     ctx.lineWidth = 4;
     roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
     ctx.stroke();
-    ctx.globalAlpha = 0.15 + 0.2 * pulse;
+    ctx.globalAlpha = 0.12 + 0.18 * pulse;
     ctx.fillStyle = '#ff3b3b';
     roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
     ctx.fill();
-    ctx.globalAlpha = 0.7 + 0.3 * pulse;
-    ctx.fillStyle = '#ffe0e0';
-    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.restore();
+  };
+  // 路径上「危险」标签：红色、大小呼吸、重影抖动
+  const markText = (px: number, py: number) => {
+    const scale = 1 + 0.14 * Math.sin(now / 120); // 呼吸缩放
+    const jitter = 1.6 * Math.sin(now / 45); // 高频错位(制造重影/抖动)
+    const size = Math.round(23 * scale);
+    ctx.save();
+    ctx.translate(px, py);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('危险', gx + CELL / 2, gy + CELL / 2);
+    // 换字体：粗黑斜体，比正文更具冲击力
+    ctx.font = `900 italic ${size}px "Hiragino Sans GB", "STHeiti", "PingFang SC", sans-serif`;
+    ctx.lineJoin = 'round';
+    // 重影层：错位的半透明红，呼吸闪动出残影
+    ctx.globalAlpha = 0.35 + 0.3 * pulse;
+    ctx.fillStyle = '#ff2a2a';
+    ctx.fillText('危险', jitter, -jitter);
+    ctx.fillText('危险', -jitter, jitter);
+    // 主体层：深色描边保清晰 + 高饱和红
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(60,0,0,0.85)';
+    ctx.strokeText('危险', 0, 0);
+    ctx.fillStyle = '#ff1a1a';
+    ctx.fillText('危险', 0, 0);
     ctx.restore();
   };
   if (b.status === 'playing' && b.dangerNear()) {
     const t = b.map.tangseng;
-    mark(t.c, t.r);
+    markBox(t.c, t.r);
+    const p = posAlong(b.map.path, lenOf(b.map.path) - 1); // 路径上离唐僧1格处
+    const { x, y } = cellCenterPx(p.c, p.r);
+    markText(x, y);
   }
   if (b.status === 'playing' && !b.aiDefeated && b.aiDangerNear()) {
-    mark(b.aiTangseng.c, b.aiTangseng.r);
+    markBox(b.aiTangseng.c, b.aiTangseng.r);
+    const p = posAlong(b.aiPath, lenOf(b.aiPath) - 1);
+    const { x, y } = cellCenterPx(p.c, p.r);
+    markText(x, y);
   }
 }
 
@@ -2831,21 +2871,26 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    if (ui.dragTrayIndex !== null) {
-      const token = b.tray[ui.dragTrayIndex];
-      if (token && token.kind === 'unit' && trayTokenCanDropOnCell(b, token, target)) {
-        const center = cellCenterPx(target.c, target.r);
-        const stat = getUnitStat(token.type, token.tier);
-        drawRangeRing(ctx, center.x, center.y, stat.rge);
-      }
-    } else if (ui.dragFrom) {
-      // 棋盘内拖兵种时同样预览落点范围
+    if (ui.dragFrom) {
+      // 棋盘内拖兵种时预览落点范围
       const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
       if (u && b.unlockedCells().some((c) => c.c === target.c && c.r === target.r)) {
         const center = cellCenterPx(target.c, target.r);
         const stat = getUnitStat(u.type, u.tier);
         drawRangeRing(ctx, center.x, center.y, stat.rge);
       }
+    }
+  }
+
+  // tray 按住武器令牌：始终展示武器信息面板 + 攻击范围(悬停合法格→格中心，否则→ghost处随手跟随)
+  if (ui.dragTrayIndex !== null) {
+    const token = b.tray[ui.dragTrayIndex];
+    if (token && token.kind === 'unit') {
+      const onCell = target && trayTokenCanDropOnCell(b, token, target);
+      const center = onCell ? cellCenterPx(target.c, target.r) : { x: ui.dragPos.x, y: ui.dragPos.y };
+      const stat = getUnitStat(token.type, token.tier);
+      drawRangeRing(ctx, center.x, center.y, stat.rge);
+      drawUnitInfoPanel(ctx, token.type, token.tier);
     }
   }
   // 源→当前的虚线连接（参考原作）
