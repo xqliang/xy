@@ -9,9 +9,9 @@ const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../sr
 
 // CELL=68。各资产在画面上的最大绘制边长 × 3（含 typeScale / cover 余量）
 const TARGET = {
-  'unit-monkey.png': 150, // CELL*0.72*1*3 ≈ 147
-  'unit-archer.png': 165, // CELL*0.72*1.08*3 ≈ 159
-  'unit-spear.png': 180,
+  'unit-monkey.png': 165, // CELL*0.72*1.06*3 ≈ 155
+  'unit-archer.png': 170, // CELL*0.72*1.09*3 ≈ 160
+  'unit-spear.png': 168, // CELL*0.72*1.08*3 ≈ 159
   'unit-cavalry.png': 180,
   'tangseng.png': 192, // CELL*0.46*2*3 ≈ 188
   'item-shovel.png': 180, // CELL*0.86*3 ≈ 175

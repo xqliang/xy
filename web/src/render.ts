@@ -200,7 +200,7 @@ function drawUnlockedCellFace(
     const rx = 3 + cellHash01(c, r, 30 + k * 7) * Math.min(iw, ih) * 0.28;
     const ry = rx * (0.45 + cellHash01(c, r, 40 + k * 7) * 0.55);
     const ang = cellHash01(c, r, 50 + k * 7) * Math.PI;
-    const a = 0.07 + cellHash01(c, r, 60 + k * 7) * 0.1; // 稍加重一点
+    const a = 0.11 + cellHash01(c, r, 60 + k * 7) * 0.14; // 灰斑略加重
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ang);
@@ -222,7 +222,7 @@ function drawUnlockedCellFace(
     const px = ix + 5 + cellHash01(c, r, 80 + k * 5) * (iw - 10);
     const py = iy + 5 + cellHash01(c, r, 90 + k * 5) * (ih - 10);
     const rad = 1.2 + cellHash01(c, r, 100 + k * 5) * 2.8;
-    const a = 0.05 + cellHash01(c, r, 110 + k * 5) * 0.07;
+    const a = 0.08 + cellHash01(c, r, 110 + k * 5) * 0.1;
     const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
     g.addColorStop(0, `rgba(130,124,112,${a})`);
     g.addColorStop(1, 'rgba(130,124,112,0)');
@@ -340,7 +340,7 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
   const spr = sprite(unitAsset(type));
   if (spr) {
     // 立绘按 contain 缩放居中，铺满整格；各类型内容留白不同，按系数微调视觉大小
-    const typeScale = type === 'monkey' ? 1 : type === 'archer' ? 1.08 : type === 'spear' ? 1.07 : 1; // 刀×1 / 射手×1.08 / 矛×1.07 / 骑手×1
+    const typeScale = type === 'monkey' ? 1.06 : type === 'archer' ? 1.09 : type === 'spear' ? 1.08 : 1; // 刀×1.06 / 射手×1.09 / 矛×1.08 / 骑手×1
     const box = s;
     const scale = Math.min(box / spr.width, box / spr.height) * typeScale;
     const dw = spr.width * scale;
@@ -692,12 +692,9 @@ function traySlotCenter(i: number): { x: number; y: number } {
 }
 function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: number, y: number, s: number) {
   if (token.kind === 'shovel') {
-    roundRect(ctx, x - s / 2, y - s / 2, s, s, 10);
-    ctx.fillStyle = '#e0b24a';
-    ctx.fill();
     const spr = sprite('item-shovel');
     if (spr) {
-      // Seedream 生成的透明 PNG 铲子图标
+      // Seedream 生成的透明 PNG 铲子图标（无底色）
       const box = s * 0.86;
       const scale = Math.min(box / spr.width, box / spr.height);
       ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
@@ -1710,7 +1707,7 @@ function drawTangsengHearts(
   }
 }
 
-/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；脚底椭圆阴影；头顶按心数画 ❤（每行最多 3） */
+/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；头顶按心数画 ❤（每行最多 3） */
 function drawTangsengFigure(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1720,7 +1717,6 @@ function drawTangsengFigure(
 ) {
   const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
   const defeated = opts?.defeated ?? false;
-  drawGroundShadow(ctx, x, y + rad * 0.22, rad * 0.72, defeated ? 0.16 : 0.26);
   const spr = sprite('tangseng');
   let headTop = y - rad;
   if (spr) {
@@ -1743,7 +1739,6 @@ function drawTangsengFigure(
 function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   const pos = b.tangsengRenderPos();
   const { x, y } = cellCenterPx(pos.c, pos.r);
-  drawGroundShadow(ctx, x, y, CELL * 0.28, 0.26);
   drawTangsengFigure(ctx, x, y, b.tangsengHP);
 }
 
@@ -2359,8 +2354,8 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const fallen = u.knockdownT > 0;
-    // 地面阴影（贴格底，不随 bob/开火上跳，与怪物同风格）
-    drawGroundShadow(ctx, x, y, CELL * 0.28, fallen ? 0.18 : 0.28);
+    // 地面阴影（贴格底略偏前，不随 bob/开火上跳，与怪物同风格）
+    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.28, fallen ? 0.18 : 0.28);
     // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来（倒下时停 bob）
     const bob = fallen ? 0 : Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     // 开火脉冲：放大 + 上跳
@@ -3221,7 +3216,7 @@ function endlessBestWaveCached(): number {
 
 // 伪竞技 AI 对手（上半场，对角唐僧）。路径用棋盘格背景表示，不再画描边线。
 function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
-  // AI 怪物：图标 + 血条（与玩家侧一致，尺寸略小）
+  // AI 怪物：图标 + 血条（与玩家侧同尺寸）
   for (const m of b.aiMonsters) {
     const p = b.aiMonsterPos(m);
     const { x, y } = cellCenterPx(p.c, p.r);
@@ -3230,15 +3225,25 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
     drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
   }
-  // AI 单位（上半场自动部署）
+  // AI 单位（上半场自动部署，立绘/阴影/微动与玩家侧一致）
   const t = performance.now() / 1000;
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.26, 0.26);
-    const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.1;
-    const uy = y - u.firePulse * 3 + bob;
-    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.66 });
-    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, u.firePulse, u.combo);
+    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.28, 0.28);
+    const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
+    const pulse = u.firePulse;
+    const uy = y - pulse * 4 + bob;
+    drawUnit(
+      ctx,
+      u.type,
+      u.tier,
+      x,
+      uy,
+      CELL * 0.72 * (1 + pulse * 0.16),
+      u.fireDir != null && Math.cos(u.fireDir) < 0,
+      { x, y, s: CELL * 0.72 },
+    );
+    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
   }
   // AI 字牌 / 激活武将（与玩家侧 drawGenerals 同视觉，便于点击查看范围与 tips）
   drawAiGenerals(ctx, b);
@@ -3246,7 +3251,6 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   const tp = b.aiTangsengRenderPos();
   const { x, y } = cellCenterPx(tp.c, tp.r);
   drawTangsengFigure(ctx, x, y, b.aiTangsengHP, {
-    rad: CELL * 0.42,
     defeated: b.aiDefeated,
   });
 }
