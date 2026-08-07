@@ -191,7 +191,7 @@ it('铲子加权：同贴路距时优先挖靠近出口的格', () => {
   expect(v.diggable.some((c) => c.c === 4)).toBe(true); // 远处未挖
 });
 
-it('digPriorityScore：1格优先于远距三边；0格≈2格；同距贴边多更好；出口微调', () => {
+it('digPriorityScore：1格优先于远距三边；0格≈2格；同距贴边多更好；近出口权重大', () => {
   // 一边但离路1格 << 三边但离路4格
   expect(digPriorityScore(1, 1, 5)).toBeLessThan(digPriorityScore(3, 4, 0));
   // 0格与2格同档（差仅来自贴边/出口）
@@ -200,8 +200,22 @@ it('digPriorityScore：1格优先于远距三边；0格≈2格；同距贴边多
   expect(digPriorityScore(3, 1, 0)).toBeLessThan(digPriorityScore(1, 1, 0));
   // 同贴边同距离：更近出口更好
   expect(digPriorityScore(1, 1, 1)).toBeLessThan(digPriorityScore(1, 1, 3));
+  // 近出口可压过小幅贴边差（一边但出口近 优于 三边但出口远2格）
+  expect(digPriorityScore(1, 1, 0)).toBeLessThan(digPriorityScore(3, 1, 2));
   // 1格优于2格（利于就近输出）
   expect(digPriorityScore(1, 1, 0)).toBeLessThan(digPriorityScore(1, 2, 0));
+  // 自定义出口权重：0.5 时出口差影响弱于默认 3
+  expect(digPriorityScore(1, 1, 2, 0.5)).toBeLessThan(digPriorityScore(1, 1, 2, 3));
+});
+
+it('AI randomDigExitWeight：同批候选下出口权重可改写挖点', () => {
+  // 两格同离路1、同贴边1；c=0 近出口，c=4 远出口。高权重挖近出口，低权重仍挖近出口但分差变小
+  const near = digPriorityScore(1, 1, 0, 3);
+  const farHigh = digPriorityScore(1, 1, 4, 3);
+  const farLow = digPriorityScore(1, 1, 4, 0.5);
+  expect(near).toBeLessThan(farHigh);
+  expect(near).toBeLessThan(farLow);
+  expect(farLow - near).toBeLessThan(farHigh - near);
 });
 
 it('铲子优先挖离路约1格的格（优于更远格）', () => {

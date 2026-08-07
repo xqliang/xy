@@ -83,6 +83,19 @@ export function entranceDistance(path: Cell[]): number {
   return 0;
 }
 
+/** 路径出怪口：首个在网格内的点（用于朝向/距离） */
+export function pathEntranceCell(path: Cell[]): Cell {
+  for (const p of path) {
+    if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) return p;
+  }
+  return path[0] ?? { c: 0, r: 0 };
+}
+
+/** 从 from 朝向 to 的朝向角（格坐标系，atan2） */
+export function faceDirToward(from: Cell, to: Cell): number {
+  return Math.atan2(to.r - from.r, to.c - from.c);
+}
+
 // 沿任意路径 path 的进度 dist（格）→ 连续网格坐标
 export function posAlong(path: Cell[], dist: number): { c: number; r: number } {
   if (dist <= 0) return { c: path[0]!.c, r: path[0]!.r };

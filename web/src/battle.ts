@@ -56,6 +56,8 @@ import {
   posAlong,
   lenOf,
   entranceDistance,
+  pathEntranceCell,
+  faceDirToward,
   mirrorPath,
   mirrorCell,
   slotUnlockOrder,
@@ -234,8 +236,13 @@ export interface PlacedUnit {
   knockdownT: number; // 倒下剩余(秒)：>0 时无法攻击，立绘横躺
 }
 
-/** 新建落位兵器的公共初始状态（含减益计时器） */
-export function makePlacedUnit(type: UnitType, tier: number, cell: Cell): PlacedUnit {
+/** 新建落位兵器的公共初始状态（含减益计时器）；可选朝向出怪口 */
+export function makePlacedUnit(
+  type: UnitType,
+  tier: number,
+  cell: Cell,
+  faceToward?: Cell,
+): PlacedUnit {
   return {
     type,
     tier,
@@ -243,6 +250,7 @@ export function makePlacedUnit(type: UnitType, tier: number, cell: Cell): Placed
     cooldown: 0,
     firePulse: 0,
     combo: 0,
+    fireDir: faceToward ? faceDirToward(cell, faceToward) : undefined,
     stunT: 0,
     slowT: 0,
     weakenT: 0,
@@ -862,7 +870,7 @@ export class Battle {
       return false;
     }
     if (!this.aiCellFree(to.c, to.r)) return false;
-    this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }));
+    this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate(true)));
     this.aiTray.splice(index, 1);
     return true;
   }
@@ -982,6 +990,7 @@ export class Battle {
         if (!u) return false;
         if (!this.aiUnlocked.has(cellKey(to.c, to.r)) || !this.aiCellFree(to.c, to.r)) return false;
         u.cell = { c: to.c, r: to.r };
+        u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
         return true;
       },
       swapUnits: (a, b) => {
@@ -990,6 +999,8 @@ export class Battle {
         if (!ua || !ub) return false;
         ua.cell = { c: b.c, r: b.r };
         ub.cell = { c: a.c, r: a.r };
+        ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
+        ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
         return true;
       },
       moveWord: (from, to) => {
@@ -1043,6 +1054,11 @@ export class Battle {
     }
     if (!gate) gate = path[0] ?? { c: 0, r: 0 };
     return Math.hypot(cell.c - gate.c, cell.r - gate.r);
+  }
+
+  /** 出怪口格（兵器落位默认朝向） */
+  private unitFaceGate(ai = false): Cell {
+    return pathEntranceCell(ai ? this.aiPath : this.map.path);
   }
 
   /** AI 候选区同型同阶合成（镜像 mergeTrayTokens） */
@@ -1155,7 +1171,7 @@ export class Battle {
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
-      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }));
+      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
       this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
@@ -1172,12 +1188,12 @@ export class Battle {
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }));
+      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
       this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
-    this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }));
+    this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
     this.tray.splice(index, 1);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.emit('place');
@@ -1276,7 +1292,12 @@ export class Battle {
       this.words.delete(cellKey(to.c, to.r));
       this.words.set(cellKey(from.c, from.r), { ...tw, cell: { c: from.c, r: from.r } });
       this.units.delete(cellKey(from.c, from.r));
-      this.units.set(cellKey(to.c, to.r), { ...a, cell: { c: to.c, r: to.r }, cooldown: 0 });
+      this.units.set(cellKey(to.c, to.r), {
+        ...a,
+        cell: { c: to.c, r: to.r },
+        cooldown: 0,
+        fireDir: faceDirToward(to, this.unitFaceGate()),
+      });
       this.message = '兵与字牌交换位置';
       return true;
     }
@@ -1293,14 +1314,25 @@ export class Battle {
         return true;
       }
       // 非同型同级 → 两格交换位置
-      this.units.set(cellKey(from.c, from.r), { ...b, cell: { c: from.c, r: from.r }, cooldown: 0 });
-      this.units.set(cellKey(to.c, to.r), { ...a, cell: { c: to.c, r: to.r }, cooldown: 0 });
+      this.units.set(cellKey(from.c, from.r), {
+        ...b,
+        cell: { c: from.c, r: from.r },
+        cooldown: 0,
+        fireDir: faceDirToward(from, this.unitFaceGate()),
+      });
+      this.units.set(cellKey(to.c, to.r), {
+        ...a,
+        cell: { c: to.c, r: to.r },
+        cooldown: 0,
+        fireDir: faceDirToward(to, this.unitFaceGate()),
+      });
       this.message = '交换了两个单位位置';
       return true;
     }
     // 移动到空格
     this.units.delete(cellKey(from.c, from.r));
     a.cell = { c: to.c, r: to.r };
+    a.fireDir = faceDirToward(a.cell, this.unitFaceGate());
     this.units.set(cellKey(to.c, to.r), a);
     return true;
   }
@@ -1795,7 +1827,11 @@ export class Battle {
     if (this.aiSummonTimer <= 0) {
       this.aiSummonTimer = knobs.summonInterval;
       if (this.aiSummon()) {
-        planAutoPlace(this.buildAiAutoView(), { rng: () => this.aiRng.next(), pSubOptimal: knobs.pSubOptimal });
+        planAutoPlace(this.buildAiAutoView(), {
+          rng: () => this.aiRng.next(),
+          pSubOptimal: knobs.pSubOptimal,
+          randomDigExitWeight: true,
+        });
       }
     }
     // 2) 战斗：AI 兵 + AI 武将攻击 aiMonsters
@@ -2287,7 +2323,7 @@ export class Battle {
             : isElite
               ? PEACH_PER_ELITE
               : PEACH_PER_KILL;
-        const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英2 / 小Boss3 / 大Boss10，+道具）
+        const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英5 / 小Boss10 / 大Boss20，+道具）
         this.peach += amount;
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({
@@ -2488,7 +2524,7 @@ export class Battle {
         if (this.digFx.some((d) => d.c === p.c && d.r === p.r)) { still.push(p); continue; } // 动画未完，继续等
         const cell = { c: p.c, r: p.r };
         if (p.token.kind === 'unit') {
-          this.units.set(cellKey(p.c, p.r), makePlacedUnit(p.token.type, p.token.tier, cell));
+          this.units.set(cellKey(p.c, p.r), makePlacedUnit(p.token.type, p.token.tier, cell, this.unitFaceGate()));
           this.emit('place');
         } else if (p.token.kind === 'word') {
           const w = p.token;
@@ -2504,7 +2540,7 @@ export class Battle {
         if (this.aiDigFx.some((d) => d.c === p.c && d.r === p.r)) { still.push(p); continue; }
         const cell = { c: p.c, r: p.r };
         if (p.token.kind === 'unit') {
-          this.aiUnits.push(makePlacedUnit(p.token.type, p.token.tier, cell));
+          this.aiUnits.push(makePlacedUnit(p.token.type, p.token.tier, cell, this.unitFaceGate(true)));
         } else if (p.token.kind === 'word') {
           this.aiWords.set(cellKey(p.c, p.r), { char: p.token.char, general: p.token.general, tier: p.token.tier, cell });
         }
@@ -2542,6 +2578,7 @@ export class Battle {
         if (!this.isUnlocked(to.c, to.r) || !this.cellFree(to.c, to.r)) return false;
         this.units.delete(cellKey(from.c, from.r));
         u.cell = { c: to.c, r: to.r };
+        u.fireDir = faceDirToward(u.cell, this.unitFaceGate());
         this.units.set(cellKey(to.c, to.r), u);
         return true;
       },
@@ -2555,6 +2592,8 @@ export class Battle {
         this.units.delete(kb);
         ua.cell = { c: b.c, r: b.r };
         ub.cell = { c: a.c, r: a.r };
+        ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate());
+        ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate());
         this.units.set(kb, ua);
         this.units.set(ka, ub);
         return true;

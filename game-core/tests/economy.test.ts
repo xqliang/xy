@@ -7,13 +7,13 @@ import {
 } from '../src/domain/economy';
 
 describe('蟠桃经济常量（照搬原作）', () => {
-  it('开局20 / 杀怪1 / 掉血10 / 精英2 / 小Boss3 / BOSS10 / 唐僧初始3滴血', () => {
+  it('开局20 / 杀怪1 / 掉血10 / 精英5 / 小Boss10 / BOSS20 / 唐僧初始3滴血', () => {
     expect(INITIAL_PEACH).toBe(20);
     expect(PEACH_PER_KILL).toBe(1);
     expect(PEACH_PER_BLEED).toBe(10);
-    expect(PEACH_PER_ELITE).toBe(2);
-    expect(PEACH_PER_MINI_BOSS).toBe(3);
-    expect(PEACH_PER_BOSS).toBe(10);
+    expect(PEACH_PER_ELITE).toBe(5);
+    expect(PEACH_PER_MINI_BOSS).toBe(10);
+    expect(PEACH_PER_BOSS).toBe(20);
     expect(TANGSENG_INITIAL_HP).toBe(3);
   });
 });

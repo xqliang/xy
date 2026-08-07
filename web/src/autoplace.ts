@@ -54,17 +54,23 @@ export interface AutoPlaceOpts {
   rng: () => number;       // [0,1)
   pSubOptimal?: number;    // 次优概率，默认 0（恒最优）
   rangeTolerance?: number; // 默认 0.5，与战斗判定一致
+  /** AI 对手：每次挖铲在 [DIG_EXIT_WEIGHT_AI_MIN, MAX] 随机出口权重，增加挖格随机性 */
+  randomDigExitWeight?: boolean;
 }
 
 /**
  * 洛阳铲挖格优先级（分越低越优先），服务「就近部署持续输出」：
  * 1) 离路距离：约 1 格最优；0 格与 2 格接近；更远惩罚递增（远距三边也不压过近距一边）
  * 2) 同距离档内：贴路边数越多越好（弱权重）
- * 3) 再叠加离出怪口距离
+ * 3) 靠近出怪口加分（权重高于贴边，可压过小幅贴边差）
  */
 export const DIG_DIST_WEIGHT = 10;
 export const DIG_TOUCH_WEIGHT = 1;
-export const DIG_EXIT_WEIGHT = 1;
+/** 离出口每远 1 格的惩罚；高于贴边权重，使近出口更优先（玩家默认） */
+export const DIG_EXIT_WEIGHT = 3;
+/** AI 挖铲出口权重随机区间 */
+export const DIG_EXIT_WEIGHT_AI_MIN = 0.5;
+export const DIG_EXIT_WEIGHT_AI_MAX = 3;
 
 /** 离路距离惩罚：~1 格=0；~0 与 ~2 格同档；更远线性加重 */
 export function digPathDistPenalty(pathDist: number): number {
@@ -75,14 +81,19 @@ export function digPathDistPenalty(pathDist: number): number {
   return 1 + (d - 2.5);               // 更远
 }
 
-export function digPriorityScore(touchSides: number, pathDist: number, exitDist: number): number {
+export function digPriorityScore(
+  touchSides: number,
+  pathDist: number,
+  exitDist: number,
+  exitWeight: number = DIG_EXIT_WEIGHT,
+): number {
   const sides = Math.max(0, Math.min(4, Math.floor(touchSides)));
   // 贴边越多分越低；权重远小于距离档，避免「远端三边」压过「近端一边」
   const touchPart = DIG_TOUCH_WEIGHT * (4 - sides);
   return (
     DIG_DIST_WEIGHT * digPathDistPenalty(pathDist) +
     touchPart +
-    DIG_EXIT_WEIGHT * Math.max(0, exitDist)
+    Math.max(0, exitWeight) * Math.max(0, exitDist)
   );
 }
 
@@ -135,7 +146,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     // 1) 铲子：挖「贴路 + 近出口」加权最优格；次优时挖较后一格
     for (let i = 0; i < tray.length; i++) {
       if (tray[i]!.kind !== 'shovel') continue;
-      const digs = sortedDigTargets();
+      const exitW = opts.randomDigExitWeight
+        ? DIG_EXIT_WEIGHT_AI_MIN + opts.rng() * (DIG_EXIT_WEIGHT_AI_MAX - DIG_EXIT_WEIGHT_AI_MIN)
+        : DIG_EXIT_WEIGHT;
+      const digs = sortedDigTargets(exitW);
       if (digs.length === 0) continue; // 无处可挖：保留，扫下一个
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
@@ -227,11 +241,11 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return view.swapUnits(best.hi.cell, best.lo.cell);
   }
 
-  /** 可挖格：离路~1格优先，贴边数弱加权，再叠加近出口 */
-  function sortedDigTargets(): Cell[] {
+  /** 可挖格：离路~1格优先，贴边数弱加权，再叠加近出口（exitWeight 可由 AI 每次挖时随机） */
+  function sortedDigTargets(exitWeight: number = DIG_EXIT_WEIGHT): Cell[] {
     return view.diggableCells().slice().sort((a, b) => {
-      const sa = digPriorityScore(view.pathTouchSides(a), view.nearestPathDist(a), view.exitDist(a));
-      const sb = digPriorityScore(view.pathTouchSides(b), view.nearestPathDist(b), view.exitDist(b));
+      const sa = digPriorityScore(view.pathTouchSides(a), view.nearestPathDist(a), view.exitDist(a), exitWeight);
+      const sb = digPriorityScore(view.pathTouchSides(b), view.nearestPathDist(b), view.exitDist(b), exitWeight);
       return sa - sb || a.r - b.r || a.c - b.c;
     });
   }

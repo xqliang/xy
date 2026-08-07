@@ -1,10 +1,10 @@
-// 蟠桃经济常量（照搬《赵云与阿斗》馒头模型；精英/小Boss 数值按本局玩法微调）
+// 蟠桃经济常量（照搬《赵云与阿斗》馒头模型；精英/小Boss/大Boss 按本局玩法）
 export const INITIAL_PEACH = 20;      // 开局初始蟠桃
 export const PEACH_PER_KILL = 1;      // 杀普通怪 1 桃/只
 export const PEACH_PER_BLEED = 10;    // 唐僧掉血 10 桃/滴（舍身饲魔）
-export const PEACH_PER_ELITE = 2;     // 击杀精英妖 2 桃
-export const PEACH_PER_MINI_BOSS = 3; // 击杀小 Boss 3 桃
-export const PEACH_PER_BOSS = 10;     // 击杀大 Boss 10 桃
+export const PEACH_PER_ELITE = 5;     // 击杀精英妖 5 桃
+export const PEACH_PER_MINI_BOSS = 10; // 击杀小 Boss 10 桃
+export const PEACH_PER_BOSS = 20;     // 击杀大 Boss 20 桃
 export const TANGSENG_INITIAL_HP = 3; // 唐僧初始 3 滴血（道具可拉高）
 
 // 第 n 波怪物数 = MONSTER_BASE + n
