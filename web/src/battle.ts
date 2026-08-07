@@ -25,7 +25,6 @@ import {
   qualityColor,
   matchGeneral,
   partnerChars,
-  WORD_POOL,
   BOND_GENERAL,
   BOND_ATK_BONUS,
   ultTypeOf,
@@ -389,6 +388,8 @@ export class Battle {
   aiTray: TrayToken[] = [];
   aiWords = new Map<string, PlacedWord>();
   private aiSummonsSinceShovel = 0;
+  private aiSummonsSinceWord = 0; // AI 字牌保底计数（镜像 summonsSinceWord）
+  private aiSummonsSincePair = 0; // AI 半对保底计数（镜像 summonsSincePair）
   private aiSummonCount = 0;
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
@@ -702,7 +703,8 @@ export class Battle {
     return !this.aiUnits.some((u) => u.cell.c === c && u.cell.r === r) && !this.aiWords.has(cellKey(c, r)) && !this.aiPendingPlace.some((p) => p.c === c && p.r === r);
   }
 
-  // AI 侧武将激活扫描（镜像 activeGenerals，读 aiWords + aiGeneralStates）
+  // AI 侧武将激活扫描（镜像 activeGenerals：matchGeneral 配对 + 继承对齐，读 aiWords/aiGeneralStates）。
+  // AI 基础经济：不享法宝符 generalTierDelta 加成。
   aiActiveGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
@@ -712,15 +714,30 @@ export class Battle {
       const right = this.aiWords.get(cellKey(w.cell.c + 1, w.cell.r));
       if (!right) continue;
       const kR = cellKey(right.cell.c, right.cell.r);
-      if (used.has(kR) || right.general !== w.general) continue;
-      const def = generalById(w.general);
-      if (!def || w.char !== def.chars[0] || right.char !== def.chars[1]) continue;
+      if (used.has(kR)) continue;
+      const def = matchGeneral(w.char, right.char); // 按字连读匹配，支持门派共享字
+      if (!def) continue;
       used.add(kL); used.add(kR);
+      const cap = def.maxTier;
+      const target = Math.min(Math.max(w.tier, right.tier), cap); // 继承对齐：只升不降、受 maxTier 封顶
+      if (w.tier < target) w.tier = target;
+      if (right.tier < target) right.tier = target;
+      w.general = def.id;
+      right.general = def.id;
       let s = this.aiGeneralStates.get(def.id);
       if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
-      out.push({ def, tier: Math.min(w.tier, right.tier), cells: [w.cell, right.cell], state: s });
+      out.push({ def, tier: Math.min(w.tier, right.tier, cap), cells: [w.cell, right.cell], state: s });
     }
     return out;
+  }
+
+  // AI 侧孤儿字（镜像 orphanCharsNow）：未激活的已放字牌 + tray 中的字，用于半对保底
+  private aiOrphanCharsNow(): string[] {
+    const activeKeys = new Set<string>();
+    for (const g of this.aiActiveGenerals()) for (const c of g.cells) activeKeys.add(cellKey(c.c, c.r));
+    const board = [...this.aiWords.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
+    const trayChars = this.aiTray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word').map((t) => t.char);
+    return collectOrphanChars(board, trayChars, activeKeys);
   }
 
   // AI 落子入口（planAutoPlace 会调用的子集：shovel / unit(place|merge) / word(place|merge)）
@@ -793,13 +810,37 @@ export class Battle {
     });
     this.aiSummonCount += 1;
     if (base.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0; else this.aiSummonsSinceShovel += 1;
-    this.aiTray = base.map((tok) => {
+    // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对（无玩家 mods.wordRateBonus）
+    const forceWord = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
+    const orphansBefore = this.aiOrphanCharsNow();
+    const forcePartner = !firstSummon && orphansBefore.length > 0 && this.aiSummonsSincePair >= TUNING.pairPityAfter;
+    const trayWordsSoFar: string[] = [];
+    let partnerForced = false;
+    const drawOneWord = (forcePair: boolean) => {
+      const w = pickWordChar(this.aiRng, Math.max(1, this.wave), orphansBefore, trayWordsSoFar, forcePair);
+      trayWordsSoFar.push(w.char);
+      if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
+      return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
+    };
+    const draws: TrayToken[] = base.map((tok) => {
       if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance) {
-        const w = this.aiRng.pick(WORD_POOL);
-        return { kind: 'word', char: w.char, general: w.general, tier: 1 } as TrayToken;
+        return drawOneWord(forcePartner && !partnerForced);
       }
       return tok;
     });
+    if (forceWord && !draws.some((t) => t.kind === 'word')) {
+      const idx = draws.findIndex((t) => t.kind === 'unit');
+      if (idx >= 0) draws[idx] = drawOneWord(forcePartner);
+    } else if (forcePartner && !partnerForced) {
+      const idx = draws.findIndex((t) => t.kind === 'unit');
+      if (idx >= 0) draws[idx] = drawOneWord(true);
+    }
+    this.aiTray = draws;
+    if (draws.some((t) => t.kind === 'word')) this.aiSummonsSinceWord = 0;
+    else if (!firstSummon) this.aiSummonsSinceWord += 1;
+    if (firstSummon || orphansBefore.length === 0) this.aiSummonsSincePair = 0;
+    else if (partnerForced || trayWordsSoFar.some((c) => orphansBefore.some((o) => partnerChars(o).includes(c)))) this.aiSummonsSincePair = 0;
+    else this.aiSummonsSincePair += 1;
     return true;
   }
 

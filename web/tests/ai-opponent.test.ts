@@ -1,6 +1,6 @@
 // web/tests/ai-opponent.test.ts
 import { describe, it, expect } from 'vitest';
-import { Battle } from '../src/battle';
+import { Battle, TUNING } from '../src/battle';
 import { PEACH_PER_KILL } from '@core';
 
 describe('AI 落子与激活', () => {
@@ -84,5 +84,18 @@ describe('updateAi 真玩家循环', () => {
     const b = new Battle(7, 1, undefined, undefined, undefined, undefined, undefined, true);
     for (let t = 0; t < 100; t++) (b as any).updateAi(0.1);
     expect(b.aiUnits.length).toBe(0);
+  });
+});
+
+describe('AI 字牌保底（对齐玩家 word pity）', () => {
+  it('连续 wordPityAfter 次无字后，下一次 aiSummon 强制产出字牌', () => {
+    const b = new Battle(9) as any;
+    b.aiPeach = 1e9;
+    b.wave = 3;
+    // 把字牌保底计数顶到阈值，模拟"连续多次没出字"
+    b.aiSummonsSinceWord = TUNING.wordPityAfter;
+    b.aiSummonCount = 5; // 非首次征兵（首次不触发保底）
+    b.aiSummon();
+    expect(b.aiTray.some((t: any) => t.kind === 'word')).toBe(true);
   });
 });
