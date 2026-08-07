@@ -89,8 +89,8 @@ export const TUNING = {
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
-  spawnInterval: 1.25, // 秒/只（出怪节奏；更舒缓）
-  spawnIntervalMin: 0.35, // 第 4 波起加快出怪后的间隔下限（避免门口被秒时叠得过疯）
+  spawnInterval: 1.25, // 秒/只（基础出怪节奏；第 4 波起再缩短）
+  spawnIntervalMin: 0.35, // 出怪间隔下限
   summonCostStart: 10, // 首次征兵成本
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）

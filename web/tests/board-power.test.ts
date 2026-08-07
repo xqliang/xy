@@ -103,49 +103,50 @@ describe('estimateOptimalBoardPower', () => {
 });
 
 describe('planSpawnInterval', () => {
+  const base = 1.25;
+
   it('第 4 波前保持基础间隔（仅难度加速）', () => {
     const itv = planSpawnInterval({
       wave: 3,
-      baseInterval: 1.25,
+      baseInterval: base,
       monsterSpd: 0.68,
       normalHp: 80,
       entranceDps: 0,
     });
-    expect(itv).toBeCloseTo(1.25, 5);
+    expect(itv).toBeCloseTo(base, 5);
   });
 
   it('第 4 波起随波次逐渐缩短间隔', () => {
     const w4 = planSpawnInterval({
       wave: 4,
-      baseInterval: 1.25,
+      baseInterval: base,
       monsterSpd: 0.68,
       normalHp: 200,
       entranceDps: 0,
     });
     const w8 = planSpawnInterval({
       wave: 8,
-      baseInterval: 1.25,
+      baseInterval: base,
       monsterSpd: 0.68,
       normalHp: 200,
       entranceDps: 0,
     });
-    expect(w4).toBeCloseTo(1.25, 5);
-    expect(w8).toBeCloseTo(1.25 * Math.pow(SPAWN_INTERVAL_WAVE_DECAY, 4), 5);
+    expect(w4).toBeCloseTo(base, 5);
+    expect(w8).toBeCloseTo(base * Math.pow(SPAWN_INTERVAL_WAVE_DECAY, 4), 5);
     expect(w8).toBeLessThan(w4);
   });
 
   it('门口 DPS 能秒杀时进一步压间隔，且不低于下限', () => {
     const spd = 0.68;
-    // 门口 2.5 格走完约 3.7s；DPS 很大 → 必须叠怪
     const itv = planSpawnInterval({
       wave: 4,
-      baseInterval: 1.25,
+      baseInterval: base,
       monsterSpd: spd,
       normalHp: 50,
       entranceDps: 200,
     });
     const timeInZone = ENTRANCE_ZONE_LEN / spd;
-    expect(itv).toBeLessThan(1.25);
+    expect(itv).toBeLessThan(base);
     expect(itv).toBeGreaterThanOrEqual(SPAWN_INTERVAL_MIN);
     expect(itv).toBeLessThanOrEqual(timeInZone / 2);
   });

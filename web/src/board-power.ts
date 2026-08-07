@@ -13,7 +13,7 @@ export const PRESSURE_FROM_WAVE = 4;
 /** 门口路段长度（格）：用于判断会不会在出怪口被秒 */
 export const ENTRANCE_ZONE_LEN = 2.5;
 /** 第 PRESSURE_FROM_WAVE 波起，每波出怪间隔再 × 该系数（逐渐加快） */
-export const SPAWN_INTERVAL_WAVE_DECAY = 0.88;
+export const SPAWN_INTERVAL_WAVE_DECAY = 0.85;
 /** 出怪间隔下限（秒） */
 export const SPAWN_INTERVAL_MIN = 0.35;
 /** 门口段集火伤害超过怪血该比例时，视为会门口灭队 → 加快叠怪 */
