@@ -8,6 +8,7 @@ import {
   seatScore,
   placeExitWeight,
   singleWordScore,
+  heroSeatScore,
   type AutoPlaceView,
   type PlaceToken,
   type Cell,
@@ -255,6 +256,33 @@ it('单字优先远离路径且靠近唐僧', () => {
 it('singleWordScore：远路近唐僧分更高', () => {
   expect(singleWordScore(3, 1)).toBeGreaterThan(singleWordScore(1, 1));
   expect(singleWordScore(2, 1)).toBeGreaterThan(singleWordScore(2, 4));
+});
+
+it('heroSeatScore：覆盖更高优先，不因贴出口加分', () => {
+  expect(heroSeatScore(5, 1)).toBeGreaterThan(heroSeatScore(3, 0));
+  // 同覆盖时略偏好离路更近；与 exit 无关（无 exit 参数）
+  expect(heroSeatScore(4, 0)).toBeGreaterThan(heroSeatScore(4, 2));
+});
+
+it('激活武将：宁可覆盖高的中段，不追贴出口列', () => {
+  // FakeView：exitDist=c，pathCover 随 ay 降、随 ax 略降。
+  // (0,0)-(1,0) 贴口但 cover 高；(5,0)-(6,0) 离口远、cover 略低。
+  // 旧 seatScore 会强烈偏好 c=0；新规则 cover 接近时不应只因贴口选左对。
+  // 这里造 cover 相同（同 ay）、右对 cover 因 ax 略低 → 仍选左对因 cover；
+  // 另测：左对 r=1 cover 更低、右对 r=0 cover 更高 → 选右对（不贴口列也能赢）。
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '大', general: 'g', tier: 1 },
+      { kind: 'word', char: '圣', general: 'g', tier: 1 },
+    ],
+    [{ c: 0, r: 1 }, { c: 1, r: 1 }, { c: 5, r: 0 }, { c: 6, r: 0 }],
+  );
+  planAutoPlace(v, { rng });
+  const words = v.placedWords();
+  expect(words).toHaveLength(2);
+  // r=0 覆盖更高，应落在 (5,0)-(6,0) 而非贴口的 r=1
+  expect(words.every((w) => w.cell.r === 0)).toBe(true);
+  expect(words.every((w) => w.cell.c >= 5)).toBe(true);
 });
 
 it('激活武将：邻格被武器占时可挪开再落字', () => {

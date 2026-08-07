@@ -2,7 +2,7 @@
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
-// 武将：激活落位按 placeCellScore 最大化，可挪开普通武器；单字优先远离路径、靠近唐僧。
+// 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
 import { matchGeneral } from './generals';
@@ -139,12 +139,20 @@ export function placeCellScore(
   return seatScore(pathCover, exitDist, pathDist, rge);
 }
 
-/** 单字落位：远离路径、靠近唐僧（分越高越好） */
+/** 单字落位：远离路径、靠近唐僧（分越高越好）；不追贴出口 */
 export const SINGLE_WORD_PATH_WEIGHT = 1;
 export const SINGLE_WORD_TANG_WEIGHT = 1.25;
 
 export function singleWordScore(pathDist: number, tangDist: number): number {
   return SINGLE_WORD_PATH_WEIGHT * pathDist - SINGLE_WORD_TANG_WEIGHT * Math.max(0, tangDist);
+}
+
+/**
+ * 激活武将双格座位分：以路径覆盖为主（射程内能打到路即可），
+ * 不奖励贴出怪口——贴口留给普通兵，避免武将堵在闸门旁。
+ */
+export function heroSeatScore(pathCover: number, pathDist = 0): number {
+  return pathCover - 0.05 * Math.max(0, pathDist);
 }
 
 function cellKey(c: Cell): string { return `${c.c},${c.r}`; }
@@ -355,11 +363,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   function heroPairScore(left: Cell, right: Cell, general: string, tier: number): number {
     const ax = (left.c + right.c) / 2;
     const ay = (left.r + right.r) / 2;
-    const cover = view.pathCoverAt(ax, ay, view.generalRge(general, tier));
-    const exit = (view.exitDist(left) + view.exitDist(right)) / 2;
-    const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
     const rge = view.generalRge(general, tier);
-    return seatScore(cover, exit, pathD, rge);
+    const cover = view.pathCoverAt(ax, ay, rge);
+    const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
+    return heroSeatScore(cover, pathD);
   }
 
   /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
