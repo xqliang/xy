@@ -20,7 +20,7 @@ describe('成长系数链（照搬原作）', () => {
     expect(MAX_TIER).toBe(5);
   });
 
-  it('四兵种 1 阶 ATK：棍猴=3，其余=2；RGE 与目标数符合原作定位', () => {
+  it('四兵种 1 阶 ATK：刀兵=3，其余=2；RGE 与目标数符合原作定位', () => {
     expect(UNITS.monkey.baseAtk).toBe(3);
     expect(UNITS.spear.baseAtk).toBe(2);
     expect(UNITS.cavalry.baseAtk).toBe(2);

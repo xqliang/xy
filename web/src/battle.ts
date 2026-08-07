@@ -308,13 +308,16 @@ export interface Monster {
   healFlash: number; // 刚被血泉治疗的闪光(1→0)，用于 UI
 }
 
+/** 弹道/命中特效种类：四兵种 + 英雄悟空金箍棒（原棍兵特效迁至此） */
+export type HitFxStyle = UnitType | 'staff';
+
 export interface HitFx {
   from: { c: number; r: number };
   to: { c: number; r: number };
   ttl: number;
   maxTtl: number;
   color: string;
-  wtype?: UnitType; // 攻击来源兵种，用于区分弹道动画（棍/枪/骑/弓）
+  wtype?: HitFxStyle; // 攻击来源：刀/枪/骑/弓，或英雄悟空金箍棒 staff
   tier?: number; // 攻击者阶数，用于让特效随等级加大(圈数/范围/时长)
 }
 
@@ -958,6 +961,7 @@ export class Battle {
       placedUnits: () => this.aiUnits.map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
+      pathTouchSides: (cell) => this.pathTouchSidesOf(this.aiPath, cell),
       exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
@@ -1010,6 +1014,21 @@ export class Battle {
       if (inAttackRange(ax, ay, rge, p)) covered += step;
     }
     return covered;
+  }
+
+  /** 格与路径正交相邻的边数（上下左右四向） */
+  private pathTouchSidesOf(path: { c: number; r: number }[], cell: { c: number; r: number }): number {
+    const keys = new Set<string>();
+    for (const p of path) {
+      if (p.c < 0 || p.c >= COLS || p.r < 0 || p.r >= ROWS) continue;
+      keys.add(cellKey(p.c, p.r));
+    }
+    let n = 0;
+    if (keys.has(cellKey(cell.c + 1, cell.r))) n++;
+    if (keys.has(cellKey(cell.c - 1, cell.r))) n++;
+    if (keys.has(cellKey(cell.c, cell.r + 1))) n++;
+    if (keys.has(cellKey(cell.c, cell.r - 1))) n++;
+    return n;
   }
 
   /** 格到路径「出怪口」（首个在网格内的点）的欧氏距离 */
@@ -1685,7 +1704,7 @@ export class Battle {
     return null;
   }
 
-  // AI 单位攻击 AI 怪（与玩家同一套战斗数值，无道具加成、不产特效）
+  // AI 单位攻击 AI 怪（与玩家同一套战斗数值；出招特效走共用 this.fx）
   private updateAiUnits(dt: number): void {
     for (const u of this.aiUnits) {
       u.cooldown -= dt;
@@ -1707,7 +1726,8 @@ export class Battle {
         t.m.hp -= dmg;
         t.m.hitFlash = 0.1;
         const p = posAlong(this.aiPath, t.m.dist);
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: 0.3 + (u.tier - 1) * 0.04, maxTtl: 0.3 + (u.tier - 1) * 0.04, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
+        const fxTtl = this.attackFxTtl(u.type, u.tier);
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
         hit++;
       }
       if (hit > 0) {
@@ -1744,7 +1764,16 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
-        this.fx.push({ from: { c: ax, r: ay }, to: t.p, ttl: 0.16, maxTtl: 0.16, color: qualityColor(g.tier) });
+        const isStaff = g.def.id === 'wukong';
+        const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
+        this.fx.push({
+          from: { c: ax, r: ay },
+          to: t.p,
+          ttl,
+          maxTtl: ttl,
+          color: qualityColor(g.tier),
+          ...(isStaff ? { wtype: 'staff' as const, tier: g.tier } : {}),
+        });
         hit++;
       }
       s.cooldown = 1 / stat.frq;
@@ -1819,6 +1848,12 @@ export class Battle {
     }
   }
 
+  /** 兵种攻击特效时长：骑基础再慢一倍(1.2s)，随阶加快；其它约 0.3s 起 */
+  private attackFxTtl(type: UnitType, tier: number): number {
+    if (type === 'cavalry') return 1.2 / (1 + (tier - 1) * 0.22);
+    return 0.3 + (tier - 1) * 0.04;
+  }
+
   // 单位攻击结算
   private updateUnits(dt: number): void {
     for (const u of this.units.values()) {
@@ -1852,12 +1887,13 @@ export class Battle {
         if (hitCount >= maxTargets) break;
         target.m.hp -= dmg;
         target.m.hitFlash = 0.12; // 受击闪白
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: 0.3 + (u.tier - 1) * 0.04, maxTtl: 0.3 + (u.tier - 1) * 0.04, color, wtype: u.type, tier: u.tier });
+        const fxTtl = this.attackFxTtl(u.type, u.tier);
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier });
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
         hitCount++;
       }
       if (hitCount > 0) {
-        // 上次出招还没收完(firePulse 尚高)就再次命中 → 连击累加，用于枪的连刺形变
+        // 上次出招还没收完(firePulse 尚高)就再次命中 → 连击累加，用于枪连刺 / 刀连砍形变
         u.combo = u.firePulse > 0.35 ? Math.min(9, u.combo + 1) : 0;
         u.firePulse = 1;
         u.fireDir = Math.atan2(inRange[0]!.p.r - u.cell.r, inRange[0]!.p.c - u.cell.c); // 朝最靠前目标形变出招
@@ -1958,7 +1994,17 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
-        this.fx.push({ from: { c: ax, r: ay }, to: t.p, ttl: 0.16, maxTtl: 0.16, color: qualityColor(g.tier) });
+        // 悟空普攻：复用原棍兵金箍棒旋转特效；其余武将仍用短线弹道
+        const isStaff = g.def.id === 'wukong';
+        const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
+        this.fx.push({
+          from: { c: ax, r: ay },
+          to: t.p,
+          ttl,
+          maxTtl: ttl,
+          color: qualityColor(g.tier),
+          ...(isStaff ? { wtype: 'staff' as const, tier: g.tier } : {}),
+        });
         hit++;
       }
       if (hit > 0) {
@@ -2295,11 +2341,18 @@ export class Battle {
     // 开火脉冲/连击衰减：在所有状态(含波间'ready')推进，避免单位兵器卡在槽位一直显示
     // 连击(combo>0)时衰减更快(9 vs 6)，出招/收招更迅捷，视觉更密集（不改实际攻击频率/DPS）
     for (const u of this.units.values()) {
-      u.firePulse = Math.max(0, u.firePulse - dt * (u.combo > 0 ? 9 : 6));
+      // 骑：基础转速再减半(1.5)，随阶加快；其它兵种保持原衰减
+      const decay = u.type === 'cavalry'
+        ? 1.5 * (1 + (u.tier - 1) * 0.28) * (u.combo > 0 ? 1.25 : 1)
+        : (u.combo > 0 ? 9 : 6);
+      u.firePulse = Math.max(0, u.firePulse - dt * decay);
       if (u.firePulse <= 0.02) u.combo = 0; // 收招完成即清连击
     }
     for (const u of this.aiUnits) {
-      u.firePulse = Math.max(0, u.firePulse - dt * (u.combo > 0 ? 9 : 6));
+      const decay = u.type === 'cavalry'
+        ? 1.5 * (1 + (u.tier - 1) * 0.28) * (u.combo > 0 ? 1.25 : 1)
+        : (u.combo > 0 ? 9 : 6);
+      u.firePulse = Math.max(0, u.firePulse - dt * decay);
       if (u.firePulse <= 0.02) u.combo = 0;
     }
     for (const bt of this.bursts) bt.ttl -= dt;
@@ -2458,6 +2511,7 @@ export class Battle {
       placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
+      pathTouchSides: (cell) => this.pathTouchSidesOf(this.map.path, cell),
       exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>

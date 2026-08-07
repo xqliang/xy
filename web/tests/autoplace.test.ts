@@ -36,6 +36,8 @@ class FakeView implements AutoPlaceView {
   placedUnits() { return [...this.unitsMap.values()]; }
   placedWords() { return [...this.wordsMap.values()]; }
   nearestPathDist(cell: Cell) { return cell.r; } // 行号=离路距
+  // 假路径：整行 r=0；r=1 贴一边；其余未贴路
+  pathTouchSides(cell: Cell) { return cell.r === 1 ? 1 : cell.r === 0 ? 1 : 0; }
   exitDist(cell: Cell) { return cell.c; } // 列号=离出口距（出口在 c=0）
   tangsengDist(cell: Cell) { return Math.hypot(cell.c - 7, cell.r - 5); }
   pathCover(cell: Cell, type: any, tier: number) {
@@ -173,9 +175,19 @@ it('铲子加权：同贴路距时优先挖靠近出口的格', () => {
   expect(v.diggable.some((c) => c.c === 4)).toBe(true); // 远处未挖
 });
 
-it('digPriorityScore：贴路近 + 出口近 → 分更低', () => {
-  expect(digPriorityScore(1, 1)).toBeLessThan(digPriorityScore(2, 1));
-  expect(digPriorityScore(1, 1)).toBeLessThan(digPriorityScore(1, 3));
+it('digPriorityScore：三边>两边>一边>未贴路；未贴按离路距；再叠加出口', () => {
+  expect(digPriorityScore(3, 0, 9)).toBeLessThan(digPriorityScore(2, 0, 0));
+  expect(digPriorityScore(2, 0, 9)).toBeLessThan(digPriorityScore(1, 0, 0));
+  expect(digPriorityScore(1, 0, 9)).toBeLessThan(digPriorityScore(0, 1, 0));
+  expect(digPriorityScore(0, 1, 0)).toBeLessThan(digPriorityScore(0, 3, 0));
+  expect(digPriorityScore(1, 0, 1)).toBeLessThan(digPriorityScore(1, 0, 3));
+});
+
+it('铲子优先挖贴路边数更多的格', () => {
+  // FakeView：r=1 一边贴路；r=3 未贴。应挖一边贴路格
+  const v = new FakeView([{ kind: 'shovel' }], [], [{ c: 2, r: 3 }, { c: 2, r: 1 }]);
+  planAutoPlace(v, { rng });
+  expect(v.freeCells().some((c) => c.r === 1)).toBe(true);
 });
 
 it('够不着(仅远格 + 无同阶合成)则保留在 tray，不浪费格', () => {

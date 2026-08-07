@@ -1,6 +1,6 @@
 // 按「最终显示尺寸 × 3」缩小立绘 PNG，减小 git 体积。透明通道用 canvas 保留。
 import puppeteer from 'puppeteer-core';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -25,7 +25,7 @@ const TARGET = {
   'monster-minion-huoyanshan.png': 150,
   'monster-minion-liushahe.png': 150,
   'monster-minion-pansidong.png': 150,
-  // 菜单主角立绘 260×3；武将卡同套素材
+  // 菜单主角立绘 260×3；武将卡同套素材（web + wechat 共用尺寸）
   'hero-wukong.png': 780,
   'hero-bajie.png': 780,
   'hero-shaseng.png': 780,
@@ -80,3 +80,14 @@ for (const [name, maxSide] of Object.entries(TARGET)) {
 
 await browser.close();
 console.log(`合计 ${(before / 1024 / 1024).toFixed(1)}MB → ${(after / 1024 / 1024).toFixed(1)}MB  节省 ${(saved / 1024 / 1024).toFixed(1)}MB`);
+
+// 同步到微信小游戏 assets（存在同名文件才覆盖）
+const WX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../wechat/assets');
+let synced = 0;
+for (const name of Object.keys(TARGET)) {
+  const dest = path.join(WX, name);
+  if (!existsSync(dest)) continue;
+  copyFileSync(path.join(DIR, name), dest);
+  synced++;
+}
+console.log(`已同步 ${synced} 个文件 → wechat/assets`);

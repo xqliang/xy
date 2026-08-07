@@ -317,9 +317,9 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.rotate(dir); // 旋转后 +x 轴指向目标
   ctx.globalAlpha = Math.min(1, pulse * 1.25);
   ctx.lineJoin = 'round';
-  drawWeaponGlyph(ctx, type, s, pulse, combo);
-  // 朝向箭头（出招时格上显示方向）
-  if (type !== 'monkey') {
+  drawWeaponGlyph(ctx, type, s, pulse, combo, tier);
+  // 朝向箭头（刀/骑不出箭头，避免抢戏）
+  if (type !== 'monkey' && type !== 'cavalry') {
     ctx.globalAlpha = Math.min(0.85, pulse * 1.1);
     ctx.strokeStyle = '#2a2018';
     ctx.lineWidth = 2;
@@ -332,8 +332,170 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.globalAlpha = 1;
 }
 
+/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 35%～85% 半径） */
+function drawWhipSweepFill(
+  ctx: CanvasRenderingContext2D,
+  fromAng: number,
+  toAng: number,
+  reach: number,
+  alpha: number,
+) {
+  let sweep = toAng - fromAng;
+  while (sweep <= 0) sweep += Math.PI * 2;
+  if (sweep < 0.05 || alpha <= 0.02) return;
+  const r0 = reach * 0.35;
+  const r1 = reach * 0.85;
+  const slices = Math.max(8, Math.ceil(sweep / 0.2));
+  for (let i = 0; i < slices; i++) {
+    const t0 = i / slices;
+    const t1 = (i + 1) / slices;
+    const a0 = fromAng + sweep * t0;
+    const a1 = fromAng + sweep * t1;
+    const along = (t0 + t1) * 0.5;
+    ctx.globalAlpha = alpha * (0.1 + 0.32 * along);
+    const grad = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
+    grad.addColorStop(0, 'rgba(145,120,90,0)');
+    grad.addColorStop(0.5, 'rgba(130,105,78,0.4)');
+    grad.addColorStop(1, 'rgba(110,88,64,0.14)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r1, a0, a1);
+    ctx.arc(0, 0, r0, a1, a0, true);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// 弯曲鞭梢：虚线、粗→细、只画外段；tier 越高越粗
+function drawCurvedWhip(
+  ctx: CanvasRenderingContext2D,
+  ang: number,
+  reach: number,
+  alpha: number,
+  side = 1,
+  flex = 1,
+  tier = 1,
+) {
+  if (alpha <= 0.02 || reach < 4) return;
+  const r0 = reach * 0.35;
+  const r1 = reach * 0.85;
+  const n = 16;
+  const lag = 0.85 * side * (0.65 + 0.5 * flex);
+  const belly = 0.45 * side * flex;
+  const pts: { x: number; y: number; t: number }[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const ease = t * t * (3 - 2 * t);
+    const r = r0 + (r1 - r0) * ease;
+    const a = ang - lag * t * t + Math.sin(t * Math.PI) * belly * (1 - t * 0.2);
+    pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, t });
+  }
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const wScale = Math.max(0.75, reach / (CELL * 1.85));
+  const thickMul = 1 + (tier - 1) * 0.22;
+  const midW = (2.4 * 0.5 + 0.6) * wScale * thickMul;
+  ctx.save();
+  // 更虚：短实线 + 长空隙
+  ctx.setLineDash([Math.max(2.5, midW * 1.2), Math.max(7, midW * 4.2)]);
+  ctx.lineDashOffset = 0;
+  ctx.beginPath();
+  ctx.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i <= n; i++) ctx.lineTo(pts[i]!.x, pts[i]!.y);
+  ctx.globalAlpha = alpha * 0.28;
+  ctx.strokeStyle = 'rgba(70,52,38,0.45)';
+  ctx.lineWidth = midW * 1.25;
+  ctx.stroke();
+  for (let i = 0; i < n; i++) {
+    const tMid = (pts[i]!.t + pts[i + 1]!.t) / 2;
+    const w = (2.4 * (1 - tMid) + 0.6) * wScale * thickMul;
+    const shade = 78 + Math.round(tMid * 36);
+    ctx.globalAlpha = alpha * (0.5 + 0.28 * (1 - tMid));
+    ctx.strokeStyle = `rgb(${shade + 18},${shade + 4},${shade - 6})`;
+    ctx.lineWidth = w;
+    ctx.setLineDash([Math.max(2.2, w * 1.3), Math.max(6.5, w * 4.5)]);
+    ctx.beginPath();
+    ctx.moveTo(pts[i]!.x, pts[i]!.y);
+    ctx.lineTo(pts[i + 1]!.x, pts[i + 1]!.y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/** 弯刀：白刃 + 金护手 + 黑柄 + 金球；沿 +x 出尖，刃背向上弯 */
+function drawCurvedDao(ctx: CanvasRenderingContext2D, s: number, alpha: number) {
+  if (alpha <= 0.02) return;
+  const tipX = s * 1.02;
+  const guardX = s * 0.1;
+  const handleEnd = -s * 0.26;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // 白刃：脊背高拱、刃口略平，尖端收拢
+  ctx.beginPath();
+  ctx.moveTo(guardX, -s * 0.015);
+  ctx.bezierCurveTo(s * 0.38, -s * 0.22, s * 0.72, -s * 0.26, tipX, -s * 0.02);
+  ctx.quadraticCurveTo(tipX + s * 0.02, 0, tipX - s * 0.02, s * 0.04);
+  ctx.bezierCurveTo(s * 0.62, s * 0.1, s * 0.32, s * 0.07, guardX, s * 0.05);
+  ctx.closePath();
+  ctx.fillStyle = '#f5f7fb';
+  ctx.fill();
+  ctx.strokeStyle = '#1a1208';
+  ctx.lineWidth = Math.max(1.8, s * 0.045);
+  ctx.stroke();
+  // 刃口高光
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = Math.max(1.2, s * 0.028);
+  ctx.beginPath();
+  ctx.moveTo(guardX + s * 0.04, s * 0.02);
+  ctx.bezierCurveTo(s * 0.4, s * 0.05, s * 0.7, s * 0.04, tipX - s * 0.06, s * 0.015);
+  ctx.stroke();
+
+  // 金护手
+  ctx.fillStyle = '#e8b84a';
+  ctx.strokeStyle = '#8a5a12';
+  ctx.lineWidth = 1.2;
+  const gw = s * 0.07, gh = s * 0.2;
+  roundRect(ctx, guardX - gw * 0.55, -gh / 2, gw, gh, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // 黑柄
+  ctx.fillStyle = '#1a1208';
+  ctx.beginPath();
+  ctx.moveTo(handleEnd + s * 0.02, -s * 0.038);
+  ctx.lineTo(guardX - gw * 0.35, -s * 0.038);
+  ctx.lineTo(guardX - gw * 0.35, s * 0.038);
+  ctx.lineTo(handleEnd + s * 0.02, s * 0.038);
+  ctx.closePath();
+  ctx.fill();
+  // 柄缠线
+  ctx.strokeStyle = 'rgba(80,60,40,0.7)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 3; i++) {
+    const hx = handleEnd + s * 0.07 + i * s * 0.05;
+    ctx.beginPath();
+    ctx.moveTo(hx, -s * 0.032);
+    ctx.lineTo(hx - s * 0.015, s * 0.032);
+    ctx.stroke();
+  }
+
+  // 金球柄头
+  ctx.fillStyle = '#e8b84a';
+  ctx.strokeStyle = '#8a5a12';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(handleEnd, 0, s * 0.055, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 // 在已 translate 到单位中心、rotate 到 dir 的坐标系里，绘制单个兵器（沿 +x 出招）
-function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: number, pulse: number, combo: number) {
+function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: number, pulse: number, combo: number, tier = 1) {
   ctx.lineCap = 'round';
   switch (type) {
     case 'spear': { // 枪：向前突刺（杆+红缨+枪头）；连击时只收回约 1/4 再刺出，更显连贯有力
@@ -356,61 +518,15 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       ctx.closePath(); ctx.fill();
       break;
     }
-    case 'cavalry': { // 骑：主鞭根粗梢细；残影是扫过的亮弧 + 等宽虚影
+    case 'cavalry': { // 骑：虚线弯鞭 + 扇区残影；转速由 firePulse 衰减控制（阶越高越快）
       const phase = 1 - pulse;
-      const a0 = -0.55;
-      const span = Math.PI / 3; // ~60°
-      const tipAng = a0 + phase * span;
-      const reach = s * 0.85;
-      // —— 残影：梢端扫过的亮弧（关键可见性）+ 等宽虚影鞭 ——
-      const swept = Math.max(0.08, phase * span);
-      ctx.globalAlpha = Math.min(1, pulse * 1.2) * 0.55;
-      ctx.strokeStyle = 'rgba(180,255,170,0.85)';
-      ctx.lineWidth = Math.max(2.5, s * 0.08);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(0, 0, reach * 0.92, tipAng - swept, tipAng);
-      ctx.stroke();
-      ctx.globalAlpha = Math.min(1, pulse * 1.2) * 0.28;
-      ctx.strokeStyle = 'rgba(120,220,130,0.7)';
-      ctx.lineWidth = Math.max(4, s * 0.12);
-      ctx.beginPath();
-      ctx.arc(0, 0, reach * 0.92, tipAng - swept, tipAng);
-      ctx.stroke();
-      // 等宽虚影鞭（不锥形）
-      for (let i = 3; i >= 1; i--) {
-        const a = tipAng - i * 0.12;
-        if (a < a0 - 0.02) continue;
-        ctx.globalAlpha = Math.min(1, pulse * 1.15) * (0.35 - i * 0.08);
-        ctx.strokeStyle = 'rgba(160,240,150,0.9)';
-        ctx.lineWidth = Math.max(2, s * 0.05);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(a) * reach, Math.sin(a) * reach);
-        ctx.stroke();
-      }
-      // —— 主鞭：根粗梢细，加亮描边保证看得见 ——
-      const tipX = Math.cos(tipAng) * reach;
-      const tipY = Math.sin(tipAng) * reach;
-      const midX = Math.cos(tipAng) * reach * 0.5;
-      const midY = Math.sin(tipAng) * reach * 0.5;
-      ctx.globalAlpha = Math.min(1, pulse * 1.3);
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = 'rgba(40,60,30,0.55)'; // 深色描边
-      ctx.lineWidth = Math.max(5, s * 0.14);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(midX, midY); ctx.stroke();
-      ctx.lineWidth = Math.max(2.5, s * 0.06);
-      ctx.beginPath(); ctx.moveTo(midX, midY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      ctx.strokeStyle = '#7dff8a';
-      ctx.lineWidth = Math.max(3.5, s * 0.1);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(midX, midY); ctx.stroke();
-      ctx.strokeStyle = '#c8ffc0';
-      ctx.lineWidth = Math.max(1.6, s * 0.04);
-      ctx.beginPath(); ctx.moveTo(midX, midY); ctx.lineTo(tipX, tipY); ctx.stroke();
-      ctx.fillStyle = '#e8ffe0';
-      ctx.beginPath();
-      ctx.arc(tipX, tipY, Math.max(2, s * 0.05), 0, Math.PI * 2);
-      ctx.fill();
+      const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
+      const fromAng = -Math.PI;
+      const tipAng = fromAng + phase * Math.PI * 2;
+      const flex = Math.sin(phase * Math.PI);
+      const alpha = Math.min(1, pulse * 1.15);
+      drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
+      drawCurvedWhip(ctx, tipAng, reach, alpha, 1, flex, tier);
       break;
     }
     case 'archer': { // 弓：拉弓放箭
@@ -431,45 +547,7 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       ctx.beginPath(); ctx.moveTo(ax + s * 0.06, 0); ctx.lineTo(ax - s * 0.04, -s * 0.05); ctx.lineTo(ax - s * 0.04, s * 0.05); ctx.closePath(); ctx.fill();
       break;
     }
-    default: { // 刀兵：连砍——多道斜斩弧随 pulse/combo 叠出
-      const cuts = 2 + Math.min(3, combo); // 连击越多斩痕越多
-      const phase = 1 - pulse;
-      for (let i = 0; i < cuts; i++) {
-        // 各斩错开相位，形成连砍节奏
-        const local = Math.max(0, Math.min(1, (phase - i * 0.12) / 0.55));
-        if (local <= 0) continue;
-        const swing = Math.sin(local * Math.PI); // 0→1→0 一斩起落
-        const baseAng = -0.95 + i * 0.42; // 从上劈到横斩错开角度
-        const ang = baseAng + local * 1.15;
-        const reach = s * (0.35 + 0.55 * swing);
-        ctx.save();
-        ctx.rotate(ang);
-        ctx.globalAlpha = Math.min(1, pulse * 1.3) * (0.45 + 0.55 * swing);
-        // 刀刃斩弧
-        ctx.strokeStyle = i % 2 === 0 ? '#f0d090' : '#ffe9b8';
-        ctx.lineWidth = Math.max(2, s * (0.08 - i * 0.01));
-        ctx.beginPath();
-        ctx.arc(0, 0, reach, -0.55, 0.35);
-        ctx.stroke();
-        // 刃光亮线
-        ctx.strokeStyle = '#fff8e0';
-        ctx.lineWidth = Math.max(1, s * 0.03);
-        ctx.beginPath();
-        ctx.arc(0, 0, reach, -0.35, 0.2);
-        ctx.stroke();
-        // 刀身短段
-        if (i === 0) {
-          ctx.strokeStyle = '#c0c6ce';
-          ctx.lineWidth = Math.max(2.5, s * 0.09);
-          ctx.beginPath();
-          ctx.moveTo(reach * 0.15, 0);
-          ctx.lineTo(reach, 0);
-          ctx.stroke();
-          ctx.fillStyle = '#8a6a2b';
-          ctx.fillRect(-s * 0.06, -s * 0.04, s * 0.18, s * 0.08);
-        }
-        ctx.restore();
-      }
+    default: { // 刀兵：立绘出招不画刀，弯刀砍击只画在怪物身上（drawFx）
       break;
     }
   }
@@ -2615,33 +2693,68 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'monkey': {
-        // 刀兵：命中处连砍——多道错开斩弧依次亮起
-        const cuts = 3 + Math.min(2, tier - 1);
-        ctx.translate(t.x, t.y);
-        ctx.rotate(ang);
-        for (let i = 0; i < cuts; i++) {
-          const start = i * 0.14;
-          const local = Math.max(0, Math.min(1, (prog - start) / 0.28));
-          if (local <= 0) continue;
-          const swing = Math.sin(local * Math.PI);
-          const fadeCut = local < 0.7 ? 1 : 1 - (local - 0.7) / 0.3;
-          const baseAng = -1.1 + i * 0.55;
-          const reach = CELL * (0.28 + tier * 0.06) * (0.55 + 0.45 * swing);
+        // 竖向砍：刀尖始终画面上→下劈落；只按攻击者在怪的左/右镜像，上下方位不扭转砍向
+        const seed = ((f.from.c * 13 + f.from.r * 29) ^ (tier * 7)) | 0;
+        const lane = (seed % 5) - 2;
+        const dx = a.x - t.x;
+        // 从右侧来 → 右劈(顺时针)，从左侧来 → 左劈(逆时针)；纯上下时用微小水平差/种子兜底
+        const hand = Math.abs(dx) > 0.5 ? (dx > 0 ? 1 : -1) : (seed % 2 === 0 ? 1 : -1);
+        const daoS = CELL * (0.55 + tier * 0.05);
+        const snap = Math.min(1, prog / 0.4);
+        const ease = 1 - Math.pow(1 - snap, 2.6);
+        // 举起(尖朝上) → 劈落(尖朝下)：固定竖向约 180°，左右只偏 lean
+        const lean = 0.42;
+        const startAng = -Math.PI / 2 - hand * lean;
+        const sweep = Math.PI;
+        const chopAng = startAng + hand * sweep * ease;
+        const fade =
+          prog < 0.5 ? Math.min(1, 0.4 + snap * 0.7) : Math.max(0, 1 - (prog - 0.5) / 0.5);
+        // 握点：始终在怪心略上方，只沿画面水平错开（不随攻击角旋转）
+        const gripX = t.x + hand * CELL * 0.05 + lane * CELL * 0.11;
+        const gripY = t.y - CELL * 0.1;
+        ctx.translate(gripX, gripY);
+        const ccw = hand < 0;
+        if (ease > 0.06 && fade > 0.05) {
+          const trailR = daoS * 0.92;
           ctx.save();
-          ctx.rotate(baseAng + local * 0.9);
-          ctx.globalAlpha = fadeCut * swing * 0.95;
-          ctx.strokeStyle = i % 2 === 0 ? '#ffd76a' : '#fff3c4';
-          ctx.lineWidth = 3 + tier * 0.6;
+          ctx.globalAlpha = fade * 0.4 * ease;
+          ctx.strokeStyle = 'rgba(255,220,140,0.7)';
+          ctx.lineWidth = Math.max(2.2, daoS * 0.07);
+          ctx.lineCap = 'round';
           ctx.beginPath();
-          ctx.arc(0, 0, reach, -0.7, 0.55);
+          ctx.arc(0, 0, trailR, startAng, chopAng, ccw);
           ctx.stroke();
-          ctx.strokeStyle = '#fffaf0';
-          ctx.lineWidth = 1.4;
+          ctx.globalAlpha = fade * 0.22 * ease;
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = Math.max(1.2, daoS * 0.035);
+          const tipFrom = chopAng - hand * sweep * 0.22;
           ctx.beginPath();
-          ctx.arc(0, 0, reach, -0.45, 0.35);
+          ctx.arc(0, 0, trailR, tipFrom, chopAng, ccw);
           ctx.stroke();
           ctx.restore();
         }
+        // 命中短斩痕：沿当前刀向，强化竖劈读感
+        if (ease > 0.72 && ease < 0.98 && fade > 0.2) {
+          const hitA = (ease - 0.72) / 0.26;
+          ctx.save();
+          ctx.globalAlpha = fade * (1 - hitA) * 0.75;
+          ctx.strokeStyle = '#fff6d0';
+          ctx.lineWidth = Math.max(2, daoS * 0.05);
+          ctx.lineCap = 'round';
+          const hx = Math.cos(chopAng) * daoS * 0.55;
+          const hy = Math.sin(chopAng) * daoS * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(hx - Math.cos(chopAng) * daoS * 0.2, hy - Math.sin(chopAng) * daoS * 0.2);
+          ctx.lineTo(hx + Math.cos(chopAng) * daoS * 0.35, hy + Math.sin(chopAng) * daoS * 0.35);
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.rotate(chopAng);
+        ctx.scale(1, hand);
+        ctx.translate(-daoS * 0.08, 0);
+        drawCurvedDao(ctx, daoS, fade);
+        ctx.restore();
         break;
       }
       case 'spear': {
@@ -2678,70 +2791,16 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'cavalry': {
-        // 骑：落在被攻击位置，约 60° 扇扫。
-        // 主鞭：根粗梢细、高对比；残影：梢端扫过亮弧 + 等宽虚影鞭（残影不做锥形）。
-        const reach = CELL * (0.62 + tier * 0.1);
-        const sweepSpan = Math.PI / 3; // 60°
-        const aStart = ang - sweepSpan / 2;
+        // 骑：命中层只画扇区残影；鞭体只在单位出招 glyph 画一条，避免双鞭
+        const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
+        const ox = a.x + Math.cos(ang) * CELL * 0.08;
+        const oy = a.y + Math.sin(ang) * CELL * 0.08;
         const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2;
-        const tipAng = aStart + sweepSpan * eio;
-        const fade = Math.min(1, 1.2 - prog * 0.55);
-        ctx.translate(t.x, t.y);
-        ctx.lineCap = 'round';
-
-        // 1) 残影亮弧：鞭梢扫过的轨迹（粗亮，保证看得见）
-        const arcEnd = tipAng;
-        const arcStart = aStart;
-        if (arcEnd > arcStart + 0.04) {
-          ctx.globalAlpha = fade * 0.35;
-          ctx.strokeStyle = 'rgba(120,230,140,0.9)';
-          ctx.lineWidth = 7 + tier;
-          ctx.beginPath();
-          ctx.arc(0, 0, reach * 0.9, arcStart, arcEnd);
-          ctx.stroke();
-          ctx.globalAlpha = fade * 0.7;
-          ctx.strokeStyle = 'rgba(210,255,200,0.95)';
-          ctx.lineWidth = 3 + tier * 0.4;
-          ctx.beginPath();
-          ctx.arc(0, 0, reach * 0.9, arcStart, arcEnd);
-          ctx.stroke();
-        }
-
-        // 2) 等宽虚影鞭：落在主鞭后方几个角度
-        const ghosts = 4;
-        for (let i = ghosts; i >= 1; i--) {
-          const a = tipAng - i * (sweepSpan / (ghosts + 1.5));
-          if (a < aStart - 0.02) continue;
-          ctx.globalAlpha = fade * (0.5 - i * 0.08);
-          ctx.strokeStyle = `rgba(170,245,160,${0.75 - i * 0.1})`;
-          ctx.lineWidth = 2.4 + tier * 0.2;
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(Math.cos(a) * reach, Math.sin(a) * reach);
-          ctx.stroke();
-        }
-
-        // 3) 主鞭：仅此锥形（根粗梢细）+ 深描边保证对比
-        const tipX = Math.cos(tipAng) * reach;
-        const tipY = Math.sin(tipAng) * reach;
-        const midX = Math.cos(tipAng) * reach * 0.48;
-        const midY = Math.sin(tipAng) * reach * 0.48;
-        ctx.globalAlpha = fade;
-        ctx.strokeStyle = 'rgba(30,50,25,0.65)';
-        ctx.lineWidth = 6 + tier * 0.5;
-        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(midX, midY); ctx.stroke();
-        ctx.lineWidth = 2.8 + tier * 0.2;
-        ctx.beginPath(); ctx.moveTo(midX, midY); ctx.lineTo(tipX, tipY); ctx.stroke();
-        ctx.strokeStyle = '#6edc78';
-        ctx.lineWidth = 4.2 + tier * 0.35;
-        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(midX, midY); ctx.stroke();
-        ctx.strokeStyle = '#e0ffe0';
-        ctx.lineWidth = 1.8 + tier * 0.15;
-        ctx.beginPath(); ctx.moveTo(midX, midY); ctx.lineTo(tipX, tipY); ctx.stroke();
-        ctx.fillStyle = '#f2fff0';
-        ctx.beginPath();
-        ctx.arc(tipX, tipY, 2.4 + tier * 0.35, 0, Math.PI * 2);
-        ctx.fill();
+        const fromAng = ang - Math.PI;
+        const tipAng = fromAng + eio * Math.PI * 2;
+        const fade = Math.min(1, 1.1 - prog * 0.4);
+        ctx.translate(ox, oy);
+        drawWhipSweepFill(ctx, fromAng, tipAng, reach, fade * 0.95);
         break;
       }
       default: {

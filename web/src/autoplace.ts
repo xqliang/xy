@@ -23,6 +23,8 @@ export interface AutoPlaceView {
   placedUnits(): PlacedUnitLite[];
   placedWords(): PlacedWordLite[];
   nearestPathDist(cell: Cell): number;      // 格到怪路的最近距（格）
+  /** 格与怪物路径正交贴合的边数（0–4：一边/两边/三边…） */
+  pathTouchSides(cell: Cell): number;
   /** 格到怪物出口（路径首个在网格内的点）的距离 */
   exitDist(cell: Cell): number;
   /** 格到唐僧的距离 */
@@ -52,12 +54,23 @@ export interface AutoPlaceOpts {
   rangeTolerance?: number; // 默认 0.5，与战斗判定一致
 }
 
-/** 洛阳铲挖格加权：贴路 + 靠近出怪口（分越低越优先） */
+/**
+ * 洛阳铲挖格优先级（分越低越优先）：
+ * 1) 贴路边数：三边 > 两边 > 一边 > 未贴路
+ * 2) 未贴路时按离路最近距离
+ * 3) 再叠加离出怪口距离
+ */
 export const DIG_PATH_WEIGHT = 1;
-export const DIG_EXIT_WEIGHT = 1.25;
+export const DIG_EXIT_WEIGHT = 1;
+/** 贴路边数档位间距（保证边数差压过距离/出口微调） */
+export const DIG_TOUCH_BAND = 100;
 
-export function digPriorityScore(pathDist: number, exitDist: number): number {
-  return DIG_PATH_WEIGHT * pathDist + DIG_EXIT_WEIGHT * exitDist;
+export function digPriorityScore(touchSides: number, pathDist: number, exitDist: number): number {
+  const sides = Math.max(0, Math.min(4, Math.floor(touchSides)));
+  // 3边→1、2边→2、1边→3、未贴→4（越小越好）
+  const band = sides > 0 ? 4 - sides : 4;
+  const distPart = sides > 0 ? 0 : DIG_PATH_WEIGHT * Math.max(0, pathDist);
+  return band * DIG_TOUCH_BAND + distPart + DIG_EXIT_WEIGHT * Math.max(0, exitDist);
 }
 
 /**
@@ -201,11 +214,11 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return view.swapUnits(best.hi.cell, best.lo.cell);
   }
 
-  /** 可挖格按「贴路 + 近出口」加权排序（低分优先） */
+  /** 可挖格：贴路边数优先（三边>两边>一边>未贴），未贴按离路距，再叠加近出口 */
   function sortedDigTargets(): Cell[] {
     return view.diggableCells().slice().sort((a, b) => {
-      const sa = digPriorityScore(view.nearestPathDist(a), view.exitDist(a));
-      const sb = digPriorityScore(view.nearestPathDist(b), view.exitDist(b));
+      const sa = digPriorityScore(view.pathTouchSides(a), view.nearestPathDist(a), view.exitDist(a));
+      const sb = digPriorityScore(view.pathTouchSides(b), view.nearestPathDist(b), view.exitDist(b));
       return sa - sb || a.r - b.r || a.c - b.c;
     });
   }

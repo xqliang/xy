@@ -19,7 +19,7 @@ export const TIER_COEFFICIENTS: number[] = (() => {
 export const BASE_FRQ = 4.09 / TIER_COEFFICIENTS[4]!;
 
 export const UNITS: Record<UnitType, UnitConfig> = {
-  monkey:  { type: 'monkey',  name: '棍猴',    origin: '刀', role: '近战单体·收割', baseAtk: 3, baseFrq: BASE_FRQ, rge: 1,   targets: 1 },
+  monkey:  { type: 'monkey',  name: '刀兵',    origin: '刀', role: '近战单体·收割', baseAtk: 3, baseFrq: BASE_FRQ, rge: 1,   targets: 1 },
   spear:   { type: 'spear',   name: '枪天兵',  origin: '枪', role: '中距穿刺',       baseAtk: 2, baseFrq: BASE_FRQ, rge: 2,   targets: 1.5 },
   cavalry: { type: 'cavalry', name: '天马骑兵', origin: '骑', role: '近战 AOE 冲锋',  baseAtk: 2, baseFrq: BASE_FRQ, rge: 1.5, targets: 2 },
   archer:  { type: 'archer',  name: '神箭手',  origin: '弓', role: '远程单点',       baseAtk: 2, baseFrq: BASE_FRQ, rge: 3,   targets: 1 },
