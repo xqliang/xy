@@ -35,6 +35,12 @@ import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { planAutoPlace, type AutoPlaceView } from './autoplace';
+import {
+  estimateOptimalBoardPower,
+  planWavePressure,
+  type BoardPowerResult,
+  type PressurePlan,
+} from './board-power';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
 import { DEFAULT_AI_SKILL, skillToKnobs } from './ai-skill';
@@ -420,6 +426,8 @@ export class Battle {
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
   private bossWaves = new Set<number>(); // 正常模式预计算的 BOSS 波集合（无尽模式不用，见 isBossWave）
+  /** 本波按最优输出算出的压力方案（开波时刷新；供出怪血量/数量使用） */
+  private wavePressure: PressurePlan | null = null;
 
   constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL) {
     this.weaponBonuses = weapons;
@@ -1125,7 +1133,9 @@ export class Battle {
     this.status = 'playing';
     this.waveActive = true;
     this.healUsedThisWave = false;
-    this.spawnRemaining = this.waveSpawnCount(this.wave); // 经济基准(9+n) + 后期堆量
+    // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（约 70% 压力）
+    this.wavePressure = this.computeWavePressure(this.wave);
+    this.spawnRemaining = this.wavePressure.count;
     this.waveMonsterCount = this.spawnRemaining; // 记录总数用于骑兵半数判定
     // 后期(第 6 波起)随机某波成为骑兵波：半数怪替换为骑兵（移速翻倍、血量相同）
     this.cavalryWave =
@@ -1320,9 +1330,10 @@ export class Battle {
     return this.endless ? wave % TUNING.bossEveryWave === 0 : this.bossWaves.has(wave);
   }
 
-  // 本波出怪总数：经济基准(9+n，同时决定掉落) + 后期堆量。
+  // 本波出怪总数基准：经济基准(9+n，同时决定掉落) + 后期堆量。
   // 只在 battle 层叠加，不改 game-core 的 monstersInWave，保持"第5波蟠桃转负"的经济不变量与测试。
-  private waveSpawnCount(wave: number): number {
+  // 第 4 波起还会按最优输出抬升（见 computeWavePressure），本函数结果作为最低保底。
+  private baselineWaveSpawnCount(wave: number): number {
     const base = monstersInWave(wave); // 9 + n
     const extra =
       wave >= TUNING.lateWaveFrom
@@ -1337,6 +1348,67 @@ export class Battle {
     return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
   }
 
+  /** 普通怪基础血量（含境界/无尽圈系数，不含 Boss 倍乘） */
+  private normalMonsterHp(wave: number = this.wave): number {
+    return (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
+  }
+
+  /** 某波 Boss 移速（含被动减速、难度加速） */
+  private bossSpeed(wave: number = this.wave): number {
+    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
+    return TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * TUNING.bossSpdMul;
+  }
+
+  /**
+   * 当前地图下，把战场兵种按最优重排后的输出（含被动攻速/伤害、武将神兵/羁绊）。
+   * 不计主动技能临时增益，避免开波瞬间吃 Buff 抬高整波难度。
+   */
+  estimateOptimalPower(): BoardPowerResult {
+    const bond = this.bondAtkMul();
+    const atkMul = this.mods.atkMul * bond;
+    const frqMul = this.mods.frqMul;
+    const wordKeys = new Set(this.words.keys());
+    const freeCells = this.unlockedCells().filter((c) => !wordKeys.has(cellKey(c.c, c.r)));
+    const units = [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier }));
+    const generals = this.activeGenerals().map((g) => {
+      const base = generalStat(g.def, g.tier);
+      const wb = this.weaponBonuses[g.def.id];
+      return {
+        atk: base.atk * (1 + (wb?.atk ?? 0)) * atkMul,
+        frq: base.frq * (1 + (wb?.frq ?? 0)) * frqMul,
+        rge: base.rge * (1 + (wb?.rge ?? 0)),
+        targets: base.targets,
+        ax: (g.cells[0].c + g.cells[1].c) / 2,
+        ay: (g.cells[0].r + g.cells[1].r) / 2,
+      };
+    });
+    return estimateOptimalBoardPower({
+      map: this.map,
+      entranceDist: this.entranceDist,
+      pathLen: this.pathLen,
+      units,
+      freeCells,
+      nearestPathDist: (cell) => this.nearestPathDist(cell),
+      generals,
+      atkMul,
+      frqMul,
+      rangeTolerance: TUNING.rangeTolerance,
+    });
+  }
+
+  /** 按最优 DPS 规划本波出怪数与 Boss 血量（约 70% 压力） */
+  private computeWavePressure(wave: number): PressurePlan {
+    const power = this.estimateOptimalPower();
+    return planWavePressure({
+      wave,
+      baselineCount: this.baselineWaveSpawnCount(wave),
+      normalHp: this.normalMonsterHp(wave),
+      isBossWave: this.isBossWave(wave),
+      bossSpd: this.bossSpeed(wave),
+      power,
+    });
+  }
+
   private spawnMonster(): void {
     // BOSS：boss 波的最后一只，或最终通关波的最后一只
     const isBoss =
@@ -1346,12 +1418,16 @@ export class Battle {
     const spawnedIdx = this.waveMonsterCount - this.spawnRemaining; // 0-based 出场序号
     const isCavalry = this.cavalryWave && !isBoss && spawnedIdx % 2 === 0;
 
-    let hp = TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave;
-    hp *= this.effectiveDifficulty(); // 境界越高妖怪越强；无尽模式再叠分圈系数
+    let hp = this.normalMonsterHp();
     if (isBoss) {
-      // BOSS 血量倍数随波次爬升：前期(第5波)较低，后期(通关波)到满。骑兵血量与普通妖相同，不额外调整。
-      const t = Math.max(0, Math.min(1, (this.wave - 5) / Math.max(1, TUNING.winWave - 5)));
-      hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+      // Boss 血：当前地图最优重排全路集火伤害 × ~70%；无方案时回退旧倍乘
+      const planned = this.wavePressure?.bossHp;
+      if (planned != null && planned > 0) {
+        hp = planned;
+      } else {
+        const t = Math.max(0, Math.min(1, (this.wave - 5) / Math.max(1, TUNING.winWave - 5)));
+        hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+      }
     }
 
     // 移速倍率：BOSS 减半、骑兵翻倍（二者互斥，BOSS 不会被判为骑兵）
@@ -2135,6 +2211,9 @@ export class Battle {
       debuffed,
       activesReady: this.activeSlots.filter((s) => s.ready).length, // 就绪的主动技能数
       towerPow: Math.round(towerPowTotal),
+      optimalDps: Math.round(this.estimateOptimalPower().optimalDps),
+      waveCount: this.waveMonsterCount,
+      bossHpPlan: this.wavePressure?.bossHp != null ? Math.round(this.wavePressure.bossHp) : null,
       generals: this.activeGenerals().length,
       words: this.words.size,
       drops: this.droppedWeapons.length,
