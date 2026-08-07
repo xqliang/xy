@@ -485,8 +485,8 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 // —— 游戏循环（按需重绘） —— //
-// 静态界面（菜单/商店/图鉴/排行/背包，以及结算星级动画播完后）只在状态变化时画一帧，画完即停掉
-// rAF，不再持续满帧空转；只有战斗、结算动画进行中才连续循环。待机时 CPU/GPU 几乎不工作，显著降功耗。
+// 静态界面（商店/图鉴/排行/背包，以及结算星级动画播完后）只在状态变化时画一帧，画完即停掉
+// rAF；菜单因大圣待机动画、战斗与结算动画进行中才连续循环。
 // （last / rafId / MIN_FRAME_MS 已在 resize() 之前声明，避免初始化 TDZ。）
 
 // 请求下一帧：若已有帧在排队则合并为一次（幂等），避免输入风暴导致重复调度。
@@ -494,8 +494,9 @@ function scheduleFrame(): void {
   if (rafId === null) rafId = requestAnimationFrame(frame);
 }
 
-// 当前界面是否需要连续动画：战斗一直跑（暂停时停表但仍需箭头等静态可停）；结算仅在星级动画播放期间跑。
+// 当前界面是否需要连续动画：战斗一直跑；结算星级动画期间跑；菜单大圣待机动画需持续重绘。
 function needsContinuousLoop(): boolean {
+  if (screen === 'menu') return true;
   if (screen === 'battle') return !ui.paused;
   if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart);
   return false;

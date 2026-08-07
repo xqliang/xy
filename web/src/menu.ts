@@ -93,12 +93,15 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   let starStr = '★'.repeat(stars) + '☆'.repeat(5 - stars);
   ctx.fillText(starStr, VIEW_W / 2, 196);
 
-  // 主角立绘
+  // 主角立绘：待机轻微上下浮动
   const spr = sprite('hero-wukong');
   if (spr) {
     const size = 260;
     const scale = Math.min(size / spr.width, size / spr.height);
-    ctx.drawImage(spr, VIEW_W / 2 - (spr.width * scale) / 2, 250, spr.width * scale, spr.height * scale);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    const bob = Math.sin(performance.now() / 1000 * 2.1) * 5;
+    ctx.drawImage(spr, VIEW_W / 2 - dw / 2, 250 + bob, dw, dh);
   }
 
   // 按钮（pressedId 时轻微下压 + 变暗，让点击有反馈）
