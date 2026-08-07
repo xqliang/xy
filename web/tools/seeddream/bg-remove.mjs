@@ -59,10 +59,10 @@ for (const f of jpgs) {
       const x = idx % w, y = (idx / w) | 0;
       pushIf(x + 1, y); pushIf(x - 1, y); pushIf(x, y + 1); pushIf(x, y - 1);
     }
-    // 边缘平滑：按到透明区的邻域比例做多级羽化（半径2）+ smoothstep 柔化，近白毛边额外压低 → 抗锯齿柔边
+    // 边缘平滑：按到透明区的邻域比例做多级羽化（半径3）+ smoothstep 柔化，近白毛边额外压低 → 抗锯齿柔边
     const a0 = new Uint8Array(w * h);
     for (let k = 0; k < w * h; k++) a0[k] = p[k * 4 + 3];
-    const R = 2;
+    const R = 3;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const idx = y * w + x;
@@ -71,7 +71,7 @@ for (const f of jpgs) {
         for (let dy = -R; dy <= R; dy++) {
           for (let dx = -R; dx <= R; dx++) {
             const nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) { total++; transp++; continue; }
             total++;
             if (a0[ny * w + nx] === 0) transp++;
           }
@@ -81,7 +81,9 @@ for (const f of jpgs) {
         let a = 1 - transp / total; // 不透明邻居占比
         a = a * a * (3 - 2 * a); // smoothstep 柔化过渡带
         const mn = Math.min(p[i], p[i + 1], p[i + 2]);
-        if (mn >= 228) a *= 0.45; // 近白毛边进一步淡化
+        // 近白毛边淡化，但保留实心白刃：仅当邻域大半已透明（真毛边）才强压
+        if (mn >= 228 && transp / total > 0.35) a *= 0.4;
+        else if (mn >= 228) a = Math.max(a, 0.85);
         p[i + 3] = Math.round(p[i + 3] * a);
       }
     }

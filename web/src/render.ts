@@ -497,7 +497,7 @@ function drawCurvedWhip(
   ctx.restore();
 }
 
-/** 弯刀：白刃 + 金护手 + 黑柄 + 金球；沿 +x 出尖，刃背向上弯 */
+/** 弯刀：白刃 + 金护手 + 黑柄 + 金球；沿 +x 出尖、柄在 -x；外凸锋刃在 +y（配合 scale(1,hand) 对齐劈砍前进侧） */
 function drawCurvedDao(ctx: CanvasRenderingContext2D, s: number, alpha: number) {
   if (alpha <= 0.02) return;
   const tipX = s * 1.02;
@@ -508,24 +508,24 @@ function drawCurvedDao(ctx: CanvasRenderingContext2D, s: number, alpha: number) 
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  // 白刃：脊背高拱、刃口略平，尖端收拢
+  // 白刃：细长略弯；肚子比极细版稍鼓一点；+y 侧外凸锋刃，-y 侧刀背
   ctx.beginPath();
-  ctx.moveTo(guardX, -s * 0.015);
-  ctx.bezierCurveTo(s * 0.38, -s * 0.22, s * 0.72, -s * 0.26, tipX, -s * 0.02);
-  ctx.quadraticCurveTo(tipX + s * 0.02, 0, tipX - s * 0.02, s * 0.04);
-  ctx.bezierCurveTo(s * 0.62, s * 0.1, s * 0.32, s * 0.07, guardX, s * 0.05);
+  ctx.moveTo(guardX, -s * 0.032);
+  ctx.bezierCurveTo(s * 0.36, -s * 0.045, s * 0.7, -s * 0.055, tipX - s * 0.03, -s * 0.022);
+  ctx.quadraticCurveTo(tipX + s * 0.012, 0, tipX - s * 0.01, s * 0.02);
+  ctx.bezierCurveTo(s * 0.68, s * 0.145, s * 0.36, s * 0.12, guardX, s * 0.028);
   ctx.closePath();
   ctx.fillStyle = '#f5f7fb';
   ctx.fill();
   ctx.strokeStyle = '#1a1208';
-  ctx.lineWidth = Math.max(1.8, s * 0.045);
+  ctx.lineWidth = Math.max(1.5, s * 0.04);
   ctx.stroke();
-  // 刃口高光
+  // 刃口高光（锋刃一侧）
   ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-  ctx.lineWidth = Math.max(1.2, s * 0.028);
+  ctx.lineWidth = Math.max(1.0, s * 0.022);
   ctx.beginPath();
-  ctx.moveTo(guardX + s * 0.04, s * 0.02);
-  ctx.bezierCurveTo(s * 0.4, s * 0.05, s * 0.7, s * 0.04, tipX - s * 0.06, s * 0.015);
+  ctx.moveTo(guardX + s * 0.04, s * 0.014);
+  ctx.bezierCurveTo(s * 0.4, s * 0.08, s * 0.7, s * 0.09, tipX - s * 0.08, s * 0.025);
   ctx.stroke();
 
   // 金护手
@@ -766,9 +766,10 @@ function drawWordTile(
     drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
   }
 }
-// 营帐屋顶开合角度(弧度，0=闭合)：征兵时(summonAnimT 从 0 起)先逆时针掀开到 90°(竖起)，短暂保持(丝带飞出)，再顺时针合上。
+// 营帐屋顶开合角度(弧度，0=闭合)：征兵时(summonAnimT 从 0 起)先逆时针掀开到 90°(竖起)，保持至丝带飞完，再顺时针合上。
 function campRoofAngle(t: number): number {
-  const OPEN_END = 0.05, HOLD_END = 0.1375, CLOSE_END = 0.2, MAX = Math.PI / 2; // 最大90°；开合再加快1倍(总时长~0.2s)
+  // 与下方丝带左→右错开伸出对齐：末槽约 0.26s 才满长，屋顶稍晚再合
+  const OPEN_END = 0.05, HOLD_END = 0.32, CLOSE_END = 0.4, MAX = Math.PI / 2;
   if (t >= CLOSE_END) return 0; // 已合上(含 idle t=999)
   if (t < OPEN_END) return MAX * (t / OPEN_END); // 开：0→90°
   if (t < HOLD_END) return MAX; // 全开保持(令牌丝带飞入)
@@ -842,9 +843,10 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.moveTo(RIDGE_INSET, -roofH + 2); ctx.lineTo(campW - RIDGE_INSET, -roofH + 2);
   ctx.stroke();
   ctx.restore();
-  // 5 个候选槽：征兵丝带瞬间出现，再从「营」端缩短变细，消于槽位后出图标
-  const HOLD = 0.01;
-  const RETRACT_STAGGER = 0.08;
+  // 5 个候选槽：丝带从「营」左→右错开伸出，短暂满长后从营端收回，再出图标
+  const EXTEND_STAGGER = 0.045; // 相邻槽伸出起点延迟（左→右）
+  const EXTEND_DUR = 0.08;
+  const HOLD = 0.03;
   const RETRACT_DUR = 0.09;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
@@ -883,13 +885,20 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[i];
     if (token && ui.dragTrayIndex !== i) {
       const c = traySlotCenter(i);
-      const retractAt = HOLD + i * RETRACT_STAGGER;
+      const extendAt = i * EXTEND_STAGGER;
+      const fullAt = extendAt + EXTEND_DUR;
+      const retractAt = fullAt + HOLD;
       const t = b.summonAnimT;
-      if (t < retractAt) {
+      if (t < extendAt) {
+        // 尚未轮到本槽：不画丝带
+      } else if (t < fullAt) {
+        const u = (t - extendAt) / EXTEND_DUR; // 0→1 从营伸出
+        const ease = 1 - (1 - u) * (1 - u);
+        drawSummonRibbon(ctx, token, 0, Math.max(0.04, ease), 0.35 + 0.65 * ease, c, i);
+      } else if (t < retractAt) {
         drawSummonRibbon(ctx, token, 0, 1, 1, c, i);
       } else if (t < retractAt + RETRACT_DUR) {
         const u = (t - retractAt) / RETRACT_DUR; // 0→1 从营收向槽
-        // 长度从营端吃掉，同时整体变细（丝带慢慢变小）
         drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
         const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
@@ -2790,27 +2799,29 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'monkey': {
-        // 竖向砍：刀尖始终画面上→下劈落；只按攻击者在怪的左/右镜像，上下方位不扭转砍向
+        // 柄在攻击者一侧，尖朝怪挥砍；只看左右，不看上下
         const seed = ((f.from.c * 13 + f.from.r * 29) ^ (tier * 7)) | 0;
         const lane = (seed % 5) - 2;
         const dx = a.x - t.x;
-        // 从右侧来 → 右劈(顺时针)，从左侧来 → 左劈(逆时针)；纯上下时用微小水平差/种子兜底
-        const hand = Math.abs(dx) > 0.5 ? (dx > 0 ? 1 : -1) : (seed % 2 === 0 ? 1 : -1);
-        const daoS = CELL * (0.55 + tier * 0.05);
-        const snap = Math.min(1, prog / 0.4);
-        const ease = 1 - Math.pow(1 - snap, 2.6);
-        // 举起(尖朝上) → 劈落(尖朝下)：固定竖向约 180°，左右只偏 lean
-        const lean = 0.42;
-        const startAng = -Math.PI / 2 - hand * lean;
-        const sweep = Math.PI;
-        const chopAng = startAng + hand * sweep * ease;
+        // +1 人在右 → 柄在右、尖往左砍；-1 人在左 → 柄在左、尖往右砍
+        const side = Math.abs(dx) > 0.5 ? (dx > 0 ? 1 : -1) : (seed % 2 === 0 ? 1 : -1);
+        const daoS = CELL * (0.55 + tier * 0.05) * 0.9; // 相对初版缩小后再放大 1/8
+        // 前 22% 内完成挥砍，加速曲线更陡 → 看起来更利落
+        const snap = Math.min(1, prog / 0.22);
+        const ease = 1 - Math.pow(1 - snap, 3.4);
+        // 尖从「偏攻击者一侧举起」扫向另一侧（穿过怪）；柄始终更靠攻击者一侧
+        const lean = 0.7;
+        const sweep = Math.PI * 0.65;
+        const startAng = -Math.PI / 2 + side * lean; // 尖朝上并偏向人
+        const sweepSign = -side; // 人在右则逆时针往左砍，人在左则顺时针往右砍
+        const chopAng = startAng + sweepSign * sweep * ease;
         const fade =
-          prog < 0.5 ? Math.min(1, 0.4 + snap * 0.7) : Math.max(0, 1 - (prog - 0.5) / 0.5);
-        // 握点：始终在怪心略上方，只沿画面水平错开（不随攻击角旋转）
-        const gripX = t.x + hand * CELL * 0.05 + lane * CELL * 0.11;
-        const gripY = t.y - CELL * 0.1;
+          prog < 0.35 ? Math.min(1, 0.45 + snap * 0.65) : Math.max(0, 1 - (prog - 0.35) / 0.45);
+        // 握点偏向攻击者，柄在人那一侧
+        const gripX = t.x + side * CELL * 0.16 + lane * CELL * 0.08;
+        const gripY = t.y + CELL * 0.18;
         ctx.translate(gripX, gripY);
-        const ccw = hand < 0;
+        const ccw = sweepSign < 0;
         if (ease > 0.06 && fade > 0.05) {
           const trailR = daoS * 0.92;
           ctx.save();
@@ -2824,13 +2835,12 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
           ctx.globalAlpha = fade * 0.22 * ease;
           ctx.strokeStyle = 'rgba(255,255,255,0.85)';
           ctx.lineWidth = Math.max(1.2, daoS * 0.035);
-          const tipFrom = chopAng - hand * sweep * 0.22;
+          const tipFrom = chopAng - sweepSign * sweep * 0.22;
           ctx.beginPath();
           ctx.arc(0, 0, trailR, tipFrom, chopAng, ccw);
           ctx.stroke();
           ctx.restore();
         }
-        // 命中短斩痕：沿当前刀向，强化竖劈读感
         if (ease > 0.72 && ease < 0.98 && fade > 0.2) {
           const hitA = (ease - 0.72) / 0.26;
           ctx.save();
@@ -2848,7 +2858,9 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         }
         ctx.save();
         ctx.rotate(chopAng);
-        ctx.scale(1, hand);
+        // 锋刃(+y)对齐角速度前进侧，避免刀背砍
+        ctx.scale(1, sweepSign);
+        // 柄在 -x：尖朝怪时柄落在人一侧
         ctx.translate(-daoS * 0.08, 0);
         drawCurvedDao(ctx, daoS, fade);
         ctx.restore();
