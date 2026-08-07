@@ -971,8 +971,11 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
     // 火焰山：两柱火焰门，默认合拢，出怪时左右分开
     drawHuoyanshanFlameGate(ctx, x - off, y, -1);
     drawHuoyanshanFlameGate(ctx, x + off, y, 1);
+  } else if (id === 'liushahe') {
+    // 流沙河：砂石闸门贴图左右半扇开合
+    drawLiushaheSandGate(ctx, x, y, off);
   } else {
-    // 流沙河：两扇闸门开合
+    // 兜底：两扇素色闸门
     const w = CELL * 0.4, h = CELL * 0.52;
     const leaf = (lx: number) => {
       roundRect(ctx, lx, y - h / 2, w, h, 5);
@@ -986,6 +989,31 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
     leaf(x + off);
   }
   ctx.restore();
+}
+
+/** 流沙河出怪口：Seedream 砂石闸门左右对开 */
+function drawLiushaheSandGate(ctx: CanvasRenderingContext2D, x: number, y: number, off: number) {
+  const spr = sprite('gate-liushahe');
+  const h = CELL * 1.05;
+  const w = CELL * 1.15;
+  if (!spr || !spr.width) {
+    const lw = CELL * 0.42, lh = CELL * 0.55;
+    const leaf = (lx: number) => {
+      roundRect(ctx, lx, y - lh / 2, lw, lh, 5);
+      ctx.fillStyle = 'rgba(196,158,92,0.9)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(90,60,30,0.75)';
+      ctx.stroke();
+    };
+    leaf(x - off - lw);
+    leaf(x + off);
+    return;
+  }
+  const half = w / 2;
+  // 左半扇 / 右半扇：从贴图中线切开，随 off 左右拉开
+  ctx.drawImage(spr, 0, 0, spr.width / 2, spr.height, x - half - off, y - h / 2, half, h);
+  ctx.drawImage(spr, spr.width / 2, 0, spr.width / 2, spr.height, x + off, y - h / 2, half, h);
 }
 
 /** 出怪指引：从路径「出口后第 2 个在网格内的点」起画，避免与闸门重叠 */
@@ -1198,7 +1226,7 @@ function drawBaigulingGateLeaf(ctx: CanvasRenderingContext2D, cx: number, cy: nu
   ctx.restore();
 }
 
-// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭白骨堆；盘丝洞蛛丝网
+// 中间栅栏：默认水平木栅栏（fenceGaps 开口）；白骨岭白骨堆；流沙河/盘丝洞用可平铺贴图
 function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.map.id === 'baiguling') {
     drawBaigulingBoneFence(ctx);
@@ -1230,89 +1258,93 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-// 流沙河：用 Seedream 生成的"浪花条"贴图一片一片平铺满整条中线栅栏，严格隔断上下半场
+// 流沙河：Seedream 河沙水带横向无缝平铺，严格隔断上下半场
 function drawLiushaheWaterFence(ctx: CanvasRenderingContext2D, _b: Battle) {
-  const y = BOARD_Y + FENCE_ROW * CELL; // 栅栏线
-  const spr = sprite('fence-liushahe');
-  if (!spr || !spr.width) {
-    // 素材未就绪时回退：一条纯色水带，避免出现空栅栏（不留缺口）
-    ctx.save();
-    ctx.fillStyle = 'rgba(60,120,140,0.92)';
+  const y = BOARD_Y + FENCE_ROW * CELL;
+  drawTiledHFence(ctx, 'fence-liushahe', y, CELL * 1.55, () => {
+    ctx.fillStyle = 'rgba(180,150,70,0.9)';
     ctx.fillRect(BOARD_X, y - CELL * 0.22, COLS * CELL, CELL * 0.44);
+  });
+}
+
+// 盘丝洞：Seedream 蛛丝篱笆横向无缝平铺
+function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL;
+  drawTiledHFence(ctx, 'fence-pansidong', y, CELL * 1.5, () => {
+    // 素材未就绪时回退：丝线篱笆矢量
+    const x0 = BOARD_X;
+    const x1 = BOARD_X + COLS * CELL;
+    const accent = b.map.theme.accent;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,70,110,0.35)';
+    ctx.lineWidth = CELL * 0.28;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+    for (const dy of [-3, 0, 3]) {
+      ctx.strokeStyle = dy === 0 ? 'rgba(240,220,235,0.9)' : 'rgba(200,160,190,0.55)';
+      ctx.lineWidth = dy === 0 ? 2.2 : 1.2;
+      ctx.beginPath();
+      for (let i = 0; i <= COLS * 4; i++) {
+        const t = i / (COLS * 4);
+        const x = x0 + (x1 - x0) * t;
+        const wave = Math.sin(t * Math.PI * 8 + dy) * 2.2;
+        if (i === 0) ctx.moveTo(x, y + dy + wave);
+        else ctx.lineTo(x, y + dy + wave);
+      }
+      ctx.stroke();
+    }
+    for (let c = 0; c < COLS; c++) {
+      const cx = BOARD_X + c * CELL + CELL / 2;
+      ctx.strokeStyle = 'rgba(230,200,220,0.75)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(cx - 10, y - 9);
+      ctx.lineTo(cx + 10, y + 9);
+      ctx.moveTo(cx + 10, y - 9);
+      ctx.lineTo(cx - 10, y + 9);
+      ctx.stroke();
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, y, 4.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
+  });
+}
+
+/** 横向栅栏条：优先整条拉伸铺满（宽幅 Seedream 条更稳），必要时再循环平铺 */
+function drawTiledHFence(
+  ctx: CanvasRenderingContext2D,
+  key: 'fence-liushahe' | 'fence-pansidong',
+  y: number,
+  drawH: number,
+  fallback: () => void,
+) {
+  const spr = sprite(key);
+  if (!spr || !spr.width) {
+    fallback();
     return;
   }
   const boardW = COLS * CELL;
-  // 单向浪花条：整条横铺满栅栏（同朝向、不翻转），严格隔断上下半场、不留缺口
-  const drawH = CELL * 1.5; // 河带高度（略压扁，避免过高）
+  const naturalW = drawH * (spr.width / spr.height);
   ctx.save();
-  ctx.drawImage(spr, BOARD_X, y - drawH / 2, boardW, drawH);
-  ctx.restore();
-}
-
-// 盘丝洞：中线蛛丝篱笆（丝线 + 蛛网结 + 小茧），无开口
-function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
-  const y = BOARD_Y + FENCE_ROW * CELL;
-  const x0 = BOARD_X;
-  const x1 = BOARD_X + COLS * CELL;
-  const accent = b.map.theme.accent;
-  ctx.save();
-  // 底衬丝带
-  ctx.strokeStyle = 'rgba(120,70,110,0.35)';
-  ctx.lineWidth = CELL * 0.28;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x0, y);
-  ctx.lineTo(x1, y);
-  ctx.stroke();
-  // 主丝线（多股微起伏）
-  for (const dy of [-3, 0, 3]) {
-    ctx.strokeStyle = dy === 0 ? 'rgba(240,220,235,0.9)' : 'rgba(200,160,190,0.55)';
-    ctx.lineWidth = dy === 0 ? 2.2 : 1.2;
-    ctx.beginPath();
-    for (let i = 0; i <= COLS * 4; i++) {
-      const t = i / (COLS * 4);
-      const x = x0 + (x1 - x0) * t;
-      const wave = Math.sin(t * Math.PI * 8 + dy) * 2.2;
-      if (i === 0) ctx.moveTo(x, y + dy + wave);
-      else ctx.lineTo(x, y + dy + wave);
-    }
-    ctx.stroke();
-  }
-  // 每隔一段一个蛛网结 / 小茧
-  for (let c = 0; c < COLS; c++) {
-    const cx = BOARD_X + c * CELL + CELL / 2;
-    // 斜向交叉丝
-    ctx.strokeStyle = 'rgba(230,200,220,0.75)';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(cx - 10, y - 9);
-    ctx.lineTo(cx + 10, y + 9);
-    ctx.moveTo(cx + 10, y - 9);
-    ctx.lineTo(cx - 10, y + 9);
-    ctx.stroke();
-    // 网心小环
-    ctx.strokeStyle = accent;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(cx, y, 4.5, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    // 小茧（偶发）
-    if (c % 2 === 0) {
-      ctx.fillStyle = 'rgba(245,230,240,0.92)';
-      ctx.strokeStyle = 'rgba(130,80,120,0.7)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.ellipse(cx, y - 8, 5.5, 7.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      // 茧上细丝
-      ctx.beginPath();
-      ctx.moveTo(cx - 3, y - 12);
-      ctx.quadraticCurveTo(cx, y - 8, cx + 3, y - 4);
-      ctx.stroke();
+  // 一张就能盖住大半棋盘宽 → 整条拉伸，避免端饰重复
+  if (naturalW >= boardW * 0.75) {
+    ctx.drawImage(spr, BOARD_X, y - drawH / 2, boardW, drawH);
+  } else {
+    let x = BOARD_X;
+    while (x < BOARD_X + boardW - 0.25) {
+      const remain = BOARD_X + boardW - x;
+      const w = Math.min(naturalW, remain);
+      const srcW = spr.width * (w / naturalW);
+      ctx.drawImage(spr, 0, 0, srcW, spr.height, x, y - drawH / 2, w, drawH);
+      x += naturalW;
     }
   }
   ctx.restore();
