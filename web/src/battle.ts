@@ -72,12 +72,13 @@ export const TUNING = {
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
   lateWaveExtraPerWave: 3, // 每超出一波额外 +3 只（波6:+3, 波7:+6 … 波10:+15）
-  // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=6, 波2=9）——
+  // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
-  earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）
+  earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
+  wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
   spawnInterval: 1.25, // 秒/只（出怪节奏；更舒缓）
-  summonCostStart: 12, // 首次征兵成本（对齐原作"征兵"量级）
+  summonCostStart: 10, // 首次征兵成本
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
@@ -1059,12 +1060,13 @@ export class Battle {
       wave >= TUNING.lateWaveFrom
         ? (wave - (TUNING.lateWaveFrom - 1)) * TUNING.lateWaveExtraPerWave
         : 0;
-    // 前期减量：波1=6, 波2=9（降低上手压力，不影响经济曲线）
+    // 前期减量：波1=7, 波2=9（降低上手压力，不影响经济曲线）
     const early =
       wave <= TUNING.earlyWaveTo
         ? (TUNING.earlyWaveTo - wave + 1) * TUNING.earlyWaveReduce
         : 0;
-    return Math.max(TUNING.minWaveMonsters, base + extra - early);
+    const bonus = wave === 1 ? TUNING.wave1Bonus : 0;
+    return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
   }
 
   private spawnMonster(): void {

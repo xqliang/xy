@@ -2394,10 +2394,11 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
     // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
     if (btn.id.startsWith('act') || btn.id.startsWith('pas')) continue;
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#3a3128';
+    ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#2a2218';
     ctx.fill();
     {
       // 征兵按钮：按当前蟠桃/成本填充进度条（参考竞品，桃攒够即满格可点）
+      // 进度用固定琥珀金（不跟地图 accent），避免流沙河/白骨岭等 accent 与灰字糊成一团
       if (btn.id === 'summon') {
         const prog = Math.max(0, Math.min(1, b.peach / b.effectiveSummonCost()));
         if (!btn.enabled && prog > 0) {
@@ -2405,17 +2406,30 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
           ctx.beginPath();
           roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
           ctx.clip();
-          ctx.fillStyle = b.map.theme.accent;
-          ctx.globalAlpha = 0.55;
+          ctx.fillStyle = '#d4a84a';
+          ctx.globalAlpha = 0.9;
           ctx.fillRect(btn.x, btn.y, btn.w * prog, btn.h);
           ctx.restore();
         }
       }
-      ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+      const tx = btn.x + btn.w / 2;
+      const ty = btn.y + btn.h / 2;
       ctx.font = `bold ${btn.w < 140 ? 16 : 20}px "PingFang SC", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+      // 征兵/布阵：浅字 + 深描边，在进度填充与深底上都能读清（四图统一）
+      if (btn.id === 'summon' || btn.id === 'autoplace') {
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(20,14,8,0.92)';
+        ctx.strokeText(btn.label, tx, ty);
+        ctx.fillStyle = btn.enabled ? '#fff8e8' : '#fff3d6';
+        ctx.fillText(btn.label, tx, ty);
+      } else {
+        ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+        ctx.fillText(btn.label, tx, ty);
+      }
       // 征兵闪光
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();
