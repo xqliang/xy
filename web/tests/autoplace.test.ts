@@ -1,6 +1,6 @@
 // web/tests/autoplace.test.ts
 import { it, expect } from 'vitest';
-import { planAutoPlace, digPriorityScore, type AutoPlaceView, type PlaceToken, type Cell } from '../src/autoplace';
+import { planAutoPlace, digPriorityScore, mergeKeepScore, type AutoPlaceView, type PlaceToken, type Cell } from '../src/autoplace';
 import { getUnitStat } from '@core';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
@@ -196,4 +196,25 @@ it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位�
   expect(byCell.get('0,0')?.tier).toBe(2); // 保留近路并升阶
   expect(byCell.get('0,2')?.type).toBe('archer'); // 腾位放 tray
   expect(v.tray().length).toBe(0);
+});
+
+it('mergeKeepScore：同覆盖时更靠近出口分更高', () => {
+  expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3, 4));
+  // 出口加权可扳回略低的覆盖
+  expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3.5, 5));
+});
+
+it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
+  // 两格同贴路(r=0)→pathCover 相同；出口在 c=0 → 应保留 (0,0)，腾 (5,0) 放 archer
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'archer', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 5, r: 0 }],
+  );
+  v.unitsMap.set('0,0', { type: 'monkey', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('5,0', { type: 'monkey', tier: 1, cell: { c: 5, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
+  expect(byCell.get('0,0')?.type).toBe('monkey');
+  expect(byCell.get('0,0')?.tier).toBe(2);
+  expect(byCell.get('5,0')?.type).toBe('archer');
 });

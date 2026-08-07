@@ -1,7 +1,7 @@
 // web/src/autoplace.ts
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
-// 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留路径覆盖更大者）腾位再落子。
+// 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
 
@@ -47,6 +47,16 @@ export const DIG_EXIT_WEIGHT = 1.25;
 
 export function digPriorityScore(pathDist: number, exitDist: number): number {
   return DIG_PATH_WEIGHT * pathDist + DIG_EXIT_WEIGHT * exitDist;
+}
+
+/**
+ * 棋盘同阶合并保留格评分：pathCover 为主，靠近出怪口加权加分（分越高越优先保留）。
+ * 出口加成上限 = MERGE_EXIT_WEIGHT（贴口时满分），随 exitDist 衰减。
+ */
+export const MERGE_EXIT_WEIGHT = 1.5;
+
+export function mergeKeepScore(pathCover: number, exitDist: number): number {
+  return pathCover + MERGE_EXIT_WEIGHT / (1 + Math.max(0, exitDist));
 }
 
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
@@ -164,24 +174,24 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
 
   /**
    * 满槽且 tray 无「合后再上棋盘」：在棋盘找同型同阶合，
-   * 保留 pathCover 更大的格，腾出另一格后从 tray 放武器进去。
+   * 保留格按 pathCover + 近出口加权（mergeKeepScore）取高；腾出另一格后从 tray 放武器。
    */
   function tryBoardMergeThenPlace(): boolean {
     if (subopt()) return false;
     const placed = view.placedUnits();
-    let best: { drop: Cell; keep: Cell; keepCover: number } | null = null;
+    let best: { drop: Cell; keep: Cell; keepScore: number } | null = null;
     for (let i = 0; i < placed.length; i++) {
       const a = placed[i]!;
       for (let j = i + 1; j < placed.length; j++) {
         const b = placed[j]!;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
-        const coverA = view.pathCover(a.cell, a.type, a.tier);
-        const coverB = view.pathCover(b.cell, b.type, b.tier);
-        const keep = coverA >= coverB ? a : b;
+        const scoreA = mergeKeepScore(view.pathCover(a.cell, a.type, a.tier), view.exitDist(a.cell));
+        const scoreB = mergeKeepScore(view.pathCover(b.cell, b.type, b.tier), view.exitDist(b.cell));
+        const keep = scoreA >= scoreB ? a : b;
         const drop = keep === a ? b : a;
-        const keepCover = Math.max(coverA, coverB);
-        if (!best || keepCover > best.keepCover) {
-          best = { drop: drop.cell, keep: keep.cell, keepCover };
+        const keepScore = Math.max(scoreA, scoreB);
+        if (!best || keepScore > best.keepScore) {
+          best = { drop: drop.cell, keep: keep.cell, keepScore };
         }
       }
     }
