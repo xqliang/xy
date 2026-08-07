@@ -15,7 +15,7 @@ import {
 import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, qualityColor, qualityName } from './generals';
+import { generalById, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -515,7 +515,8 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         // 长度从营端吃掉，同时整体变细（丝带慢慢变小）
         drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
-        drawTrayToken(ctx, token, c.x, c.y, TRAY_H - 16);
+        const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+        drawTrayToken(ctx, token, c.x, c.y, tokenSize);
       }
     }
   }
@@ -1834,6 +1835,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.restore();
 }
 
+
 function drawRangeRing(ctx: CanvasRenderingContext2D, x: number, y: number, rangeCells: number) {
   ctx.save();
   ctx.beginPath();
@@ -2066,13 +2068,6 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
-    // 经验条
-    const need = 10 * g.state.level;
-    const pct = Math.max(0, Math.min(1, g.state.exp / need));
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(x + 4, y + h - 4, w - 8, 3);
-    ctx.fillStyle = '#7ec46a';
-    ctx.fillRect(x + 4, y + h - 4, (w - 8) * pct, 3);
     ctx.restore();
   }
 }
@@ -2482,10 +2477,11 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
     // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
     if (btn.id.startsWith('act') || btn.id.startsWith('pas')) continue;
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#3a3128';
+    ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#2a2218';
     ctx.fill();
     {
       // 征兵按钮：按当前蟠桃/成本填充进度条（参考竞品，桃攒够即满格可点）
+      // 进度用固定琥珀金（不跟地图 accent），避免流沙河/白骨岭等 accent 与灰字糊成一团
       if (btn.id === 'summon') {
         const prog = Math.max(0, Math.min(1, b.peach / b.effectiveSummonCost()));
         if (!btn.enabled && prog > 0) {
@@ -2493,17 +2489,30 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
           ctx.beginPath();
           roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
           ctx.clip();
-          ctx.fillStyle = b.map.theme.accent;
-          ctx.globalAlpha = 0.55;
+          ctx.fillStyle = '#d4a84a';
+          ctx.globalAlpha = 0.9;
           ctx.fillRect(btn.x, btn.y, btn.w * prog, btn.h);
           ctx.restore();
         }
       }
-      ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+      const tx = btn.x + btn.w / 2;
+      const ty = btn.y + btn.h / 2;
       ctx.font = `bold ${btn.w < 140 ? 16 : 20}px "PingFang SC", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+      // 征兵/布阵：浅字 + 深描边，在进度填充与深底上都能读清（四图统一）
+      if (btn.id === 'summon' || btn.id === 'autoplace') {
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(20,14,8,0.92)';
+        ctx.strokeText(btn.label, tx, ty);
+        ctx.fillStyle = btn.enabled ? '#fff8e8' : '#fff3d6';
+        ctx.fillText(btn.label, tx, ty);
+      } else {
+        ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
+        ctx.fillText(btn.label, tx, ty);
+      }
       // 征兵闪光
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();
@@ -2769,7 +2778,7 @@ function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolea
 function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean {
   if (!b) return false;
   if (a.kind === 'word' && b.kind === 'word') {
-    return a.char === b.char && a.tier === b.tier && b.tier < MAX_TIER;
+    return false; // 单字不可合并
   }
   if (a.kind === 'unit' && b.kind === 'unit') {
     return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
@@ -2853,7 +2862,8 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const token = b.tray[ui.dragTrayIndex];
     if (token) {
       src = traySlotCenter(ui.dragTrayIndex);
-      ghost = () => drawTrayToken(ctx, token, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.7);
+      const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+      ghost = () => drawTrayToken(ctx, token, ui.dragPos!.x, ui.dragPos!.y, tokenSize);
     }
   }
   if (!ghost) return;
