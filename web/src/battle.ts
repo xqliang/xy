@@ -120,14 +120,24 @@ export const TUNING = {
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
   aiClearRadius: 2.5, // AI 清场作用半径（格）
   aiClearDmgMul: 2.6, // AI 清场伤害 = 当前波基础怪血 × 该系数
-  // 命中判定宽容量：基础 rge 为欧氏距离，斜向相邻格中心≈1.414，若不放宽则 rge=1 的
-  // 近战(棍猴)几乎无法命中相邻怪。加 0.5 格宽容使近战可覆盖相邻格(含斜角)。基础 rge 展示不变。
+  // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
+  // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
   // AI 对手每波部署的新单位数(基数 + 波次×系数)，使 AI 战力与玩家大致对称(伪竞技公平性)
   aiDeployBase: 8,
   aiDeployPerWave: 1.5,
   aiDeployInterval: 2.2, // AI 逐个部署的间隔(秒)：模拟人手动从候选区往地图放，不再开波瞬间铺满(总量不变，只拉长过程)
 };
+
+// 攻击命中判定：以 (ax,ay) 为圆心、半径 (rgeCells + 0.5) 格的攻击圆(与范围环显示同一个圆)，
+// 是否与目标所在方格真实相交(边相切不算 → 严格小于)。目标方格取其中心 round 后的整格。
+// (ax,ay) 用格中心坐标：兵为其所在格整数坐标，英雄为两格中点(可为半格)。
+export function inAttackRange(ax: number, ay: number, rgeCells: number, p: { c: number; r: number }): boolean {
+  const mc = Math.round(p.c), mr = Math.round(p.r);        // 目标所在方格
+  const nx = Math.min(mc + 0.5, Math.max(mc - 0.5, ax));   // 方格内离圆心最近点(clamp)
+  const ny = Math.min(mr + 0.5, Math.max(mr - 0.5, ay));
+  return Math.hypot(ax - nx, ay - ny) < rgeCells + TUNING.rangeTolerance; // 半径含半格；严格<，边不算
+}
 
 // 怪物技能：对附近武将施加的减益类型
 export type MonsterSkill = 'stun' | 'slow' | 'weaken' | 'webbind';
@@ -1362,11 +1372,8 @@ export class Battle {
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0; // 用 AI 独立随机流，不扰动玩家 rng
       const maxTargets = Math.max(1, base + extra);
       const inRange = this.aiMonsters
-        .map((m) => {
-          const p = posAlong(this.aiPath, m.dist);
-          return { m, d: Math.hypot(p.c - u.cell.c, p.r - u.cell.r) };
-        })
-        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
+        .filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p))
         .sort((a, b) => b.m.dist - a.m.dist);
       if (inRange.length === 0) continue;
       const dmg = damage(stat.atk);
@@ -1400,11 +1407,8 @@ export class Battle {
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
       const inRange = this.aiMonsters
-        .map((m) => {
-          const p = posAlong(this.aiPath, m.dist);
-          return { m, d: Math.hypot(p.c - ax, p.r - ay), p };
-        })
-        .filter((x) => x.d <= stat.rge + TUNING.rangeTolerance)
+        .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
+        .filter((x) => inAttackRange(ax, ay, stat.rge, x.p))
         .sort((a, b) => b.m.dist - a.m.dist);
       s.cooldown -= dt;
       if (s.cooldown > 0 || inRange.length === 0) continue;
@@ -1507,12 +1511,8 @@ export class Battle {
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
       const inRange = this.monsters
-        .map((m) => {
-          const p = posAtDistance(this.map, m.dist);
-          const d = Math.hypot(p.c - u.cell.c, p.r - u.cell.r);
-          return { m, d, p };
-        })
-        .filter((x) => x.d <= effRge + TUNING.rangeTolerance)
+        .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
+        .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p))
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益临时抬高攻击
@@ -1606,11 +1606,8 @@ export class Battle {
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
       const inRange = this.monsters
-        .map((m) => {
-          const p = posAtDistance(this.map, m.dist);
-          return { m, d: Math.hypot(p.c - ax, p.r - ay), p };
-        })
-        .filter((x) => x.d <= this.generalRge(g) + TUNING.rangeTolerance)
+        .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
+        .filter((x) => inAttackRange(ax, ay, this.generalRge(g), x.p))
         .sort((a, b) => b.m.dist - a.m.dist);
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
@@ -1644,7 +1641,7 @@ export class Battle {
     }
   }
 
-  private castGeneralSkill(g: ActiveGeneral, inRange: { m: Monster; d: number; p: { c: number; r: number } }[]): void {
+  private castGeneralSkill(g: ActiveGeneral, inRange: { m: Monster; p: { c: number; r: number } }[]): void {
     const atk = this.generalAtk(g);
     g.state.skillFlash = 1;
     const center = inRange[0]!.p;
