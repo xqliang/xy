@@ -162,21 +162,13 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-// 统一的右上角阶数徽标：深色圆底 + 金字，去掉立绘底色后仍清晰
+// 统一的右上角阶数：无底色，仅描边 + 金字，避免压住立绘/字牌
 function drawTierBadge(ctx: CanvasRenderingContext2D, nx: number, ny: number, tier: number, fontPx: number) {
   ctx.save();
-  const r = Math.max(7, fontPx * 0.72);
-  ctx.beginPath();
-  ctx.arc(nx, ny, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(14,10,6,0.82)';
-  ctx.fill();
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = 'rgba(255,220,140,0.35)';
-  ctx.stroke();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `${fontPx}px "PingFang SC", sans-serif`;
-  ctx.lineWidth = Math.max(2, fontPx * 0.16);
+  ctx.lineWidth = Math.max(2.5, fontPx * 0.2);
   ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(20,14,6,0.95)';
   ctx.strokeText(String(tier), nx, ny);
@@ -2080,20 +2072,23 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 }
 
 // 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
-// 点击字牌：高亮该字牌，若已激活则连同搭档格与攻击范围，并弹出武将信息面板
+// 点击字牌：高亮该字牌；若已激活则双字同时选中，并画攻击范围与武将信息面板
 function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: string; general: string; tier: number; cell: { c: number; r: number } }) {
   const def = generalById(w.general);
   if (!def) return;
   const active = b.activeGenerals().find((g) => g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r));
-  const gx = BOARD_X + w.cell.c * CELL;
-  const gy = BOARD_Y + w.cell.r * CELL;
   ctx.save();
-  // 选中格金边
-  roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+  // 选中格金边：已激活则左右两字同时描边
+  const selCells = active ? active.cells : [w.cell];
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#ffe08a';
-  ctx.stroke();
-  // 激活则画范围环 + 搭档格
+  for (const c of selCells) {
+    const gx = BOARD_X + c.c * CELL;
+    const gy = BOARD_Y + c.r * CELL;
+    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+    ctx.stroke();
+  }
+  // 激活则画范围环（圆心取双格中点）
   if (active) {
     const ax = (active.cells[0].c + active.cells[1].c) / 2;
     const ay = (active.cells[0].r + active.cells[1].r) / 2;

@@ -32,6 +32,17 @@ import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
 
+/** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
+function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
+  if (!selected) return false;
+  if (selected.c === target.c && selected.r === target.r) return true;
+  const g = b.activeGenerals().find((ag) =>
+    ag.cells.some((cc) => cc.c === selected.c && cc.r === selected.r),
+  );
+  if (!g) return false;
+  return g.cells.some((cc) => cc.c === target.c && cc.r === target.r);
+}
+
 const canvas = getGameCanvas();
 const ctx = canvas.getContext('2d')!;
 
@@ -365,7 +376,8 @@ function onPointerUp() {
     } else if (ui.dragFrom && target) {
       if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
         // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
-        const same = ui.selected && ui.selected.c === target.c && ui.selected.r === target.r;
+        // 已激活武将：点左右任一格都视为同一选中态（双字同时选中）
+        const same = isSameSelection(battle, ui.selected, target);
         ui.selected = same ? null : { c: target.c, r: target.r };
       } else {
         battle.dragBoard(ui.dragFrom, target);
