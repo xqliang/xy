@@ -50,10 +50,11 @@ describe('endless difficulty curve', () => {
     expect(b.effectiveDifficulty(21)).toBeCloseTo(S * S, 5);
   });
 
-  it('正常模式 effectiveDifficulty 恒等于 difficultyMul（不受波数影响）', () => {
+  it('对战模式 effectiveDifficulty 同样分圈加压', () => {
     const b = new Battle(1, 1.5, undefined, undefined, {}, [], [], false);
+    const S = TUNING.endlessCycleStep;
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
-    expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5, 5);
+    expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5 * S * S, 5);
   });
 });
 
@@ -76,12 +77,13 @@ describe('endless disables opponent and win-cap', () => {
     expect(b.status).not.toBe('won');
   });
 
-  it('正常模式清空第 12 波判通关（回归保护）', () => {
+  it('对战模式清空第 12 波不判通关（与无尽同不封顶）', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], false);
     for (let w = 0; w < 12; w++) {
       b.startNextWave();
       b.forceClearWaveForTest();
     }
-    expect(b.status).toBe('won');
+    expect(b.status).not.toBe('won');
+    expect(b.wave).toBe(12);
   });
 });

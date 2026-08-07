@@ -77,12 +77,17 @@ export const TUNING = {
   monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
   monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
-  bossEveryWave: 5, // 无尽模式：每 5 波出一个 BOSS（正常模式改用随机 BOSS 波，见 computeBossWaves）
-  bossWaveChance: 0.35, // 正常模式：第 5..winWave-1 波各自成为 BOSS 波的概率
-  bossMinBosses: 2, // 正常模式：第 5..winWave-1 波至少出现的 BOSS 次数
-  bossHpMul: 14, // 后期(通关波)BOSS 血量倍数
-  bossHpMulEarly: 8, // 前期(第5波)BOSS 血量倍数；第5波→通关波之间线性爬升到 bossHpMul
+  // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
+  bossFirstSegLo: 5, // 首段候选波下界
+  bossFirstSegHi: 10, // 首段候选波上界（亦为段长锚点）
+  bossFirstSegMin: 1, // 首段妖王波最少个数
+  bossFirstSegMax: 2, // 首段妖王波最多个数
+  bossSegMin: 2, // 第 11 波起每段最少妖王波
+  bossSegMax: 3, // 第 11 波起每段最多妖王波
+  bossHpMul: 14, // 后期 BOSS 血量倍数
+  bossHpMulEarly: 8, // 前期(约第5波)BOSS 血量倍数；随波次线性爬升到 bossHpMul
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
+  bossHpRampWaves: 20, // 血量倍数从 early 爬到满所用波跨度（自 bossFirstSegLo 起算）
   // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
   cavalryWaveChance: 0.5, // 达到后期后，每波有 50% 概率成为骑兵波
@@ -110,8 +115,7 @@ export const TUNING = {
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
-  winWave: 12, // 通关波次
-  // —— 无尽模式：每 10 波为一圈，每进一圈怪物强度阶梯式 ×endlessCycleStep ——
+  // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
   endlessCycleStep: 1.3,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
@@ -514,7 +518,9 @@ export class Battle {
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
-  private bossWaves = new Set<number>(); // 正常模式预计算的 BOSS 波集合（无尽模式不用，见 isBossWave）
+  private bossWaves = new Set<number>(); // 分段预排的妖王波（对战/无尽共用）
+  private bossScheduleRng: RNG; // 妖王波专用 RNG，不扰动出怪/掉落主序列
+  private bossScheduleThrough = 0; // 已排程覆盖到的最高波号
   /** 本波按最优输出算出的压力方案（开波时刷新；供出怪血量/数量使用） */
   private wavePressure: PressurePlan | null = null;
 
@@ -525,8 +531,8 @@ export class Battle {
     this.aiSkill = aiSkill;
     this.difficultyMul = difficultyMul;
     this.endless = endless;
-    // 预计算 BOSS 波（正常模式）：用独立 rng，避免扰动出怪/掉落的主 rng 序列
-    if (!endless) this.bossWaves = this.computeBossWaves(new RNG((seed ^ 0x5bf03635) >>> 0));
+    this.bossScheduleRng = new RNG((seed ^ 0x5bf03635) >>> 0);
+    this.ensureBossSchedule(TUNING.bossFirstSegHi); // 开局先排好首段 1–10
     this.map = map;
     this.pathLen = pathTotalLen(map);
     this.slotOrder = slotUnlockOrder(map);
@@ -1591,38 +1597,54 @@ export class Battle {
     this.message = `第 ${this.wave} 波已清！掉落神兵`;
   }
 
-  // 有效怪物强度系数：正常模式=境界系数；无尽模式=境界系数 × 分圈阶梯系数。
+  // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈阶梯。
   // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
   effectiveDifficulty(wave: number = this.wave): number {
-    if (!this.endless) return this.difficultyMul;
     const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
   }
 
-  // 预计算正常模式的 BOSS 波：第 5..winWave-1 波各按 bossWaveChance 随机成为 BOSS 波，
-  // 保证该区间至少 bossMinBosses 个；通关波(winWave)必出 BOSS。用独立 rng，确定性可复现。
-  private computeBossWaves(rng: RNG): Set<number> {
-    const s = new Set<number>();
-    s.add(TUNING.winWave); // 通关波必出
-    const lo = 5, hi = TUNING.winWave - 1;
-    const pool: number[] = [];
-    for (let w = lo; w <= hi; w++) {
-      pool.push(w);
-      if (rng.next() < TUNING.bossWaveChance) s.add(w);
-    }
-    // 保证 [lo,hi] 至少 bossMinBosses 个 BOSS 波
-    let inRange = pool.filter((w) => s.has(w)).length;
-    const remaining = pool.filter((w) => !s.has(w));
-    while (inRange < TUNING.bossMinBosses && remaining.length > 0) {
-      s.add(remaining.splice(rng.int(remaining.length), 1)[0]!);
-      inRange++;
-    }
-    return s;
+  /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
+  private ensureBossSchedule(wave: number): void {
+    const target = Math.max(1, wave);
+    while (this.bossScheduleThrough < target) this.generateNextBossSegment();
   }
 
-  // 某波是否为 BOSS 波：无尽模式每 bossEveryWave 波，正常模式查预计算集合。
+  /** 生成下一段妖王波：首段 5–10 出 1–2；其后每 10 波出 2–3。 */
+  private generateNextBossSegment(): void {
+    const rng = this.bossScheduleRng;
+    if (this.bossScheduleThrough < TUNING.bossFirstSegHi) {
+      const pool: number[] = [];
+      for (let w = TUNING.bossFirstSegLo; w <= TUNING.bossFirstSegHi; w++) pool.push(w);
+      const span = TUNING.bossFirstSegMax - TUNING.bossFirstSegMin + 1;
+      const count = TUNING.bossFirstSegMin + rng.int(span);
+      this.pickBossWavesFromPool(pool, count, rng);
+      this.bossScheduleThrough = TUNING.bossFirstSegHi;
+      return;
+    }
+    const start = this.bossScheduleThrough + 1;
+    const end = this.bossScheduleThrough + TUNING.endlessWavesPerCycle;
+    const pool: number[] = [];
+    for (let w = start; w <= end; w++) pool.push(w);
+    const span = TUNING.bossSegMax - TUNING.bossSegMin + 1;
+    const count = TUNING.bossSegMin + rng.int(span);
+    this.pickBossWavesFromPool(pool, count, rng);
+    this.bossScheduleThrough = end;
+  }
+
+  private pickBossWavesFromPool(pool: number[], count: number, rng: RNG): void {
+    const remaining = pool.slice();
+    const n = Math.min(count, remaining.length);
+    for (let i = 0; i < n; i++) {
+      const idx = rng.int(remaining.length);
+      this.bossWaves.add(remaining.splice(idx, 1)[0]!);
+    }
+  }
+
+  // 某波是否为妖王波（查分段预排表）
   isBossWave(wave: number): boolean {
-    return this.endless ? wave % TUNING.bossEveryWave === 0 : this.bossWaves.has(wave);
+    this.ensureBossSchedule(wave);
+    return this.bossWaves.has(wave);
   }
 
   // 本波出怪总数基准：经济基准(9+n，同时决定掉落) + 后期堆量。
@@ -1744,7 +1766,7 @@ export class Battle {
       if (planned != null && planned > 0) {
         hp = planned;
       } else {
-        const t = Math.max(0, Math.min(1, (this.wave - 5) / Math.max(1, TUNING.winWave - 5)));
+        const t = Math.max(0, Math.min(1, (this.wave - TUNING.bossFirstSegLo) / Math.max(1, TUNING.bossHpRampWaves)));
         hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
       }
     } else if (isMiniBoss) {
@@ -2536,19 +2558,13 @@ export class Battle {
     if (this.checkOpponentDefeated()) return; // 对手先阵亡 → 我方胜
 
     // 波次清空判定（仅在仍在进行中时；避免覆盖同帧发生的 lost）
+    // 对战/无尽均不波次封顶通关：对战靠击败对手唐僧，无尽靠失守结束
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
-      if (!this.endless && this.wave >= TUNING.winWave) {
-        this.rollWeaponDropOnClear();
-        this.status = 'won';
-        this.emit('win');
-        this.message = `守护成功！通关第 ${this.wave} 波，取得真经！`;
-      } else {
-        this.rollWeaponDropOnClear();
-        this.status = 'ready';
-        this.nextWaveTimer = 5; // 5秒后自动开下一波
-        this.message = `第 ${this.wave} 波已清！`;
-      }
+      this.rollWeaponDropOnClear();
+      this.status = 'ready';
+      this.nextWaveTimer = 5; // 5秒后自动开下一波
+      this.message = `第 ${this.wave} 波已清！`;
     }
   }
 

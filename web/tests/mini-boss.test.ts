@@ -14,7 +14,7 @@ describe('mini-boss spawn & skills', () => {
   it('never schedules mini-boss on a boss wave', () => {
     for (let seed = 1; seed < 60; seed++) {
       const b = new Battle(seed);
-      for (let w = 1; w <= TUNING.winWave; w++) {
+      for (let w = 1; w <= 30; w++) {
         (b as unknown as { waveActive: boolean }).waveActive = false;
         (b as unknown as { status: string }).status = 'ready';
         b.startNextWave();
@@ -30,7 +30,7 @@ describe('mini-boss spawn & skills', () => {
     let seen = false;
     for (let seed = 1; seed < 150 && !seen; seed++) {
       const b = new Battle(seed);
-      for (let w = 1; w <= TUNING.winWave && !seen; w++) {
+      for (let w = 1; w <= 30 && !seen; w++) {
         b.monsters.length = 0;
         b.aiMonsters.length = 0;
         b.tangsengHP = 99; // 防止空板漏怪提前判负、中断出怪
