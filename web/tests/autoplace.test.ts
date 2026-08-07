@@ -400,6 +400,17 @@ it('mergeKeepScore / placeCellScore：近出口优先（可压过小幅覆盖差
   // 出口更近可扳回略低的覆盖
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3.5, 5));
   expect(placeCellScore(5, 0)).toBeGreaterThan(placeCellScore(5.5, 2));
+  // 近出口可压过可观覆盖差（1.5 权重下：贴口 8 分 > 远端 exit4 的 11 覆盖）
+  expect(placeCellScore(8, 1)).toBeGreaterThan(placeCellScore(11, 4));
+});
+
+it('空位更优时已上场枪会迁到近出口空格', () => {
+  // 枪在远端 (4,0)；近出口 (0,0) 空着且贴路 → 应迁枪过去
+  const v = new FakeView([], [{ c: 0, r: 0 }, { c: 4, r: 0 }]);
+  v.unitsMap.set('4,0', { type: 'spear', tier: 2, cell: { c: 4, r: 0 } });
+  planAutoPlace(v, { rng });
+  const spear = v.placedUnits().find((u) => u.type === 'spear');
+  expect(spear?.cell).toEqual({ c: 0, r: 0 });
 });
 
 it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {

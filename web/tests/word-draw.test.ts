@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { phaseWeight, phaseWeightRatio, pickWordChar, PAIR_PITY_AFTER, neededPartnerChars } from '../src/word-draw';
+import {
+  phaseWeight,
+  phaseWeightRatio,
+  pickWordChar,
+  PAIR_PITY_AFTER,
+  neededPartnerChars,
+  pendingPartnerChars,
+} from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
 import { hintGeneralForChar } from '../src/generals';
 
@@ -29,6 +36,31 @@ describe('征兵阶段权重', () => {
     expect(neededPartnerChars(['悟'])).toEqual(expect.arrayContaining(['空', '能']));
     expect(['空', '能']).toContain(pick.char);
   });
+
+  it('有孤儿时 pendingPartner 排除本盘已抽到的配对字', () => {
+    expect(pendingPartnerChars(['悟'], ['空'])).toEqual(expect.arrayContaining(['能']));
+    expect(pendingPartnerChars(['悟'], ['空'])).not.toContain('空');
+  });
+
+  it('尽量不抽已拥有字：已有「悟」时加权抽其它字', () => {
+    let dup = 0;
+    for (let i = 0; i < 200; i++) {
+      const rng = new FakeRng([i / 200, 0.3, 0.7]);
+      const pick = pickWordChar(rng, 5, [], [], false, ['悟']);
+      if (pick.char === '悟') dup++;
+    }
+    expect(dup).toBeLessThan(15);
+  });
+
+  it('本盘不抽重复配对字：tray 已有「空」则不再抽「空」', () => {
+    let dup = 0;
+    for (let i = 0; i < 200; i++) {
+      const rng = new FakeRng([i / 200]);
+      const pick = pickWordChar(rng, 5, ['悟'], ['空'], false, ['悟']);
+      if (pick.char === '空') dup++;
+    }
+    expect(dup).toBe(0);
+  });
 });
 
 describe('半对保底 N=4', () => {
@@ -43,11 +75,10 @@ describe('半对保底 N=4', () => {
   });
 
   it('有孤儿且连续未补满 pairPityAfter 次后强制出配对字', () => {
-    TUNING.wordDrawChance = 0; // 平时不随机出字，只靠保底
+    TUNING.wordDrawChance = 0;
     const b = new Battle(7);
     b.grantPeach(10_000);
     b.wave = 3;
-    // 棋盘放一个孤儿「悟」
     const cell = b.unlockedCells()[0]!;
     b.words.set(`${cell.c},${cell.r}`, {
       char: '悟',
@@ -55,10 +86,8 @@ describe('半对保底 N=4', () => {
       tier: 1,
       cell,
     });
-    b.summon(); // 首次无字
-    // 垫高半对保底
+    b.summon();
     b.forcePairPityForTest();
-    // 同时触发字牌保底，确保本盘会出字且走 forcePartner
     b.forceWordPityForTest();
     expect(b.summon()).toBe(true);
     const words = b.tray.filter((t) => t.kind === 'word');

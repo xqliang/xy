@@ -69,7 +69,7 @@ export const DIG_TOUCH_WEIGHT = 1;
 /** 离出口每远 1 格的惩罚；高于贴边权重，使近出口更优先（玩家默认） */
 export const DIG_EXIT_WEIGHT = 3;
 /** AI 挖铲出口权重随机区间 */
-export const DIG_EXIT_WEIGHT_AI_MIN = 0.5;
+export const DIG_EXIT_WEIGHT_AI_MIN = 1;
 export const DIG_EXIT_WEIGHT_AI_MAX = 3;
 
 /** 离路距离惩罚：~1 格=0；~0 与 ~2 格同档；更远线性加重 */
@@ -99,9 +99,9 @@ export function digPriorityScore(
 
 /**
  * 落位/保留格评分（分越高越优先）：pathCover 为主，靠近出怪口线性加优先级。
- * 每靠近出口 1 格 ≈ 等效 +MERGE_EXIT_WEIGHT 路径覆盖（与洛阳铲出口权重同量级）。
+ * 每靠近出口 1 格 ≈ 等效 +MERGE_EXIT_WEIGHT 路径覆盖（近出口可压过可观覆盖差）。
  */
-export const MERGE_EXIT_WEIGHT = 1;
+export const MERGE_EXIT_WEIGHT = 1.5;
 
 export function mergeKeepScore(pathCover: number, exitDist: number): number {
   return pathCover - MERGE_EXIT_WEIGHT * Math.max(0, exitDist);
@@ -205,6 +205,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     }
     // 5b) 高阶同型抢座：若低阶同类占着 placeCellScore 更高的格，与高阶交换
     if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
+    // 5c) 空位更优则迁座：新挖出的近出口/高覆盖空格，把已上场兵迁过去（如枪迁到贴口空位）
+    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
     // 6–7) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
@@ -239,6 +241,35 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     }
     if (!best) return false;
     return view.swapUnits(best.hi.cell, best.lo.cell);
+  }
+
+  /**
+   * 已上场单位迁到评分更高的空位（挖开近出口空格后补位）。
+   * 同收益时优先迁短射程（近战/枪更需要贴口）。
+   */
+  function tryRelocateToBetterFreeSeats(): boolean {
+    const free = view.freeCells();
+    if (free.length === 0) return false;
+    let best: { from: Cell; to: Cell; gain: number; rge: number } | null = null;
+    for (const u of view.placedUnits()) {
+      const rge = getUnitStat(u.type, u.tier).rge;
+      const scoreNow = placeCellScore(view.pathCover(u.cell, u.type, u.tier), view.exitDist(u.cell));
+      for (const c of free) {
+        if (view.nearestPathDist(c) > rge + tol) continue;
+        const score = placeCellScore(view.pathCover(c, u.type, u.tier), view.exitDist(c));
+        const gain = score - scoreNow;
+        if (gain <= 0.05) continue;
+        if (
+          !best ||
+          gain > best.gain + 1e-9 ||
+          (Math.abs(gain - best.gain) <= 1e-9 && rge < best.rge)
+        ) {
+          best = { from: u.cell, to: c, gain, rge };
+        }
+      }
+    }
+    if (!best) return false;
+    return view.moveUnit(best.from, best.to);
   }
 
   /** 可挖格：离路~1格优先，贴边数弱加权，再叠加近出口（exitWeight 可由 AI 每次挖时随机） */

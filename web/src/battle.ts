@@ -646,12 +646,21 @@ export class Battle {
     else this.summonsSinceShovel += 1;
     // 非首次征兵：按字牌掉率把部分「兵」槽转成武将字牌（首次保底不转，维持≥4兵）
     const forceWord = !firstSummon && this.summonsSinceWord >= TUNING.wordPityAfter;
-    const orphansBefore = this.orphanCharsNow();
+    // 配对/去重只看棋盘（旧 tray 整盘替换，不计入孤儿与已拥有）
+    const orphansBefore = this.boardOrphanCharsNow();
+    const ownedBoard = this.boardWordCharsNow();
     const forcePartner = !firstSummon && orphansBefore.length > 0 && this.summonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
     const drawOneWord = (forcePair: boolean) => {
-      const w = pickWordChar(this.rng, Math.max(1, this.wave), orphansBefore, trayWordsSoFar, forcePair);
+      const w = pickWordChar(
+        this.rng,
+        Math.max(1, this.wave),
+        orphansBefore,
+        trayWordsSoFar,
+        forcePair,
+        ownedBoard,
+      );
       trayWordsSoFar.push(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
@@ -714,6 +723,22 @@ export class Battle {
     const board = [...this.words.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
     const trayChars = this.tray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word').map((t) => t.char);
     return collectOrphanChars(board, trayChars, activeKeys);
+  }
+
+  /** 仅棋盘未激活孤儿（征兵抽字用：旧 tray 即将整盘替换） */
+  private boardOrphanCharsNow(): string[] {
+    const actives = this.activeGenerals();
+    const activeKeys = new Set<string>();
+    for (const g of actives) {
+      for (const c of g.cells) activeKeys.add(cellKey(c.c, c.r));
+    }
+    const board = [...this.words.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
+    return collectOrphanChars(board, [], activeKeys);
+  }
+
+  /** 棋盘已有全部字（含已激活），抽字去重用 */
+  private boardWordCharsNow(): string[] {
+    return [...this.words.values()].map((w) => w.char);
   }
 
   // 候选区内合并：仅兵种同型同级升阶；字牌禁止互相合并。
@@ -824,13 +849,15 @@ export class Battle {
     return out;
   }
 
-  // AI 侧孤儿字（镜像 orphanCharsNow）：未激活的已放字牌 + tray 中的字，用于半对保底
-  private aiOrphanCharsNow(): string[] {
+  private aiBoardOrphanCharsNow(): string[] {
     const activeKeys = new Set<string>();
     for (const g of this.aiActiveGenerals()) for (const c of g.cells) activeKeys.add(cellKey(c.c, c.r));
     const board = [...this.aiWords.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
-    const trayChars = this.aiTray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word').map((t) => t.char);
-    return collectOrphanChars(board, trayChars, activeKeys);
+    return collectOrphanChars(board, [], activeKeys);
+  }
+
+  private aiBoardWordCharsNow(): string[] {
+    return [...this.aiWords.values()].map((w) => w.char);
   }
 
   // AI 落子入口（planAutoPlace 会调用的子集：shovel / unit(place|merge) / word(place|merge)）
@@ -905,12 +932,20 @@ export class Battle {
     if (base.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0; else this.aiSummonsSinceShovel += 1;
     // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对（无玩家 mods.wordRateBonus）
     const forceWord = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
-    const orphansBefore = this.aiOrphanCharsNow();
+    const orphansBefore = this.aiBoardOrphanCharsNow();
+    const ownedBoard = this.aiBoardWordCharsNow();
     const forcePartner = !firstSummon && orphansBefore.length > 0 && this.aiSummonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
     const drawOneWord = (forcePair: boolean) => {
-      const w = pickWordChar(this.aiRng, Math.max(1, this.wave), orphansBefore, trayWordsSoFar, forcePair);
+      const w = pickWordChar(
+        this.aiRng,
+        Math.max(1, this.wave),
+        orphansBefore,
+        trayWordsSoFar,
+        forcePair,
+        ownedBoard,
+      );
       trayWordsSoFar.push(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
