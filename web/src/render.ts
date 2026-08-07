@@ -994,8 +994,8 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
 /** 流沙河出怪口：Seedream 砂石闸门左右对开 */
 function drawLiushaheSandGate(ctx: CanvasRenderingContext2D, x: number, y: number, off: number) {
   const spr = sprite('gate-liushahe');
-  const h = CELL * 1.05;
-  const w = CELL * 1.15;
+  const h = CELL * 0.72;
+  const w = CELL * 0.78;
   if (!spr || !spr.width) {
     const lw = CELL * 0.42, lh = CELL * 0.55;
     const leaf = (lx: number) => {
@@ -1261,16 +1261,16 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
 // 流沙河：Seedream 河沙水带横向无缝平铺，严格隔断上下半场
 function drawLiushaheWaterFence(ctx: CanvasRenderingContext2D, _b: Battle) {
   const y = BOARD_Y + FENCE_ROW * CELL;
-  drawTiledHFence(ctx, 'fence-liushahe', y, CELL * 1.55, () => {
+  drawTiledHFence(ctx, 'fence-liushahe', y, CELL * 0.26, () => {
     ctx.fillStyle = 'rgba(180,150,70,0.9)';
-    ctx.fillRect(BOARD_X, y - CELL * 0.22, COLS * CELL, CELL * 0.44);
+    ctx.fillRect(BOARD_X, y - CELL * 0.08, COLS * CELL, CELL * 0.16);
   });
 }
 
 // 盘丝洞：Seedream 蛛丝篱笆横向无缝平铺
 function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
   const y = BOARD_Y + FENCE_ROW * CELL;
-  drawTiledHFence(ctx, 'fence-pansidong', y, CELL * 1.5, () => {
+  drawTiledHFence(ctx, 'fence-pansidong', y, CELL * 0.24, () => {
     // 素材未就绪时回退：丝线篱笆矢量
     const x0 = BOARD_X;
     const x1 = BOARD_X + COLS * CELL;
