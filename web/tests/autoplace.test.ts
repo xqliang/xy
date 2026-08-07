@@ -4,6 +4,7 @@ import {
   planAutoPlace,
   digPriorityScore,
   mergeKeepScore,
+  placeCellScore,
   singleWordScore,
   type AutoPlaceView,
   type PlaceToken,
@@ -88,6 +89,21 @@ class FakeView implements AutoPlaceView {
     const w = this.wordsMap.get(kf); if (!w) return false;
     if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
     this.wordsMap.delete(kf); w.cell = to; this.wordsMap.set(kt, w); return true;
+  }
+  isActiveHeroCell(cell: Cell): boolean {
+    const w = this.wordsMap.get(this.key(cell.c, cell.r));
+    if (!w) return false;
+    const chars = this.wordChars(w.general);
+    if (!chars) return false;
+    if (w.char === chars[0]) {
+      const r = this.wordsMap.get(this.key(cell.c + 1, cell.r));
+      return !!(r && r.char === chars[1] && r.general === w.general);
+    }
+    if (w.char === chars[1]) {
+      const l = this.wordsMap.get(this.key(cell.c - 1, cell.r));
+      return !!(l && l.char === chars[0] && l.general === w.general);
+    }
+    return false;
   }
   mergeTray(from: number, to: number): boolean {
     if (from === to) return false;
@@ -226,7 +242,8 @@ it('singleWordScore：远路近唐僧分更高', () => {
 });
 
 it('激活武将：邻格被武器占时可挪开再落字', () => {
-  // 「大」在 (1,0)；「圣」应对 (2,0) 但被 monkey 占 → 挪 monkey 到 (0,0) 后激活
+  // 「大」在 (1,0)；最优对为 (0,0)-(1,0)。可把「大」迁到 (0,0)，「圣」落 (1,0)；
+  // 若落在 (1,0)-(2,0) 则需挪开 (2,0) 的 monkey。
   const v = new FakeView(
     [{ kind: 'word', char: '圣', general: 'g', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }],
@@ -234,9 +251,50 @@ it('激活武将：邻格被武器占时可挪开再落字', () => {
   v.wordsMap.set('1,0', { char: '大', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
   v.unitsMap.set('2,0', { type: 'monkey', tier: 1, cell: { c: 2, r: 0 } });
   planAutoPlace(v, { rng });
-  expect(v.placedWords().some((w) => w.char === '圣' && w.cell.c === 2 && w.cell.r === 0)).toBe(true);
-  expect(v.unitsMap.has('2,0')).toBe(false);
-  expect(v.placedUnits().length).toBe(1); // 武器被挪走而非丢弃
+  const byChar = new Map(v.placedWords().map((w) => [w.char, w.cell]));
+  expect(byChar.get('大')).toEqual({ c: 0, r: 0 });
+  expect(byChar.get('圣')).toEqual({ c: 1, r: 0 });
+  expect(v.placedUnits().length).toBe(1); // 武器保留
+});
+
+it('激活武将：邻格被孤儿字占时可挪开，迁伴侣到高分对', () => {
+  // 「大」在差位 (0,2)；最优对 (0,0)-(1,0) 的 (1,0) 被孤儿「郎」占；(2,2) 可安置孤儿
+  // tray「圣」→ 挪「郎」、迁「大」到 (0,0)、落「圣」到 (1,0)
+  const v = new FakeView(
+    [{ kind: 'word', char: '圣', general: 'g', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 2, r: 2 }],
+  );
+  v.wordsMap.set('0,2', { char: '大', general: 'g', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '郎', general: 'erlang', cell: { c: 1, r: 0 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  const byChar = new Map(v.placedWords().map((w) => [w.char, w.cell]));
+  expect(byChar.get('大')).toEqual({ c: 0, r: 0 });
+  expect(byChar.get('圣')).toEqual({ c: 1, r: 0 });
+  expect(byChar.get('郎')).toBeDefined();
+  expect(byChar.get('郎')).not.toEqual({ c: 1, r: 0 });
+});
+
+it('激活武将：不拆散其他已激活英雄占格', () => {
+  // (0,0)-(1,0) 已是「大圣」激活；伴侣「二」在 (0,2)，tray「郎」只能找别对或单放，不得拆「大圣」
+  const v = new FakeView(
+    [{ kind: 'word', char: '郎', general: 'erlang', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 1, r: 2 }],
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'g') return ['大', '圣'] as const;
+    if (g === 'erlang') return ['二', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,0', { char: '大', general: 'g', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
+  v.wordsMap.set('0,2', { char: '二', general: 'erlang', cell: { c: 0, r: 2 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  // 大圣仍在原位
+  expect(v.wordsMap.get('0,0')?.char).toBe('大');
+  expect(v.wordsMap.get('1,0')?.char).toBe('圣');
+  // 二郎在 (0,2)-(1,2) 激活
+  expect(v.wordsMap.get('0,2')?.char).toBe('二');
+  expect(v.wordsMap.get('1,2')?.char).toBe('郎');
 });
 
 it('tray 双字：落到 pathCover 更高的邻格对', () => {
@@ -323,10 +381,11 @@ it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位�
   expect(v.tray().length).toBe(0);
 });
 
-it('mergeKeepScore：同覆盖时更靠近出口分更高', () => {
+it('mergeKeepScore / placeCellScore：近出口优先（可压过小幅覆盖差）', () => {
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3, 4));
-  // 出口加权可扳回略低的覆盖
+  // 出口更近可扳回略低的覆盖
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3.5, 5));
+  expect(placeCellScore(5, 0)).toBeGreaterThan(placeCellScore(5.5, 2));
 });
 
 it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {

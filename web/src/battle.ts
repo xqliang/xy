@@ -1001,6 +1001,8 @@ export class Battle {
         this.aiWords.set(kTo, w);
         return true;
       },
+      isActiveHeroCell: (cell) =>
+        this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       mergeTray: (from, to) => this.aiMergeTrayTokens(from, to),
       mergeBoard: (from, to) => this.aiMergeBoardUnits(from, to),
     };
@@ -2560,6 +2562,8 @@ export class Battle {
         this.words.set(kTo, w);
         return true;
       },
+      isActiveHeroCell: (cell) =>
+        this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       mergeTray: (from, to) => this.mergeTrayTokens(from, to),
       mergeBoard: (from, to) => {
         const a = this.units.get(cellKey(from.c, from.r));
