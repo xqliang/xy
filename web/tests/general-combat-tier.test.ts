@@ -13,16 +13,19 @@ function placeErlang(b: Battle, leftTier: number, rightTier: number) {
 }
 
 describe('攻击升品质阶', () => {
-  it('满经验后双字各 +1，徽标 min 上升；拆开保留', () => {
+  it('满经验后双字各 +1，徽标上升；拆开保留', () => {
     const b = new Battle(1);
     const { a, right } = placeErlang(b, 2, 3);
+    // 激活时继承对齐：2+3 → 双字均为 3
     const g = b.activeGenerals()[0]!;
-    expect(g.tier).toBe(2);
+    expect(g.tier).toBe(3);
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);
+    expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(3);
     const need = Battle.expToNext(g.state.level);
     b.addGeneralCombatExp(g, need);
-    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(4);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(4);
-    expect(b.activeGenerals()[0]!.tier).toBe(3);
+    expect(b.activeGenerals()[0]!.tier).toBe(4);
   });
 
   it('一字已满阶时只升另一字', () => {

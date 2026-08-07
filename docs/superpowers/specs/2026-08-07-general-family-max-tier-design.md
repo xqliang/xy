@@ -58,16 +58,16 @@
 
 ### 4. 激活继承对齐
 
-激活瞬间：
+激活瞬间（**只升不降**，避免共享字在满 3 武将上被削阶）：
 
 ```
 cap = def.maxTier
-t = min(max(left.tier, right.tier), cap)
-left.tier = t
-right.tier = t
+target = min(max(left.tier, right.tier), cap)
+if left.tier < target: left.tier = target
+if right.tier < target: right.tier = target
 ```
 
-拆开后各字保留当前阶。激活展示阶 = `min(left.tier, right.tier)`（对齐后相等）。
+拆开后各字保留当前阶。激活展示/战力阶 = `min(left.tier, right.tier, cap)`。
 
 无法匹配任何武将：不激活、不对齐。
 
@@ -83,9 +83,11 @@ right.tier = t
 
 | 波段 | 满 3 相对权重 | 满 5 相对权重 |
 |------|--------------|--------------|
-| 1–4 | 高（约 0.75） | 低（约 0.25） |
-| 5–7 | 中（约 0.5） | 中（约 0.5） |
-| 8+ | 低（约 0.3） | 高（约 0.7） |
+| 1–4 | 高（0.8） | 低（0.2） |
+| 5–7 | 中（0.5） | 中（0.5） |
+| 8+ | 低（0.2） | 高（0.8） |
+
+（系数需压过满 3 基础 `weight≈3`、满 5 `weight≈1` 的差距，保证后期满 5 总权重更高。）
 
 在基础 `weight` 之上再乘阶段系数；招贤榜只乘出字率。
 

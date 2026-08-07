@@ -1,17 +1,12 @@
-// 武将系统配置。对齐竞品武将体系：
-//  1) 征兵有概率产出「字牌」，凑齐同一武将的两个字 → 召唤该武将（占棋盘两格）
-//  2) 五阶品质：白/绿/蓝/紫/橙，两张同名同阶武将合成升一阶
-//  3) 定位：输出 / 控制 / 辅助 / 过渡；强度梯队 T0(三核) / T1(核心) / T2(过渡)
-//  4) 羁绊：悟空(主角)上场即激活「大圣护法」，全队攻击提升（对应竞品 赵云+阿斗 羁绊）
-//
-// 数值自洽：武将 ATK/FRQ 沿用文章兵种成长系数 [1.0,1.5,2.1,2.73,3.276] 逐阶缩放，
-// POW = ATK×FRQ×RGE×目标数。白阶 POW 约 18~26，橙阶约 60~90。
-// 武将占两格，其"每格战力"仍低于满阶兵(80.4/格)，故不破坏兵种终局强度。
+// 武将系统配置。门派共享字 + 满级差（满5/满3）+ 攻击方式区分。
+//  1) 征兵产出字牌；左右紧邻且匹配某武将 chars 序对 → 激活
+//  2) 品质阶上限按武将 maxTier（3 或 5）；单字不可互相合并
+//  3) 同门派共享一字，便于激活时继承对齐
 import { TIER_COEFFICIENTS, MAX_TIER } from '@core';
 
 export type GeneralRole = '输出' | '控制' | '辅助' | '过渡';
 export type GeneralTierRank = 'T0' | 'T1' | 'T2';
-// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复唐僧 none=无技能
+// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复 none=无技能
 export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'none';
 
 export const QUALITY_NAMES = ['白', '绿', '蓝', '紫', '橙'] as const;
@@ -38,56 +33,137 @@ export interface GeneralDef {
   rge: number;
   targets: number;
   skillCd: number; // 秒；0 = 无技能
-  weight: number; // 字牌掉落权重（越小越稀有）
+  weight: number; // 基础掉落权重（越小越稀有）；满5偏小、满3偏大
   asset: string;
+  maxTier: 3 | 5;
+  atkStyle: string;
+  family: string; // 门派共享字
 }
 
 export const GENERALS: GeneralDef[] = [
-  // ——— T0 三核（必练）———
-  // 对应「黄忠」：远程 AOE 清场天花板
-  { id: 'nezha', name: '哪吒', chars: ['哪', '吒'], role: '输出', rank: 'T0', skill: 'ranged',
-    skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发并灼烧', atk: 4.0, frq: 1.5, rge: 3.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-nezha' },
-  // 对应「赵云」：近战突进贯穿，全能副C（本作主角）
+  // ——— 悟：快攻贯穿 ———
   { id: 'wukong', name: '悟空', chars: ['悟', '空'], role: '输出', rank: 'T0', skill: 'burst',
-    skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong' },
-  // 对应「张飞」：群体强控核心
-  { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
-    skillName: '钉耙震地', skillDesc: '大范围长时间定身', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie' },
+    skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
+    maxTier: 5, atkStyle: '快攻贯穿', family: '悟' },
+  { id: 'wuneng', name: '悟能', chars: ['悟', '能'], role: '过渡', rank: 'T2', skill: 'burst',
+    skillName: '钉耙小扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 1.8, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-bajie',
+    maxTier: 3, atkStyle: '快攻贯穿', family: '悟' },
 
-  // ——— T1 核心辅助 / 副C ———
-  // 对应「刘备」：群体控制 + 治疗
-  { id: 'guanyin', name: '观音', chars: ['观', '音'], role: '辅助', rank: 'T1', skill: 'heal',
-    skillName: '甘露·净瓶', skillDesc: '减速来敌并为唐僧续命', atk: 2.2, frq: 1.4, rge: 3, targets: 2, skillCd: 12, weight: 2, asset: 'hero-guanyin' },
-  // 对应「关羽」：长刀横扫，范围 + 击退
-  { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '降妖宝杖', skillDesc: '横扫并击退来敌', atk: 3.2, frq: 1.3, rge: 2.4, targets: 2, skillCd: 9, weight: 2, asset: 'hero-shaseng' },
+  // ——— 郎：远程暴击 ———
   { id: 'erlang', name: '二郎', chars: ['二', '郎'], role: '输出', rank: 'T1', skill: 'ranged',
-    skillName: '天眼诛邪', skillDesc: '远距穿透重击', atk: 3.8, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 2, asset: 'hero-erlang' },
-  { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burst',
-    skillName: '三昧真火', skillDesc: '范围灼烧爆发', atk: 3.0, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 2, asset: 'hero-honghaier' },
-  { id: 'tieshan', name: '铁扇', chars: ['铁', '扇'], role: '控制', rank: 'T1', skill: 'stun',
-    skillName: '芭蕉扇·狂风', skillDesc: '狂风定住来敌', atk: 2.8, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 2, asset: 'hero-tieshan' },
-  { id: 'niumowang', name: '牛魔', chars: ['牛', '魔'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '蛮牛冲撞', skillDesc: '近身重创并击退', atk: 4.8, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 2, asset: 'hero-niumowang' },
+    skillName: '天眼诛邪', skillDesc: '远距穿透重击', atk: 3.8, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-erlang',
+    maxTier: 5, atkStyle: '远程暴击', family: '郎' },
+  { id: 'niulang', name: '牛郎', chars: ['牛', '郎'], role: '过渡', rank: 'T2', skill: 'ranged',
+    skillName: '织云箭', skillDesc: '单体远距轻击（过渡）', atk: 2.6, frq: 1.3, rge: 2.6, targets: 1, skillCd: 11, weight: 3, asset: 'hero-erlang',
+    maxTier: 3, atkStyle: '远程暴击', family: '郎' },
 
-  // ——— T2 过渡 / 替补 ———
-  // 对应「马超」：单体刮痧，前期过渡
+  // ——— 吒：远程清场 ———
+  { id: 'nezha', name: '哪吒', chars: ['哪', '吒'], role: '输出', rank: 'T0', skill: 'burst',
+    skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发并灼烧', atk: 4.0, frq: 1.5, rge: 3.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-nezha',
+    maxTier: 5, atkStyle: '远程清场', family: '吒' },
+  { id: 'jinzha', name: '金吒', chars: ['金', '吒'], role: '过渡', rank: 'T2', skill: 'burst',
+    skillName: '砍妖刀', skillDesc: '小范围火焰（过渡）', atk: 2.8, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-nezha',
+    maxTier: 3, atkStyle: '远程清场', family: '吒' },
+
+  // ——— 红：范围灼烧 ———
+  { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burst',
+    skillName: '三昧真火', skillDesc: '范围灼烧爆发', atk: 3.0, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-honghaier',
+    maxTier: 5, atkStyle: '范围灼烧', family: '红' },
+  { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burst',
+    skillName: '赤焰', skillDesc: '小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 1.8, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
+    maxTier: 3, atkStyle: '范围灼烧', family: '红' },
+
+  // ——— 戒：定身控制 ———
+  { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
+    skillName: '钉耙震地', skillDesc: '大范围长时间定身', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
+    maxTier: 5, atkStyle: '定身控制', family: '戒' },
+  { id: 'xiaojie', name: '小戒', chars: ['小', '戒'], role: '过渡', rank: 'T2', skill: 'stun',
+    skillName: '短耙震地', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.6, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
+    maxTier: 3, atkStyle: '定身控制', family: '戒' },
+
+  // ——— 牛：冲撞击晕 ———
+  { id: 'niumowang', name: '牛魔', chars: ['牛', '魔'], role: '控制', rank: 'T1', skill: 'stun',
+    skillName: '蛮牛冲撞', skillDesc: '近身重创并短晕', atk: 4.8, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
+    maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
+  { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
+    skillName: '牛角顶', skillDesc: '短距撞击轻晕（过渡）', atk: 3.2, frq: 1.0, rge: 1.3, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-niumowang',
+    maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
+
+  // ——— 铁：狂风击退 ———
+  { id: 'tieshan', name: '铁扇', chars: ['铁', '扇'], role: '控制', rank: 'T1', skill: 'knock',
+    skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退', atk: 2.8, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
+    maxTier: 5, atkStyle: '狂风击退', family: '铁' },
+  { id: 'tiebei', name: '铁背', chars: ['铁', '背'], role: '过渡', rank: 'T2', skill: 'knock',
+    skillName: '铁背开山', skillDesc: '小范围击退（过渡）', atk: 2.2, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tieshan',
+    maxTier: 3, atkStyle: '狂风击退', family: '铁' },
+
+  // ——— 沙：杖扫击退 ———
+  { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
+    skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 3.2, frq: 1.3, rge: 2.4, targets: 2, skillCd: 9, weight: 1, asset: 'hero-shaseng',
+    maxTier: 5, atkStyle: '杖扫击退', family: '沙' },
+  { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
+    skillName: '流沙涌', skillDesc: '短距轻击退（过渡）', atk: 2.2, frq: 1.2, rge: 1.8, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-shaseng',
+    maxTier: 3, atkStyle: '杖扫击退', family: '沙' },
+
+  // ——— 白：单体突进 ———
+  { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
+    skillName: '龙牙突进', skillDesc: '单体突进撕咬', atk: 3.6, frq: 1.4, rge: 2.2, targets: 1, skillCd: 9, weight: 1, asset: 'hero-baigujing',
+    maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '骨雾', skillDesc: '小范围减速（前期过渡）', atk: 2.8, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing' },
-  { id: 'tangseng', name: '御弟', chars: ['御', '弟'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '诵经', skillDesc: '迟滞来敌（前期过渡）', atk: 2.0, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-tangseng-hero' },
-  // 对应「黄盖」：无专属技能，纯过渡
-  { id: 'mile', name: '弥勒', chars: ['弥', '勒'], role: '过渡', rank: 'T2', skill: 'none',
-    skillName: '—', skillDesc: '无专属技能（新手过渡）', atk: 3.0, frq: 1.3, rge: 2, targets: 1.5, skillCd: 0, weight: 3, asset: 'hero-mile' },
+    skillName: '骨雾', skillDesc: '单体减速（前期过渡）', atk: 2.8, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
+    maxTier: 3, atkStyle: '单体突进', family: '白' },
+
+  // ——— 音：辅助治疗 ———
+  { id: 'guanyin', name: '观音', chars: ['观', '音'], role: '辅助', rank: 'T1', skill: 'heal',
+    skillName: '甘露·净瓶', skillDesc: '减速来敌并为唐僧续命', atk: 2.2, frq: 1.4, rge: 3, targets: 2, skillCd: 12, weight: 1, asset: 'hero-guanyin',
+    maxTier: 5, atkStyle: '辅助治疗', family: '音' },
+  { id: 'fanyin', name: '梵音', chars: ['梵', '音'], role: '过渡', rank: 'T2', skill: 'heal',
+    skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 1.6, frq: 1.2, rge: 2.4, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-guanyin',
+    maxTier: 3, atkStyle: '辅助治疗', family: '音' },
 ];
 
 export function generalById(id: string): GeneralDef | undefined {
   return GENERALS.find((g) => g.id === id);
 }
 
+/** 左字+右字按序匹配武将（「郎二」不匹配二郎） */
+export function matchGeneral(leftChar: string, rightChar: string): GeneralDef | undefined {
+  return GENERALS.find((g) => g.chars[0] === leftChar && g.chars[1] === rightChar);
+}
+
+/** 含该字的全部武将 */
+export function generalsWithChar(char: string): GeneralDef[] {
+  return GENERALS.filter((g) => g.chars[0] === char || g.chars[1] === char);
+}
+
+/** 抽字时的提示武将 id：优先满5 */
+export function hintGeneralForChar(char: string): string {
+  const gs = generalsWithChar(char);
+  const pref = gs.find((g) => g.maxTier === 5) ?? gs[0];
+  return pref?.id ?? '';
+}
+
+/** 可与该字组成武将的另一侧字（去重） */
+export function partnerChars(char: string): string[] {
+  const out = new Set<string>();
+  for (const g of generalsWithChar(char)) {
+    if (g.chars[0] === char) out.add(g.chars[1]);
+    if (g.chars[1] === char) out.add(g.chars[0]);
+  }
+  return [...out];
+}
+
+/** 字牌品质阶上限：取含该字的武将中较高 maxTier（共享字可升到 5，再由激活武将封顶） */
+export function maxTierForChar(char: string): number {
+  const gs = generalsWithChar(char);
+  if (gs.length === 0) return MAX_TIER;
+  return Math.max(...gs.map((g) => g.maxTier));
+}
+
 // 某阶武将实际属性（atk/frq 按成长系数缩放；rge/目标数固定）
 export function generalStat(def: GeneralDef, tier: number): { atk: number; frq: number; rge: number; targets: number } {
-  const coeff = TIER_COEFFICIENTS[Math.max(0, Math.min(MAX_TIER - 1, tier - 1))]!;
+  const cap = Math.min(MAX_TIER, def.maxTier);
+  const coeff = TIER_COEFFICIENTS[Math.max(0, Math.min(cap - 1, tier - 1))]!;
   return { atk: def.atk * coeff, frq: def.frq * coeff, rge: def.rge, targets: def.targets };
 }
 
@@ -96,23 +172,21 @@ export function generalPOW(def: GeneralDef, tier: number): number {
   return s.atk * s.frq * s.rge * s.targets;
 }
 
-// 羁绊：悟空上场 → 全队攻击 +12%（对应竞品 赵云+阿斗 羁绊）
+// 羁绊：悟空上场 → 全队攻击 +12%
 export const BOND_GENERAL = 'wukong';
 export const BOND_NAME = '大圣护法';
 export const BOND_ATK_BONUS = 0.12;
 
-// 字牌掉落池（按 weight 展开，权重越小越稀有）
+// 字牌掉落基础池（按 weight 展开）；实际抽字见 word-draw.ts（阶段权重 + 孤儿）
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>
   g.chars.flatMap((c) => Array.from({ length: g.weight }, () => ({ char: c, general: g.id }))),
 );
 
 // —— 大招（复用 skillCd 定期触发）——
-// 类型按 skill 派生：远程单点(ranged) = 暴击(单体高倍 + 飘「暴击!」)，其余 = 群攻(范围结算)。
 export type UltType = 'aoe' | 'crit';
 
 export function ultTypeOf(def: GeneralDef): UltType {
   return def.skill === 'ranged' ? 'crit' : 'aoe';
 }
 
-// 暴击英雄大招在其单体基础倍数上再乘的倍率（初版，后续用 tools/sweep*.mjs 复核平衡）
 export const CRIT_MULT = 1.5;

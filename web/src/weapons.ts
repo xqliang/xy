@@ -29,20 +29,28 @@ export interface WeaponDef {
   stat: WeaponStat;
 }
 
-// 每位武将一件专属神兵（12 件）
+// 每位武将一件专属神兵（与 GENERALS 一一对应）
 export const WEAPONS: WeaponDef[] = [
   { id: 'jingubang', name: '如意金箍棒', general: 'wukong', stat: 'rge' },
-  { id: 'huojianqiang', name: '火尖枪', general: 'nezha', stat: 'frq' },
+  { id: 'xiaodingpa', name: '小钉耙', general: 'wuneng', stat: 'atk' },
   { id: 'sanjianliangrendao', name: '三尖两刃刀', general: 'erlang', stat: 'atk' },
+  { id: 'zhiyunjian', name: '织云箭', general: 'niulang', stat: 'frq' },
+  { id: 'huojianqiang', name: '火尖枪', general: 'nezha', stat: 'frq' },
+  { id: 'kanyaodao', name: '砍妖刀', general: 'jinzha', stat: 'atk' },
   { id: 'huntianling', name: '混天绫', general: 'honghaier', stat: 'frq' },
+  { id: 'chiyanpao', name: '赤焰袍', general: 'hongpao', stat: 'frq' },
   { id: 'jiuchidingba', name: '九齿钉耙', general: 'bajie', stat: 'atk' },
-  { id: 'bajiaoshan', name: '芭蕉扇', general: 'tieshan', stat: 'rge' },
-  { id: 'jiangyaozhang', name: '降妖宝杖', general: 'shaseng', stat: 'atk' },
+  { id: 'duandingpa', name: '短钉耙', general: 'xiaojie', stat: 'atk' },
   { id: 'niujiao', name: '混铁棍', general: 'niumowang', stat: 'atk' },
-  { id: 'jingping', name: '净瓶玉露', general: 'guanyin', stat: 'frq' },
+  { id: 'qingniujiao', name: '青牛角', general: 'qingniu', stat: 'atk' },
+  { id: 'bajiaoshan', name: '芭蕉扇', general: 'tieshan', stat: 'rge' },
+  { id: 'tiebeijia', name: '铁背甲', general: 'tiebei', stat: 'atk' },
+  { id: 'jiangyaozhang', name: '降妖宝杖', general: 'shaseng', stat: 'atk' },
+  { id: 'liushazhang', name: '流沙杖', general: 'liusha', stat: 'rge' },
+  { id: 'longyajian', name: '龙牙剑', general: 'bailong', stat: 'atk' },
   { id: 'baiguzhang', name: '白骨爪', general: 'baigujing', stat: 'frq' },
-  { id: 'jinxijzhang', name: '九环锡杖', general: 'tangseng', stat: 'rge' },
-  { id: 'renzhedai', name: '人种袋', general: 'mile', stat: 'atk' },
+  { id: 'jingping', name: '净瓶玉露', general: 'guanyin', stat: 'frq' },
+  { id: 'fanyinzhu', name: '梵音珠', general: 'fanyin', stat: 'rge' },
 ];
 
 export function weaponById(id: string): WeaponDef | undefined {

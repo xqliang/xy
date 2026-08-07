@@ -13,7 +13,7 @@ import {
 import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, qualityColor, qualityName } from './generals';
+import { generalById, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -1673,9 +1673,9 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 // 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
 // 点击字牌：高亮该字牌，若已激活则连同搭档格与攻击范围，并弹出武将信息面板
 function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: string; general: string; tier: number; cell: { c: number; r: number } }) {
-  const def = generalById(w.general);
-  if (!def) return;
   const active = b.activeGenerals().find((g) => g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r));
+  const def = active?.def ?? generalById(w.general) ?? generalsWithChar(w.char)[0];
+  if (!def) return;
   const gx = BOARD_X + w.cell.c * CELL;
   const gy = BOARD_Y + w.cell.r * CELL;
   ctx.save();
@@ -1702,8 +1702,8 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.restore();
 
   // 信息面板：固定显示在 AI 半场（行 0..FENCE_ROW）中央，避免遮住攻击范围环
-  const pw = 194;
-  const ph = active ? 150 : 134;
+  const pw = 210;
+  const ph = active ? 166 : 150;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
   ctx.save();
@@ -1716,31 +1716,35 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
   ctx.lineWidth = 2;
   ctx.strokeStyle = active ? '#f0b93c' : qualityColor(w.tier);
   ctx.stroke();
-  // 标题：武将名 + 品质阶
+  // 标题：武将名；右侧品质阶；第二行攻击方式·满级
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe6b0';
   ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText(def.name, px + 12, py + 18);
+  ctx.fillText(def.name, px + 12, py + 16);
   ctx.textAlign = 'right';
   ctx.fillStyle = qualityColor(w.tier);
-  ctx.font = 'bold 13px "PingFang SC", sans-serif';
-  ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}`, px + pw - 12, py + 16);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,226,122,0.9)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.atkStyle}·满级${def.maxTier}`, px + 12, py + 32);
   // 技能（未激活时置灰并标注不生效）
   ctx.textAlign = 'left';
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
+  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 50);
   if (!active) {
     ctx.fillStyle = 'rgba(255,154,106,0.85)';
     ctx.font = '10px "PingFang SC", sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText('未激活·不生效', px + pw - 12, py + 40);
+    ctx.fillText('未激活·不生效', px + pw - 12, py + 50);
     ctx.textAlign = 'left';
     ctx.font = '12px "PingFang SC", sans-serif';
   }
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
-  ctx.fillText(def.skillDesc, px + 12, py + 56);
+  ctx.fillText(def.skillDesc, px + 12, py + 66);
   // 属性（激活时计入品质阶/神兵）
   const rows: [string, string][] = active
     ? [
@@ -1755,7 +1759,7 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
         ['范围', def.rge.toFixed(1)],
       ];
   ctx.font = '13px "PingFang SC", sans-serif';
-  let ry = py + 78;
+  let ry = py + 88;
   for (const [k, v] of rows) {
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255,240,210,0.7)';
@@ -1772,10 +1776,10 @@ function drawWordSelection(ctx: CanvasRenderingContext2D, b: Battle, w: { char: 
     ctx.font = 'bold 12px "PingFang SC", sans-serif';
     ctx.fillText('✓ 已激活（金框生效）', px + 12, py + ph - 12);
   } else {
-    const other = def.chars.find((c) => c !== w.char) ?? '';
+    const mates = partnerChars(w.char).join('/');
     ctx.fillStyle = '#ff9a6a';
-    ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`未激活：需「${other}」左右紧邻`, px + 12, py + ph - 12);
+    ctx.font = '11px "PingFang SC", sans-serif';
+    ctx.fillText(`未激活：需「${mates}」按名左右相邻`, px + 12, py + ph - 12);
   }
   ctx.restore();
 }
@@ -2647,7 +2651,7 @@ function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolea
 function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean {
   if (!b) return false;
   if (a.kind === 'word' && b.kind === 'word') {
-    return a.char === b.char && a.tier === b.tier && b.tier < MAX_TIER;
+    return false; // 单字不可合并
   }
   if (a.kind === 'unit' && b.kind === 'unit') {
     return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });

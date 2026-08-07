@@ -18,7 +18,20 @@ import {
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
-import { generalById, generalStat, qualityName, qualityColor, WORD_POOL, BOND_GENERAL, BOND_ATK_BONUS, ultTypeOf, CRIT_MULT, type GeneralDef } from './generals';
+import {
+  generalById,
+  generalStat,
+  qualityName,
+  qualityColor,
+  matchGeneral,
+  partnerChars,
+  BOND_GENERAL,
+  BOND_ATK_BONUS,
+  ultTypeOf,
+  CRIT_MULT,
+  type GeneralDef,
+} from './generals';
+import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
@@ -71,6 +84,7 @@ export const TUNING = {
   shovelPityAfter: 3, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
+  pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
   summonMaxPerKeyAllOpen: 5, // 阵位全开后：铲子无用，放宽同兵种上限到 5（更快堆同型合成）
   traySize: 5, // 候选区容量
@@ -125,7 +139,7 @@ const MAP_SKILL: Record<string, MonsterSkill> = {
   pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
 };
 
-// 候选区令牌：兵种 / 铲子 / 武将字牌（字牌带阶数，可同字同阶合并升阶）
+// 候选区令牌：兵种 / 铲子 / 武将字牌（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
 export type TrayToken =
   | { kind: 'unit'; type: UnitType; tier: number }
   | { kind: 'shovel' }
@@ -290,6 +304,7 @@ export class Battle {
   summonCount = 0;
   private summonsSinceShovel = 0; // 距上次出铲经过的征兵次数（铲子保底计数）
   private summonsSinceWord = 0; // 距上次出字经过的征兵次数（字牌保底计数）
+  private summonsSincePair = 0; // 距上次补上孤儿配对经过的征兵次数（半对保底）
 
   units = new Map<string, PlacedUnit>();
   words = new Map<string, PlacedWord>(); // 棋盘上的武将字牌（各占一格）
@@ -488,24 +503,39 @@ export class Battle {
     else this.summonsSinceShovel += 1;
     // 非首次征兵：按字牌掉率把部分「兵」槽转成武将字牌（首次保底不转，维持≥4兵）
     const forceWord = !firstSummon && this.summonsSinceWord >= TUNING.wordPityAfter;
+    const orphansBefore = this.orphanCharsNow();
+    const forcePartner = !firstSummon && orphansBefore.length > 0 && this.summonsSincePair >= TUNING.pairPityAfter;
+    const trayWordsSoFar: string[] = [];
+    let partnerForced = false;
+    const drawOneWord = (forcePair: boolean) => {
+      const w = pickWordChar(this.rng, Math.max(1, this.wave), orphansBefore, trayWordsSoFar, forcePair);
+      trayWordsSoFar.push(w.char);
+      if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
+      return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
+    };
     const draws: TrayToken[] = base.map((tok) => {
       if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus) {
-        const w = this.rng.pick(WORD_POOL);
-        return { kind: 'word', char: w.char, general: w.general, tier: 1 };
+        const useForce = forcePartner && !partnerForced;
+        return drawOneWord(useForce);
       }
       return tok;
     });
     if (forceWord && !draws.some((t) => t.kind === 'word')) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
-      if (idx >= 0) {
-        const w = this.rng.pick(WORD_POOL);
-        draws[idx] = { kind: 'word', char: w.char, general: w.general, tier: 1 };
-      }
+      if (idx >= 0) draws[idx] = drawOneWord(forcePartner);
+    } else if (forcePartner && !partnerForced) {
+      const idx = draws.findIndex((t) => t.kind === 'unit');
+      if (idx >= 0) draws[idx] = drawOneWord(true);
     }
     this.tray = draws;
     if (draws.some((t) => t.kind === 'word')) this.summonsSinceWord = 0;
     else if (!firstSummon) this.summonsSinceWord += 1; // 首次征兵不计入保底 streak
-    this.message = '把兵拖到绿格；两个同将字牌可凑成武将（占两格）';
+    // 半对保底：有孤儿时，本盘若抽出了可补缺字则清零，否则累加
+    if (firstSummon || orphansBefore.length === 0) this.summonsSincePair = 0;
+    else if (partnerForced || trayWordsSoFar.some((c) => orphansBefore.some((o) => partnerChars(o).includes(c)))) {
+      this.summonsSincePair = 0;
+    } else this.summonsSincePair += 1;
+    this.message = '把兵拖到绿格；左右凑齐武将双字可激活（占两格）';
     return true;
   }
 
@@ -528,23 +558,30 @@ export class Battle {
   forceWordPityForTest(): void { this.summonsSinceWord = TUNING.wordPityAfter; }
   /** 测试钩子：将铲子保底计数设为阈值，便于单测触发 forceShovel */
   forceShovelPityForTest(): void { this.summonsSinceShovel = TUNING.shovelPityAfter; }
+  /** 测试钩子：将半对保底计数设为阈值 */
+  forcePairPityForTest(): void { this.summonsSincePair = TUNING.pairPityAfter; }
 
-  // 候选区内合并：兵种同型同级升阶；字牌同字同阶升阶。
+  /** 当前孤儿字（棋盘未激活 + tray） */
+  orphanCharsNow(): string[] {
+    const actives = this.activeGenerals();
+    const activeKeys = new Set<string>();
+    for (const g of actives) {
+      for (const c of g.cells) activeKeys.add(cellKey(c.c, c.r));
+    }
+    const board = [...this.words.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
+    const trayChars = this.tray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word').map((t) => t.char);
+    return collectOrphanChars(board, trayChars, activeKeys);
+  }
+
+  // 候选区内合并：仅兵种同型同级升阶；字牌禁止互相合并。
   mergeTrayTokens(from: number, to: number): boolean {
     if (from === to) return false;
     const a = this.tray[from];
     const b = this.tray[to];
     if (!a || !b) return false;
     if (a.kind === 'word' && b.kind === 'word') {
-      if (a.char !== b.char || a.tier !== b.tier || b.tier >= MAX_TIER) {
-        this.message = '字牌需同字同阶才能升阶';
-        return false;
-      }
-      this.tray[to] = { kind: 'word', char: b.char, general: b.general, tier: b.tier + 1 };
-      this.tray.splice(from, 1);
-      this.message = `字牌「${b.char}」升为 ${b.tier + 1} 阶`;
-      this.emit('merge');
-      return true;
+      this.message = '单字不可合并，需凑对激活后升阶';
+      return false;
     }
     if (a.kind !== 'unit' || b.kind !== 'unit') return false;
     if (a.type !== b.type || a.tier !== b.tier || b.tier >= MAX_TIER) {
@@ -568,7 +605,7 @@ export class Battle {
     return s;
   }
 
-  // 扫描棋盘：左右紧邻且同将的两个不同字 → 激活武将（中间有空格/别的兵则不生效）
+  // 扫描棋盘：左右紧邻且 chars 序对匹配某武将 → 激活（按字匹配，支持门派共享字）
   activeGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
@@ -579,23 +616,28 @@ export class Battle {
       if (!right) continue;
       const kR = cellKey(right.cell.c, right.cell.r);
       if (used.has(kR)) continue;
-      if (right.general !== w.general) continue;
-      const def = generalById(w.general);
+      // 左→右按武将名连读匹配（如「二郎」成立，「郎二」不激活）；不要求 general 字段一致
+      const def = matchGeneral(w.char, right.char);
       if (!def) continue;
-      // 必须左→右按武将名连读：左格=chars[0]、右格=chars[1]（如「二郎」成立，「郎二」不激活）
-      if (w.char !== def.chars[0] || right.char !== def.chars[1]) continue;
       used.add(kL);
       used.add(kR);
+      // 继承对齐：只升不降，受该武将 maxTier 封顶
+      const cap = def.maxTier;
+      const target = Math.min(Math.max(w.tier, right.tier), cap);
+      if (w.tier < target) w.tier = target;
+      if (right.tier < target) right.tier = target;
+      w.general = def.id;
+      right.general = def.id;
       if (this.mods.generalTierDelta > 0 && !this.tierBoosted.has(def.id)) {
         this.tierBoosted.add(def.id);
         for (let i = 0; i < this.mods.generalTierDelta; i++) {
-          if (w.tier < MAX_TIER) w.tier += 1;
-          if (right.tier < MAX_TIER) right.tier += 1;
+          if (w.tier < cap) w.tier += 1;
+          if (right.tier < cap) right.tier += 1;
         }
       }
       out.push({
         def,
-        tier: Math.min(w.tier, right.tier), // 以较弱的字为准
+        tier: Math.min(w.tier, right.tier, cap),
         cells: [w.cell, right.cell],
         state: this.stateOf(def.id),
       });
@@ -629,14 +671,15 @@ export class Battle {
       this.message = '只能放到已解锁的绿格';
       return false;
     }
-    // 字牌：占一格落在棋盘上；同字同阶则升阶。与同将另一个字左右紧邻即自动激活武将。
+    // 字牌：占一格；禁止同字合并。与可匹配另一字左右紧邻即激活武将。
     if (token.kind === 'word') {
-      // 喂 1 张同将同阶字牌给「已激活武将」→ 整对一起升阶（1级大圣 + 1级大/圣 → 2级大圣）
+      // 喂 1 张同将字符、同阶字牌给「已激活武将」→ 整对一起升阶（受 maxTier）
       const g = this.activeGenerals().find((gg) => gg.cells.some((cc) => cc.c === to.c && cc.r === to.r));
-      if (g && token.general === g.def.id) {
+      if (g && g.def.chars.includes(token.char)) {
         const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
         const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
-        if (wa && wb && wa.tier === wb.tier && token.tier === wa.tier && wa.tier < MAX_TIER) {
+        const cap = g.def.maxTier;
+        if (wa && wb && wa.tier === wb.tier && token.tier === wa.tier && wa.tier < cap) {
           wa.tier += 1;
           wb.tier += 1;
           this.tray.splice(index, 1);
@@ -649,12 +692,9 @@ export class Battle {
       }
       const exist = this.wordAt(to.c, to.r);
       if (exist) {
-        if (exist.char === token.char && exist.tier === token.tier && exist.tier < MAX_TIER) {
-          exist.tier += 1;
-          this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(exist.tier) });
-          this.tray.splice(index, 1);
-          this.message = `字牌「${exist.char}」升为 ${exist.tier} 阶`;
-          return true;
+        if (exist.char === token.char) {
+          this.message = '单字不可合并，需凑对激活后升阶';
+          return false;
         }
         // 不同字 → 与该格字牌交换
         this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
@@ -672,10 +712,14 @@ export class Battle {
       }
       this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
       this.tray.splice(index, 1);
-      const def = generalById(token.general);
-      const active = this.activeGenerals().some((g) => g.def.id === token.general);
-      this.emit(active ? 'general' : 'place');
-      this.message = active ? `${def?.name ?? ''} 已激活！(金框生效)` : `放下「${token.char}」，按「${def?.name ?? ''}」顺序左右相邻可激活（${def?.chars[0]}在左·${def?.chars[1]}在右）`;
+      const activated = this.activeGenerals().find((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r));
+      this.emit(activated ? 'general' : 'place');
+      if (activated) {
+        this.message = `${activated.def.name} 已激活！(金框生效)`;
+      } else {
+        const mates = partnerChars(token.char).join('/');
+        this.message = `放下「${token.char}」，与「${mates}」按武将名左右相邻可激活`;
+      }
       return true;
     }
     // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称
@@ -743,12 +787,13 @@ export class Battle {
     }
     const kTo = cellKey(to.c, to.r);
     const wasActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === from.c && cc.r === from.r));
-    // 把一张同将同阶的备用字牌拖到「已激活武将」→ 整对升阶（与从候选区喂字一致）
+    // 把一张同将字符、同阶的备用字牌拖到「已激活武将」→ 整对升阶（与从候选区喂字一致）
     const gTo = this.activeGenerals().find((gg) => gg.cells.some((cc) => cc.c === to.c && cc.r === to.r));
-    if (gTo && w.general === gTo.def.id && !gTo.cells.some((cc) => cc.c === from.c && cc.r === from.r)) {
+    if (gTo && gTo.def.chars.includes(w.char) && !gTo.cells.some((cc) => cc.c === from.c && cc.r === from.r)) {
       const wa = this.words.get(cellKey(gTo.cells[0].c, gTo.cells[0].r));
       const wb = this.words.get(cellKey(gTo.cells[1].c, gTo.cells[1].r));
-      if (wa && wb && wa.tier === wb.tier && w.tier === wa.tier && wa.tier < MAX_TIER) {
+      const cap = gTo.def.maxTier;
+      if (wa && wb && wa.tier === wb.tier && w.tier === wa.tier && wa.tier < cap) {
         wa.tier += 1;
         wb.tier += 1;
         this.words.delete(kFrom); // 消耗被拖入的字牌
@@ -762,12 +807,9 @@ export class Battle {
     const tw = this.words.get(kTo);
     const tu = this.units.get(kTo);
     if (tw) {
-      if (tw.char === w.char && tw.tier === w.tier && tw.tier < MAX_TIER) {
-        tw.tier += 1; // 同字同阶 → 升阶
-        this.words.delete(kFrom);
-        this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(tw.tier) });
-        this.message = `字牌「${tw.char}」升为 ${tw.tier} 阶`;
-        return true;
+      if (tw.char === w.char) {
+        this.message = '单字不可合并，需凑对激活后升阶';
+        return false;
       }
       // 两张字牌互换位置
       this.words.set(kFrom, { ...tw, cell: { c: from.c, r: from.r } });
@@ -1313,7 +1355,8 @@ export class Battle {
     const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
     const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
     if (!wa || !wb) return;
-    if (wa.tier >= MAX_TIER && wb.tier >= MAX_TIER) return; // 双字已满阶：丢弃经验，不存入 generalStates
+    const cap = g.def.maxTier;
+    if (wa.tier >= cap && wb.tier >= cap) return; // 双字已达该武将满级：丢弃经验
 
     const s = g.state;
     s.exp += amount;
@@ -1321,18 +1364,18 @@ export class Battle {
       const wa2 = this.wordAt(g.cells[0].c, g.cells[0].r);
       const wb2 = this.wordAt(g.cells[1].c, g.cells[1].r);
       if (!wa2 || !wb2) break;
-      const can = wa2.tier < MAX_TIER || wb2.tier < MAX_TIER;
+      const can = wa2.tier < cap || wb2.tier < cap;
       if (!can) {
         s.exp = 0; // 升阶过程中触顶：清掉剩余进度，避免拆开后多段连升
         break;
       }
       s.exp -= Battle.expToNext(s.level);
-      if (wa2.tier < MAX_TIER) wa2.tier += 1;
-      if (wb2.tier < MAX_TIER) wb2.tier += 1;
+      if (wa2.tier < cap) wa2.tier += 1;
+      if (wb2.tier < cap) wb2.tier += 1;
       s.level += 1;
       this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
       this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
-      this.message = `${g.def.name} 升为 ${Math.min(wa2.tier, wb2.tier)} 阶`;
+      this.message = `${g.def.name} 升为 ${Math.min(wa2.tier, wb2.tier, cap)} 阶`;
     }
   }
   // 含品质阶的武将实际攻击力
@@ -1751,17 +1794,21 @@ export class Battle {
         continue;
       }
       const token = this.tray[0]!;
-      // 字牌：优先放到能与同将另一个字左右相邻的格（直接激活武将）；否则放任意空格
+      // 字牌：优先放到能与可配对字左右相邻的格（直接激活武将）；否则放任意空格
       if (token.kind === 'word') {
-        const mate = [...this.words.values()].find((w) => w.general === token.general && w.char !== token.char);
+        const mates = partnerChars(token.char);
+        const mate = [...this.words.values()].find((w) => mates.includes(w.char));
         const cells = this.unlockedCells().filter((c) => this.cellFree(c.c, c.r));
-        // 按左→右连读顺序放：token 是 chars[0] 放 mate 左侧，是 chars[1] 放 mate 右侧，确保能激活
-        const def = generalById(token.general);
-        const tokenIsLeft = def ? token.char === def.chars[0] : true;
-        const wantC = mate ? (tokenIsLeft ? mate.cell.c - 1 : mate.cell.c + 1) : undefined;
-        let target = mate && wantC != null
-          ? cells.find((c) => c.r === mate.cell.r && c.c === wantC)
-          : undefined;
+        let target: Cell | undefined;
+        if (mate) {
+          const asLeft = matchGeneral(token.char, mate.char);
+          const asRight = matchGeneral(mate.char, token.char);
+          if (asLeft) {
+            target = cells.find((c) => c.r === mate.cell.r && c.c === mate.cell.c - 1);
+          } else if (asRight) {
+            target = cells.find((c) => c.r === mate.cell.r && c.c === mate.cell.c + 1);
+          }
+        }
         target ??= cells[0];
         if (target && this.placeFromTray(0, target)) continue;
         this.tray.splice(0, 1); // 无空格可放则弃置
