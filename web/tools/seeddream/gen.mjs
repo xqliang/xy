@@ -13,8 +13,8 @@ mkdirSync(OUT, { recursive: true });
 const STYLE = '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，纯白色背景，无阴影，无文字，高辨识度';
 const jobs = [
   { id: 'tangseng', prompt: '唐僧，圆脸慈眉、金红色袈裟、毗卢帽、双手合十，主色金红' + STYLE },
-  { id: 'unit-monkey', prompt: '孙悟空猴兵，金黄毛发、手持金箍棒，主色橙金色' + STYLE },
-  { id: 'unit-spear', prompt: '天兵长枪手，蓝色铠甲、手持一杆长枪，主色蓝色' + STYLE },
+  { id: 'unit-monkey', prompt: '天兵刀兵人类士兵，橙金色轻甲、侧身打斗姿势面向右、高举弯刀劈砍，非猴子非悟空，主色橙金色' + STYLE },
+  { id: 'unit-spear', prompt: '天兵长枪手人类士兵，侧身打斗姿势面向右、双手握长枪向前突刺，亮青蓝铠甲、鲜红大枪缨与朱红腰带，主色青蓝+朱红' + STYLE },
   { id: 'unit-cavalry', prompt: '天将骑白色天马冲锋，绿色披风，主色绿色' + STYLE },
   { id: 'unit-archer', prompt: '神箭手，紫色劲装、手持弓箭拉满，主色紫色' + STYLE },
   { id: 'monster-minion', prompt: '西游小妖卒，青绿皮肤獠牙、手持木棍，主色青绿色' + STYLE },
