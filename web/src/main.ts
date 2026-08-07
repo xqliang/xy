@@ -72,6 +72,9 @@ let bag: BagState = loadBag();
 let bagToast = '';
 let bagPopup: string | null = null; // 打开详情 tips 的神兵 id（null=未开）
 let menuToast = '';
+// 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
+let menuDownId: string | null = null;
+let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
 let shopToast = '';
 let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗（null=未开）
 // 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
@@ -95,9 +98,7 @@ function newGame() {
   ui.paused = false;
 }
 
-function handleMenu(x: number, y: number) {
-  const id = menuButtonAt(x, y);
-  if (!id) return;
+function handleMenu(id: string) {
   playSfx('click');
   if (id === 'mute') {
     const m = toggleMute();
@@ -252,7 +253,9 @@ function onPointerDown(e: PointerEvent) {
   initAudio(); // 首个用户手势后启用音频（浏览器自动播放策略）
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
-    handleMenu(x, y);
+    menuDownId = menuButtonAt(x, y);
+    menuPressedId = menuDownId;
+    if (menuDownId) canvas.setPointerCapture(e.pointerId);
     return;
   }
   if (screen === 'shop') {
@@ -341,8 +344,18 @@ function onPointerDown(e: PointerEvent) {
 }
 canvas.addEventListener('pointerdown', (e) => { onPointerDown(e); scheduleFrame(); });
 canvas.addEventListener('pointermove', onPointerMove);
-canvas.addEventListener('pointerup', () => { onPointerUp(); scheduleFrame(); });
+canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
+canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
 function onPointerMove(e: PointerEvent) {
+  if (screen === 'menu' && menuDownId) {
+    const { x, y } = toLogical(e.clientX, e.clientY);
+    const next = menuButtonAt(x, y) === menuDownId ? menuDownId : null;
+    if (next !== menuPressedId) {
+      menuPressedId = next;
+      scheduleFrame();
+    }
+    return;
+  }
   if (screen === 'shop') {
     if (!shopPointerActive) return;
     const { y } = toLogical(e.clientX, e.clientY);
@@ -356,7 +369,21 @@ function onPointerMove(e: PointerEvent) {
   ui.dragPos = toLogical(e.clientX, e.clientY);
   scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
 }
-function onPointerUp() {
+function onPointerUp(e?: PointerEvent, cancelled = false) {
+  if (screen === 'menu' && menuDownId) {
+    const id = menuDownId;
+    let stillOn = false;
+    if (!cancelled && e) {
+      const { x, y } = toLogical(e.clientX, e.clientY);
+      stillOn = menuButtonAt(x, y) === id;
+    } else if (!cancelled) {
+      stillOn = menuPressedId === id;
+    }
+    menuDownId = null;
+    menuPressedId = null;
+    if (stillOn) handleMenu(id);
+    return;
+  }
   if (screen === 'shop') {
     // 轻点(未拖动)才触发购买；拖动只滚动
     if (shopPointerActive && !shopDragged) handleShop(shopDownX, shopDownY);
@@ -440,6 +467,7 @@ function frame(now: number): void {
       muted: isMuted(),
       musicOn: isMusicOn(),
       endlessOn,
+      pressedId: menuPressedId,
     });
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);

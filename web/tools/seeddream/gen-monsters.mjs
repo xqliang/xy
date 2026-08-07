@@ -13,20 +13,22 @@ const MODEL = 'doubao-seedream-4-0-250828';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/game-assets');
 
-const STYLE = '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，纯白色背景，无阴影，无文字，高辨识度';
+const STYLE =
+  '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，' +
+  '纯白色背景，无地面、无脚下灰色投影、无底部白色光晕、无阴影、无文字，角色脚底干净贴边，高辨识度';
 const jobs = [
   // 火焰山：烈焰主题（Boss 沿用牛魔王）
-  { id: 'monster-minion-huoyanshan', prompt: '火焰山小妖卒，通体火红、头顶跳动火苗、獠牙短角、手持烧红铁棍，主色橙红色' + STYLE },
-  { id: 'monster-boss-huoyanshan', prompt: '牛魔王妖王，赤红肌肉、巨大黑牛角、黑金铠甲、怒目獠牙，主色红色' + STYLE },
+  { id: 'monster-minion-huoyanshan', prompt: '火焰山小妖卒，通体火红、头顶跳动火苗、獠牙短角、手持烧红铁棍，主色橙红色，脚底干净无投影' + STYLE },
+  { id: 'monster-boss-huoyanshan', prompt: '牛魔王妖王，赤红肌肉、巨大黑牛角、黑金铠甲、怒目獠牙，主色红色，脚底干净无投影' + STYLE },
   // 流沙河：水/河妖主题
-  { id: 'monster-minion-liushahe', prompt: '流沙河河妖小卒，青灰鱼头水鬼、蹼状手掌、湿滑鳞片、滴水，主色青灰蓝色' + STYLE },
-  { id: 'monster-boss-liushahe', prompt: '流沙河巨型河妖卷帘水怪，青蓝鳞甲、须发飘荡、獠牙、手持降妖宝杖，主色墨蓝色' + STYLE },
+  { id: 'monster-minion-liushahe', prompt: '流沙河河妖小卒，青灰鱼头水鬼、蹼状手掌、湿滑鳞片、滴水，主色青灰蓝色，脚底干净无投影' + STYLE },
+  { id: 'monster-boss-liushahe', prompt: '流沙河巨型河妖卷帘水怪，青蓝鳞甲、须发飘荡、獠牙、手持降妖宝杖，主色墨蓝色，脚底干净无投影' + STYLE },
   // 白骨岭：骸骨主题
-  { id: 'monster-minion-baiguling', prompt: '白骨岭骷髅小卒，白骨骷髅兵、空洞眼窝、手持锈蚀弯刀、破碎腰甲，主色骨白色' + STYLE },
-  { id: 'monster-boss-baiguling', prompt: '白骨精妖女，惨白骷髅妖女、白骨裙裾、幽绿鬼火缠绕、阴森妖艳，主色惨白色' + STYLE },
+  { id: 'monster-minion-baiguling', prompt: '白骨岭骷髅小卒，白骨骷髅兵、空洞眼窝、手持锈蚀弯刀、破碎腰甲，主色骨白色，脚底干净无投影' + STYLE },
+  { id: 'monster-boss-baiguling', prompt: '白骨精妖女，惨白骷髅妖女、白骨裙裾、幽绿鬼火缠绕、阴森妖艳，主色惨白色，脚底干净无投影' + STYLE },
   // 盘丝洞：蜘蛛主题
-  { id: 'monster-minion-pansidong', prompt: '盘丝洞蜘蛛小妖，紫黑色八爪小蜘蛛、独眼獠牙、身缠蛛丝，主色紫黑色' + STYLE },
-  { id: 'monster-boss-pansidong', prompt: '盘丝洞蜘蛛精，紫衣蛛女、多足蛛身、身后盘丝大网、妖艳诡异，主色紫色' + STYLE },
+  { id: 'monster-minion-pansidong', prompt: '盘丝洞蜘蛛小妖，紫黑色八爪小蜘蛛、独眼獠牙、身缠蛛丝，主色紫黑色，脚底干净无投影' + STYLE },
+  { id: 'monster-boss-pansidong', prompt: '盘丝洞蜘蛛精，紫衣蛛女、多足蛛身、身后盘丝大网、妖艳诡异，主色紫色，脚底干净无投影' + STYLE },
 ];
 
 async function gen(job) {

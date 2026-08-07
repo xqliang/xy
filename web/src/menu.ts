@@ -20,6 +20,8 @@ export interface MenuInfo {
   muted: boolean;
   musicOn: boolean;
   endlessOn: boolean;
+  /** 当前按下的按钮 id（手指仍压在该按钮上时有按下态视觉） */
+  pressedId: string | null;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -99,32 +101,54 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.drawImage(spr, VIEW_W / 2 - (spr.width * scale) / 2, 250, spr.width * scale, spr.height * scale);
   }
 
-  // 按钮
+  // 按钮（pressedId 时轻微下压 + 变暗，让点击有反馈）
   for (const b of menuButtons()) {
+    const pressed = info.pressedId === b.id;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    if (pressed) {
+      ctx.save();
+      ctx.translate(cx, cy + 2);
+      ctx.scale(0.96, 0.96);
+      ctx.translate(-cx, -cy);
+    }
     if (b.id === 'mute') {
+      if (pressed) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(122,59,18,0.18)';
+        ctx.fill();
+      }
       ctx.font = '26px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(info.muted ? '🔇' : '🔊', b.x + b.w / 2, b.y + b.h / 2);
+      ctx.fillText(info.muted ? '🔇' : '🔊', cx, cy);
+      if (pressed) ctx.restore();
       continue;
     }
     if (b.id === 'music') {
       // 背景音乐开关：开=音符，关=半透明音符+红色斜杠
-      const mx = b.x + b.w / 2, my = b.y + b.h / 2;
+      if (pressed) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(122,59,18,0.18)';
+        ctx.fill();
+      }
       ctx.font = '24px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.globalAlpha = info.musicOn ? 1 : 0.35;
-      ctx.fillText('🎵', mx, my);
+      ctx.fillText('🎵', cx, cy);
       ctx.globalAlpha = 1;
       if (!info.musicOn) {
         ctx.strokeStyle = '#c8392b';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(mx - 13, my + 13);
-        ctx.lineTo(mx + 13, my - 13);
+        ctx.moveTo(cx - 13, cy + 13);
+        ctx.lineTo(cx + 13, cy - 13);
         ctx.stroke();
       }
+      if (pressed) ctx.restore();
       continue;
     }
     if (b.id === 'endless') {
@@ -132,6 +156,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       const boxSize = 24;
       const boxX = b.x + 40;
       const boxY = b.y + (b.h - boxSize) / 2;
+      if (pressed) {
+        roundRect(ctx, b.x + 20, b.y, b.w - 40, b.h, 8);
+        ctx.fillStyle = 'rgba(122,59,18,0.12)';
+        ctx.fill();
+      }
       roundRect(ctx, boxX, boxY, boxSize, boxSize, 6);
       ctx.fillStyle = info.endlessOn ? '#b5391f' : 'rgba(255,244,224,0.65)';
       ctx.fill();
@@ -152,29 +181,46 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       ctx.font = 'bold 20px "PingFang SC", sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText('无尽模式', boxX + boxSize + 12, b.y + b.h / 2);
+      ctx.fillText('无尽模式', boxX + boxSize + 12, cy);
+      if (pressed) ctx.restore();
       continue;
     }
     if (b.id === 'mapPrev' || b.id === 'mapNext') {
       // 地图切换箭头（调试用）
       roundRect(ctx, b.x, b.y, b.w, b.h, 10);
-      ctx.fillStyle = '#8a6a3a';
+      ctx.fillStyle = pressed ? '#6a4a22' : '#8a6a3a';
       ctx.fill();
       ctx.fillStyle = '#fff4e0';
       ctx.font = 'bold 22px "PingFang SC", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(b.id === 'mapPrev' ? '‹' : '›', b.x + b.w / 2, b.y + b.h / 2);
+      ctx.fillText(b.id === 'mapPrev' ? '‹' : '›', cx, cy);
+      if (pressed) ctx.restore();
       continue;
     }
     const isStart = b.id === 'start';
     roundRect(ctx, b.x, b.y, b.w, b.h, 12);
-    ctx.fillStyle =
+    const base =
       isStart ? '#b5391f' :
       b.id === 'ad' ? '#c8792b' :
       b.id === 'share' ? '#4a8a4a' :
       b.id === 'shop' ? '#7a4aa0' : '#8a6a3a';
+    const dim =
+      isStart ? '#8a2a14' :
+      b.id === 'ad' ? '#9a5a1a' :
+      b.id === 'share' ? '#356a35' :
+      b.id === 'shop' ? '#5a3078' : '#6a4a22';
+    ctx.fillStyle = pressed ? dim : base;
     ctx.fill();
+    if (pressed) {
+      // 内阴影感：顶部压暗一条，强化「按进去」
+      ctx.save();
+      roundRect(ctx, b.x, b.y, b.w, b.h, 12);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(b.x, b.y, b.w, 6);
+      ctx.restore();
+    }
     ctx.fillStyle = '#fff4e0';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -186,7 +232,8 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       b.id === 'codex' ? '图鉴' :
       b.id === 'rank' ? '排行榜' : '武器背包';
     ctx.font = isStart ? 'bold 26px "PingFang SC", sans-serif' : '16px "PingFang SC", sans-serif';
-    ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
+    ctx.fillText(label, cx, cy);
+    if (pressed) ctx.restore();
   }
 
   // 当前地图名（夹在切换箭头之间，调试用）

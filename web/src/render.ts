@@ -79,7 +79,7 @@ export function getButtons(b: Battle): Button[] {
     // 布阵：移到候选区(tray)右端，与候选槽同高，便于拿到令牌后就近一键落位
     { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: !trayEmpty },
     // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
-    { id: 'summon', label: `征兵${b.effectiveSummonCost()}🍑`, x: 180, y, w: 200, h: 78, enabled: canSummon },
+    { id: 'summon', label: `征兵${b.effectiveSummonCost()}`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
   // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
   const ACT_D = 60; // 圆直径
@@ -778,9 +778,13 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
   const campX = 12, campY = TRAY_Y + 4, campW = 48, campH = TRAY_H - 8;
   const roofH = 16; // 屋顶高
-  const BODY_SHRINK = 6; // 棕色屋身减矮量(底部对齐，整体降低不再显高)
-  const bodyH = campH - roofH - BODY_SHRINK;
-  const bodyY = campY + roofH + BODY_SHRINK; // 屋身顶沿 = 屋顶铰链所在水平线(整体下移，底部保持贴合)
+  const BODY_SHRINK = 6; // 棕色屋身减矮量
+  const bodyH0 = campH - roofH - BODY_SHRINK;
+  const bodyH = bodyH0 * 0.75; // 棕色高度再调低 1/4
+  // 屋身+屋顶整体在营帐框内垂直居中（屋顶叠在屋身顶沿上方）
+  const stackH = bodyH + roofH;
+  const stackTop = campY + (campH - stackH) / 2;
+  const bodyY = stackTop + roofH; // 屋身顶沿 = 屋顶铰链；屋顶向上画 roofH
   // —— 屋身（棕色木屋身 + 「营」字）——
   const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
   wood.addColorStop(0, '#8a5626');
@@ -1655,41 +1659,77 @@ function drawPath(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
-  const pos = b.tangsengRenderPos();
-  const { x, y } = cellCenterPx(pos.c, pos.r);
-  const rad = CELL * 0.46;
-  // 金色光晕底座
-  ctx.beginPath();
-  ctx.arc(x, y, rad, 0, Math.PI * 2);
-  const g = ctx.createRadialGradient(x, y - 8, 4, x, y, rad);
-  g.addColorStop(0, '#ffe9a8');
-  g.addColorStop(1, '#d99a2b');
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#8a5a12';
-  ctx.stroke();
+function drawTangsengHearts(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  headTop: number,
+  hp: number,
+  defeated = false,
+) {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (defeated) {
+    ctx.fillStyle = '#9a9a9a';
+    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.fillText('已败', cx, headTop - 6);
+    return;
+  }
+  const n = Math.max(0, Math.floor(hp));
+  if (n <= 0) return;
+  const perRow = 3;
+  const fontPx = Math.round(CELL * 0.28 * 0.75); // 再缩小 1/4
+  const rowGap = fontPx * 0.95;
+  const colGap = fontPx * 0.95;
+  ctx.font = `${fontPx}px sans-serif`;
+  ctx.fillStyle = '#e03030';
+  // 自头顶向上堆叠：先排最靠近头顶的一行（最多 3 心）
+  let remaining = n;
+  let row = 0;
+  while (remaining > 0) {
+    const count = Math.min(perRow, remaining);
+    const rowY = headTop - 4 - row * rowGap;
+    const totalW = (count - 1) * colGap;
+    const startX = cx - totalW / 2;
+    for (let i = 0; i < count; i++) {
+      ctx.fillText('❤', startX + i * colGap, rowY);
+    }
+    remaining -= count;
+    row++;
+  }
+}
 
+/** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；头顶按心数画 ❤（每行最多 3） */
+function drawTangsengFigure(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  hp: number,
+  opts?: { rad?: number; defeated?: boolean },
+) {
+  const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
   const spr = sprite('tangseng');
+  let headTop = y - rad;
   if (spr) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, rad - 2, 0, Math.PI * 2);
-    ctx.clip();
-    // cover 缩放填满圆
-    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
+    const box = rad * 2;
+    const scale = Math.min(box / spr.width, box / spr.height);
     const dw = spr.width * scale;
     const dh = spr.height * scale;
-    ctx.drawImage(spr, x - dw / 2, y - dh / 2 - rad * 0.1, dw, dh);
-    ctx.restore();
+    ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    headTop = y - dh / 2;
   } else {
     ctx.fillStyle = '#5a3a08';
-    ctx.font = 'bold 26px "PingFang SC", sans-serif';
+    ctx.font = 'bold 22px "PingFang SC", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('唐', x, y);
   }
+  drawTangsengHearts(ctx, x, headTop, hp, opts?.defeated ?? false);
+}
+
+function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
+  const pos = b.tangsengRenderPos();
+  const { x, y } = cellCenterPx(pos.c, pos.r);
+  drawTangsengFigure(ctx, x, y, b.tangsengHP);
 }
 
 // 入场缩放：由小变大略带回弹(easeOutBack)，营造"崩出来"感
@@ -2931,41 +2971,13 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.66 * (1 + u.firePulse * 0.14), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.66 });
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, u.firePulse, u.combo);
   }
-  // 对手终点：唐僧立绘（不再用「斗」字）
+  // 对手终点：唐僧立绘（无底座 + 头顶心数，与我方一致）
   const tp = b.aiTangsengRenderPos();
   const { x, y } = cellCenterPx(tp.c, tp.r);
-  const rad = CELL * 0.42;
-  ctx.beginPath();
-  ctx.arc(x, y, rad, 0, Math.PI * 2);
-  const g = ctx.createRadialGradient(x, y - 8, 4, x, y, rad);
-  g.addColorStop(0, '#cfd0ee');
-  g.addColorStop(1, '#8a86c0'); // 对手唐僧用冷色调区分敌我
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#5a5a8a';
-  ctx.stroke();
-  const spr = sprite('tangseng');
-  if (spr) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, rad - 2, 0, Math.PI * 2);
-    ctx.clip();
-    const scale = Math.max((rad * 2) / spr.width, (rad * 2) / spr.height);
-    ctx.drawImage(spr, x - (spr.width * scale) / 2, y - (spr.height * scale) / 2 - rad * 0.1, spr.width * scale, spr.height * scale);
-    ctx.restore();
-  } else {
-    ctx.fillStyle = '#3a3a6a';
-    ctx.font = 'bold 22px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('唐', x, y);
-  }
-  ctx.fillStyle = b.aiDefeated ? '#9a9a9a' : '#7a5aa0';
-  ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(b.aiDefeated ? '对手已败' : `对手唐僧 ❤${b.aiTangsengHP}`, x, y - rad - 12);
+  drawTangsengFigure(ctx, x, y, b.aiTangsengHP, {
+    rad: CELL * 0.42,
+    defeated: b.aiDefeated,
+  });
 }
 
 // 无尽模式上半场信息面板：网格/路径已由 drawBoard 照常绘制作背景，
@@ -3217,7 +3229,24 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       // 征兵/布阵：浅字 + 深描边，在进度填充与深底上都能读清（四图统一）
-      if (btn.id === 'summon' || btn.id === 'autoplace') {
+      if (btn.id === 'summon') {
+        // 文字与桃子分开画：留间距；不可征兵时桃子变灰
+        const peach = '🍑';
+        const gap = 12;
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(20,14,8,0.92)';
+        const textW = ctx.measureText(btn.label).width;
+        const peachW = ctx.measureText(peach).width;
+        const totalW = textW + gap + peachW;
+        const textX = tx - totalW / 2 + textW / 2;
+        const peachX = tx - totalW / 2 + textW + gap + peachW / 2;
+        ctx.strokeText(btn.label, textX, ty);
+        ctx.fillStyle = btn.enabled ? '#fff8e8' : '#fff3d6';
+        ctx.fillText(btn.label, textX, ty);
+        ctx.fillText(peach, peachX, ty);
+      } else if (btn.id === 'autoplace') {
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
         ctx.lineWidth = 4;

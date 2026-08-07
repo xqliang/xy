@@ -10,7 +10,7 @@ const MODEL = 'doubao-seedream-4-0-250828';
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets');
 mkdirSync(OUT, { recursive: true });
 
-const STYLE = '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，纯白色背景，无阴影，无文字，高辨识度';
+const STYLE = '，Q版扁平游戏图标，造型简洁、粗黑描边、强剪影、高饱和对比色、细节精简、每个角色单一主色调、正面全身居中，纯白色背景，无地面、无脚下灰色投影、无底部白色光晕、无阴影，无文字，高辨识度';
 const jobs = [
   { id: 'tangseng', prompt: '唐僧，圆脸慈眉、金红色袈裟、毗卢帽、双手合十，主色金红' + STYLE },
   { id: 'unit-monkey', prompt: '天兵刀兵人类士兵，橙金色轻甲、侧身打斗姿势面向右、高举弯刀劈砍，非猴子非悟空，主色橙金色' + STYLE },
