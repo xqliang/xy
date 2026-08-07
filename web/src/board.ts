@@ -108,6 +108,40 @@ export function pathEntranceCell(path: Cell[]): Cell {
   return path[0] ?? { c: 0, r: 0 };
 }
 
+/** 最大射程够得着路径的阈值（神箭手 rge=3 + 容差 0.5） */
+export const EXIT_PATH_REACH = 3.5;
+
+/**
+ * 格到出怪口距离：够得着怪路（pathDist ≤ EXIT_PATH_REACH）用欧氏；
+ * 否则用出怪口沿路径到最近点的下标差（路径末尾更大，避免几何近出口却够不着路的假近）。
+ */
+export function exitDistToPath(path: Cell[], cell: Cell): number {
+  const gate = pathEntranceCell(path);
+  let bestI = -1;
+  let bestD = Infinity;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
+    if (p.r < 0 || p.r >= ROWS) continue;
+    const d = Math.hypot(p.c - cell.c, p.r - cell.r);
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  if (bestI < 0 || bestD <= EXIT_PATH_REACH) {
+    return Math.hypot(cell.c - gate.c, cell.r - gate.r);
+  }
+  let gateI = 0;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
+    if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) {
+      gateI = i;
+      break;
+    }
+  }
+  return Math.abs(bestI - gateI);
+}
+
 /** 从 from 朝向 to 的朝向角（格坐标系，atan2） */
 export function faceDirToward(from: Cell, to: Cell): number {
   return Math.atan2(to.r - from.r, to.c - from.c);

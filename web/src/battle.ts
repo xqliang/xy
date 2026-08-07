@@ -57,6 +57,7 @@ import {
   lenOf,
   entranceDistance,
   pathEntranceCell,
+  exitDistToPath,
   faceDirToward,
   mirrorPath,
   mirrorCell,
@@ -1081,14 +1082,9 @@ export class Battle {
     return n;
   }
 
-  /** 格到路径「出怪口」（首个在网格内的点）的欧氏距离 */
+  /** 格到路径出怪口距离（够得着路用欧氏，否则沿程下标差；见 exitDistToPath） */
   private distToPathEntrance(path: { c: number; r: number }[], cell: { c: number; r: number }): number {
-    let gate: { c: number; r: number } | null = null;
-    for (const p of path) {
-      if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) { gate = p; break; }
-    }
-    if (!gate) gate = path[0] ?? { c: 0, r: 0 };
-    return Math.hypot(cell.c - gate.c, cell.r - gate.r);
+    return exitDistToPath(path, cell);
   }
 
   /** 出怪口格（兵器落位默认朝向） */
