@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, TUNING } from '../src/battle';
+import { Battle, TUNING, makePlacedUnit } from '../src/battle';
 
 describe('Battle.summon tray rules', () => {
   it('clears leftover tray tokens before writing the new hand', () => {
@@ -32,10 +32,7 @@ describe('Battle.placeFromTray', () => {
   it('swaps with a different unit on an unlocked cell', () => {
     const b = new Battle(1);
     const cell = b.unlockedCells()[0]!;
-    b.units.set(`${cell.c},${cell.r}`, {
-      type: 'monkey', tier: 1, cell: { c: cell.c, r: cell.r },
-      cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0,
-    });
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('monkey', 1, { c: cell.c, r: cell.r }));
     b.tray = [{ kind: 'unit', type: 'spear', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.type).toBe('spear');
@@ -45,10 +42,7 @@ describe('Battle.placeFromTray', () => {
   it('merges same type and tier', () => {
     const b = new Battle(1);
     const cell = b.unlockedCells()[0]!;
-    b.units.set(`${cell.c},${cell.r}`, {
-      type: 'monkey', tier: 1, cell: { c: cell.c, r: cell.r },
-      cooldown: 0, firePulse: 0, stunT: 0, slowT: 0, weakenT: 0,
-    });
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('monkey', 1, { c: cell.c, r: cell.r }));
     b.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.tier).toBe(2);

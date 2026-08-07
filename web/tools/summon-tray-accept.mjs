@@ -102,9 +102,12 @@ try {
       cell: { c: cell.c, r: cell.r },
       cooldown: 0,
       firePulse: 0,
+      combo: 0,
       stunT: 0,
       slowT: 0,
       weakenT: 0,
+      rangeCutT: 0,
+      knockdownT: 0,
     });
     g.battle.tray = [{ kind: 'unit', type: 'spear', tier: 1 }];
     const ok = g.placeFromTray(0, cell);
@@ -135,9 +138,12 @@ try {
       cell: { c: cell.c, r: cell.r },
       cooldown: 0,
       firePulse: 0,
+      combo: 0,
       stunT: 0,
       slowT: 0,
       weakenT: 0,
+      rangeCutT: 0,
+      knockdownT: 0,
     });
     g.battle.tray = [{ kind: 'unit', type: 'monkey', tier: 1 }];
     const ok = g.placeFromTray(0, cell);

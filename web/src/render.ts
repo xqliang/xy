@@ -12,7 +12,7 @@ import {
   placeableCells,
   type Cell,
 } from './board';
-import { Battle, TUNING, SKILL_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
@@ -162,22 +162,110 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-// 统一的右上角阶数徽标：非加粗金字 + 深描边，单位/字牌/激活武将共用，保证清晰一致
+// 统一的右上角阶数徽标：深色圆底 + 金字，去掉立绘底色后仍清晰
 function drawTierBadge(ctx: CanvasRenderingContext2D, nx: number, ny: number, tier: number, fontPx: number) {
   ctx.save();
+  const r = Math.max(7, fontPx * 0.72);
+  ctx.beginPath();
+  ctx.arc(nx, ny, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(14,10,6,0.82)';
+  ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(255,220,140,0.35)';
+  ctx.stroke();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `${fontPx}px "PingFang SC", sans-serif`;
-  ctx.lineWidth = Math.max(2, fontPx * 0.18);
+  ctx.lineWidth = Math.max(2, fontPx * 0.16);
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(20,14,6,0.9)';
+  ctx.strokeStyle = 'rgba(20,14,6,0.95)';
   ctx.strokeText(String(tier), nx, ny);
   ctx.fillStyle = '#ffe6a2';
   ctx.fillText(String(tier), nx, ny);
   ctx.restore();
 }
 
-function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number, faceLeft = false, badge?: { x: number; y: number; s: number }) {
+/** 状态芯片：深色圆底 + 彩色描边 + 图标，去掉立绘底色后仍清晰可读 */
+function drawStatusChip(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  icon: string,
+  color: string,
+  r = 9,
+) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(12,10,8,0.88)';
+  ctx.fill();
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  // 内侧淡色晕，增强对比
+  ctx.beginPath();
+  ctx.arc(x, y, r - 1.2, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,245,220,0.18)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.font = `${Math.round(r * 1.15)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff8e8';
+  ctx.fillText(icon, x, y + 0.5);
+  ctx.restore();
+}
+
+/** 横向排列多个状态芯片（右对齐锚点） */
+function drawStatusRow(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  items: { icon: string; color: string }[],
+  r = 9,
+) {
+  if (items.length === 0) return;
+  const gap = r * 2 + 3;
+  const total = gap * (items.length - 1);
+  const startX = cx - total / 2;
+  items.forEach((it, i) => drawStatusChip(ctx, startX + i * gap, cy, it.icon, it.color, r));
+}
+
+function unitStatusItems(u: {
+  stunT: number;
+  slowT: number;
+  weakenT: number;
+  rangeCutT: number;
+  knockdownT: number;
+}): { icon: string; color: string }[] {
+  const order: UnitStatusId[] = ['knockdown', 'stun', 'slow', 'weaken', 'webbind'];
+  const on: Record<UnitStatusId, boolean> = {
+    knockdown: u.knockdownT > 0,
+    stun: u.stunT > 0,
+    slow: u.slowT > 0,
+    weaken: u.weakenT > 0,
+    webbind: u.rangeCutT > 0,
+  };
+  return order.filter((id) => on[id]).map((id) => UNIT_STATUS_META[id]);
+}
+
+function monsterStatusItems(m: {
+  stunT: number;
+  slowT: number;
+  hasteT: number;
+  healFlash: number;
+}): { icon: string; color: string }[] {
+  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal'];
+  const on: Record<MonsterStatusId, boolean> = {
+    stun: m.stunT > 0,
+    slow: m.slowT > 0,
+    haste: m.hasteT > 0,
+    heal: m.healFlash > 0.05,
+  };
+  return order.filter((id) => on[id]).map((id) => MONSTER_STATUS_META[id]);
+}
+
+function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number, faceLeft = false, badge?: { x: number; y: number; s: number }, fallen = false) {
   const s = size;
   // 不再画类型色底座：棋盘格与托盘都直接用透明立绘，无背景色
   const spr = sprite(unitAsset(type));
@@ -189,16 +277,37 @@ function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x
     const dw = spr.width * scale;
     const dh = spr.height * scale;
     ctx.save();
-    // 仅射手/骑手朝左攻击时水平翻转立绘（矛/棍不翻转）
-    if (faceLeft && (type === 'archer' || type === 'cavalry')) { ctx.translate(x, 0); ctx.scale(-1, 1); ctx.translate(-x, 0); }
-    ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    if (fallen) {
+      // 倒下：横躺 + 略压扁，与「无法攻击」状态对应
+      ctx.translate(x, y + s * 0.08);
+      ctx.rotate(Math.PI / 2);
+      ctx.scale(1, 0.72);
+      if (faceLeft && (type === 'archer' || type === 'cavalry')) { ctx.scale(-1, 1); }
+      ctx.drawImage(spr, -dw / 2, -dh / 2, dw, dh);
+    } else {
+      // 仅射手/骑手朝左攻击时水平翻转立绘（矛/棍不翻转）
+      if (faceLeft && (type === 'archer' || type === 'cavalry')) { ctx.translate(x, 0); ctx.scale(-1, 1); ctx.translate(-x, 0); }
+      ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
+    }
     ctx.restore();
   } else {
-    ctx.fillStyle = '#1a1208';
-    ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(UNIT_LABEL[type], x, y - s * 0.06);
+    ctx.save();
+    if (fallen) {
+      ctx.translate(x, y);
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = '#1a1208';
+      ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(UNIT_LABEL[type], 0, 0);
+    } else {
+      ctx.fillStyle = '#1a1208';
+      ctx.font = `bold ${Math.round(s * 0.42)}px "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(UNIT_LABEL[type], x, y - s * 0.06);
+    }
+    ctx.restore();
   }
 
   // 阶数：右上角小数字 1-5（统一徽标样式，非加粗）；锚定在固定的格中心/尺寸(badge)，不随立绘 bob/开火脉冲抖动
@@ -1376,7 +1485,31 @@ function emergeScale(t: number): number {
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
-function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0: number, m: { dist: number; hp: number; maxHp: number; isBoss: boolean; isCavalry?: boolean; hitFlash: number; skill: unknown; castFlash: number; spawnT: number }, mapId: string, trailDir = 1) {
+function drawMonsterAt(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rad0: number,
+  m: {
+    dist: number;
+    hp: number;
+    maxHp: number;
+    isBoss: boolean;
+    isMiniBoss?: boolean;
+    miniBossKind?: MiniBossKind | null;
+    isCavalry?: boolean;
+    hitFlash: number;
+    skill: unknown;
+    castFlash: number;
+    spawnT: number;
+    stunT?: number;
+    slowT?: number;
+    hasteT?: number;
+    healFlash?: number;
+  },
+  mapId: string,
+  trailDir = 1,
+) {
   const rad = rad0 * emergeScale(m.spawnT);
   // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
   const phase = m.dist * 5.2;
@@ -1391,7 +1524,8 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   ctx.ellipse(x, y + rad0 * 0.82, shW, rad0 * 0.32, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  const spr = monsterSprite(mapId, m.isBoss);
+  // 小 Boss 用 boss 立绘（体型介于精英与妖王之间）；无专属图时回退 minion
+  const spr = monsterSprite(mapId, m.isBoss || !!m.isMiniBoss);
   // 骑兵视觉区分：身后拖出青蓝速度线（快速冲锋感）。拖尾始终在移动的反方向：
   // trailDir=+1 表示向右移动→拖尾在左侧；trailDir=-1 表示向左移动→拖尾在右侧。
   if (m.isCavalry) {
@@ -1411,6 +1545,23 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
     }
     ctx.restore();
   }
+  // 疾风加速：青绿拖尾（非骑兵）
+  if ((m.hasteT ?? 0) > 0 && !m.isCavalry) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(125,255,176,0.7)';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2;
+    const side = -trailDir;
+    for (let i = -1; i <= 1; i++) {
+      const ly = cy + i * rad0 * 0.35;
+      ctx.globalAlpha = 0.55 - Math.abs(i) * 0.15;
+      ctx.beginPath();
+      ctx.moveTo(x + side * rad0 * 0.5, ly);
+      ctx.lineTo(x + side * rad0 * 1.5, ly);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   if (spr) {
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
@@ -1418,7 +1569,7 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
   } else {
     ctx.beginPath();
     ctx.arc(x, cy, rad, 0, Math.PI * 2);
-    ctx.fillStyle = m.isBoss ? '#b02a5b' : '#7a2b2b';
+    ctx.fillStyle = m.isBoss ? '#b02a5b' : m.isMiniBoss ? '#b05a2a' : '#7a2b2b';
     ctx.fill();
   }
   // 墨风血条：深墨底条 + 朱红填充
@@ -1445,15 +1596,37 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
     ctx.fill();
     ctx.globalAlpha = 1;
   }
-  // 精英/BOSS 技能标识：彩色环 + 图标；施法瞬间脉冲光圈
-  if (m.skill) {
-    const meta = SKILL_META[m.skill as keyof typeof SKILL_META];
+  // 治疗绿闪
+  if ((m.healFlash ?? 0) > 0) {
+    ctx.globalAlpha = Math.min(0.55, (m.healFlash ?? 0) * 0.55);
+    ctx.fillStyle = '#7dff8a';
+    ctx.beginPath();
+    ctx.arc(x, cy, rad + 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // 精英/BOSS/小 Boss 技能标识：彩色环 + 状态芯片；施法瞬间脉冲光圈
+  const miniMeta = m.isMiniBoss && m.miniBossKind ? MINI_BOSS_META[m.miniBossKind] : null;
+  const skillMeta = m.skill ? SKILL_META[m.skill as keyof typeof SKILL_META] : null;
+  const ringMeta = miniMeta ?? skillMeta;
+  if (ringMeta) {
     ctx.save();
-    ctx.strokeStyle = meta.color;
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = ringMeta.color;
+    ctx.lineWidth = m.isMiniBoss ? 3 : 2.5;
     ctx.beginPath();
     ctx.arc(x, cy, rad + 3, 0, Math.PI * 2);
     ctx.stroke();
+    if (m.isMiniBoss) {
+      // 小 Boss 外圈虚线，与妖王实环区分
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.arc(x, cy, rad + 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
     if (m.castFlash > 0) {
       ctx.globalAlpha = m.castFlash;
       ctx.lineWidth = 3;
@@ -1462,11 +1635,18 @@ function drawMonsterAt(ctx: CanvasRenderingContext2D, x: number, y: number, rad0
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    ctx.font = `${Math.round(rad)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(meta.icon, x, y - rad - 12);
+    drawStatusChip(ctx, x, y - rad - 14, ringMeta.icon, ringMeta.color, Math.max(8, rad * 0.55));
     ctx.restore();
+  }
+  // 妖怪身上的控制/增益状态（定身/减速/疾风/回春）
+  const mStatuses = monsterStatusItems({
+    stunT: m.stunT ?? 0,
+    slowT: m.slowT ?? 0,
+    hasteT: m.hasteT ?? 0,
+    healFlash: m.healFlash ?? 0,
+  });
+  if (mStatuses.length > 0) {
+    drawStatusRow(ctx, x, y + rad0 + 8, mStatuses, 7);
   }
 }
 
@@ -1477,7 +1657,8 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     // 采样前方一小段求水平朝向（骑兵拖尾方向用）：向右移=+1，向左移=-1
     const np = posAtDistance(b.map, m.dist + 0.05);
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
+    const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
+    drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
   }
 }
 
@@ -1852,19 +2033,30 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   for (const u of b.units.values()) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来
-    const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
+    const fallen = u.knockdownT > 0;
+    // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来（倒下时停 bob）
+    const bob = fallen ? 0 : Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     // 开火脉冲：放大 + 上跳
-    const pulse = u.firePulse;
+    const pulse = fallen ? 0 : u.firePulse;
     const uy = y - pulse * 4 + bob;
-    drawUnit(ctx, u.type, u.tier, x, uy, CELL * 0.72 * (1 + pulse * 0.16), u.fireDir != null && Math.cos(u.fireDir) < 0, { x, y, s: CELL * 0.72 });
-    // 攻击瞬间：字→兵器形变，朝目标出招
-    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
-    // 减益标识：被怪物技能命中时显示图标（定身/迟滞/弱身/缠丝）
-    const debuff: string | null = u.stunT > 0 ? SKILL_META.stun.icon : u.slowT > 0 ? SKILL_META.slow.icon : u.weakenT > 0 ? SKILL_META.weaken.icon : u.rangeCutT > 0 ? SKILL_META.webbind.icon : null;
-    if (debuff) {
+    drawUnit(
+      ctx,
+      u.type,
+      u.tier,
+      x,
+      uy,
+      CELL * 0.72 * (1 + pulse * 0.16),
+      u.fireDir != null && Math.cos(u.fireDir) < 0,
+      { x, y, s: CELL * 0.72 },
+      fallen,
+    );
+    // 攻击瞬间：字→兵器形变，朝目标出招（倒下时不画）
+    if (!fallen) drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
+    // 减益标识：深色芯片（去掉立绘底色后仍清晰）
+    const statuses = unitStatusItems(u);
+    if (statuses.length > 0) {
       ctx.save();
-      if (u.stunT > 0) {
+      if (u.stunT > 0 && !fallen) {
         // 眩晕：整格泛黄闪烁
         ctx.globalAlpha = 0.3 + 0.2 * Math.sin(u.stunT * 12);
         roundRect(ctx, x - CELL * 0.36, y - CELL * 0.36, CELL * 0.72, CELL * 0.72, 8);
@@ -1872,10 +2064,16 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      ctx.font = '16px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(debuff, x + CELL * 0.28, y - CELL * 0.3);
+      if (fallen) {
+        // 倒下：地面尘土感
+        ctx.globalAlpha = 0.35 + 0.15 * Math.sin(u.knockdownT * 8);
+        ctx.fillStyle = UNIT_STATUS_META.knockdown.color;
+        ctx.beginPath();
+        ctx.ellipse(x, y + CELL * 0.28, CELL * 0.32, CELL * 0.1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      drawStatusRow(ctx, x, y - CELL * 0.42, statuses, 8);
       ctx.restore();
     }
   }
@@ -2412,7 +2610,8 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const { x, y } = cellCenterPx(p.c, p.r);
     const np = b.aiMonsterPos({ ...m, dist: m.dist + 0.05 });
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
-    drawMonsterAt(ctx, x, y, m.isBoss ? CELL * 0.42 : CELL * 0.28, m, b.map.id, trailDir);
+    const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
+    drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
   }
   // AI 单位（上半场自动部署）
   const t = performance.now() / 1000;
