@@ -1,6 +1,8 @@
 // web/src/autoplace.ts
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
+// 挖出空位后：先让棋盘武器迁/换到更合适座位，再处理 tray。
+// tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
 // 满盘凑对：优先伴侣已在位的邻格；占位可顶回候选或与 tray 字直接交换（place）。
@@ -389,13 +391,18 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (view.placedWords().some((w) => w.char === t.char)) continue;
       if (placeSingleWord(i)) return true;
     }
-    // 3) 兵种合成：同型同阶 → 合成升阶（"合成英雄"/升级武器）
+    // 3) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
+    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
+    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
+    // 4) tray 同型同阶落到棋盘合升阶
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && !subopt()) { if (view.place(i, mate.cell)) return true; }
     }
-    // 4) 射程感知铺格：短射程先占位；各自在可达格中选 pathCover（+近出口）最大的格。
+    // 5) tray 合出更高阶 → 与地图上更低阶的异型武器交换上板（空位不如该座时）
+    if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
+    // 6) 射程感知铺格：短射程先占位；各自在可达格中选座位分最高的格
     const free = view.freeCells();
     const unitIdx = tray
       .map((t, i) => ({ t, i }))
@@ -410,11 +417,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         : pickReachCell(reach, t.type, t.tier);
       if (view.place(i, cell)) return true;
     }
-    // 5) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
+    // 7) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
     //    且该占位兵能挪到更远的可达空格 → 挪走占位兵、腾出近格给短兵。尽量少扰动现有布局。
     for (const { t, i } of unitIdx) {
       const rge = getUnitStat(t.type, t.tier).rge;
-      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步4已放），跳过
+      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步6已放），跳过
       for (const occ of view.placedUnits()) {
         if (view.nearestPathDist(occ.cell) > rge + tol) continue; // 占位兵不在短兵可达格，挪它无益
         const occRge = getUnitStat(occ.type, occ.tier).rge;
@@ -433,15 +440,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         }
       }
     }
-    // 5b) 高阶同型抢座：若低阶同类占着 placeCellScore 更高的格，与高阶交换
-    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
-    // 5c) 空位更优则迁座：新挖出的近出口/高覆盖空格，把已上场兵迁过去（如枪迁到贴口空位）
-    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
-    // 5d) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
+    // 8) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
     if (!subopt() && tryYieldOrphanSeatsToUnits()) return true;
-    // 5e) 孤儿字迁到更远离路径/靠唐僧的空位
+    // 9) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!subopt() && tryRelocateOrphansToRear()) return true;
-    // 6–7) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
+    // 10) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
       if (tryBoardMergeThenPlace()) return true;
@@ -968,6 +971,52 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       }
     }
     return false;
+  }
+
+  /**
+   * tray 两枚同型同阶可合出更高阶时：与棋盘上更低阶的异型武器交换上板。
+   * 仅当目标座对升阶兵的座位分明显高于最佳空位（或无空位）时才换，避免空位更好却硬换。
+   */
+  function tryTrayMergeThenSwapLowerOther(): boolean {
+    const tray = view.tray();
+    let best: {
+      i: number;
+      j: number;
+      cell: Cell;
+      gain: number;
+    } | null = null;
+    for (let i = 0; i < tray.length; i++) {
+      const a = tray[i]!;
+      if (a.kind !== 'unit') continue;
+      for (let j = i + 1; j < tray.length; j++) {
+        const b = tray[j]!;
+        if (b.kind !== 'unit') continue;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
+        const upType = a.type;
+        const upTier = a.tier + 1;
+        const rge = getUnitStat(upType, upTier).rge;
+        let bestFree = -Infinity;
+        for (const c of view.freeCells()) {
+          if (view.nearestPathDist(c) > rge + tol) continue;
+          bestFree = Math.max(bestFree, scoreCell(c, upType, upTier));
+        }
+        for (const u of view.placedUnits()) {
+          if (u.type === upType) continue; // 其他武器
+          if (u.tier >= upTier) continue;  // 仅换更低阶
+          if (view.isActiveHeroCell(u.cell)) continue;
+          if (view.nearestPathDist(u.cell) > rge + tol) continue;
+          const sc = scoreCell(u.cell, upType, upTier);
+          const gain = sc - bestFree;
+          if (gain <= 0.05) continue;
+          if (!best || gain > best.gain) best = { i, j, cell: u.cell, gain };
+        }
+      }
+    }
+    if (!best) return false;
+    if (!view.mergeTray(best.i, best.j)) return false;
+    const upIdx = best.i < best.j ? best.j - 1 : best.j;
+    if (view.place(upIdx, best.cell)) return true;
+    return true; // tray 已合，避免死循环重合
   }
 
   /**

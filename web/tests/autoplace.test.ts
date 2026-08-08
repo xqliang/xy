@@ -86,7 +86,15 @@ class FakeView implements AutoPlaceView {
     }
     if (t.kind === 'unit') {
       const ex = this.unitsMap.get(k);
-      if (ex) { if (ex.type !== t.type || ex.tier !== t.tier) return false; ex.tier += 1; this.trayArr.splice(index, 1); return true; }
+      if (ex) {
+        if (ex.type === t.type && ex.tier === t.tier) {
+          ex.tier += 1; this.trayArr.splice(index, 1); return true;
+        }
+        // 不可合 → 与棋盘兵交换（对齐 battle.placeFromTray）
+        this.unitsMap.set(k, { type: t.type, tier: t.tier, cell: to });
+        this.trayArr[index] = { kind: 'unit', type: ex.type, tier: ex.tier };
+        return true;
+      }
       if (!this.unlocked.has(k) || this.wordsMap.has(k)) return false;
       this.unitsMap.set(k, { type: t.type, tier: t.tier, cell: to }); this.trayArr.splice(index, 1); return true;
     }
@@ -548,6 +556,42 @@ it('刀在右侧、左侧近出口空着时应迁到左侧（结合射程与出�
   planAutoPlace(v, { rng });
   const knife = v.placedUnits().find((u) => u.type === 'dao');
   expect(knife?.cell).toEqual({ c: 0, r: 0 });
+});
+
+it('挖出空位后先迁棋盘武器，再落 tray', () => {
+  // 棋盘刀在远端 (4,0)；铲子挖近出口 (0,0)；tray 另有枪。应先把刀迁到 (0,0)，枪再落到腾出的 (4,0)
+  const v = new FakeView(
+    [
+      { kind: 'shovel' },
+      { kind: 'unit', type: 'spear', tier: 1 },
+    ],
+    [{ c: 4, r: 0 }],
+    [{ c: 0, r: 0 }],
+  );
+  v.unitsMap.set('4,0', { type: 'dao', tier: 2, cell: { c: 4, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byType = new Map(v.placedUnits().map((u) => [u.type, u]));
+  expect(byType.get('dao')?.cell).toEqual({ c: 0, r: 0 });
+  expect(byType.get('spear')?.cell).toEqual({ c: 4, r: 0 });
+  expect(v.tray().some((t) => t.kind === 'unit')).toBe(false);
+});
+
+it('tray 合出高级后可换地图上更低阶异型武器', () => {
+  // 满盘：弓 T1 占近出口好位；tray 两把刀可合 T2 → 换掉弓
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'dao', tier: 1 },
+      { kind: 'unit', type: 'dao', tier: 1 },
+    ],
+    [{ c: 0, r: 0 }, { c: 3, r: 0 }],
+  );
+  v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('3,0', { type: 'spear', tier: 2, cell: { c: 3, r: 0 } });
+  planAutoPlace(v, { rng });
+  const atGate = v.placedUnits().find((u) => u.cell.c === 0 && u.cell.r === 0);
+  expect(atGate?.type).toBe('dao');
+  expect(atGate?.tier).toBe(2);
+  expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'archer' && t.tier === 1)).toBe(true);
 });
 
 it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
