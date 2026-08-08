@@ -386,7 +386,7 @@ export interface HeroUltFx {
   rge: number;           // 英雄当前射程(格)，范围类动画铺开半径
   crit: boolean;         // true=暴击(单体) false=群攻(范围)
   critDmg?: number;      // 暴击伤害数字(crit 时飘字)
-  fromC?: number;        // 施法者格坐标（大圣飞棒往返 / 二郎天眼射线起点）
+  fromC?: number;        // 施法者格坐标（大圣飞棒 / 二郎·牛郎射线起点）
   fromR?: number;
 }
 
@@ -2543,7 +2543,7 @@ export class Battle {
       rge: this.generalRge(g),
       crit,
       critDmg,
-      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' ? { fromC: gAx, fromR: gAy } : {}),
+      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
     });
     this.addGeneralCombatExp(g, 4);
   }

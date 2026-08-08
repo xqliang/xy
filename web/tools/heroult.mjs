@@ -12,7 +12,11 @@ await page.goto('http://127.0.0.1:5180/?seed=7&t=' + Date.now(), { waitUntil: 'n
 await page.waitForFunction('window.__game');
 await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
 
-const heroes = ['nezha', 'erlang', 'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'tangseng'];
+const heroes = [
+  'nezha', 'erlang', 'niulang',
+  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'tangseng',
+  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'bailong',
+];
 for (const id of heroes) {
   await page.evaluate((heroId) => {
     const g = window.__game; g.enterBattle();

@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { GENERALS, ultTypeOf, CRIT_MULT } from '../src/generals';
 
+/** 与 render.ts drawHeroUlt switch 对齐：有技能的武将均应有专属大招动画 */
+const HERO_ULT_IDS = new Set([
+  'nezha', 'erlang', 'niulang',
+  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'tangseng',
+  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'bailong',
+]);
+
 describe('大招类型派生 ultTypeOf', () => {
   it('远程单点(ranged)英雄 = 暴击 crit', () => {
     for (const id of ['erlang', 'niulang']) {
@@ -23,5 +30,11 @@ describe('大招类型派生 ultTypeOf', () => {
 
   it('暴击倍率 > 1', () => {
     expect(CRIT_MULT).toBeGreaterThan(1);
+  });
+
+  it('所有在册武将均有大招动画分派', () => {
+    for (const g of GENERALS) {
+      expect(HERO_ULT_IDS.has(g.id), `${g.id}(${g.name}) 缺少大招动画`).toBe(true);
+    }
   });
 });

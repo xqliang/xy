@@ -2230,10 +2230,11 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     const R = f.rge * CELL;            // 群攻范围半径(px)
     ctx.save();
     switch (f.heroId) {
-      // —— 暴击（哪吒/二郎）——
+      // —— 暴击 ——
       case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
       case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
-      // —— 群攻 ——
+      case 'niulang': drawUltNiulang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
+      // —— 满5 群攻 ——
       case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R, f.fromC, f.fromR); break;
       case 'honghaier': drawUltHonghaier(ctx, x, y, prog, fade, f.tier, R); break;
       case 'bajie': drawUltBajie(ctx, x, y, prog, fade, f.tier, R); break;
@@ -2243,6 +2244,16 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'guanyin': drawUltGuanyin(ctx, x, y, prog, fade, f.tier, R); break;
       case 'baigujing': drawUltBaigujing(ctx, x, y, prog, fade, f.tier, R); break;
       case 'tangseng': drawUltTangseng(ctx, x, y, prog, fade, f.tier, R); break;
+      // —— 过渡满3 ——
+      case 'damang': drawUltDamang(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'jinzha': drawUltJinzha(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'hongpao': drawUltHongpao(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'baxian': drawUltBaxian(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'qingniu': drawUltQingniu(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'tiebei': drawUltTiebei(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'liusha': drawUltLiusha(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'fanyin': drawUltFanyin(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'bailong': drawUltBailong(ctx, x, y, prog, fade, f.tier, R); break;
     }
     ctx.restore();
     // 暴击飘字：红字上飘 + 放大
@@ -2702,6 +2713,247 @@ function drawUltTangseng(ctx: CanvasRenderingContext2D, x: number, y: number, p:
       const a = (i / n) * Math.PI * 2 + p * (ring ? -1.2 : 1.2);
       ctx.fillText(chars[i % chars.length]!, x + Math.cos(a) * rad, y + Math.sin(a) * rad);
     }
+  }
+}
+
+// —— 过渡 / 白龙（相对满5更轻、更短）——
+// 大蟒 钉耙小扫：绿色短弧横扫
+function drawUltDamang(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const sweep = easeOut(p);
+  const rad = R * 0.7;
+  const a0 = -Math.PI * 0.85;
+  const a1 = a0 + Math.PI * 1.5 * sweep;
+  ctx.globalAlpha = fade;
+  ctx.fillStyle = 'rgba(110,200,120,0.22)';
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, rad, a0, a1); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#6ecf78';
+  ctx.lineWidth = 3.5 + tier;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(x, y, rad, a0, a1); ctx.stroke();
+  ctx.strokeStyle = '#3a8a48';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * rad, y + Math.sin(a1) * rad); ctx.stroke();
+}
+
+// 牛郎 织云箭：自英雄飞出淡蓝云箭，命中爆点
+function drawUltNiulang(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  p: number, fade: number, tier: number,
+  fromC?: number, fromR?: number,
+) {
+  const hasOrigin = fromC != null && fromR != null;
+  const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : { x: x - CELL * 2.2, y };
+  const dx = x - fromPx.x;
+  const dy = y - fromPx.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ang = Math.atan2(dy, dx);
+  const fly = easeOut(Math.min(1, p / 0.7));
+  const px = fromPx.x + Math.cos(ang) * dist * fly;
+  const py = fromPx.y + Math.sin(ang) * dist * fly;
+
+  ctx.globalAlpha = fade * 0.55;
+  ctx.strokeStyle = '#c8d8ff';
+  ctx.lineWidth = 1.8 + tier * 0.3;
+  ctx.beginPath(); ctx.moveTo(fromPx.x, fromPx.y); ctx.lineTo(px, py); ctx.stroke();
+
+  // 云絮箭身
+  ctx.globalAlpha = fade;
+  const rad = CELL * (0.12 + tier * 0.03);
+  const g = ctx.createRadialGradient(px, py, 1, px, py, rad * 2.2);
+  g.addColorStop(0, 'rgba(255,248,220,0.95)');
+  g.addColorStop(0.45, 'rgba(180,200,255,0.55)');
+  g.addColorStop(1, 'rgba(120,160,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(px, py, rad * 2.2, 0, Math.PI * 2); ctx.fill();
+
+  if (fly > 0.85) {
+    const bp = (fly - 0.85) / 0.15;
+    ctx.globalAlpha = (1 - bp) * fade;
+    ctx.fillStyle = 'rgba(200,220,255,0.7)';
+    ctx.beginPath(); ctx.arc(x, y, CELL * (0.2 + bp * 0.25), 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 金吒 砍妖刀：金色弧斩 + 小焰
+function drawUltJinzha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const snap = easeOut(Math.min(1, p / 0.55));
+  const rad = R * 0.65;
+  const a0 = -Math.PI * 0.2;
+  const a1 = a0 - Math.PI * 1.1 * snap;
+  ctx.globalAlpha = fade;
+  ctx.strokeStyle = '#ffd878';
+  ctx.lineWidth = 4 + tier;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(x, y, rad, a0, a1, true); ctx.stroke();
+  if (snap > 0.4) {
+    const bp = (snap - 0.4) / 0.6;
+    const fr = CELL * (0.25 + tier * 0.06) * (0.5 + bp);
+    ctx.globalAlpha = (1 - bp * 0.5) * fade;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, fr);
+    g.addColorStop(0, 'rgba(255,230,160,0.85)');
+    g.addColorStop(0.55, 'rgba(255,140,50,0.4)');
+    g.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, fr, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 红袍 赤焰：小范围火花扩散
+function drawUltHongpao(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const rad = easeOut(p) * R * 0.65;
+  const n = 5 + tier;
+  ctx.globalAlpha = fade;
+  const g = ctx.createRadialGradient(x, y, 1, x, y, rad);
+  g.addColorStop(0, 'rgba(255,210,150,0.75)');
+  g.addColorStop(0.55, 'rgba(255,110,50,0.35)');
+  g.addColorStop(1, 'rgba(255,40,10,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + p * 1.2;
+    const px = x + Math.cos(a) * rad * 0.85;
+    const py = y + Math.sin(a) * rad * 0.85;
+    ctx.fillStyle = '#ff9060';
+    ctx.beginPath(); ctx.arc(px, py, 2.5 + tier * 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 八仙 仙缘定身：金环 + 符点
+function drawUltBaxian(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  for (let k = 0; k < 2; k++) {
+    const pk = Math.max(0, Math.min(1, p - k * 0.18));
+    const rad = easeOut(pk) * R * (0.55 + k * 0.25);
+    ctx.strokeStyle = k === 0 ? '#ffe08a' : 'rgba(255,224,138,0.5)';
+    ctx.lineWidth = 3.5 - k;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+  }
+  const n = 5 + tier;
+  ctx.fillStyle = '#ffe9a8';
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + p * 1.5;
+    const rr = easeOut(p) * R * 0.55;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 2.2 + tier * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// 青牛 牛角顶：短距青绿冲刺线 + 角尖
+function drawUltQingniu(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const len = R * 0.85;
+  const headD = easeOut(p) * len;
+  const hx = x;
+  const hy = y - headD;
+  ctx.globalAlpha = fade;
+  ctx.strokeStyle = 'rgba(120,170,110,0.85)';
+  ctx.lineWidth = 5 + tier;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(hx, hy); ctx.stroke();
+  // 双角
+  ctx.fillStyle = '#c8e0b8';
+  ctx.strokeStyle = '#4a6a40';
+  ctx.lineWidth = 1.2;
+  const horn = CELL * (0.1 + tier * 0.02);
+  for (const side of [-1, 1] as const) {
+    ctx.beginPath();
+    ctx.moveTo(hx + side * horn * 0.2, hy + horn * 0.3);
+    ctx.lineTo(hx + side * horn * 1.1, hy - horn * 0.9);
+    ctx.lineTo(hx + side * horn * 0.05, hy - horn * 0.1);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+}
+
+// 铁背 开山：灰铁冲击波环
+function drawUltTiebei(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const rad = easeOut(p) * R * 0.75;
+  ctx.globalAlpha = fade;
+  ctx.strokeStyle = 'rgba(140,150,160,0.75)';
+  ctx.lineWidth = 4 + tier * 0.6;
+  ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = 'rgba(200,210,220,0.45)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, rad * 0.7, 0, Math.PI * 2); ctx.stroke();
+  // 碎石点
+  const n = 4 + tier;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + p;
+    ctx.fillStyle = `rgba(150,155,160,${0.55 * fade})`;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * rad * 0.85, y + Math.sin(a) * rad * 0.85, 2.5 + tier * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// 流沙 流沙涌：沙旋涡外扩
+function drawUltLiusha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const expand = easeOut(p);
+  ctx.globalAlpha = fade;
+  for (let arm = 0; arm < 3; arm++) {
+    for (let i = 1; i <= 4 + tier; i++) {
+      const t = i / (4 + tier);
+      const rad = expand * R * 0.8 * t;
+      const a = arm * ((Math.PI * 2) / 3) + p * 4 + t * 1.8;
+      const px = x + Math.cos(a) * rad;
+      const py = y + Math.sin(a) * rad;
+      ctx.fillStyle = `rgba(210,180,120,${0.55 * (1 - t * 0.4)})`;
+      ctx.beginPath(); ctx.arc(px, py, 2.5 + tier * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.strokeStyle = 'rgba(190,160,100,0.45)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(x, y, expand * R * 0.75, 0, Math.PI * 2); ctx.stroke();
+}
+
+// 梵音 浅润：淡紫音环 + 少许甘露
+function drawUltFanyin(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  ctx.globalAlpha = fade;
+  for (let k = 0; k < 2; k++) {
+    const pk = Math.max(0, Math.min(1, p - k * 0.2));
+    const rad = easeOut(pk) * R * (0.4 + k * 0.3);
+    ctx.strokeStyle = k === 0 ? 'rgba(200,180,255,0.7)' : 'rgba(180,160,240,0.4)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+  }
+  const drops = 4 + tier;
+  for (let i = 0; i < drops; i++) {
+    const a = (i / drops) * Math.PI * 2;
+    const spread = R * 0.45 * (0.5 + (i % 2) * 0.25);
+    const dx = x + Math.cos(a) * spread;
+    const fall = ((p * 1.4 + i * 0.17) % 1);
+    const dy = y - CELL * 0.9 + fall * CELL * 1.3;
+    ctx.fillStyle = 'rgba(210,200,255,0.8)';
+    ctx.beginPath(); ctx.ellipse(dx, dy, 2, 4, 0, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// 白龙 龙牙突进：银白爪痕撕扯（满5，顺带补齐）
+function drawUltBailong(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const jab = easeOut(Math.min(1, p / 0.55));
+  ctx.globalAlpha = fade;
+  ctx.strokeStyle = '#e8f4ff';
+  ctx.lineWidth = 2.8 + tier * 0.5;
+  ctx.lineCap = 'round';
+  for (let i = -1; i <= 1; i++) {
+    const ang = -Math.PI / 2 + i * 0.28;
+    const len = R * (0.35 + jab * 0.55);
+    const ox = Math.cos(ang + Math.PI / 2) * i * CELL * 0.12;
+    const oy = Math.sin(ang + Math.PI / 2) * i * CELL * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(x + ox - Math.cos(ang) * len * 0.15, y + oy - Math.sin(ang) * len * 0.15);
+    ctx.lineTo(x + ox + Math.cos(ang) * len, y + oy + Math.sin(ang) * len);
+    ctx.stroke();
+  }
+  if (jab > 0.5) {
+    const bp = (jab - 0.5) / 0.5;
+    ctx.globalAlpha = (1 - bp) * fade * 0.8;
+    const g = ctx.createRadialGradient(x, y - R * 0.4, 1, x, y - R * 0.4, CELL * (0.3 + bp * 0.2));
+    g.addColorStop(0, 'rgba(230,245,255,0.9)');
+    g.addColorStop(1, 'rgba(180,210,240,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y - R * 0.4, CELL * (0.3 + bp * 0.2), 0, Math.PI * 2); ctx.fill();
   }
 }
 
