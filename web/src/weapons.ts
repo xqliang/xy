@@ -1,6 +1,6 @@
 // 武器（神兵）系统：每位武将一件专属神兵，五级品质 白/绿/蓝/紫/金。
 // 对局中随机掉落；重复掉落自动升品质；背包内最多装备 3 件（形成取舍）。
-// 数值有上限：最高品质也只给 +20% 单一属性，避免破坏兵种/武将的终局平衡。
+// 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.5 格（格数加成）。
 import { GENERALS, generalById } from './generals';
 import { storeGet, storeSet } from './storage';
 
@@ -60,9 +60,30 @@ export function weaponOfGeneral(generalId: string): WeaponDef | undefined {
   return WEAPONS.find((w) => w.general === generalId);
 }
 
-// 品质 → 加成倍率（+4%/级，金阶 +20%）
-export function weaponBonus(tier: number): number {
+export const WEAPON_RANGE_STEP = 0.5; // 神兵范围：每品质阶 +0.5 格
+
+// 品质 → 攻击/攻速比例加成（+4%/级，金阶 +20%）
+export function weaponPctBonus(tier: number): number {
   return 0.04 * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
+}
+
+/** 兼容旧名：攻击/攻速比例加成 */
+export function weaponBonus(tier: number): number {
+  return weaponPctBonus(tier);
+}
+
+/** 神兵范围：每品质阶 +0.5 格（白 +0.5 … 金 +2.5） */
+export function weaponRangeBonusGrids(tier: number): number {
+  return WEAPON_RANGE_STEP * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
+}
+
+/** 背包/UI 用加成文案 */
+export function weaponBonusLabel(stat: WeaponStat, tier: number): string {
+  if (stat === 'rge') {
+    const g = weaponRangeBonusGrids(tier);
+    return `${STAT_LABEL[stat]} +${g % 1 === 0 ? g : g.toFixed(1)}格`;
+  }
+  return `${STAT_LABEL[stat]} +${Math.round(weaponPctBonus(tier) * 100)}%`;
 }
 
 export interface BagState {
@@ -122,7 +143,7 @@ export function toggleEquip(s: BagState, id: string): { state: BagState; ok: boo
   return { state: next, ok: true };
 }
 
-// 每位武将的加成（仅已装备的神兵生效），供开局注入 Battle
+// 每位武将的加成（仅已装备的神兵生效）：atk/frq 为比例(0~0.2)，rge 为格数(0.5~2.5)
 export type WeaponBonuses = Record<string, { atk: number; frq: number; rge: number }>;
 export function weaponBonuses(s: BagState): WeaponBonuses {
   const out: WeaponBonuses = {};
@@ -130,7 +151,7 @@ export function weaponBonuses(s: BagState): WeaponBonuses {
     const def = weaponById(id);
     const tier = s.owned[id];
     if (!def || !tier) continue;
-    const b = weaponBonus(tier);
+    const b = def.stat === 'rge' ? weaponRangeBonusGrids(tier) : weaponPctBonus(tier);
     const e = (out[def.general] ??= { atk: 0, frq: 0, rge: 0 });
     e[def.stat] += b;
   }

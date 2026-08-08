@@ -17,7 +17,7 @@ import {
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
+import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -337,6 +337,14 @@ function formatRemainT(t: number): string {
   return t >= 10 ? `${Math.ceil(t)}s` : `${t.toFixed(1)}s`;
 }
 
+function bondAtkPctLabel(): string {
+  return `+${Math.round(BOND_ATK_BONUS * 100)}%`;
+}
+
+function bondBuffText(): string {
+  return `🐵${BOND_NAME} 攻击${bondAtkPctLabel()}`;
+}
+
 function unitStatusEntries(u: {
   stunT: number;
   slowT: number;
@@ -390,6 +398,7 @@ function battleBuffLines(
 ): string[] {
   const lines: string[] = [];
   if (ctx !== 'monster') {
+    if (b.bondActive()) lines.push(bondBuffText());
     if (b.atkBuffT > 0) {
       lines.push(`🔴仙丹 攻击+${Math.round((b.atkBuffMul - 1) * 100)}% ${formatRemainT(b.atkBuffT)}`);
     }
@@ -2104,6 +2113,99 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
 
 // 缓动：ease-out（两端→中段），大招动画统一手感
 function easeOut(p: number): number { return 1 - Math.pow(1 - p, 3); }
+function easeIn(p: number): number { return p * p * p; }
+
+/** 金箍棒旋转绘制（普攻/大招共用）：len 为半长(px)，blur 控制残影盘强度 */
+function drawStaffSpinGlyph(
+  ctx: CanvasRenderingContext2D,
+  spin: number,
+  len: number,
+  tier: number,
+  alpha: number,
+  blur: number,
+) {
+  const lw = (4 + tier * 1.1) * Math.max(0.35, len / (CELL * 0.34));
+  ctx.save();
+  ctx.lineCap = 'round';
+  if (blur > 0.05) {
+    const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
+    grad.addColorStop(0, 'rgba(232,161,28,0.03)');
+    grad.addColorStop(0.65, `rgba(232,161,28,${0.14 * blur})`);
+    grad.addColorStop(1, `rgba(255,226,122,${0.4 * blur})`);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = alpha * blur * 0.85;
+    ctx.strokeStyle = '#fff3c4';
+    ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
+  }
+  ctx.globalAlpha = alpha * (1 - 0.75 * blur);
+  ctx.rotate(spin);
+  ctx.strokeStyle = '#e8a11c';
+  ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+  ctx.strokeStyle = '#fff3c4';
+  ctx.lineWidth = Math.max(1.5, lw * 0.45);
+  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
+  ctx.fillStyle = '#ffe27a';
+  const cap = Math.max(1.5, (2 + tier * 0.8) * Math.max(0.35, len / (CELL * 0.34)));
+  ctx.beginPath(); ctx.arc(len, 0, cap, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-len, 0, cap, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+/** 大圣金箍棒：从 from 飞到 to（变大），再飞回 from（变小隐藏） */
+function drawStaffBoomerang(
+  ctx: CanvasRenderingContext2D,
+  fromX: number, fromY: number,
+  toX: number, toY: number,
+  prog: number,
+  tier: number,
+  outFrac = 0.42,
+) {
+  const turns = 2 + tier;
+  const lenBase = CELL * (0.24 + tier * 0.10);
+  let cx: number, cy: number, scale: number, alpha: number, spin: number, blur: number;
+
+  if (prog < outFrac) {
+    const lp = prog / outFrac;
+    const ease = easeOut(lp);
+    cx = fromX + (toX - fromX) * ease;
+    cy = fromY + (toY - fromY) * ease;
+    scale = 0.18 + 0.82 * ease;
+    alpha = 0.4 + 0.6 * ease;
+    const eio = lp < 0.5 ? 2 * lp * lp : 1 - Math.pow(-2 * lp + 2, 2) / 2;
+    spin = turns * Math.PI * 2 * eio * 0.65;
+    blur = Math.pow(Math.sin(Math.PI * lp), 2.4) * 0.85;
+    // 飞出尾迹
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.35;
+    ctx.strokeStyle = '#ffe27a';
+    ctx.lineWidth = 3 * scale;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(cx, cy);
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    const lp = (prog - outFrac) / (1 - outFrac);
+    const ease = easeIn(lp);
+    cx = toX + (fromX - toX) * ease;
+    cy = toY + (fromY - toY) * ease;
+    scale = Math.max(0.06, 1 - lp * 0.94);
+    alpha = Math.max(0, 1 - lp * 0.96);
+    spin = turns * Math.PI * 2 * (0.65 + lp * 0.35);
+    blur = Math.pow(Math.sin(Math.PI * lp), 1.6) * 0.45 * (1 - lp * 0.7);
+  }
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  drawStaffSpinGlyph(ctx, spin, lenBase * scale, tier, alpha, blur);
+  ctx.restore();
+}
 
 // 武将大招专属动画：switch(heroId) 分派，风格对齐 drawFx
 function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
@@ -2118,7 +2220,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
       case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier); break;
       // —— 群攻 ——
-      case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R, f.fromC, f.fromR); break;
       case 'honghaier': drawUltHonghaier(ctx, x, y, prog, fade, f.tier, R); break;
       case 'bajie': drawUltBajie(ctx, x, y, prog, fade, f.tier, R); break;
       case 'tieshan': drawUltTieshan(ctx, x, y, prog, fade, f.tier, R); break;
@@ -2197,9 +2299,31 @@ function drawUltErlang(ctx: CanvasRenderingContext2D, x: number, y: number, p: n
 }
 
 // —— 输出群攻 ——
-// 悟空 金箍棒大范围横扫：原棍兵旋转残影特效放大版 + 扇形扫掠
-function drawUltDasheng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const sweep = easeOut(p);
+// 悟空 金箍棒大范围横扫：从大圣飞出→目标处横扫→飞回缩小隐藏
+function drawUltDasheng(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  p: number, fade: number,
+  tier: number, R: number,
+  fromC?: number, fromR?: number,
+) {
+  const OUT = 0.28;
+  const SWEEP_END = 0.72;
+  const hasOrigin = fromC != null && fromR != null;
+  const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : null;
+
+  if (hasOrigin && fromPx && p < OUT) {
+    drawStaffBoomerang(ctx, fromPx.x, fromPx.y, x, y, p / OUT, tier, 1);
+    return;
+  }
+  if (hasOrigin && fromPx && p > SWEEP_END) {
+    const lp = (p - SWEEP_END) / (1 - SWEEP_END);
+    drawStaffBoomerang(ctx, fromPx.x, fromPx.y, x, y, OUT + lp * (1 - OUT), tier, 0.42);
+    return;
+  }
+
+  const sweepP = hasOrigin ? (p - OUT) / (SWEEP_END - OUT) : p;
+  const sweep = easeOut(Math.max(0, Math.min(1, sweepP)));
   const a0 = -Math.PI * 0.9, a1 = a0 + Math.PI * 1.8 * sweep;
   const rad = R * 0.9;
   ctx.globalAlpha = fade;
@@ -2209,44 +2333,34 @@ function drawUltDasheng(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
   grad.addColorStop(1, 'rgba(240,185,60,0.35)');
   ctx.fillStyle = grad;
   ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, rad, a0, a1); ctx.closePath(); ctx.fill();
-  // 金箍棒旋转残影（自棍兵迁来）：中段化为残影盘，两端清晰
+  // 金箍棒旋转残影（横扫段）：比普攻更大
   const turns = 2.2 + tier * 0.35;
-  const eio = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+  const eio = sweepP < 0.5 ? 2 * sweepP * sweepP : 1 - Math.pow(-2 * sweepP + 2, 2) / 2;
   const spin = turns * Math.PI * 2 * eio;
-  const blur = Math.pow(Math.sin(Math.PI * p), 3);
+  const blur = Math.pow(Math.sin(Math.PI * sweepP), 3);
   const len = rad * (0.72 + tier * 0.04);
-  const lw = 5 + tier;
   ctx.save();
   ctx.translate(x, y);
-  if (blur > 0.05) {
-    const disk = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
-    disk.addColorStop(0, 'rgba(232,161,28,0.04)');
-    disk.addColorStop(0.65, `rgba(232,161,28,${0.18 * blur})`);
-    disk.addColorStop(1, `rgba(255,226,122,${0.45 * blur})`);
-    ctx.fillStyle = disk;
-    ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = fade * blur * 0.9;
-    ctx.strokeStyle = '#fff3c4';
-    ctx.lineWidth = lw;
-    ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.7, spin + 0.2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.7, spin + Math.PI + 0.2); ctx.stroke();
-  }
-  ctx.globalAlpha = fade * (1 - 0.7 * blur);
-  ctx.rotate(spin);
-  ctx.strokeStyle = '#e8a11c';
-  ctx.lineWidth = lw;
-  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-  ctx.strokeStyle = '#fff3c4';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-  ctx.fillStyle = '#ffe27a';
-  ctx.beginPath(); ctx.arc(len, 0, 3 + tier, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(-len, 0, 3 + tier, 0, Math.PI * 2); ctx.fill();
+  drawStaffSpinGlyph(ctx, spin, len, tier, fade, blur);
   ctx.restore();
   // 扫掠前缘指示线
   ctx.globalAlpha = fade;
   ctx.strokeStyle = '#e8a11c'; ctx.lineWidth = 4 + tier;
   ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * rad, y + Math.sin(a1) * rad); ctx.stroke();
+  // 横扫段仍显示一根从大圣连到爆心的淡金线，强化来源感
+  if (hasOrigin && fromPx) {
+    ctx.save();
+    ctx.globalAlpha = fade * 0.25;
+    ctx.strokeStyle = '#ffe27a';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(fromPx.x, fromPx.y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
 }
 
 // 红孩 三昧真火扩散火花花瓣
@@ -2532,9 +2646,12 @@ function drawWordSelection(
   ctx.restore();
 
   // 信息面板：放在另一半场中央，避免遮住攻击范围环
-  const buffLines = !fromAi && active ? battleBuffLines(b, 'general') : [];
+  const showBondDetail = !fromAi && active && def.id === BOND_GENERAL && b.bondActive();
+  const buffLines = !fromAi && active
+    ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
+    : [];
   const pw = 194;
-  const ph = (active ? 150 : 146) + buffLines.length * 16;
+  const ph = (active ? 150 : 146) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -2564,7 +2681,15 @@ function drawWordSelection(
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
   ctx.fillText(def.skillDesc, px + 12, py + 56);
+  if (showBondDetail) {
+    ctx.fillStyle = '#f0c860';
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 72);
+    ctx.fillStyle = 'rgba(255,240,210,0.75)';
+    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 86);
+  }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
+  const statTop = showBondDetail ? 102 : 78;
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -2588,7 +2713,7 @@ function drawWordSelection(
         ['范围', def.rge.toFixed(1)],
       ];
   ctx.font = '13px "PingFang SC", sans-serif';
-  let ry = py + 78;
+  let ry = py + statTop;
   for (const [k, v] of rows) {
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255,240,210,0.7)';
@@ -2599,11 +2724,12 @@ function drawWordSelection(
     ry += 16;
   }
   for (const line of buffLines) {
+    const isBond = line.startsWith('🐵');
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#a0e8b0';
-    ctx.fillText('增益', px + 12, ry);
+    ctx.fillStyle = isBond ? '#f0c860' : '#a0e8b0';
+    ctx.fillText(isBond ? '羁绊' : '增益', px + 12, ry);
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#c8ffd8';
+    ctx.fillStyle = isBond ? '#ffe8a0' : '#c8ffd8';
     ctx.fillText(line, px + pw - 12, ry);
     ry += 16;
   }
@@ -2940,16 +3066,16 @@ function drawUnitInfoPanel(
     rows.push(['状态', formatStatusLine(statusEntries)]);
   }
   for (const line of buffLines) {
-    rows.push(['增益', line]);
+    rows.push([line.startsWith('🐵') ? '羁绊' : '增益', line]);
   }
   ctx.font = '13px "PingFang SC", sans-serif';
   let ry = py + 40;
   for (const [k, v] of rows) {
     ctx.textAlign = 'left';
-    ctx.fillStyle = k === '状态' ? '#ffb0a0' : k === '增益' ? '#a0e8b0' : 'rgba(255,240,210,0.7)';
+    ctx.fillStyle = k === '状态' ? '#ffb0a0' : k === '羁绊' ? '#f0c860' : k === '增益' ? '#a0e8b0' : 'rgba(255,240,210,0.7)';
     ctx.fillText(k, px + 12, ry);
     ctx.textAlign = 'right';
-    ctx.fillStyle = k === '状态' ? '#ffd0c0' : k === '增益' ? '#c8ffd8' : '#fff6e6';
+    ctx.fillStyle = k === '状态' ? '#ffd0c0' : k === '羁绊' ? '#ffe8a0' : k === '增益' ? '#c8ffd8' : '#fff6e6';
     ctx.fillText(v, px + pw - 12, ry);
     ry += 16;
   }
@@ -3099,6 +3225,28 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
+    if (g.def.id === BOND_GENERAL) {
+      const cx = (a.x + z.x) / 2;
+      const cy = Math.min(a.y, z.y) - CELL * 0.44;
+      const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 220);
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      ctx.font = 'bold 10px "PingFang SC", sans-serif';
+      const label = BOND_NAME;
+      const tw = ctx.measureText(label).width;
+      const bw = tw + 10;
+      roundRect(ctx, cx - bw / 2, cy - 7, bw, 14, 5);
+      ctx.fillStyle = 'rgba(200,146,42,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = '#ffe27a';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#fff8e8';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, cx, cy);
+      ctx.restore();
+    }
     ctx.restore();
   }
 }
@@ -3118,43 +3266,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
     switch (f.wtype) {
       case 'staff': {
-        // 英雄悟空金箍棒（原棍兵特效）：起转清晰→加速残影盘→减速重现
-        const turns = 2 + tier;
-        const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2;
-        const spin = turns * Math.PI * 2 * eio;
-        const blur = Math.pow(Math.sin(Math.PI * prog), 3);
-        const len = CELL * (0.24 + tier * 0.10);
-        const baseA = Math.min(1, 1.4 - prog);
-        const lw = 4 + tier * 1.1;
-        ctx.translate(t.x, t.y);
-        ctx.lineCap = 'round';
-        if (blur > 0.05) {
-          const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
-          grad.addColorStop(0, 'rgba(232,161,28,0.03)');
-          grad.addColorStop(0.65, `rgba(232,161,28,${0.14 * blur})`);
-          grad.addColorStop(1, `rgba(255,226,122,${0.4 * blur})`);
-          ctx.globalAlpha = baseA;
-          ctx.fillStyle = grad;
-          ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
-          ctx.globalAlpha = baseA * blur * 0.85;
-          ctx.strokeStyle = '#fff3c4';
-          ctx.lineWidth = lw;
-          ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
-          ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
-        }
-        ctx.globalAlpha = baseA * (1 - 0.75 * blur);
-        ctx.save();
-        ctx.rotate(spin);
-        ctx.strokeStyle = '#e8a11c';
-        ctx.lineWidth = lw;
-        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-        ctx.strokeStyle = '#fff3c4';
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
-        ctx.fillStyle = '#ffe27a';
-        ctx.beginPath(); ctx.arc(len, 0, 2 + tier * 0.8, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(-len, 0, 2 + tier * 0.8, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
+        // 大圣金箍棒：从大圣飞出变大，命中后飞回缩小隐藏
+        drawStaffBoomerang(ctx, a.x, a.y, t.x, t.y, prog, tier);
         break;
       }
       case 'dao': {
@@ -3499,7 +3612,7 @@ function drawEndlessPanel(ctx: CanvasRenderingContext2D, b: Battle): void {
   ctx.restore();
 }
 
-// 危险提示：怪物距唐僧≤4格时，唐僧格红色呼吸描边 + 在路径上(离唐僧1格、朝向来敌处)显示红色「危险」标签(大小呼吸+重影抖动，营造紧张感)
+// 危险提示：怪物距唐僧≤5格时，唐僧格红色呼吸描边 + 在路径上(离唐僧1格、朝向来敌处)显示红色「危险」标签(大小呼吸+重影抖动，营造紧张感)
 function drawDanger(ctx: CanvasRenderingContext2D, b: Battle) {
   const now = performance.now();
   const pulse = 0.5 + 0.5 * Math.sin(now / 140); // 0..1 呼吸
@@ -3593,6 +3706,31 @@ function drawAoeBurst(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
+function drawBondHudChip(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (!b.bondActive() || (b.status !== 'ready' && b.status !== 'playing')) return;
+  const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 200);
+  const label = `🐵 ${BOND_NAME} ${bondAtkPctLabel()}`;
+  ctx.save();
+  ctx.font = 'bold 11px "PingFang SC", sans-serif';
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 14;
+  const bx = VIEW_W / 2 - bw / 2;
+  const by = HUD_H - 17;
+  ctx.globalAlpha = pulse;
+  roundRect(ctx, bx, by, bw, 15, 7);
+  ctx.fillStyle = 'rgba(200,146,42,0.88)';
+  ctx.fill();
+  ctx.strokeStyle = '#ffe27a';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff8e8';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, VIEW_W / 2, by + 7.5);
+  ctx.restore();
+}
+
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
@@ -3619,6 +3757,7 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.textAlign = 'right';
   ctx.fillStyle = '#c23b3b';
   ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);
+  drawBondHudChip(ctx, b);
 }
 
 // HUD 左上角（桃前）：播放器风格暂停按钮（两竖条）

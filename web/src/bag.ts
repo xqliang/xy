@@ -1,7 +1,8 @@
 // 武器背包：展示已获得的神兵（品质/加成/专属武将），可切换装备（最多 3 件）。
 import { VIEW_W, VIEW_H } from './render';
 import {
-  WEAPONS, weaponById, weaponQualityName, weaponQualityColor, weaponBonus, STAT_LABEL,
+  WEAPONS, weaponById, weaponQualityName, weaponQualityColor, weaponBonusLabel,
+  weaponPctBonus, weaponRangeBonusGrids, STAT_LABEL,
   MAX_EQUIPPED, MAX_WEAPON_TIER, type BagState,
 } from './weapons';
 import { generalById } from './generals';
@@ -84,7 +85,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
     ctx.textAlign = 'right';
     ctx.fillStyle = has ? '#9bffb0' : 'rgba(155,255,176,0.25)';
     ctx.font = 'bold 14px "PingFang SC", sans-serif';
-    ctx.fillText(has ? `${STAT_LABEL[w.stat]} +${Math.round(weaponBonus(tier) * 100)}%` : `${STAT_LABEL[w.stat]} —`, LEFT + ROW_W - 96, y + ROW_H / 2);
+    ctx.fillText(has ? weaponBonusLabel(w.stat, tier) : `${STAT_LABEL[w.stat]} —`, LEFT + ROW_W - 96, y + ROW_H / 2);
 
     // 装备状态徽标
     const bw = 74, bh = 30;
@@ -194,12 +195,19 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.stroke();
 
   // 说明：定位 + 当前加成 + 满阶加成 + 获取方式
-  const curBonus = has ? Math.round(weaponBonus(tier) * 100) : 0;
-  const maxBonus = Math.round(weaponBonus(MAX_WEAPON_TIER) * 100);
+  const curBonus = has
+    ? (w.stat === 'rge' ? `+${weaponRangeBonusGrids(tier)}格` : `+${Math.round(weaponPctBonus(tier) * 100)}%`)
+    : '';
+  const maxBonus = w.stat === 'rge'
+    ? `+${weaponRangeBonusGrids(MAX_WEAPON_TIER)}格`
+    : `+${Math.round(weaponPctBonus(MAX_WEAPON_TIER) * 100)}%`;
+  const bonusExplain = w.stat === 'rge'
+    ? `范围每升一阶 +0.5 格（金阶满 ${maxBonus}）`
+    : `随品质提升（金阶满 ${maxBonus}）`;
   const usage =
     `专属「${gname}」神兵，装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
-    (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} +${curBonus}%（金阶满 +${maxBonus}%）。\n`
-         : `尚未获得。获得后可装备：${STAT_LABEL[w.stat]} 随品质提升（金阶满 +${maxBonus}%）。\n`) +
+    (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} ${curBonus}。${bonusExplain}。\n`
+         : `尚未获得。获得后可装备：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
     `对局中随机掉落，重复掉落自动升品质；背包最多同时装备 ${MAX_EQUIPPED} 件。`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';

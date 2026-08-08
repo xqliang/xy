@@ -6,6 +6,7 @@
 // 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
+import { posAlong } from './board';
 import { matchGeneral } from './generals';
 
 export interface Cell { c: number; r: number; }
@@ -46,6 +47,10 @@ export interface AutoPlaceView {
   moveWord(from: Cell, to: Cell): boolean;
   /** 该格是否属于已激活武将（禁止拆散） */
   isActiveHeroCell(cell: Cell): boolean;
+  /** 危险提示：怪物逼近唐僧，布阵/调位优先往唐僧方向靠拢 */
+  dangerNear(): boolean;
+  /** 格对「怪物即将路过」路段的贴近分（越高越好；无怪时为 0） */
+  imminentPathScore(cell: Cell): number;
   /** 候选区内两枚同型同阶兵合成（升阶留在 to 下标；from 被移除） */
   mergeTray(from: number, to: number): boolean;
   /** 棋盘两兵合成：from 并入 to（保留 to 格，升阶） */
@@ -88,15 +93,19 @@ export function digPriorityScore(
   pathDist: number,
   exitDist: number,
   exitWeight: number = DIG_EXIT_WEIGHT,
+  opts?: { danger?: boolean; imminentScore?: number; tangsengDist?: number },
 ): number {
   const sides = Math.max(0, Math.min(4, Math.floor(touchSides)));
   // 贴边越多分越低；权重远小于距离档，避免「远端三边」压过「近端一边」
   const touchPart = DIG_TOUCH_WEIGHT * (4 - sides);
-  return (
-    DIG_DIST_WEIGHT * digPathDistPenalty(pathDist) +
-    touchPart +
-    Math.max(0, exitWeight) * Math.max(0, exitDist)
-  );
+  const pathPart = DIG_DIST_WEIGHT * digPathDistPenalty(pathDist);
+  if (opts?.danger) {
+    const imm = opts.imminentScore ?? 0;
+    if (imm > 0) return pathPart + touchPart - IMMINENT_DIG_WEIGHT * imm;
+    // 无怪时回退：沿路径靠唐僧
+    return pathPart + touchPart - dangerSeatBonus(exitDist, opts.tangsengDist ?? 0);
+  }
+  return pathPart + touchPart + Math.max(0, exitWeight) * Math.max(0, exitDist);
 }
 
 /**
@@ -156,6 +165,61 @@ export function heroSeatScore(pathCover: number, pathDist = 0): number {
   return pathCover - 0.05 * Math.max(0, pathDist);
 }
 
+/** 危险时座位加分：沿路径更靠唐僧(exitDist↑) + 欧氏更贴唐僧(tangsengDist↓) */
+export const DANGER_EXIT_WEIGHT = 2;
+export const DANGER_TANG_WEIGHT = 1.5;
+
+export function dangerSeatBonus(exitDist: number, tangsengDist: number): number {
+  return DANGER_EXIT_WEIGHT * Math.max(0, exitDist) - DANGER_TANG_WEIGHT * Math.max(0, tangsengDist);
+}
+
+/** 怪物即将路过路段：从最靠前怪起向前 lookahead、略向后 lookback（格） */
+export const IMMINENT_LOOKAHEAD = 4;
+export const IMMINENT_LOOKBACK = 1;
+export const IMMINENT_DIG_WEIGHT = 8;
+export const IMMINENT_PLACE_WEIGHT = 3;
+
+/**
+ * 格对 imminent 路段的贴近分（越高越好）。
+ * 采样最靠前怪附近路径点，欧氏越近、越靠近怪头分越高。
+ */
+export function imminentPathScore(
+  path: { c: number; r: number }[],
+  pathLen: number,
+  entranceDist: number,
+  monsterDists: number[],
+  cell: Cell,
+  opts?: { lookahead?: number; lookback?: number },
+): number {
+  if (monsterDists.length === 0 || pathLen <= entranceDist) return 0;
+  const front = Math.max(...monsterDists);
+  const lookAhead = opts?.lookahead ?? IMMINENT_LOOKAHEAD;
+  const lookBack = opts?.lookback ?? IMMINENT_LOOKBACK;
+  const zoneStart = Math.max(entranceDist, front - lookBack);
+  const zoneEnd = Math.min(pathLen, front + lookAhead);
+  const span = Math.max(0.01, zoneEnd - zoneStart);
+  const step = 0.25;
+  let best = 0;
+  for (let d = zoneStart; d <= zoneEnd; d += step) {
+    const p = posAlong(path, d);
+    const euclid = Math.hypot(cell.c - p.c, cell.r - p.r);
+    const alongBias = 1 + 0.2 * (1 - Math.abs(d - front) / span);
+    const prox = alongBias / (1 + euclid);
+    if (prox > best) best = prox;
+  }
+  return best;
+}
+
+/** 危险布阵/调位加分：有怪时用 imminent 路段，否则回退靠唐僧启发 */
+export function dangerPlacementBonus(
+  imminentScore: number,
+  exitDist: number,
+  tangsengDist: number,
+): number {
+  if (imminentScore > 0) return IMMINENT_PLACE_WEIGHT * imminentScore;
+  return dangerSeatBonus(exitDist, tangsengDist);
+}
+
 function cellKey(c: Cell): string { return `${c.c},${c.r}`; }
 function sameCell(a: Cell, b: Cell): boolean { return a.c === b.c && a.r === b.r; }
 
@@ -195,15 +259,23 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     if (!step()) break; // 一整轮找不到可执行动作 → 停（剩余令牌保留在 tray）
   }
 
-  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路 */
+  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；危险时追加靠唐僧加权 */
   function scoreCell(cell: Cell, type: UnitType, tier: number): number {
     const rge = getUnitStat(type, tier).rge;
-    return seatScore(
+    let s = seatScore(
       view.pathCover(cell, type, tier),
       view.exitDist(cell),
       view.nearestPathDist(cell),
       rge,
     );
+    if (view.dangerNear()) {
+      s += dangerPlacementBonus(
+        view.imminentPathScore(cell),
+        view.exitDist(cell),
+        view.tangsengDist(cell),
+      );
+    }
+    return s;
   }
 
   /** 可达格中选座位分最高者（短兵先占位，避免远程抢近路甜区） */
@@ -213,12 +285,14 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
 
   function step(): boolean {
     const tray = view.tray();
-    // 1) 铲子：挖「贴路 + 近出口」加权最优格；次优时挖较后一格
+    // 1) 铲子：平时挖贴路+近出口；危险时优先挖靠近唐僧的格
     for (let i = 0; i < tray.length; i++) {
       if (tray[i]!.kind !== 'shovel') continue;
-      const exitW = opts.randomDigExitWeight
-        ? DIG_EXIT_WEIGHT_AI_MIN + opts.rng() * (DIG_EXIT_WEIGHT_AI_MAX - DIG_EXIT_WEIGHT_AI_MIN)
-        : DIG_EXIT_WEIGHT;
+      const exitW = view.dangerNear()
+        ? 0
+        : opts.randomDigExitWeight
+          ? DIG_EXIT_WEIGHT_AI_MIN + opts.rng() * (DIG_EXIT_WEIGHT_AI_MAX - DIG_EXIT_WEIGHT_AI_MIN)
+          : DIG_EXIT_WEIGHT;
       const digs = sortedDigTargets(exitW);
       if (digs.length === 0) continue; // 无处可挖：保留，扫下一个
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
@@ -354,11 +428,24 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return view.moveUnit(best.from, best.to);
   }
 
-  /** 可挖格：离路~1格优先，贴边数弱加权，再叠加近出口（exitWeight 可由 AI 每次挖时随机） */
+  /** 可挖格：离路~1格优先，贴边数弱加权；平时叠加近出口，危险时改优先靠近唐僧 */
   function sortedDigTargets(exitWeight: number = DIG_EXIT_WEIGHT): Cell[] {
+    const danger = view.dangerNear();
     return view.diggableCells().slice().sort((a, b) => {
-      const sa = digPriorityScore(view.pathTouchSides(a), view.nearestPathDist(a), view.exitDist(a), exitWeight);
-      const sb = digPriorityScore(view.pathTouchSides(b), view.nearestPathDist(b), view.exitDist(b), exitWeight);
+      const sa = digPriorityScore(
+        view.pathTouchSides(a),
+        view.nearestPathDist(a),
+        view.exitDist(a),
+        exitWeight,
+        danger ? { danger: true, imminentScore: view.imminentPathScore(a), tangsengDist: view.tangsengDist(a) } : undefined,
+      );
+      const sb = digPriorityScore(
+        view.pathTouchSides(b),
+        view.nearestPathDist(b),
+        view.exitDist(b),
+        exitWeight,
+        danger ? { danger: true, imminentScore: view.imminentPathScore(b), tangsengDist: view.tangsengDist(b) } : undefined,
+      );
       return sa - sb || a.r - b.r || a.c - b.c;
     });
   }
@@ -489,7 +576,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return best;
   }
 
-  /** tray 更高阶同字 ↔ 棋盘更低阶孤儿 */
+  /** tray 更高阶同字 ↔ 棋盘更低阶孤儿（不碰已激活武将格） */
   function tryPromoteHigherTierWords(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
@@ -499,15 +586,17 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       for (const w of orphanWords()) {
         if (w.char !== t.char) continue;
         if (wordTier(w) >= t.tier) continue;
+        if (view.isActiveHeroCell(w.cell)) continue;
         if (!target || wordTier(w) < wordTier(target)) target = w;
       }
-      if (target && view.place(i, target.cell)) return true;
+      if (target && !view.isActiveHeroCell(target.cell) && view.place(i, target.cell)) return true;
     }
     return false;
   }
 
   /**
-   * 棋盘同字只留最高阶（含已激活）：其余未激活低阶/重复用 tray 异字换下。
+   * 棋盘同字只留最高阶：统计时含已激活格上的字（用于识别重复），
+   * 但换下目标只能是未激活孤儿——绝不拆散已激活武将。
    */
   function tryEjectLowerDuplicateOrphans(): boolean {
     const byChar = new Map<string, PlacedWordLite[]>();
@@ -527,7 +616,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       });
       for (let k = 1; k < list.length; k++) {
         const w = list[k]!;
-        if (view.isActiveHeroCell(w.cell)) continue; // 绝不拆激活武将
+        // 已激活武将任一格都不可作为回收目标
+        if (view.isActiveHeroCell(w.cell)) continue;
         expendable.push(w);
       }
     }
@@ -535,6 +625,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     expendable.sort((a, b) => wordTier(a) - wordTier(b));
 
     for (const junk of expendable) {
+      // 双重守卫：place 前再确认目标仍非激活格
+      if (view.isActiveHeroCell(junk.cell)) continue;
       const tray = view.tray();
       let bestIdx = -1;
       let bestScore = -Infinity;
@@ -560,7 +652,9 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
           bestIdx = i;
         }
       }
-      if (bestIdx >= 0 && view.place(bestIdx, junk.cell)) return true;
+      if (bestIdx < 0) continue;
+      if (view.isActiveHeroCell(junk.cell)) continue;
+      if (view.place(bestIdx, junk.cell)) return true;
     }
     return false;
   }
@@ -831,30 +925,67 @@ export interface BattleRepositionView {
   isActiveHeroCell(cell: Cell): boolean;
   canEngage(cell: Cell, type: UnitType, tier: number): boolean;
   engageScore(cell: Cell, type: UnitType, tier: number): number;
+  dangerNear(): boolean;
+  exitDist(cell: Cell): number;
+  tangsengDist(cell: Cell): number;
+  imminentPathScore(cell: Cell): number;
+}
+
+export interface BattleRepositionOpts {
+  /** 禁止对同一对格子再次 swap/move（仅挡紧邻一次，防 AI 来回抖） */
+  blockedPair?: { a: Cell; b: Cell };
+}
+
+export function repositionPairKey(a: Cell, b: Cell): string {
+  const ka = `${a.c},${a.r}`;
+  const kb = `${b.c},${b.r}`;
+  return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+}
+
+function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolean {
+  if (!blocked) return false;
+  return repositionPairKey(a, b) === repositionPairKey(blocked.a, blocked.b);
 }
 
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位。
- * 每次调用至多成功一次 move/swap；宿主侧用 ≥200ms 间隔节流。
+ * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧用 ≥1s 间隔节流。
  */
-export function planBattleReposition(view: BattleRepositionView): boolean {
+export function planBattleReposition(
+  view: BattleRepositionView,
+  opts?: BattleRepositionOpts,
+): { ok: boolean; pair?: { a: Cell; b: Cell } } {
   const units = view.placedUnits();
-  if (units.length === 0) return false;
+  if (units.length === 0) return { ok: false };
+
+  const danger = view.dangerNear();
+  const placementBonus = (cell: Cell) =>
+    danger
+      ? dangerPlacementBonus(view.imminentPathScore(cell), view.exitDist(cell), view.tangsengDist(cell))
+      : 0;
+  const cellValue = (cell: Cell, type: UnitType, tier: number) =>
+    view.engageScore(cell, type, tier) + placementBonus(cell);
 
   let bestGain = 0.05;
+  let bestPair: { a: Cell; b: Cell } | null = null;
   let bestAction: (() => boolean) | null = null;
 
-  // 1) 空闲高价值武器 → 能打怪的空格
+  // 1) 空闲/够不着 → 能打怪的空格；危险时亦考虑更贴唐僧的空格
   for (const u of units) {
     if (view.isActiveHeroCell(u.cell)) continue;
-    if (view.canEngage(u.cell, u.type, u.tier)) continue;
-    const cur = view.engageScore(u.cell, u.type, u.tier);
+    const curVal = cellValue(u.cell, u.type, u.tier);
+    const idle = !view.canEngage(u.cell, u.type, u.tier);
+    if (!idle && !danger) continue;
     for (const to of view.freeCells()) {
-      if (!view.canEngage(to, u.type, u.tier)) continue;
-      const gain = view.engageScore(to, u.type, u.tier) - cur;
+      const canEng = view.canEngage(to, u.type, u.tier);
+      if (!canEng && (!danger || placementBonus(to) <= placementBonus(u.cell) + 0.05)) continue;
+      if (!idle && !canEng) continue; // 已在打怪时不挪到够不着的格
+      const gain = cellValue(to, u.type, u.tier) - curVal;
       if (gain <= bestGain) continue;
-      bestGain = gain;
       const from = u.cell;
+      if (isBlockedPair(from, to, opts?.blockedPair)) continue;
+      bestGain = gain;
+      bestPair = { a: from, b: to };
       bestAction = () => view.moveUnit(from, to);
     }
   }
@@ -865,28 +996,30 @@ export function planBattleReposition(view: BattleRepositionView): boolean {
       const a = units[i]!;
       const b = units[j]!;
       if (view.isActiveHeroCell(a.cell) || view.isActiveHeroCell(b.cell)) continue;
-      const before =
-        view.engageScore(a.cell, a.type, a.tier) + view.engageScore(b.cell, b.type, b.tier);
-      const after =
-        view.engageScore(b.cell, a.type, a.tier) + view.engageScore(a.cell, b.type, b.tier);
+      const before = cellValue(a.cell, a.type, a.tier) + cellValue(b.cell, b.type, b.tier);
+      const after = cellValue(b.cell, a.type, a.tier) + cellValue(a.cell, b.type, b.tier);
       const gain = after - before;
       if (gain <= bestGain) continue;
       const aIdle = !view.canEngage(a.cell, a.type, a.tier);
       const bIdle = !view.canEngage(b.cell, b.type, b.tier);
       const aEngagesAfter = view.canEngage(b.cell, a.type, a.tier);
       const bEngagesAfter = view.canEngage(a.cell, b.type, b.tier);
-      if (!(aIdle && aEngagesAfter) && !(bIdle && bEngagesAfter)) continue;
+      if (!(aIdle && aEngagesAfter) && !(bIdle && bEngagesAfter) && !(danger && gain > 0.1)) continue;
+      if (isBlockedPair(a.cell, b.cell, opts?.blockedPair)) continue;
       bestGain = gain;
+      bestPair = { a: a.cell, b: b.cell };
       bestAction = () => view.swapUnits(a.cell, b.cell);
     }
   }
 
-  return bestAction ? bestAction() : false;
+  if (!bestAction) return { ok: false };
+  if (!bestAction()) return { ok: false };
+  return { ok: true, pair: bestPair ?? undefined };
 }
 
-/** 连续调位；maxSteps=1 用于 AI 200ms 节流，更大值用于玩家一键布阵 */
+/** 连续调位；maxSteps=1 用于 AI 1s 节流，更大值用于玩家一键布阵 */
 export function runBattleReposition(view: BattleRepositionView, maxSteps = 1): number {
   let steps = 0;
-  while (steps < maxSteps && planBattleReposition(view)) steps++;
+  while (steps < maxSteps && planBattleReposition(view).ok) steps++;
   return steps;
 }

@@ -28,6 +28,7 @@ import {
   partnerChars,
   BOND_GENERAL,
   BOND_ATK_BONUS,
+  BOND_NAME,
   ultTypeOf,
   CRIT_MULT,
   type GeneralDef,
@@ -35,7 +36,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, runBattleReposition, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlace, planBattleReposition, runBattleReposition, imminentPathScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -75,6 +76,7 @@ import {
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 export const TUNING = {
   monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
+  dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
   monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
@@ -132,7 +134,7 @@ export const TUNING = {
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
   webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
-  webbindRangeMul: 0.5, // 缠丝期间有效射程倍率（最低 1 格，见 updateUnits）
+  webbindRangeCut: 0.5, // 缠丝：有效射程 -0.5 格（见 updateUnits）
   // —— 小 Boss（第 4 波之后、非妖王波：有概率刷出跨地图小头目，各带独立光环技能）——
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.42, // 非 BOSS 波出现小 Boss 的概率
@@ -358,6 +360,8 @@ export interface HeroUltFx {
   rge: number;           // 英雄当前射程(格)，范围类动画铺开半径
   crit: boolean;         // true=暴击(单体) false=群攻(范围)
   critDmg?: number;      // 暴击伤害数字(crit 时飘字)
+  fromC?: number;        // 施法者格坐标（大圣等需从武将飞出再收回）
+  fromR?: number;
 }
 
 // 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
@@ -491,8 +495,9 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调位节流（≥200ms 一次）
-  static readonly AI_REPOSITION_INTERVAL = 0.2;
+  private aiRepositionTimer = 0;            // 战中调位节流（≥1s 一次）
+  private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
+  static readonly AI_REPOSITION_INTERVAL = 1;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
   // 道具与修正器
@@ -1100,6 +1105,9 @@ export class Battle {
       },
       isActiveHeroCell: (cell) =>
         this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
+      dangerNear: () => this.aiDangerNear(),
+      imminentPathScore: (cell) =>
+        this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
       mergeTray: (from, to) => this.aiMergeTrayTokens(from, to),
       mergeBoard: (from, to) => this.aiMergeBoardUnits(from, to),
     };
@@ -1121,6 +1129,23 @@ export class Battle {
       if (inAttackRange(cell.c, cell.r, stat.rge, p)) score += stat.atk;
     }
     return score;
+  }
+
+  /** 格对「怪物即将路过」路段的贴近分（挖铲/危险布阵用） */
+  private imminentPathScoreAt(
+    monsters: Monster[],
+    path: Cell[],
+    pathLen: number,
+    entranceDist: number,
+    cell: Cell,
+  ): number {
+    return imminentPathScore(
+      path,
+      pathLen,
+      entranceDist,
+      monsters.map((m) => m.dist),
+      cell,
+    );
   }
 
   private buildBattleRepositionView(side: 'player' | 'ai'): BattleRepositionView {
@@ -1150,6 +1175,11 @@ export class Battle {
           this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
         canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier) > 0,
         engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier),
+        dangerNear: () => this.aiDangerNear(),
+        exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+        tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
+        imminentPathScore: (cell) =>
+          this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
       };
     }
     return {
@@ -1185,17 +1215,28 @@ export class Battle {
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier) > 0,
       engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier),
+      dangerNear: () => this.dangerNear(),
+      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
+      imminentPathScore: (cell) =>
+        this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
     };
   }
 
-  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（200ms 节流），玩家一键布阵可连续多步 */
+  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（1s 节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
       if (this.aiMonsters.length === 0 || this.aiUnits.length === 0) return 0;
-    } else if (this.monsters.length === 0 || this.units.size === 0) {
+      const r = planBattleReposition(this.buildBattleRepositionView('ai'), {
+        blockedPair: this.aiLastRepositionPair ?? undefined,
+      });
+      this.aiLastRepositionPair = r.ok && r.pair ? r.pair : null;
+      return r.ok ? 1 : 0;
+    }
+    if (this.monsters.length === 0 || this.units.size === 0) {
       return 0;
     }
-    return runBattleReposition(this.buildBattleRepositionView(side), maxSteps);
+    return runBattleReposition(this.buildBattleRepositionView('player'), maxSteps);
   }
 
   private aiPathCoverAt(ax: number, ay: number, rge: number): number {
@@ -1335,7 +1376,7 @@ export class Battle {
       const activated = this.activeGenerals().find((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r));
       this.emit(activated ? 'general' : 'place');
       if (activated) {
-        this.message = `${activated.def.name} 已激活！(金框生效)`;
+        this.message = this.generalActivateMessage(activated.def.name, activated.def.id);
       } else {
         const mates = partnerChars(token.char).join('/');
         this.message = `放下「${token.char}」，与「${mates}」按武将名左右相邻可激活`;
@@ -1449,8 +1490,14 @@ export class Battle {
     // 反馈：是否因移动而激活/拆分
     const nowActive = this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === to.c && cc.r === to.r));
     const def = generalById(w.general);
-    if (nowActive) { this.emit('general'); this.message = `${def?.name ?? ''} 已激活！(金框生效)`; }
-    else if (wasActive) this.message = `${def?.name ?? ''} 已拆分，失去输出`;
+    if (nowActive) {
+      this.emit('general');
+      this.message = this.generalActivateMessage(def?.name ?? '', def?.id ?? '');
+    } else if (wasActive) {
+      let msg = `${def?.name ?? ''} 已拆分，失去输出`;
+      if (def?.id === BOND_GENERAL) msg += ` · ${BOND_NAME}已失效`;
+      this.message = msg;
+    }
     return true;
   }
 
@@ -1804,7 +1851,7 @@ export class Battle {
       return {
         atk: base.atk * (1 + (wb?.atk ?? 0)) * atkMul,
         frq: base.frq * (1 + (wb?.frq ?? 0)) * frqMul,
-        rge: base.rge * (1 + (wb?.rge ?? 0)),
+        rge: base.rge + (wb?.rge ?? 0),
         targets: base.targets,
         ax: (g.cells[0].c + g.cells[1].c) / 2,
         ay: (g.cells[0].r + g.cells[1].r) / 2,
@@ -1994,7 +2041,7 @@ export class Battle {
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
         const isStaff = g.def.id === 'dasheng';
-        const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
+        const ttl = isStaff ? 0.58 + (g.tier - 1) * 0.06 : 0.16;
         this.fx.push({
           from: { c: ax, r: ay },
           to: t.p,
@@ -2025,7 +2072,7 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（200ms 至多一次）
+    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（AI 1s 至多一次）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       this.aiRepositionTimer = Battle.AI_REPOSITION_INTERVAL;
@@ -2068,13 +2115,13 @@ export class Battle {
     return false;
   }
 
-  // 危险提示：任一怪物距唐僧（沿路剩余）≤3 格
+  // 危险提示：任一怪物距唐僧（沿路剩余）≤ dangerRemaining 格
   dangerNear(): boolean {
-    for (const m of this.monsters) if (this.pathLen - m.dist <= 4) return true;
+    for (const m of this.monsters) if (this.pathLen - m.dist <= TUNING.dangerRemaining) return true;
     return false;
   }
   aiDangerNear(): boolean {
-    for (const m of this.aiMonsters) if (this.aiPathLen - m.dist <= 4) return true;
+    for (const m of this.aiMonsters) if (this.aiPathLen - m.dist <= TUNING.dangerRemaining) return true;
     return false;
   }
 
@@ -2108,8 +2155,10 @@ export class Battle {
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier); // atk/frq/rge/targets（来自 game-core）
-      // 缠丝：有效射程削减（最低 1 格），逼近战化，配合盘丝洞蛛网主题
-      const effRge = u.rangeCutT > 0 ? Math.max(1, stat.rge * TUNING.webbindRangeMul) : stat.rge;
+      // 缠丝：有效射程 -0.5 格（最低 0.5 格，仍可与相邻格相交命中）
+      const effRge = u.rangeCutT > 0
+        ? Math.max(TUNING.rangeTolerance, stat.rge - TUNING.webbindRangeCut)
+        : stat.rge;
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
@@ -2150,6 +2199,14 @@ export class Battle {
   }
   private bondAtkMul(): number {
     return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
+  }
+
+  private generalActivateMessage(name: string, generalId: string): string {
+    let msg = `${name} 已激活！(金框生效)`;
+    if (generalId === BOND_GENERAL) {
+      msg += ` · ${BOND_NAME}：全队攻击+${Math.round(BOND_ATK_BONUS * 100)}%`;
+    }
+    return msg;
   }
 
   // 武将升阶进度：每级所需经验 = 10 × 当前 level；满条时双字各 +1 阶（level 仅作阈值曲线，不参与攻力）
@@ -2197,7 +2254,7 @@ export class Battle {
   }
   generalRge(g: ActiveGeneral): number {
     const wb = this.weaponBonuses[g.def.id];
-    return generalStat(g.def, g.tier).rge * (1 + (wb?.rge ?? 0));
+    return generalStat(g.def, g.tier).rge + (wb?.rge ?? 0);
   }
 
   // 已激活武将的攻击 + 定期技能（未相邻的字牌不产生任何输出）
@@ -2236,7 +2293,7 @@ export class Battle {
         t.m.hitFlash = 0.12;
         // 悟空普攻：复用原棍兵金箍棒旋转特效；其余武将仍用短线弹道
         const isStaff = g.def.id === 'dasheng';
-        const ttl = isStaff ? 0.3 + (g.tier - 1) * 0.04 : 0.16;
+        const ttl = isStaff ? 0.58 + (g.tier - 1) * 0.06 : 0.16;
         this.fx.push({
           from: { c: ax, r: ay },
           to: t.p,
@@ -2298,14 +2355,18 @@ export class Battle {
       }
     }
     // 专属大招特效（替代原通用 bursts.push）
+    const gAx = (g.cells[0].c + g.cells[1].c) / 2;
+    const gAy = (g.cells[0].r + g.cells[1].r) / 2;
+    const ultTtl = g.def.id === 'dasheng' ? 0.9 : 0.6;
     this.heroUltFx.push({
       heroId: g.def.id,
       c: center.c, r: center.r,
-      ttl: 0.6, maxTtl: 0.6,
+      ttl: ultTtl, maxTtl: ultTtl,
       tier: g.tier,
       rge: this.generalRge(g),
       crit,
       critDmg,
+      ...(g.def.id === 'dasheng' ? { fromC: gAx, fromR: gAy } : {}),
     });
     this.addGeneralCombatExp(g, 4);
   }
@@ -2760,7 +2821,7 @@ export class Battle {
         const def = generalById(general);
         if (!def) return 2;
         const wb = this.weaponBonuses[def.id];
-        return generalStat(def, tier).rge * (1 + (wb?.rge ?? 0));
+        return generalStat(def, tier).rge + (wb?.rge ?? 0);
       },
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.autoPlaceApply(i, cell),
@@ -2803,6 +2864,9 @@ export class Battle {
       },
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
+      dangerNear: () => this.dangerNear(),
+      imminentPathScore: (cell) =>
+        this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
       mergeTray: (from, to) => this.mergeTrayTokens(from, to),
       mergeBoard: (from, to) => {
         const a = this.units.get(cellKey(from.c, from.r));

@@ -86,7 +86,7 @@ describe('updateAi 真玩家循环', () => {
     expect(b.aiUnits.length).toBe(0);
   });
 
-  it('战中调位节流：200ms 内至多一次互换', () => {
+  it('战中调位节流：1s 内至多一次', () => {
     const b = new Battle(7) as any;
     b.aiMonsters = [{ dist: 10, hp: 100, spd: 1, isBoss: true, isMiniBoss: false, spawnT: 0, hitFlash: 0, hasteT: 0, stunT: 0, slowT: 0 }];
     b.aiPathLen = 20;

@@ -4,6 +4,9 @@ import {
   planAutoPlace,
   planBattleReposition,
   runBattleReposition,
+  dangerSeatBonus,
+  imminentPathScore,
+  dangerPlacementBonus,
   digPriorityScore,
   mergeKeepScore,
   placeCellScore,
@@ -28,6 +31,11 @@ class FakeView implements AutoPlaceView {
   wordsMap = new Map<string, { char: string; general: string; cell: Cell; tier: number }>();
   diggable: Cell[];
   generalRgeVal = 2;
+  /** 假路径：水平 r=0，用于 imminent 路段评分 */
+  readonly fakePath = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  pathLen = 7;
+  entranceDist = 0;
+  monsterDists: number[] = [];
   private key(c: number, r: number) { return `${c},${r}`; }
   constructor(tray: PlaceToken[], unlocked: Cell[], diggable: Cell[] = []) {
     this.trayArr = tray.slice();
@@ -48,6 +56,9 @@ class FakeView implements AutoPlaceView {
   pathTouchSides(cell: Cell) { return cell.r === 1 ? 1 : cell.r === 0 ? 1 : 0; }
   exitDist(cell: Cell) { return cell.c; } // 列号=离出口距（出口在 c=0）
   tangsengDist(cell: Cell) { return Math.hypot(cell.c - 7, cell.r - 5); }
+  imminentPathScore(cell: Cell) {
+    return imminentPathScore(this.fakePath, this.pathLen, this.entranceDist, this.monsterDists, cell);
+  }
   pathCover(cell: Cell, type: any, tier: number) {
     return Math.max(0, getUnitStat(type, tier).rge - this.nearestPathDist(cell) + 1);
   }
@@ -117,6 +128,8 @@ class FakeView implements AutoPlaceView {
     }
     return false;
   }
+  dangerNearFlag = false;
+  dangerNear() { return this.dangerNearFlag; }
   mergeTray(from: number, to: number): boolean {
     if (from === to) return false;
     const a = this.trayArr[from], b = this.trayArr[to];
@@ -201,6 +214,28 @@ it('铲子加权：同贴路距时优先挖靠近出口的格', () => {
   planAutoPlace(v, { rng });
   expect(v.freeCells().some((c) => c.c === 0 && c.r === 0)).toBe(true);
   expect(v.diggable.some((c) => c.c === 4)).toBe(true); // 远处未挖
+});
+
+it('危险时铲子优先挖怪物即将路过的路段旁', () => {
+  const v = new FakeView([{ kind: 'shovel' }], [], [{ c: 0, r: 0 }, { c: 6, r: 1 }]);
+  v.dangerNearFlag = true;
+  v.monsterDists = [6]; // 最靠前怪在路径 dist=6
+  planAutoPlace(v, { rng });
+  expect(v.unlocked.has('6,1')).toBe(true);
+  expect(v.unlocked.has('0,0')).toBe(false);
+});
+
+it('imminentPathScore：更贴近怪头路段的格分更高', () => {
+  const path = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 }, { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 }];
+  const nearFront = imminentPathScore(path, 6, 0, [5], { c: 5, r: 1 });
+  const nearExit = imminentPathScore(path, 6, 0, [5], { c: 0, r: 1 });
+  expect(nearFront).toBeGreaterThan(nearExit);
+});
+
+it('digPriorityScore 危险模式：imminent 分高的格更优先挖', () => {
+  const nearFront = digPriorityScore(1, 1, 5, 0, { danger: true, imminentScore: 0.8 });
+  const nearExit = digPriorityScore(1, 1, 0, 0, { danger: true, imminentScore: 0.1 });
+  expect(nearFront).toBeLessThan(nearExit);
 });
 
 it('digPriorityScore：1格优先于远距三边；0格≈2格；同距贴边多更好；近出口权重大', () => {
@@ -585,17 +620,79 @@ it('重复孤儿只留最高阶，低阶用 tray 异字换回候选区', () => {
   expect(trayLow).toBeDefined();
 });
 
+it('回收重复字时绝不拆散已激活武将', () => {
+  // 已激活「大圣」t1 在 (0,0)-(1,0)；孤儿更高阶「大」t3 在 (2,2)；tray「郎」
+  // 统计同字时会看到重复，但不可拆「大圣」；t3 孤儿保留，郎单放
+  const v = new FakeView(
+    [{ kind: 'word', char: '郎', general: 'erlang', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 2 }, { c: 3, r: 2 }, { c: 7, r: 4 }],
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'g') return ['大', '圣'] as const;
+    if (g === 'erlang') return ['二', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,0', { char: '大', general: 'g', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'g', cell: { c: 1, r: 0 }, tier: 1 });
+  v.wordsMap.set('2,2', { char: '大', general: 'g', cell: { c: 2, r: 2 }, tier: 3 });
+  v.unlocked.add('2,2');
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  expect(v.isActiveHeroCell({ c: 1, r: 0 })).toBe(true);
+  planAutoPlace(v, { rng });
+  // 大圣仍在原格激活
+  expect(v.wordsMap.get('0,0')).toMatchObject({ char: '大', tier: 1 });
+  expect(v.wordsMap.get('1,0')).toMatchObject({ char: '圣', tier: 1 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  expect(v.isActiveHeroCell({ c: 1, r: 0 })).toBe(true);
+  // 更高阶孤儿「大」仍在棋盘（不能拿激活的低阶去换它）
+  expect(v.placedWords().some((w) => w.char === '大' && w.tier === 3)).toBe(true);
+});
+
+it('已激活高阶同字时，只回收未激活的低阶重复', () => {
+  // 已激活「大圣」t3；另有孤儿「大」t1；tray「郎」→ 换下 t1，大圣不动
+  const v = new FakeView(
+    [{ kind: 'word', char: '郎', general: 'erlang', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 2 }, { c: 7, r: 4 }],
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'g') return ['大', '圣'] as const;
+    if (g === 'erlang') return ['二', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,0', { char: '大', general: 'g', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'g', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,2', { char: '大', general: 'g', cell: { c: 2, r: 2 }, tier: 1 });
+  v.unlocked.add('2,2');
+  planAutoPlace(v, { rng });
+  expect(v.wordsMap.get('0,0')).toMatchObject({ char: '大', tier: 3 });
+  expect(v.wordsMap.get('1,0')).toMatchObject({ char: '圣', tier: 3 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  expect(v.placedWords().filter((w) => w.char === '大')).toHaveLength(1);
+  expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
+});
+
 class FakeRepositionView implements BattleRepositionView {
   unitsMap = new Map<string, { type: 'dao' | 'spear' | 'archer' | 'cavalry'; tier: number; cell: Cell }>();
   free: Cell[] = [];
   heroCells = new Set<string>();
   monsterCells: Cell[] = [];
+  dangerNearFlag = false;
+  monsterDists: number[] = [];
+  readonly fakePath = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  pathLen = 7;
+  entranceDist = 0;
 
   placedUnits() {
     return [...this.unitsMap.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell }));
   }
   freeCells() { return this.free.slice(); }
   isActiveHeroCell(cell: Cell) { return this.heroCells.has(`${cell.c},${cell.r}`); }
+  dangerNear() { return this.dangerNearFlag; }
+  exitDist(cell: Cell) { return cell.c; }
+  tangsengDist(cell: Cell) { return Math.hypot(cell.c - 7, cell.r - 5); }
+  imminentPathScore(cell: Cell) {
+    return imminentPathScore(this.fakePath, this.pathLen, this.entranceDist, this.monsterDists, cell);
+  }
   canEngage(cell: Cell, type: 'dao' | 'spear' | 'archer' | 'cavalry', tier: number) {
     return this.engageScore(cell, type, tier) > 0;
   }
@@ -635,7 +732,7 @@ it('战中调位：前排高阶够不着时与后方低阶互换', () => {
   v.unitsMap.set('0,0', { type: 'archer', tier: 3, cell: { c: 0, r: 0 } }); // 前排高阶，够不着
   v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });     // 后方低阶，能打
   v.monsterCells = [{ c: 5, r: 0 }];
-  expect(planBattleReposition(v)).toBe(true);
+  expect(planBattleReposition(v).ok).toBe(true);
   const hi = v.unitsMap.get('5,0');
   const lo = v.unitsMap.get('0,0');
   expect(hi?.type).toBe('archer');
@@ -648,7 +745,7 @@ it('战中调位：空闲高阶挪到能打怪的空格', () => {
   v.unitsMap.set('0,0', { type: 'spear', tier: 2, cell: { c: 0, r: 0 } });
   v.free = [{ c: 4, r: 0 }];
   v.monsterCells = [{ c: 4, r: 0 }];
-  expect(planBattleReposition(v)).toBe(true);
+  expect(planBattleReposition(v).ok).toBe(true);
   expect(v.unitsMap.has('4,0')).toBe(true);
   expect(v.unitsMap.has('0,0')).toBe(false);
 });
@@ -658,7 +755,7 @@ it('战中调位：双方都能打到时不动作', () => {
   v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
   v.unitsMap.set('1,0', { type: 'dao', tier: 1, cell: { c: 1, r: 0 } });
   v.monsterCells = [{ c: 0, r: 0 }, { c: 1, r: 0 }];
-  expect(planBattleReposition(v)).toBe(false);
+  expect(planBattleReposition(v).ok).toBe(false);
 });
 
 it('战中调位：不拆已激活武将格', () => {
@@ -667,7 +764,19 @@ it('战中调位：不拆已激活武将格', () => {
   v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
   v.heroCells.add('5,0');
   v.monsterCells = [{ c: 5, r: 0 }];
-  expect(planBattleReposition(v)).toBe(false);
+  expect(planBattleReposition(v).ok).toBe(false);
+});
+
+it('同一对位置不能连续 swap', () => {
+  const v = new FakeRepositionView();
+  v.unitsMap.set('0,0', { type: 'archer', tier: 3, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
+  v.monsterCells = [{ c: 5, r: 0 }];
+  const r1 = planBattleReposition(v);
+  expect(r1.ok).toBe(true);
+  expect(r1.pair).toBeDefined();
+  const r2 = planBattleReposition(v, { blockedPair: r1.pair });
+  expect(r2.ok).toBe(false);
 });
 
 it('runBattleReposition 可连续多步', () => {
@@ -679,4 +788,18 @@ it('runBattleReposition 可连续多步', () => {
   v.monsterCells = [{ c: 4, r: 0 }, { c: 6, r: 0 }];
   const steps = runBattleReposition(v, 50);
   expect(steps).toBeGreaterThanOrEqual(1);
+});
+
+it('危险时优先把兵力往怪物即将路过的路段调度', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [5];
+  v.unitsMap.set('0,0', { type: 'spear', tier: 2, cell: { c: 0, r: 0 } });
+  v.free = [{ c: 5, r: 1 }];
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.has('5,1')).toBe(true);
+});
+
+it('dangerSeatBonus：沿路径更靠唐僧且欧氏更近则分更高', () => {
+  expect(dangerSeatBonus(6, 2)).toBeGreaterThan(dangerSeatBonus(1, 8));
 });

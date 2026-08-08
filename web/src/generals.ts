@@ -44,10 +44,10 @@ export interface GeneralDef {
 export const GENERALS: GeneralDef[] = [
   // ——— 大：快攻贯穿 ———
   { id: 'dasheng', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',
-    skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
+    skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
     maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
   { id: 'damang', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '钉耙小扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 1.8, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-bajie',
+    skillName: '钉耙小扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-bajie',
     maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
 
   // ——— 郎：远程暴击 ———
@@ -55,7 +55,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '天眼诛邪', skillDesc: '远距穿透重击', atk: 3.8, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-erlang',
     maxTier: 5, atkStyle: '远程暴击', family: '郎' },
   { id: 'niulang', name: '牛郎', chars: ['牛', '郎'], role: '过渡', rank: 'T2', skill: 'ranged',
-    skillName: '织云箭', skillDesc: '单体远距轻击（过渡）', atk: 2.6, frq: 1.3, rge: 2.6, targets: 1, skillCd: 11, weight: 3, asset: 'hero-erlang',
+    skillName: '织云箭', skillDesc: '单体远距轻击（过渡）', atk: 2.6, frq: 1.3, rge: 2.5, targets: 1, skillCd: 11, weight: 3, asset: 'hero-erlang',
     maxTier: 3, atkStyle: '远程暴击', family: '郎' },
 
   // ——— 吒：远程清场 ———
@@ -68,10 +68,10 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 红：范围灼烧 ———
   { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burst',
-    skillName: '三昧真火', skillDesc: '范围灼烧爆发', atk: 3.0, frq: 1.6, rge: 2.2, targets: 2, skillCd: 8, weight: 1, asset: 'hero-honghaier',
+    skillName: '三昧真火', skillDesc: '范围灼烧爆发', atk: 3.0, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-honghaier',
     maxTier: 5, atkStyle: '范围灼烧', family: '红' },
   { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '赤焰', skillDesc: '小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 1.8, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
+    skillName: '赤焰', skillDesc: '小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
     maxTier: 3, atkStyle: '范围灼烧', family: '红' },
 
   // ——— 戒：定身控制 ———
@@ -79,7 +79,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '钉耙震地', skillDesc: '大范围长时间定身', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '戒' },
   { id: 'xiaojie', name: '小戒', chars: ['小', '戒'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '短耙震地', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.6, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
+    skillName: '短耙震地', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
     maxTier: 3, atkStyle: '定身控制', family: '戒' },
 
   // ——— 牛：冲撞击晕 ———
@@ -87,7 +87,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '蛮牛冲撞', skillDesc: '近身重创并短晕', atk: 4.8, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '牛角顶', skillDesc: '短距撞击轻晕（过渡）', atk: 3.2, frq: 1.0, rge: 1.3, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-niumowang',
+    skillName: '牛角顶', skillDesc: '短距撞击轻晕（过渡）', atk: 3.2, frq: 1.0, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-niumowang',
     maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
 
   // ——— 铁：狂风击退 ———
@@ -100,15 +100,15 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 沙：杖扫击退 ———
   { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 3.2, frq: 1.3, rge: 2.4, targets: 2, skillCd: 9, weight: 1, asset: 'hero-shaseng',
+    skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 3.2, frq: 1.3, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-shaseng',
     maxTier: 5, atkStyle: '杖扫击退', family: '沙' },
   { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '流沙涌', skillDesc: '短距轻击退（过渡）', atk: 2.2, frq: 1.2, rge: 1.8, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-shaseng',
+    skillName: '流沙涌', skillDesc: '短距轻击退（过渡）', atk: 2.2, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-shaseng',
     maxTier: 3, atkStyle: '杖扫击退', family: '沙' },
 
   // ——— 白：单体突进 ———
   { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
-    skillName: '龙牙突进', skillDesc: '单体突进撕咬', atk: 3.6, frq: 1.4, rge: 2.2, targets: 1, skillCd: 9, weight: 1, asset: 'hero-baigujing',
+    skillName: '龙牙突进', skillDesc: '单体突进撕咬', atk: 3.6, frq: 1.4, rge: 2.5, targets: 1, skillCd: 9, weight: 1, asset: 'hero-baigujing',
     maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
     skillName: '骨雾', skillDesc: '单体减速（前期过渡）', atk: 2.8, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
@@ -119,7 +119,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '甘露·净瓶', skillDesc: '减速来敌并为唐僧续命', atk: 2.2, frq: 1.4, rge: 3, targets: 2, skillCd: 12, weight: 1, asset: 'hero-guanyin',
     maxTier: 5, atkStyle: '辅助治疗', family: '音' },
   { id: 'fanyin', name: '梵音', chars: ['梵', '音'], role: '过渡', rank: 'T2', skill: 'heal',
-    skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 1.6, frq: 1.2, rge: 2.4, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-guanyin',
+    skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 1.6, frq: 1.2, rge: 2.5, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-guanyin',
     maxTier: 3, atkStyle: '辅助治疗', family: '音' },
 ];
 
