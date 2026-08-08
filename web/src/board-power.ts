@@ -2,7 +2,7 @@
 // 综合攻速/范围/伤害/目标数（含被动乘区）得到最优 DPS，
 // 并据此按约 70% 压力推算 Boss 血量与第 4 波起的出怪数 / 叠怪批次。
 import { getUnitStat, type UnitType } from '@core';
-import { posAtDistance, type Cell, type GameMap, COLS, ROWS } from './board';
+import { exitDistToPath, posAtDistance, type Cell, type GameMap } from './board';
 import { placeCellScore } from './autoplace';
 
 /** 目标压力：怪物总血量 ≈ 武器最优输出的该比例 */
@@ -202,19 +202,11 @@ function zoneAverageFocusDps(
   return n > 0 ? sum / n : 0;
 }
 
-function pathEntranceCell(map: GameMap): Cell {
-  for (const p of map.path) {
-    if (p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS) return p;
-  }
-  return map.path[0] ?? { c: 0, r: 0 };
-}
-
 function planOptimalUnitPlacement(input: BoardPowerInput, tol: number): PlacedAttacker[] {
   const cells = input.freeCells.map((c) => ({ ...c }));
   const sorted = [...input.units].sort(
     (a, b) => getUnitStat(a.type, a.tier).rge - getUnitStat(b.type, b.tier).rge,
   );
-  const gate = pathEntranceCell(input.map);
   const out: PlacedAttacker[] = [];
   for (const u of sorted) {
     const stat = getUnitStat(u.type, u.tier);
@@ -227,8 +219,8 @@ function planOptimalUnitPlacement(input: BoardPowerInput, tol: number): PlacedAt
       const bestCov = pathCoverageLen(
         input.map, input.entranceDist, input.pathLen, best.c, best.r, stat.rge, tol,
       );
-      const s = placeCellScore(cov, Math.hypot(c.c - gate.c, c.r - gate.r), stat.rge, input.nearestPathDist(c));
-      const bs = placeCellScore(bestCov, Math.hypot(best.c - gate.c, best.r - gate.r), stat.rge, input.nearestPathDist(best));
+      const s = placeCellScore(cov, exitDistToPath(input.map.path, c), stat.rge, input.nearestPathDist(c));
+      const bs = placeCellScore(bestCov, exitDistToPath(input.map.path, best), stat.rge, input.nearestPathDist(best));
       return s > bs ? c : best;
     }, reach[0]!);
     const idx = cells.findIndex((c) => c.c === cell.c && c.r === cell.r);

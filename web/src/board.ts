@@ -108,15 +108,15 @@ export function pathEntranceCell(path: Cell[]): Cell {
   return path[0] ?? { c: 0, r: 0 };
 }
 
-/** 最大射程够得着路径的阈值（神箭手 rge=3 + 容差 0.5） */
+/** 最大射程够得着路径的阈值（神箭手 rge=3 + 容差 0.5）；供射程判定/文档对齐 */
 export const EXIT_PATH_REACH = 3.5;
 
 /**
- * 格到出怪口距离：够得着怪路（pathDist ≤ EXIT_PATH_REACH）用欧氏；
- * 否则用出怪口沿路径到最近点的下标差（路径末尾更大，避免几何近出口却够不着路的假近）。
+ * 格到出怪口距离：出怪口沿路径到「该格最近路径点」的下标差。
+ * 一律用沿程（不用欧氏）：蛇形路上几何近出口、但附着在路径后段的格不再被当成近出口
+ * （例如流沙河 (2,5) 欧氏近门却沿程≈9，应排在左谷贴路边 (1,8) 之后）。
  */
 export function exitDistToPath(path: Cell[], cell: Cell): number {
-  const gate = pathEntranceCell(path);
   let bestI = -1;
   let bestD = Infinity;
   for (let i = 0; i < path.length; i++) {
@@ -128,7 +128,8 @@ export function exitDistToPath(path: Cell[], cell: Cell): number {
       bestI = i;
     }
   }
-  if (bestI < 0 || bestD <= EXIT_PATH_REACH) {
+  if (bestI < 0) {
+    const gate = pathEntranceCell(path);
     return Math.hypot(cell.c - gate.c, cell.r - gate.r);
   }
   let gateI = 0;
