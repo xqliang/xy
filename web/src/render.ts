@@ -494,7 +494,7 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.globalAlpha = 1;
 }
 
-/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 35%～85% 半径） */
+/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 20%～85% 半径） */
 function drawWhipSweepFill(
   ctx: CanvasRenderingContext2D,
   fromAng: number,
@@ -505,7 +505,7 @@ function drawWhipSweepFill(
   let sweep = toAng - fromAng;
   while (sweep <= 0) sweep += Math.PI * 2;
   if (sweep < 0.05 || alpha <= 0.02) return;
-  const r0 = reach * 0.35;
+  const r0 = reach * 0.20;
   const r1 = reach * 0.85;
   const slices = Math.max(8, Math.ceil(sweep / 0.2));
   for (let i = 0; i < slices; i++) {
@@ -539,7 +539,7 @@ function drawCurvedWhip(
   tier = 1,
 ) {
   if (alpha <= 0.02 || reach < 4) return;
-  const r0 = reach * 0.35;
+  const r0 = reach * 0.20;
   const r1 = reach * 0.85;
   const n = 16;
   const lag = 0.85 * side * (0.65 + 0.5 * flex);
