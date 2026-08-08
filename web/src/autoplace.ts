@@ -381,14 +381,24 @@ function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken
   if (!pair) return false;
   const forming = matchGeneral(pair.chars[0], pair.chars[1]);
   if (!forming || forming.maxTier !== 3) return false;
+
+  const mateIsLeft = mate.char === forming.chars[0];
+  const needTray = mateIsLeft
+    ? { c: mate.cell.c + 1, r: mate.cell.r }
+    : { c: mate.cell.c - 1, r: mate.cell.r };
+  if (needTray.c < 0 || !view.isActiveHeroCell(needTray)) return false;
+
+  const leftCell = mateIsLeft ? mate.cell : needTray;
+  const rightCell = mateIsLeft ? needTray : mate.cell;
   for (const p of scanActivePairs(view)) {
-    if (p.def.maxTier >= forming.maxTier && p.def.id !== forming.id) {
-      const dist = Math.min(
-        Math.abs(p.left.cell.c - mate.cell.c) + Math.abs(p.left.cell.r - mate.cell.r),
-        Math.abs(p.right.cell.c - mate.cell.c) + Math.abs(p.right.cell.r - mate.cell.r),
-      );
-      if (dist <= 2) return true;
-    }
+    if (p.def.id === forming.id) continue;
+    const overlap =
+      sameCell(p.left.cell, leftCell) || sameCell(p.right.cell, leftCell)
+      || sameCell(p.left.cell, rightCell) || sameCell(p.right.cell, rightCell);
+    if (!overlap || p.def.maxTier < forming.maxTier) continue;
+    // tray 字落伴侣右侧且会拆散其它激活将 → skip（如 吒+金 拆 白骨）
+    // tray 字落伴侣左侧可拆散占位将 → allow（如 白+骨 拆 金吒）
+    return mateIsLeft;
   }
   return false;
 }
