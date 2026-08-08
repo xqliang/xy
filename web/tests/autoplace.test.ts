@@ -839,7 +839,7 @@ it('金吒已激活时 tray「哪」布阵替换「金」组成哪吒', () => {
   expect(v.tray()).toContainEqual({ kind: 'word', char: '金', general: 'jinzha', tier: 3 });
 });
 
-it('贴路行满槽：tray白与骨凑对可交换拆散金吒占位', () => {
+it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 },
@@ -864,12 +864,21 @@ it('贴路行满槽：tray白与骨凑对可交换拆散金吒占位', () => {
   planAutoPlace(v, { rng });
   const bai = v.placedWords().find((w) => w.char === '白');
   const gu = v.placedWords().find((w) => w.char === '骨');
+  const jin = v.placedWords().find((w) => w.char === '金');
+  const zha = v.placedWords().find((w) => w.char === '吒');
+  const niu = v.placedWords().find((w) => w.char === '牛');
   expect(bai?.cell).toEqual({ c: 4, r: 0 });
   expect(gu?.cell).toEqual({ c: 5, r: 0 });
   expect(matchGeneral(bai!.char, gu!.char)?.id).toBe('baigujing');
+  expect(matchGeneral(jin!.char, zha!.char)?.id).toBe('jinzha');
+  expect(v.isActiveHeroCell(jin!.cell)).toBe(true);
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+  expect(niu!.cell.c).toBeLessThan(jin!.cell.c);
+  // 左移腾位的骑兵后续循环交换回贴路优位
+  expect(v.placedUnits().some((u) => u.type === 'cavalry')).toBe(true);
 });
 
-it('仅 tray 白时可直接交换吒位激活白骨', () => {
+it('仅 tray 白时左移金吒一格后激活白骨', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 },

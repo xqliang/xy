@@ -5,7 +5,8 @@
 // tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
-// 满盘凑对：优先伴侣已在位的邻格；占位可顶回候选或与 tray 字直接交换（place）。
+// 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
+// 仅当无法左移时才与占位交换（place）。
 // 未激活孤儿字不占前线：与兵器换高覆盖座，或迁到远离路径/靠唐僧的空位。
 // 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
@@ -517,6 +518,13 @@ function evacuateCell(view: AutoPlaceView, cell: Cell): boolean {
   return view.moveWord(w.cell, dest);
 }
 
+/** 左移腾位：仅顶回候选区，后续循环再寻位交换上板 */
+function evacuateCellToTray(view: AutoPlaceView, cell: Cell): boolean {
+  if (isCellEmptyView(view, cell)) return true;
+  if (view.isActiveHeroCell(cell)) return false;
+  return view.displaceToTray(cell);
+}
+
 function moveActivePairLeft(view: AutoPlaceView, pair: ActivePair): boolean {
   if (pair.left.cell.c <= 0) return false;
   const destL = { c: pair.left.cell.c - 1, r: pair.left.cell.r };
@@ -562,6 +570,77 @@ function tryShiftPathRowLeft(view: AutoPlaceView): boolean {
     const dest = { c: u.cell.c - 1, r: row };
     if (!isCellEmptyView(view, dest) && !evacuateCell(view, dest)) continue;
     if (isCellEmptyView(view, dest) && view.moveUnit(u.cell, dest)) return true;
+  }
+  return false;
+}
+
+/**
+ * 规划并一次性执行：贴路行上 needTray 前的激活将整体左移一格 → 落 tray 字。
+ * 保留已有英雄不拆散（如 tray「白」+「骨」时左移牛郎/金吒，三将并存）。
+ */
+function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
+  for (let trayIdx = 0; trayIdx < view.tray().length; trayIdx++) {
+    const t = view.tray()[trayIdx]!;
+    if (t.kind !== 'word') continue;
+    if (shouldSkipTrayWordActivation(view, t)) continue;
+
+    const mate = pickBestBoardMateView(view, t.char, t.general);
+    if (!mate) continue;
+    const pair = resolveHeroPair(
+      t.char,
+      mate.char,
+      view,
+      t.general === mate.general ? t.general : undefined,
+    );
+    if (!pair) continue;
+    const def = matchGeneral(pair.chars[0], pair.chars[1]);
+    if (!def) continue;
+
+    const mateIsLeft = mate.char === def.chars[0];
+    if (mateIsLeft && t.char !== def.chars[1]) continue;
+    if (!mateIsLeft && t.char !== def.chars[0]) continue;
+
+    const needMate = mate.cell;
+    const needTray = mateIsLeft
+      ? { c: mate.cell.c + 1, r: mate.cell.r }
+      : { c: mate.cell.c - 1, r: mate.cell.r };
+    if (!sameCell(mate.cell, needMate)) continue;
+    if (needTray.c < 0) continue;
+    if (isCellEmptyView(view, needTray)) continue;
+    if (!view.isActiveHeroCell(needTray)) continue;
+
+    const row = needTray.r;
+    const shiftIds = new Set<string>();
+    for (const p of scanActivePairs(view)) {
+      if (p.left.cell.r !== row) continue;
+      if (p.right.cell.c <= needTray.c) shiftIds.add(p.def.id);
+    }
+    if (shiftIds.size === 0) continue;
+
+    const leftmostC = Math.min(
+      ...scanActivePairs(view)
+        .filter((p) => p.left.cell.r === row && shiftIds.has(p.def.id))
+        .map((p) => p.left.cell.c),
+    );
+    const destL = { c: leftmostC - 1, r: row };
+    if (destL.c < 0) continue;
+    if (!isCellEmptyView(view, destL) && !evacuateCellToTray(view, destL)) continue;
+    if (!isCellEmptyView(view, destL)) continue;
+
+    for (let s = 0; s < shiftIds.size; s++) {
+      const pairs = scanActivePairs(view)
+        .filter((p) => p.left.cell.r === row && shiftIds.has(p.def.id))
+        .sort((a, b) => a.left.cell.c - b.left.cell.c);
+      if (pairs.length === 0) break;
+      if (!moveActivePairLeft(view, pairs[0]!)) return false;
+    }
+
+    if (!isCellEmptyView(view, needTray)) return false;
+    const idx = view.tray().findIndex(
+      (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
+    );
+    if (idx < 0) return false;
+    if (view.place(idx, needTray)) return true;
   }
   return false;
 }
@@ -667,7 +746,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryFamilyUpgrade()) return true;
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) return true;
-    // 2b) 字牌激活：tray 与棋盘孤儿凑对（含交换拆散占位激活武将，如 白+骨）
+    // 2b-0) 贴路行左移后插入 tray 字（保留已有激活将，一次执行完）
+    if (!subopt() && tryTrayHeroInsertByRowShift(view)) return true;
+    // 2b) 字牌激活：tray 与棋盘孤儿凑对
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
@@ -1258,14 +1339,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         // 只处理伴侣已在目标位的对（避免误换到 c3 等非目标左格）
         if (!sameCell(boardMate.cell, needMate)) continue;
 
-        // 目标格被占且属于其它已激活武将 → 仅当本次凑对需要拆散它时才交换（如 白 换 吒，骨 已就位）
-        if (view.isActiveHeroCell(needTray)) {
-          const idx = view.tray().findIndex(
-            (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
-          );
-          if (idx >= 0 && view.place(idx, needTray)) return true;
-          continue;
-        }
+        // 目标格被其它激活将占用 → 由 tryTrayHeroInsertByRowShift 整行左移；此处不拆散
+        if (view.isActiveHeroCell(needTray)) continue;
         if (view.isActiveHeroCell(needMate) && !sameCell(boardMate.cell, needMate)) continue;
 
         const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
