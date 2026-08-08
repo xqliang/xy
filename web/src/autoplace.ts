@@ -757,8 +757,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2b-1) 贴路行左移 / 未升满前置（凑对失败后再整行腾位）
     if (!subopt() && tryShiftPathRowLeft(view)) return true;
     if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) return true;
-    // 2a0) 同字高阶上板：tray 更高阶与棋盘低阶孤儿互换
+    // 2a0) 同字/同型高阶上板：tray 更高阶与棋盘低阶互换
     if (!subopt() && tryPromoteHigherTierWords()) return true;
+    if (!subopt() && tryPromoteHigherTierUnits()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
@@ -822,7 +823,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryYieldOrphanSeatsToUnits()) return true;
     // 8) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!subopt() && tryRelocateOrphansToRear()) return true;
-    // 9) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
+    // 9) 地图槽位已满：先 tray 内合 / 棋盘合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
       if (tryBoardMergeThenPlace()) return true;
@@ -1103,6 +1104,32 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         if (!target || wordTier(w) < wordTier(target)) target = w;
       }
       if (target && !view.isActiveHeroCell(target.cell) && view.place(i, target.cell)) return true;
+    }
+    return false;
+  }
+
+  /** tray 更高阶同型 ↔ 棋盘更低阶兵器（互换上板，如 tray 弓3 换 弓1 优位） */
+  function tryPromoteHigherTierUnits(): boolean {
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'unit') continue;
+      let target: PlacedUnitLite | null = null;
+      let targetSeat = -Infinity;
+      for (const u of view.placedUnits()) {
+        if (u.type !== t.type || u.tier >= t.tier) continue;
+        if (view.isActiveHeroCell(u.cell)) continue;
+        const seat = scoreCell(u.cell, t.type, t.tier);
+        if (
+          !target ||
+          u.tier < target.tier ||
+          (u.tier === target.tier && seat > targetSeat)
+        ) {
+          target = u;
+          targetSeat = seat;
+        }
+      }
+      if (target && view.place(i, target.cell)) return true;
     }
     return false;
   }

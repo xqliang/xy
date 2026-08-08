@@ -35,6 +35,14 @@ export function createImage(): HTMLImageElement {
   return new Image();
 }
 
+// 离屏画布（用于生成「空手」立绘等）：Web = document.createElement；微信 = wx.createCanvas。
+export function createOffscreenCanvas(width: number, height: number): HTMLCanvasElement {
+  const c = (isWeChat ? wx.createCanvas() : document.createElement('canvas')) as HTMLCanvasElement;
+  c.width = width;
+  c.height = height;
+  return c;
+}
+
 // 资源路径：Web = '/assets/..'（vite public 根）；微信 = 包内相对路径 'assets/..'（无 URL 根）。
 export function assetUrl(p: string): string {
   return isWeChat ? p.replace(/^\/+/, '') : p;

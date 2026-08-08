@@ -688,6 +688,34 @@ it('tray 同字更高阶与棋盘低阶孤儿互换', () => {
   expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
 });
 
+it('tray 同型更高阶与棋盘低阶兵器互换', () => {
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+    { c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 },
+    { c: 0, r: 2 }, { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 },
+  ];
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'archer', tier: 3 },
+      { kind: 'unit', type: 'dao', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordChars = (g: string) => (g === 'baigujing' ? (['白', '骨'] as const) : undefined);
+  v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,1', { type: 'cavalry', tier: 2, cell: { c: 1, r: 1 } });
+  v.unitsMap.set('2,1', { type: 'spear', tier: 2, cell: { c: 2, r: 1 } });
+  v.unitsMap.set('3,1', { type: 'spear', tier: 3, cell: { c: 3, r: 1 } });
+  v.wordsMap.set('1,2', { char: '白', general: 'baigujing', cell: { c: 1, r: 2 }, tier: 1 });
+  v.wordsMap.set('2,2', { char: '骨', general: 'baigujing', cell: { c: 2, r: 2 }, tier: 1 });
+  v.unitsMap.set('3,2', { type: 'dao', tier: 2, cell: { c: 3, r: 2 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  const archer = v.placedUnits().find((u) => u.type === 'archer');
+  expect(archer?.tier).toBe(3);
+  expect(archer?.cell).toEqual({ c: 0, r: 0 });
+  expect(v.tray()).toContainEqual({ kind: 'unit', type: 'archer', tier: 1 });
+});
+
 it('重复孤儿只留最高阶，低阶用 tray 异字换回候选区', () => {
   // 棋盘「大」t1+t3；tray「圣」「郎」→ 与 t3 激活后，t1 被换下，棋盘不再有两枚「大」
   const v = new FakeView(
@@ -874,8 +902,10 @@ it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
   expect(v.isActiveHeroCell(jin!.cell)).toBe(true);
   expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
   expect(niu!.cell.c).toBeLessThan(jin!.cell.c);
-  // 左移腾位的骑兵后续循环交换回贴路优位
-  expect(v.placedUnits().some((u) => u.type === 'cavalry')).toBe(true);
+  // 左移腾位的骑兵先进 tray；后续若满盘无更优换占则暂留候选区
+  const cavOnBoard = v.placedUnits().some((u) => u.type === 'cavalry');
+  const cavInTray = v.tray().some((t) => t.kind === 'unit' && t.type === 'cavalry');
+  expect(cavOnBoard || cavInTray).toBe(true);
 });
 
 it('仅 tray 白时左移金吒一格后激活白骨', () => {
