@@ -4247,28 +4247,41 @@ function drawPauseOverlay(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-/** 蟠桃够征兵时：金色脉冲外环 + 顶部高光，提醒玩家可点 */
-function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button) {
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 130);
-  const expand = 2 + pulse * 5;
-  ctx.save();
-  ctx.globalAlpha = 0.28 + pulse * 0.38;
-  ctx.strokeStyle = '#ffe27a';
-  ctx.lineWidth = 3 + pulse * 2;
-  roundRect(ctx, btn.x - expand, btn.y - expand, btn.w + expand * 2, btn.h + expand * 2, 14);
-  ctx.stroke();
-  ctx.restore();
-  // 顶部柔光扫过感
+/** 蟠桃够征兵时：外圈光晕(halo) + 按钮内高光/描边(edge) */
+function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button, phase: 'halo' | 'edge') {
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
+  if (phase === 'halo') {
+    const expand = 3 + pulse * 3;
+    ctx.save();
+    ctx.globalAlpha = 0.32 + pulse * 0.28;
+    ctx.strokeStyle = '#ffe27a';
+    ctx.lineWidth = 3;
+    roundRect(ctx, btn.x - expand, btn.y - expand, btn.w + expand * 2, btn.h + expand * 2, 14);
+    ctx.stroke();
+    ctx.globalAlpha = 0.14 + pulse * 0.1;
+    ctx.lineWidth = 7;
+    roundRect(ctx, btn.x - expand - 2, btn.y - expand - 2, btn.w + (expand + 2) * 2, btn.h + (expand + 2) * 2, 16);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.beginPath();
   roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
   ctx.clip();
-  ctx.globalAlpha = 0.12 + pulse * 0.14;
+  ctx.globalAlpha = 0.2 + pulse * 0.14;
   const grad = ctx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h * 0.55);
   grad.addColorStop(0, '#fff6c8');
   grad.addColorStop(1, 'rgba(255,246,200,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
+  ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = 0.62 + pulse * 0.28;
+  ctx.strokeStyle = '#fff0a8';
+  ctx.lineWidth = 2.5;
+  roundRect(ctx, btn.x + 1, btn.y + 1, btn.w - 2, btn.h - 2, 11);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -4277,15 +4290,10 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
     // 主动技能图标(act*)与被动技能格(pas*)由 drawActiveIcons/drawPassiveRow 单独绘制，这里只出命中矩形
     if (btn.id.startsWith('act') || btn.id.startsWith('pas')) continue;
     if (btn.id === 'summon' && btn.enabled) {
-      drawSummonReadyReminder(ctx, btn);
+      drawSummonReadyReminder(ctx, btn, 'halo');
     }
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-    if (btn.id === 'summon' && btn.enabled) {
-      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 130);
-      ctx.fillStyle = pulse > 0.65 ? '#d4a030' : b.map.theme.accent;
-    } else {
-      ctx.fillStyle = btn.enabled ? b.map.theme.accent : '#2a2218';
-    }
+    ctx.fillStyle = btn.id === 'summon' && btn.enabled ? '#d4a030' : btn.enabled ? b.map.theme.accent : '#2a2218';
     ctx.fill();
     {
       // 征兵按钮：按当前蟠桃/成本填充进度条（参考竞品，桃攒够即满格可点）
@@ -4322,20 +4330,10 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
         const totalW = textW + gap + peachW;
         const textX = tx - totalW / 2 + textW / 2;
         const peachX = tx - totalW / 2 + textW + gap + peachW / 2;
-        const peachBob = btn.enabled ? Math.sin(performance.now() / 180) * 2.5 : 0;
         ctx.strokeText(btn.label, textX, ty);
         ctx.fillStyle = btn.enabled ? '#fff8e8' : '#fff3d6';
         ctx.fillText(btn.label, textX, ty);
-        if (btn.enabled) {
-          ctx.save();
-          ctx.translate(peachX, ty + peachBob);
-          const peachScale = 1 + 0.08 * Math.sin(performance.now() / 160);
-          ctx.scale(peachScale, peachScale);
-          ctx.fillText(peach, 0, 0);
-          ctx.restore();
-        } else {
-          ctx.fillText(peach, peachX, ty);
-        }
+        ctx.fillText(peach, peachX, ty);
       } else if (btn.id === 'autoplace') {
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
@@ -4348,22 +4346,16 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.fillStyle = btn.enabled ? '#fff6e6' : '#7a7160';
         ctx.fillText(btn.label, tx, ty);
       }
-      // 征兵闪光（点击反馈 + 就绪脉冲描边）
+      if (btn.id === 'summon' && btn.enabled) {
+        drawSummonReadyReminder(ctx, btn, 'edge');
+      }
+      // 征兵闪光（仅点击反馈）
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();
         ctx.globalAlpha = b.summonFlash;
         ctx.strokeStyle = '#ffe89a';
         ctx.lineWidth = 4;
         roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
-        ctx.stroke();
-        ctx.restore();
-      } else if (btn.id === 'summon' && btn.enabled) {
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 130);
-        ctx.save();
-        ctx.globalAlpha = 0.55 + pulse * 0.35;
-        ctx.strokeStyle = '#fff0a8';
-        ctx.lineWidth = 2.5;
-        roundRect(ctx, btn.x + 1, btn.y + 1, btn.w - 2, btn.h - 2, 11);
         ctx.stroke();
         ctx.restore();
       }

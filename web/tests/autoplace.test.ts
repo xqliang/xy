@@ -27,6 +27,7 @@ import {
   type Cell,
 } from '../src/autoplace';
 import { getUnitStat } from '@core';
+import { posAlong } from '../src/board';
 import { inAttackRange } from '../src/battle';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
@@ -705,8 +706,12 @@ class FakeRepositionView implements BattleRepositionView {
   }
   engageScore(cell: Cell, type: 'dao' | 'spear' | 'archer' | 'cavalry', tier: number) {
     const stat = getUnitStat(type, tier);
+    const targets =
+      this.monsterCells.length > 0
+        ? this.monsterCells
+        : [posAlong(this.fakePath, this.entranceDist)];
     let score = 0;
-    for (const m of this.monsterCells) {
+    for (const m of targets) {
       if (inAttackRange(cell.c, cell.r, stat.rge, m)) score += stat.atk;
     }
     return score;
@@ -757,6 +762,17 @@ it('战中调位：空闲高阶挪到能打怪的空格', () => {
   expect(v.unitsMap.has('0,0')).toBe(false);
 });
 
+it('无怪时假设出怪口有怪，仍可调位', () => {
+  const v = new FakeRepositionView();
+  v.unitsMap.set('5,0', { type: 'archer', tier: 3, cell: { c: 5, r: 0 } }); // 远，够不着出口
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });   // 贴出口，能打
+  v.monsterCells = [];
+  v.entranceDist = 0; // 假路径出口在 (0,0)
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.get('0,0')?.type).toBe('archer');
+  expect(v.unitsMap.get('5,0')?.type).toBe('dao');
+});
+
 it('战中调位：双方都能打到时不动作', () => {
   const v = new FakeRepositionView();
   v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
@@ -801,6 +817,7 @@ it('危险时优先把兵力往怪物即将路过的路段调度', () => {
   const v = new FakeRepositionView();
   v.dangerNearFlag = true;
   v.monsterDists = [5];
+  v.monsterCells = [{ c: 5, r: 0 }];
   v.unitsMap.set('0,0', { type: 'spear', tier: 2, cell: { c: 0, r: 0 } });
   v.free = [{ c: 5, r: 1 }];
   expect(planBattleReposition(v).ok).toBe(true);

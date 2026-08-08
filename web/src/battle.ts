@@ -1114,19 +1114,22 @@ export class Battle {
     };
   }
 
-  /** 该格兵种对指定怪群的路径威胁分（范围内怪 atk 之和） */
+  /** 该格兵种对指定怪群的路径威胁分（范围内怪 atk 之和）；无怪时假设出怪口有怪 */
   private engageScoreAt(
     monsters: Monster[],
     path: Cell[],
+    entranceDist: number,
     cell: Cell,
     type: UnitType,
     tier: number,
   ): number {
-    if (monsters.length === 0) return 0;
     const stat = getUnitStat(type, tier);
+    const targets =
+      monsters.length > 0
+        ? monsters.map((m) => posAlong(path, m.dist))
+        : [posAlong(path, entranceDist)];
     let score = 0;
-    for (const m of monsters) {
-      const p = posAlong(path, m.dist);
+    for (const p of targets) {
       if (inAttackRange(cell.c, cell.r, stat.rge, p)) score += stat.atk;
     }
     return score;
@@ -1174,8 +1177,8 @@ export class Battle {
         },
         isActiveHeroCell: (cell) =>
           this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
-        canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier) > 0,
-        engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier),
+        canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier) > 0,
+        engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier),
         dangerNear: () => this.aiDangerNear(),
         exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
         tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
@@ -1214,8 +1217,8 @@ export class Battle {
       },
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
-      canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier) > 0,
-      engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier),
+      canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier) > 0,
+      engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier),
       dangerNear: () => this.dangerNear(),
       exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
@@ -1227,14 +1230,14 @@ export class Battle {
   /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（随机节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
-      if (this.aiMonsters.length === 0 || this.aiUnits.length === 0) return 0;
+      if (this.aiUnits.length === 0) return 0;
       const r = planBattleReposition(this.buildBattleRepositionView('ai'), {
         blockedPair: this.aiLastRepositionPair ?? undefined,
       });
       this.aiLastRepositionPair = r.ok && r.pair ? r.pair : null;
       return r.ok ? 1 : 0;
     }
-    if (this.monsters.length === 0 || this.units.size === 0) {
+    if (this.units.size === 0) {
       return 0;
     }
     return runBattleReposition(this.buildBattleRepositionView('player'), maxSteps);
