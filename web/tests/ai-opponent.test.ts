@@ -40,6 +40,25 @@ describe('AI 落子与激活', () => {
     expect(gens.length).toBe(1);
     expect(gens[0]!.def.id).toBe('dasheng');
   });
+
+  it('AI 武将攻击累积升阶经验', () => {
+    const b = new Battle(1);
+    const cells = b.aiUnlockedCells();
+    let left: { c: number; r: number } | undefined, right: { c: number; r: number } | undefined;
+    for (const l of cells) {
+      const r = cells.find((c) => c.r === l.r && c.c === l.c + 1);
+      if (r) { left = l; right = r; break; }
+    }
+    expect(left && right).toBeTruthy();
+    b.aiWords.set(`${left!.c},${left!.r}`, { char: '八', general: 'bajie', tier: 1, cell: left! });
+    b.aiWords.set(`${right!.c},${right!.r}`, { char: '戒', general: 'bajie', tier: 1, cell: right! });
+    const g = b.aiActiveGenerals()[0]!;
+    expect(g.tier).toBe(1);
+    b.addGeneralCombatExp(g, Battle.expToNext(g.state.level), true);
+    expect(b.aiWords.get(`${left!.c},${left!.r}`)?.tier).toBe(2);
+    expect(b.aiWords.get(`${right!.c},${right!.r}`)?.tier).toBe(2);
+    expect(b.aiActiveGenerals()[0]!.tier).toBe(2);
+  });
 });
 
 describe('AI 经济与征兵', () => {

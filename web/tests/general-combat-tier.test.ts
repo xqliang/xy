@@ -77,4 +77,10 @@ describe('攻击升品质阶', () => {
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(3);
   });
+
+  it('combatExpFromHits：额外目标折计，避免 multi-target 刷经验', () => {
+    expect(Battle.combatExpFromHits(10, 1)).toBeCloseTo(0.5, 5);
+    expect(Battle.combatExpFromHits(10, 3)).toBeCloseTo(0.85, 5); // 旧公式为 1.5
+    expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
+  });
 });
