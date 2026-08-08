@@ -3,7 +3,13 @@ import { VIEW_W, VIEW_H } from './render';
 import { UPGRADES, levelOf, upgradeById, RARITY_COLOR, type MeritState } from './merit';
 import { MAX_EQUIPPED_ACTIVES, activeById, enabledActives } from './actives';
 import { MAX_EQUIPPED_PASSIVES, passiveById, enabledPassives } from './passives';
-import { isEquipped, isPassiveEquipped, type LoadoutState } from './loadout';
+import {
+  isEquipped,
+  isPassiveEquipped,
+  isOwnedActive,
+  isOwnedPassive,
+  type LoadoutState,
+} from './loadout';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -184,19 +190,20 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx,
     activeSectionTop(),
     '主动技能',
-    `战斗中手动释放，每日重置，最多启用 ${MAX_EQUIPPED_ACTIVES} 个；满额需先禁用再买`,
+    `当日购买一次即可，可随时卸下/再装备；最多同时装备 ${MAX_EQUIPPED_ACTIVES} 个`,
   );
   const actFull = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES;
   for (let i = 0; i < shopActives.length; i++) {
     const act = shopActives[i]!;
     const equipped = isEquipped(loadout, act.id);
+    const owned = isOwnedActive(loadout, act.id);
     const afford = merit.merit >= act.cost;
     const { x, y } = activeCardRect(i);
     roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
     ctx.fillStyle = '#241d38';
     ctx.fill();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = equipped ? '#6ab0ff' : '#5a4a7a';
+    ctx.strokeStyle = equipped ? '#6ab0ff' : owned ? '#7a9ad0' : '#5a4a7a';
     ctx.stroke();
     // 图标 + 名称
     ctx.textAlign = 'left';
@@ -209,22 +216,22 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillStyle = 'rgba(255,240,210,0.8)';
     ctx.font = '12px "PingFang SC", sans-serif';
     ctx.fillText(fitText(ctx, act.desc, CARD_W - 64), x + 52, y + 40);
-    // 购买 / 已启用(可禁用) / 槽满提示
+    // 购买 / 装备 / 卸下 / 槽满
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 30;
     roundRect(ctx, x + 12, by, bw, 22, 7);
-    const barOk = equipped || (!actFull && afford);
-    ctx.fillStyle = equipped ? '#2f5a3a' : barOk ? '#c8792b' : '#4a3a30';
+    const barOk = equipped || (owned ? !actFull : afford);
+    ctx.fillStyle = equipped ? '#2f5a3a' : owned && !actFull ? '#3a5a7a' : barOk ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped || (owned && !actFull) ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
     const barText = equipped
-      ? '✓ 已启用 · 点击禁用'
-      : actFull
-        ? '已满，请先禁用'
-        : `购买启用 · ${act.cost} 功德 · CD${act.cd}s`;
+      ? '✓ 已装备 · 点击卸下'
+      : owned
+        ? (actFull ? '已满，请先卸下' : '已购买 · 点击装备')
+        : `购买 · ${act.cost} 功德 · CD${act.cd}s`;
     ctx.fillText(barText, x + 12 + bw / 2, by + 11);
   }
 
@@ -234,19 +241,20 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx,
     passiveSectionTop(),
     '被动技能',
-    `开局自动生效，每日重置，最多启用 ${MAX_EQUIPPED_PASSIVES} 个；满额需先禁用再买`,
+    `当日购买一次即可，可随时卸下/再装备；最多同时装备 ${MAX_EQUIPPED_PASSIVES} 个`,
   );
   const pasFull = loadout.passives.length >= MAX_EQUIPPED_PASSIVES;
   for (let i = 0; i < shopPassives.length; i++) {
     const pas = shopPassives[i]!;
     const equipped = isPassiveEquipped(loadout, pas.id);
+    const owned = isOwnedPassive(loadout, pas.id);
     const afford = merit.merit >= pas.cost;
     const { x, y } = passiveCardRect(i);
     roundRect(ctx, x, y, CARD_W, ACT_CARD_H, 12);
     ctx.fillStyle = '#241d38';
     ctx.fill();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = equipped ? '#7ec46a' : '#5a4a7a';
+    ctx.strokeStyle = equipped ? '#7ec46a' : owned ? '#6a9a6a' : '#5a4a7a';
     ctx.stroke();
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
@@ -261,18 +269,18 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 30;
     roundRect(ctx, x + 12, by, bw, 22, 7);
-    const barOk = equipped || (!pasFull && afford);
-    ctx.fillStyle = equipped ? '#2f5a3a' : barOk ? '#c8792b' : '#4a3a30';
+    const barOk = equipped || (owned ? !pasFull : afford);
+    ctx.fillStyle = equipped ? '#2f5a3a' : owned && !pasFull ? '#3a5a4a' : barOk ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped || (owned && !pasFull) ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
     const barText = equipped
-      ? '✓ 已启用 · 点击禁用'
-      : pasFull
-        ? '已满，请先禁用'
-        : `购买启用 · ${pas.cost} 功德`;
+      ? '✓ 已装备 · 点击卸下'
+      : owned
+        ? (pasFull ? '已满，请先卸下' : '已购买 · 点击装备')
+        : `购买 · ${pas.cost} 功德`;
     ctx.fillText(barText, x + 12 + bw / 2, by + 11);
   }
 
@@ -369,8 +377,8 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
 interface PopupInfo {
   icon: string; name: string; color: string; sub: string;
   usage: string; cost: number;
-  /** buy=购买确认；unequip=禁用已启用；none=置灰不可点 */
-  actionKind: 'buy' | 'unequip' | 'none';
+  /** buy=购买确认；equip=免费装备；unequip=卸下；none=置灰不可点 */
+  actionKind: 'buy' | 'equip' | 'unequip' | 'none';
   actionLabel: string;
 }
 function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: LoadoutState): PopupInfo | null {
@@ -396,7 +404,8 @@ function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: Loado
     const act = activeById(id);
     if (!act) return null;
     const equipped = isEquipped(loadout, id);
-    const usage = `${act.desc}。\n战斗中点击技能图标手动释放，冷却 ${act.cd}s。每日重置，最多启用 ${MAX_EQUIPPED_ACTIVES} 个；满额需先禁用再买。`;
+    const owned = isOwnedActive(loadout, id);
+    const usage = `${act.desc}。\n战斗中点击技能图标手动释放，冷却 ${act.cd}s。当日购买一次后可随时卸下/再装备，最多同时装备 ${MAX_EQUIPPED_ACTIVES} 个。`;
     const down = !!act.disabled;
     const full = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES;
     if (down) {
@@ -409,23 +418,33 @@ function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: Loado
     if (equipped) {
       return {
         icon: act.icon, name: act.name, color: '#6ab0ff',
-        sub: `主动技能 · CD ${act.cd}s · 已启用`,
-        usage, cost: act.cost, actionKind: 'unequip', actionLabel: '禁用',
+        sub: `主动技能 · CD ${act.cd}s · 已装备`,
+        usage, cost: act.cost, actionKind: 'unequip', actionLabel: '卸下',
       };
     }
-    const can = !full && merit.merit >= act.cost;
+    if (owned) {
+      return {
+        icon: act.icon, name: act.name, color: '#6ab0ff',
+        sub: `主动技能 · CD ${act.cd}s · 已购买`,
+        usage, cost: act.cost,
+        actionKind: full ? 'none' : 'equip',
+        actionLabel: full ? '请先卸下才能装备' : '装备',
+      };
+    }
+    const canBuy = merit.merit >= act.cost; // 槽满仍可购买（仅拥有、稍后装备）
     return {
       icon: act.icon, name: act.name, color: '#6ab0ff',
       sub: `主动技能 · CD ${act.cd}s`,
       usage, cost: act.cost,
-      actionKind: can ? 'buy' : 'none',
-      actionLabel: can ? `购买 · ${act.cost} 功德` : full ? '请先禁用才能购买' : '功德不足',
+      actionKind: canBuy ? 'buy' : 'none',
+      actionLabel: canBuy ? `购买 · ${act.cost} 功德` : '功德不足',
     };
   }
   const pas = passiveById(id);
   if (!pas) return null;
   const equipped = isPassiveEquipped(loadout, id);
-  const usage = `${pas.desc}。\n被动技能：购买后当日生效，开局自动注入本局。每日重置，最多启用 ${MAX_EQUIPPED_PASSIVES} 个；满额需先禁用再买。`;
+  const owned = isOwnedPassive(loadout, id);
+  const usage = `${pas.desc}。\n被动技能：开局自动注入本局。当日购买一次后可随时卸下/再装备，最多同时装备 ${MAX_EQUIPPED_PASSIVES} 个。`;
   const down = !!pas.disabled;
   const full = loadout.passives.length >= MAX_EQUIPPED_PASSIVES;
   if (down) {
@@ -438,17 +457,26 @@ function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: Loado
   if (equipped) {
     return {
       icon: pas.icon, name: pas.name, color: '#7ec46a',
-      sub: '被动技能 · 已启用',
-      usage, cost: pas.cost, actionKind: 'unequip', actionLabel: '禁用',
+      sub: '被动技能 · 已装备',
+      usage, cost: pas.cost, actionKind: 'unequip', actionLabel: '卸下',
     };
   }
-  const can = !full && merit.merit >= pas.cost;
+  if (owned) {
+    return {
+      icon: pas.icon, name: pas.name, color: '#7ec46a',
+      sub: '被动技能 · 已购买',
+      usage, cost: pas.cost,
+      actionKind: full ? 'none' : 'equip',
+      actionLabel: full ? '请先卸下才能装备' : '装备',
+    };
+  }
+  const canBuy = merit.merit >= pas.cost;
   return {
     icon: pas.icon, name: pas.name, color: '#7ec46a',
     sub: '被动技能 · 每日生效',
     usage, cost: pas.cost,
-    actionKind: can ? 'buy' : 'none',
-    actionLabel: can ? `购买 · ${pas.cost} 功德` : full ? '请先禁用才能购买' : '功德不足',
+    actionKind: canBuy ? 'buy' : 'none',
+    actionLabel: canBuy ? `购买 · ${pas.cost} 功德` : '功德不足',
   };
 }
 
@@ -525,8 +553,8 @@ export function drawShopPopup(
   let ty = PY + 90;
   for (const ln of lines) { ctx.fillText(ln, PX + PAD, ty); ty += 24; }
 
-  // 花费 + 余额（仅详情阶段；确认阶段用问句展示花费，避免重叠）
-  if (popup.phase === 'detail') {
+  // 花费 + 余额（仅待购买时展示；已购装备/卸下不扣费）
+  if (popup.phase === 'detail' && info.actionKind === 'buy') {
     ctx.fillStyle = '#ffd76a';
     ctx.font = 'bold 15px "PingFang SC", sans-serif';
     ctx.fillText(`花费 ${info.cost} 功德`, PX + PAD, PY + PH - 96);
@@ -534,14 +562,23 @@ export function drawShopPopup(
     ctx.font = '13px "PingFang SC", sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(`余额 ${merit.merit}`, PX + PW - PAD, PY + PH - 94);
+  } else if (popup.phase === 'detail' && (info.actionKind === 'equip' || info.actionKind === 'unequip')) {
+    ctx.fillStyle = 'rgba(224,200,255,0.85)';
+    ctx.font = '13px "PingFang SC", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(info.actionKind === 'equip' ? '今日已购买，装备不额外扣费' : '卸下后今日仍可再装备', PX + PAD, PY + PH - 96);
   }
 
   // 底部动作区
   if (popup.phase === 'detail') {
-    // 购买 / 禁用 / 置灰原因（满额文案可能较长，用略小字号）
+    // 购买 / 装备 / 卸下 / 置灰原因
     roundRect(ctx, ACTION_R.x, ACTION_R.y, ACTION_R.w, ACTION_R.h, 10);
-    const interactive = info.actionKind === 'buy' || info.actionKind === 'unequip';
-    ctx.fillStyle = info.actionKind === 'unequip' ? '#5a3a2a' : interactive ? '#c8792b' : '#4a3a30';
+    const interactive = info.actionKind === 'buy' || info.actionKind === 'equip' || info.actionKind === 'unequip';
+    ctx.fillStyle = info.actionKind === 'unequip'
+      ? '#5a3a2a'
+      : info.actionKind === 'equip'
+        ? '#3a5a7a'
+        : interactive ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

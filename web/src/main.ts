@@ -28,14 +28,16 @@ import {
   loadLoadout,
   buyActive,
   buyPassive,
+  equipActive,
+  equipPassive,
   unequipActive,
   unequipPassive,
+  isOwnedActive,
+  isOwnedPassive,
   ACTIVE_FULL_HINT,
   PASSIVE_FULL_HINT,
   type LoadoutState,
 } from './loadout';
-import { MAX_EQUIPPED_ACTIVES } from './actives';
-import { MAX_EQUIPPED_PASSIVES } from './passives';
 import { drawShop, shopHitAt, SHOP_MAX_SCROLL, drawShopPopup, shopPopupHitAt, type ShopPopupState } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
@@ -216,34 +218,42 @@ function handleShop(x: number, y: number) {
   if (hit.id) shopPopup = { kind: hit.kind, id: hit.id, phase: 'detail' };
 }
 
-// 处理商品弹窗点击：detail 阶段点购买→进入 confirm；已启用点「禁用」立即卸下；confirm 才扣费。
+// 处理商品弹窗：卸下/装备立即生效；未购买点「购买」→ confirm 才扣费。
 function handleShopPopup(x: number, y: number) {
   if (!shopPopup) return;
   const r = shopPopupHitAt(x, y, shopPopup);
   if (r === 'close' || r === 'outside') { shopPopup = null; return; }
   if (r === 'action') {
     const { kind, id } = shopPopup;
-    // 已启用技能：动作键为「禁用」，直接腾槽（不退功德）
-    if (kind === 'buyActive' && loadout.equipped.includes(id)) {
-      loadout = unequipActive(loadout, id);
-      shopToast = '已禁用';
-      shopPopup = null;
-      return;
+    if (kind === 'buyActive') {
+      if (loadout.equipped.includes(id)) {
+        loadout = unequipActive(loadout, id);
+        shopToast = '已卸下（今日仍可再装备）';
+        shopPopup = null;
+        return;
+      }
+      if (isOwnedActive(loadout, id)) {
+        const res = equipActive(loadout, id);
+        loadout = res.loadout;
+        shopToast = res.ok ? '已装备' : res.reason ?? ACTIVE_FULL_HINT;
+        shopPopup = null;
+        return;
+      }
     }
-    if (kind === 'buyPassive' && loadout.passives.includes(id)) {
-      loadout = unequipPassive(loadout, id);
-      shopToast = '已禁用';
-      shopPopup = null;
-      return;
-    }
-    // 满额时置灰按钮不可进入确认（并 toast 完整提示）
-    if (kind === 'buyActive' && loadout.equipped.length >= MAX_EQUIPPED_ACTIVES) {
-      shopToast = ACTIVE_FULL_HINT;
-      return;
-    }
-    if (kind === 'buyPassive' && loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
-      shopToast = PASSIVE_FULL_HINT;
-      return;
+    if (kind === 'buyPassive') {
+      if (loadout.passives.includes(id)) {
+        loadout = unequipPassive(loadout, id);
+        shopToast = '已卸下（今日仍可再装备）';
+        shopPopup = null;
+        return;
+      }
+      if (isOwnedPassive(loadout, id)) {
+        const res = equipPassive(loadout, id);
+        loadout = res.loadout;
+        shopToast = res.ok ? '已装备' : res.reason ?? PASSIVE_FULL_HINT;
+        shopPopup = null;
+        return;
+      }
     }
     shopPopup = { ...shopPopup, phase: 'confirm' };
     return;
@@ -258,11 +268,15 @@ function handleShopPopup(x: number, y: number) {
     } else if (kind === 'buyActive') {
       const res = buyActive(loadout, merit, id);
       loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok ? '已启用（今日有效）' : res.reason ?? '无法购买';
+      shopToast = res.ok
+        ? (loadout.equipped.includes(id) ? '已购买并装备（今日有效）' : '已购买（槽满，卸下其他后可装备）')
+        : res.reason ?? '无法购买';
     } else {
       const res = buyPassive(loadout, merit, id);
       loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok ? '已启用（今日有效）' : res.reason ?? '无法购买';
+      shopToast = res.ok
+        ? (loadout.passives.includes(id) ? '已购买并装备（今日有效）' : '已购买（槽满，卸下其他后可装备）')
+        : res.reason ?? '无法购买';
     }
     shopPopup = null;
   }
@@ -687,8 +701,16 @@ const hook: GameHook = {
   wave: () => battle.startNextWave(),
   ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
   triggerActive: (i: number) => battle.triggerActive(i),
-  equipActives: (ids: string[]) => { loadout = { ...loadout, equipped: ids.slice(0, 2) }; newGame(); },
-  equipPassives: (ids: string[]) => { loadout = { ...loadout, passives: ids.slice(0, 6) }; newGame(); },
+  equipActives: (ids: string[]) => {
+    const equipped = ids.slice(0, 2);
+    loadout = { ...loadout, ownedActives: [...new Set([...loadout.ownedActives, ...equipped])], equipped };
+    newGame();
+  },
+  equipPassives: (ids: string[]) => {
+    const passives = ids.slice(0, 6);
+    loadout = { ...loadout, ownedPassives: [...new Set([...loadout.ownedPassives, ...passives])], passives };
+    newGame();
+  },
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),

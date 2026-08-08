@@ -1,5 +1,5 @@
-// 主动技能「每日装备」持久化：跨局 localStorage，与体力(stamina.ts)一样按自然日重置。
-// 玩家每天需重新用功德购买主动技能才能装备（功德每日消耗，形成消耗口）。
+// 主动/被动技能「每日购买 + 装备」持久化：跨局 localStorage，按自然日重置。
+// 当日购买一次即拥有；可随时卸下/再装备，无需重复扣功德。跨天清空需重新购买。
 import { storeGet, storeSet } from './storage';
 import { MAX_EQUIPPED_ACTIVES, activeById, isActiveEnabled } from './actives';
 import { MAX_EQUIPPED_PASSIVES, passiveById, isPassiveEnabled } from './passives';
@@ -14,8 +14,18 @@ function today(): number {
 
 export interface LoadoutState {
   day: number;
-  equipped: string[]; // 已装备(已购买)的主动技能 id，最多 MAX_EQUIPPED_ACTIVES 个
-  passives: string[]; // 已装备(已购买)的被动技能 id，最多 MAX_EQUIPPED_PASSIVES 个
+  /** 今日已购买的主动技能（可反复装备） */
+  ownedActives: string[];
+  /** 今日已购买的被动技能（可反复装备） */
+  ownedPassives: string[];
+  /** 当前装备中的主动（⊆ ownedActives），最多 MAX_EQUIPPED_ACTIVES */
+  equipped: string[];
+  /** 当前装备中的被动（⊆ ownedPassives），最多 MAX_EQUIPPED_PASSIVES */
+  passives: string[];
+}
+
+function emptyLoadout(): LoadoutState {
+  return { day: today(), ownedActives: [], ownedPassives: [], equipped: [], passives: [] };
 }
 
 function save(s: LoadoutState): LoadoutState {
@@ -27,6 +37,37 @@ function save(s: LoadoutState): LoadoutState {
   return s;
 }
 
+function uniqKeepOrder(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** 规范化：剔下架、保证装备 ⊆ 拥有、截断装备上限 */
+function normalize(s: LoadoutState): LoadoutState {
+  const ownedActives = uniqKeepOrder(s.ownedActives.filter(isActiveEnabled));
+  const ownedPassives = uniqKeepOrder(s.ownedPassives.filter(isPassiveEnabled));
+  const ownedA = new Set(ownedActives);
+  const ownedP = new Set(ownedPassives);
+  // 旧档仅有 equipped/passives 时，装备项并入拥有
+  for (const id of s.equipped) if (isActiveEnabled(id) && !ownedA.has(id)) {
+    ownedActives.push(id);
+    ownedA.add(id);
+  }
+  for (const id of s.passives) if (isPassiveEnabled(id) && !ownedP.has(id)) {
+    ownedPassives.push(id);
+    ownedP.add(id);
+  }
+  const equipped = uniqKeepOrder(s.equipped.filter((id) => ownedA.has(id))).slice(0, MAX_EQUIPPED_ACTIVES);
+  const passives = uniqKeepOrder(s.passives.filter((id) => ownedP.has(id))).slice(0, MAX_EQUIPPED_PASSIVES);
+  return { day: s.day, ownedActives, ownedPassives, equipped, passives };
+}
+
 // 读取装备；跨天则清空（需重新购买）
 export function loadLoadout(): LoadoutState {
   try {
@@ -34,21 +75,30 @@ export function loadLoadout(): LoadoutState {
     if (raw) {
       const s = JSON.parse(raw);
       if (typeof s.day === 'number' && Array.isArray(s.equipped)) {
-        if (s.day !== today()) return save({ day: today(), equipped: [], passives: [] }); // 跨天重置
-        return {
+        if (s.day !== today()) return save(emptyLoadout());
+        return save(normalize({
           day: s.day,
-          // 已下架技能从存档装备中剔除，避免局内仍生效
-          equipped: s.equipped.filter(isActiveEnabled).slice(0, MAX_EQUIPPED_ACTIVES),
-          passives: Array.isArray(s.passives)
-            ? s.passives.filter(isPassiveEnabled).slice(0, MAX_EQUIPPED_PASSIVES)
-            : [],
-        };
+          ownedActives: Array.isArray(s.ownedActives) ? s.ownedActives : [...s.equipped],
+          ownedPassives: Array.isArray(s.ownedPassives)
+            ? s.ownedPassives
+            : (Array.isArray(s.passives) ? [...s.passives] : []),
+          equipped: s.equipped,
+          passives: Array.isArray(s.passives) ? s.passives : [],
+        }));
       }
     }
   } catch {
     /* ignore */
   }
-  return save({ day: today(), equipped: [], passives: [] });
+  return save(emptyLoadout());
+}
+
+export function isOwnedActive(s: LoadoutState, id: string): boolean {
+  return s.ownedActives.includes(id);
+}
+
+export function isOwnedPassive(s: LoadoutState, id: string): boolean {
+  return s.ownedPassives.includes(id);
 }
 
 export function isEquipped(s: LoadoutState, id: string): boolean {
@@ -59,12 +109,11 @@ export function isPassiveEquipped(s: LoadoutState, id: string): boolean {
   return s.passives.includes(id);
 }
 
-/** 主动槽已满时的购买提示 */
-export const ACTIVE_FULL_HINT = `已有 ${MAX_EQUIPPED_ACTIVES} 个启用中，请先禁用才能购买`;
-/** 被动槽已满时的购买提示 */
-export const PASSIVE_FULL_HINT = `已有 ${MAX_EQUIPPED_PASSIVES} 个启用中，请先禁用才能购买`;
+/** 装备槽已满时的提示（卸下腾位后再装备） */
+export const ACTIVE_FULL_HINT = `已有 ${MAX_EQUIPPED_ACTIVES} 个装备中，请先卸下才能装备`;
+export const PASSIVE_FULL_HINT = `已有 ${MAX_EQUIPPED_PASSIVES} 个装备中，请先卸下才能装备`;
 
-// 购买即启用：校验未启用、未满额、功德足够；满额不挤旧，需先禁用腾位。
+// 购买：当日首次扣功德并拥有；有空位则自动装备。已拥有不可再买。
 export function buyActive(
   loadout: LoadoutState,
   merit: MeritState,
@@ -73,17 +122,17 @@ export function buyActive(
   const def = activeById(id);
   if (!def) return { loadout, merit, ok: false, reason: '无此技能' };
   if (def.disabled) return { loadout, merit, ok: false, reason: '技能已下架' };
-  if (isEquipped(loadout, id)) return { loadout, merit, ok: false, reason: '已启用' };
-  if (loadout.equipped.length >= MAX_EQUIPPED_ACTIVES) {
-    return { loadout, merit, ok: false, reason: ACTIVE_FULL_HINT };
-  }
+  if (isOwnedActive(loadout, id)) return { loadout, merit, ok: false, reason: '今日已购买' };
   if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
   const nextMerit = spendMerit(merit, def.cost);
-  const nextLoadout = save({ ...loadout, day: today(), equipped: [...loadout.equipped, id] });
+  const ownedActives = [...loadout.ownedActives, id];
+  const equipped = loadout.equipped.length < MAX_EQUIPPED_ACTIVES
+    ? [...loadout.equipped, id]
+    : loadout.equipped;
+  const nextLoadout = save(normalize({ ...loadout, day: today(), ownedActives, equipped }));
   return { loadout: nextLoadout, merit: nextMerit, ok: true };
 }
 
-// 购买即启用被动：满额不挤旧，需先禁用腾位。
 export function buyPassive(
   loadout: LoadoutState,
   merit: MeritState,
@@ -92,24 +141,65 @@ export function buyPassive(
   const def = passiveById(id);
   if (!def) return { loadout, merit, ok: false, reason: '无此技能' };
   if (def.disabled) return { loadout, merit, ok: false, reason: '技能已下架' };
-  if (isPassiveEquipped(loadout, id)) return { loadout, merit, ok: false, reason: '已启用' };
-  if (loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
-    return { loadout, merit, ok: false, reason: PASSIVE_FULL_HINT };
-  }
+  if (isOwnedPassive(loadout, id)) return { loadout, merit, ok: false, reason: '今日已购买' };
   if (merit.merit < def.cost) return { loadout, merit, ok: false, reason: '功德不足' };
   const nextMerit = spendMerit(merit, def.cost);
-  const nextLoadout = save({ ...loadout, day: today(), passives: [...loadout.passives, id] });
+  const ownedPassives = [...loadout.ownedPassives, id];
+  const passives = loadout.passives.length < MAX_EQUIPPED_PASSIVES
+    ? [...loadout.passives, id]
+    : loadout.passives;
+  const nextLoadout = save(normalize({ ...loadout, day: today(), ownedPassives, passives }));
   return { loadout: nextLoadout, merit: nextMerit, ok: true };
 }
 
-/** 禁用已启用的主动技能（腾出槽位；不退功德） */
-export function unequipActive(loadout: LoadoutState, id: string): LoadoutState {
-  if (!isEquipped(loadout, id)) return loadout;
-  return save({ ...loadout, day: today(), equipped: loadout.equipped.filter((x) => x !== id) });
+/** 装备已拥有的主动（不扣功德）；槽满则失败 */
+export function equipActive(
+  loadout: LoadoutState,
+  id: string,
+): { loadout: LoadoutState; ok: boolean; reason?: string } {
+  if (!isOwnedActive(loadout, id)) return { loadout, ok: false, reason: '尚未购买' };
+  if (isEquipped(loadout, id)) return { loadout, ok: false, reason: '已装备' };
+  if (loadout.equipped.length >= MAX_EQUIPPED_ACTIVES) {
+    return { loadout, ok: false, reason: ACTIVE_FULL_HINT };
+  }
+  return {
+    loadout: save(normalize({ ...loadout, day: today(), equipped: [...loadout.equipped, id] })),
+    ok: true,
+  };
 }
 
-/** 禁用已启用的被动技能（腾出槽位；不退功德） */
+/** 装备已拥有的被动（不扣功德）；槽满则失败 */
+export function equipPassive(
+  loadout: LoadoutState,
+  id: string,
+): { loadout: LoadoutState; ok: boolean; reason?: string } {
+  if (!isOwnedPassive(loadout, id)) return { loadout, ok: false, reason: '尚未购买' };
+  if (isPassiveEquipped(loadout, id)) return { loadout, ok: false, reason: '已装备' };
+  if (loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
+    return { loadout, ok: false, reason: PASSIVE_FULL_HINT };
+  }
+  return {
+    loadout: save(normalize({ ...loadout, day: today(), passives: [...loadout.passives, id] })),
+    ok: true,
+  };
+}
+
+/** 卸下已装备的主动（仍保留今日拥有，可再装备） */
+export function unequipActive(loadout: LoadoutState, id: string): LoadoutState {
+  if (!isEquipped(loadout, id)) return loadout;
+  return save(normalize({
+    ...loadout,
+    day: today(),
+    equipped: loadout.equipped.filter((x) => x !== id),
+  }));
+}
+
+/** 卸下已装备的被动（仍保留今日拥有，可再装备） */
 export function unequipPassive(loadout: LoadoutState, id: string): LoadoutState {
   if (!isPassiveEquipped(loadout, id)) return loadout;
-  return save({ ...loadout, day: today(), passives: loadout.passives.filter((x) => x !== id) });
+  return save(normalize({
+    ...loadout,
+    day: today(),
+    passives: loadout.passives.filter((x) => x !== id),
+  }));
 }
