@@ -10,8 +10,8 @@ export type GeneralTierRank = 'T0' | 'T1' | 'T2';
 export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'none';
 
 export const QUALITY_NAMES = ['白', '绿', '蓝', '紫', '橙'] as const;
-// 白阶不用冷灰（易像未激活），用暖金琥珀；其后仍为绿/蓝/紫/橙
-export const QUALITY_COLORS = ['#e0b84a', '#7ec46a', '#4a9be0', '#a86ad0', '#e8912c'] as const;
+// 白阶用纯白（一级英雄名）；其后绿/蓝/紫/橙
+export const QUALITY_COLORS = ['#ffffff', '#7ec46a', '#4a9be0', '#a86ad0', '#e8912c'] as const;
 
 export function qualityName(tier: number): string {
   return QUALITY_NAMES[Math.max(0, Math.min(MAX_TIER - 1, tier - 1))]!;

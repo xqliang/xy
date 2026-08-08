@@ -2980,7 +2980,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const qTier = activeTier.get(key) ?? 0;
     drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
   }
-  // 再给「左右紧邻同将」的激活武将套品质色框（框色随阶：琥珀→绿→蓝→紫→橙）
+  // 再给「左右紧邻同将」的激活武将套品质色框（框色随阶：白→绿→蓝→紫→橙）
   for (const g of b.activeGenerals()) {
     const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
     const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
@@ -2989,9 +2989,8 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const w = Math.abs(z.x - a.x) + CELL - 4;
     const h = CELL - 4;
     ctx.save();
-    // 激活框 + 释放技能时更亮；描边用品质色
-    const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
-    ctx.globalAlpha = Math.min(1, glow);
+    // 激活框常亮不呼吸；施法瞬间 skillFlash 略提亮
+    ctx.globalAlpha = Math.min(1, 0.95 + g.state.skillFlash * 0.05);
     ctx.strokeStyle = qualityColor(g.tier);
     ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
     roundRect(ctx, x, y, w, h, 8);
@@ -3284,8 +3283,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     const w = Math.abs(z.x - a.x) + CELL - 4;
     const h = CELL - 4;
     ctx.save();
-    const glow = 0.65 + 0.35 * Math.sin(performance.now() / 220) + g.state.skillFlash * 0.5;
-    ctx.globalAlpha = Math.min(1, glow);
+    ctx.globalAlpha = Math.min(1, 0.95 + g.state.skillFlash * 0.05);
     ctx.strokeStyle = qualityColor(g.tier);
     ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
     roundRect(ctx, x, y, w, h, 8);
