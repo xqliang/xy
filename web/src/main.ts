@@ -321,6 +321,7 @@ function handleButton(x: number, y: number): boolean {
   for (const btn of getButtons(battle)) {
     if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
       if (!btn.enabled) return true;
+      playSfx('click');
       if (btn.id === 'summon') battle.summon();
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'act0') { if (battle.activeSlots[0]?.ready) battle.triggerActive(0); else { ui.activePopup = 0; ui.activePopupUntil = performance.now() + 2500; } }

@@ -84,11 +84,11 @@ describe('攻击升品质阶', () => {
     expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
   });
 
-  it('expToNext：高阶经验需求显著高于低阶', () => {
-    expect(Battle.expToNext(1)).toBe(11);
-    expect(Battle.expToNext(2)).toBe(32);
-    expect(Battle.expToNext(4)).toBe(104);
-    expect(Battle.expToNext(4)).toBeGreaterThan(Battle.expToNext(2) * 2);
+  it('expToNext：10×3^level', () => {
+    expect(Battle.expToNext(1)).toBe(30);
+    expect(Battle.expToNext(2)).toBe(90);
+    expect(Battle.expToNext(3)).toBe(270);
+    expect(Battle.expToNext(4)).toBe(810);
   });
 
   it('heroSkillExp 低于首档升阶阈值', () => {

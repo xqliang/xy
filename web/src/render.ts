@@ -73,18 +73,18 @@ export function getButtons(b: Battle): Button[] {
     return [{ id: 'restart', label: '重新开始', x: 24, y, w: VIEW_W - 48, h, enabled: true }];
   }
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
-  // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，左端「布阵」，
+  // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，候选区右端「布阵」，
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
   const trayRightX = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 8; // 候选槽右侧
   const btns: Button[] = [
     // 布阵：常亮；候选区有牌则落子/合成，无牌也可依当前怪群动态调整已上场武器
     { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: true },
-    // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
+    // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免从「营」拖令牌部署时误点
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
   // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
   const ACT_D = 60; // 圆直径
-  const ACT_GAP = 10; // 与「征兵」按钮的间隙
+  const ACT_GAP = 20; // 与「征兵」按钮的间隙（左右各留 20px）
   const SUMMON_X = 180, SUMMON_W = 200, SUMMON_H = 78; // 与上方征兵按钮保持一致
   const actX = [SUMMON_X - ACT_GAP - ACT_D, SUMMON_X + SUMMON_W + ACT_GAP]; // 征兵左侧/右侧
   const actY = y + (SUMMON_H - ACT_D) / 2; // 与征兵按钮垂直居中
@@ -4810,11 +4810,20 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       if (btn.id === 'summon' && btn.enabled) {
         drawSummonReadyReminder(ctx, btn, 'edge');
       }
-      // 征兵闪光（仅点击反馈）
+      // 征兵/布阵点击闪光
       if (btn.id === 'summon' && b.summonFlash > 0) {
         ctx.save();
         ctx.globalAlpha = b.summonFlash;
         ctx.strokeStyle = '#ffe89a';
+        ctx.lineWidth = 4;
+        roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (btn.id === 'autoplace' && b.autoplaceFlash > 0) {
+        ctx.save();
+        ctx.globalAlpha = b.autoplaceFlash;
+        ctx.strokeStyle = '#b8e8ff';
         ctx.lineWidth = 4;
         roundRect(ctx, btn.x - 2, btn.y - 2, btn.w + 4, btn.h + 4, 12);
         ctx.stroke();

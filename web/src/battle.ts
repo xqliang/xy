@@ -551,6 +551,7 @@ export class Battle {
   private pendingPlace: { token: TrayToken; c: number; r: number }[] = [];
   private aiPendingPlace: { token: TrayToken; c: number; r: number }[] = [];
   summonFlash = 0; // 征兵闪光(1→0)
+  autoplaceFlash = 0; // 布阵闪光(1→0)
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
   private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
@@ -2558,9 +2559,9 @@ export class Battle {
     return msg;
   }
 
-  // 武将升阶进度：经验需求 = 6×level + 5×level²（低阶温和、高阶明显变慢）；满条时双字各 +1 阶
+  // 武将升阶进度：10×3^level（30/90/270/810…）；满条时双字各 +1 阶
   static expToNext(level: number): number {
-    return 6 * level + 5 * level * level;
+    return 10 * 3 ** level;
   }
   /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
   static combatExpFromHits(dmg: number, hit: number): number {
@@ -3125,6 +3126,7 @@ export class Battle {
     this.aiDigFx = this.aiDigFx.filter((d) => d.t < DIG_DUR);
     this.updatePendingPlace(); // 开格动画结束后落下预占的兵/字牌
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
+    if (this.autoplaceFlash > 0) this.autoplaceFlash = Math.max(0, this.autoplaceFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
@@ -3360,9 +3362,20 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
-    planAutoPlace(this.buildPlayerAutoView(), { rng: () => this.rng.next(), pSubOptimal: 0 });
-    // 战中动态调位：一键布阵可连续多步，不限 200ms（候选区空时仍可调已上场武器）
-    this.tickBattleReposition('player', 50);
+    const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), { rng: () => this.rng.next(), pSubOptimal: 0 });
+    const moved = this.tickBattleReposition('player', 50);
+    const total = placed + moved;
+    if (total > 0) {
+      if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;
+      else if (placed > 0) this.message = `布阵：落子/合成 ${placed} 步`;
+      else this.message = `布阵：调位 ${moved} 步`;
+      this.autoplaceFlash = 1;
+      if (placed > 0) this.emit('place');
+    } else if (this.tray.length === 0 && this.units.size === 0 && this.words.size === 0) {
+      this.message = '请先征兵，再点布阵';
+    } else {
+      this.message = '布阵：当前暂无可执行操作';
+    }
   }
 
   // 便于自测/渲染读取的快照
