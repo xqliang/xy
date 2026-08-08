@@ -161,7 +161,18 @@ export const TUNING = {
   aiDeployBase: 8,
   aiDeployPerWave: 1.5,
   aiDeployInterval: 2.2, // AI 逐个部署的间隔(秒)：模拟人手动从候选区往地图放，不再开波瞬间铺满(总量不变，只拉长过程)
+  // —— 双雄及以上：波中额外刷大 Boss（妖王）；间隔随机 ∈ [min, maxBase - min(shrinkCap, 英雄数-1)] ——
+  heroBossFromCount: 2, // 至少几名已配对英雄才触发
+  heroBossIntervalMin: 8, // 间隔下界（秒）
+  heroBossIntervalMaxBase: 15, // 间隔上界基数（秒）
+  heroBossIntervalShrinkCap: 4, // 英雄越多上界越压，最多压 shrinkCap 秒
 };
+
+/** 双雄引妖王：间隔上界 = maxBase - min(shrinkCap, heroCount-1) */
+export function heroBossIntervalHi(heroCount: number): number {
+  const shrink = Math.min(TUNING.heroBossIntervalShrinkCap, Math.max(0, heroCount - 1));
+  return Math.max(TUNING.heroBossIntervalMin, TUNING.heroBossIntervalMaxBase - shrink);
+}
 
 // 攻击命中判定：以 (ax,ay) 为圆心、半径 (rgeCells + 0.5) 格的攻击圆(与范围环显示同一个圆)，
 // 是否与目标所在方格真实相交(边相切不算 → 严格小于)。目标方格取其中心 round 后的整格。
@@ -534,6 +545,8 @@ export class Battle {
   private cavalryWave = false; // 本波是否为骑兵波（半数怪为骑兵）
   private waveMiniBoss: MiniBossKind | null = null; // 本波预定的小 Boss 种类（非 BOSS 波才可能）
   private miniBossSpawnIdx = -1; // 小 Boss 出场序号（0-based）；-1 表示本波无
+  /** 双雄引妖王：距下次额外大 Boss 的秒数；英雄不足时置 0，重新凑齐后重 roll 满间隔 */
+  private heroBossTimer = 0;
   private nextMonsterId = 1;
   private waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
@@ -1402,7 +1415,7 @@ export class Battle {
     return n;
   }
 
-  /** 格到路径出怪口距离（够得着路用欧氏，否则沿程下标差；见 exitDistToPath） */
+  /** 格到路径出怪口距离（沿程下标差；见 exitDistToPath） */
   private distToPathEntrance(path: { c: number; r: number }[], cell: { c: number; r: number }): number {
     return exitDistToPath(path, cell);
   }
@@ -1731,6 +1744,7 @@ export class Battle {
       this.miniBossSpawnIdx = lo + this.rng.int(hi - lo + 1);
     }
     this.spawnTimer = 0;
+    this.heroBossTimer = 0; // 本波重新计时；凑齐双雄后 roll 间隔
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
     if (bossWave) this.message = '⚠ 妖王来袭！';
@@ -2036,13 +2050,29 @@ export class Battle {
     );
   }
 
+  /** 双雄引妖王：均匀随机间隔秒数 ∈ [min, hi(heroCount)] */
+  private rollHeroBossInterval(heroCount: number): number {
+    const lo = TUNING.heroBossIntervalMin;
+    const hi = heroBossIntervalHi(heroCount);
+    if (hi <= lo) return lo;
+    return lo + this.rng.next() * (hi - lo);
+  }
+
+  /** 波中额外刷一只大 Boss（不占用 spawnRemaining） */
+  private spawnHeroSummonedBoss(): void {
+    this.spawnMonster(0, { forceBoss: true });
+    this.message = '⚠ 英雄引来妖王！';
+    this.emit('wave');
+  }
+
   /** @param distOffset 相对出怪口沿路偏移（负值=尚未走到门口，用于同批错位） */
-  private spawnMonster(distOffset = 0): void {
-    // BOSS：boss 波的最后一只，或最终通关波的最后一只
+  private spawnMonster(distOffset = 0, opts?: { forceBoss?: boolean }): void {
+    // BOSS：强制（双雄引妖王）/ boss 波的最后一只
     const isBoss =
-      this.isBossWave(this.wave) &&
-      this.spawnRemaining === 1;
+      opts?.forceBoss === true ||
+      (this.isBossWave(this.wave) && this.spawnRemaining === 1);
     // 骑兵：仅骑兵波、非 BOSS，按出场序号隔一出一 → 约占本波半数
+    // forceBoss 不占本波序号；仍用当前剩余推算，避免误标小 Boss/骑兵
     const spawnedIdx = this.waveMonsterCount - this.spawnRemaining; // 0-based 出场序号
     // 小 Boss：预定序号出场；与 BOSS 互斥，也不做骑兵
     const miniKind = !isBoss && spawnedIdx === this.miniBossSpawnIdx ? this.waveMiniBoss : null;
@@ -2913,6 +2943,21 @@ export class Battle {
           this.spawnRemaining -= 1;
         }
         this.spawnTimer = this.currentSpawnInterval();
+      }
+    }
+    // 双雄及以上：当前波随机间隔刷额外大 Boss（不占本波定额）
+    if (this.waveActive) {
+      const heroCount = this.activeGenerals().length;
+      if (heroCount >= TUNING.heroBossFromCount) {
+        if (this.heroBossTimer <= 0) this.heroBossTimer = this.rollHeroBossInterval(heroCount);
+        this.heroBossTimer -= dt;
+        if (this.heroBossTimer <= 0) {
+          this.spawnHeroSummonedBoss();
+          const n2 = this.activeGenerals().length;
+          this.heroBossTimer = n2 >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(n2) : 0;
+        }
+      } else {
+        this.heroBossTimer = 0;
       }
     }
     this.updateUnits(dt);
