@@ -73,7 +73,7 @@ describe('双雄引妖王', () => {
     expect(b.monsters.some((m) => m.isBoss && !m.isMiniBoss)).toBe(true);
   });
 
-  it('双雄召唤 Boss 血量走压力公式（非静态×8~14）', () => {
+  it('双雄召唤 Boss 总血池走压力公式（妖王+护卫拆分）', () => {
     const b = new Battle(11);
     placeHeroes(b, 2);
     for (let i = 0; i < 20; i++) {
@@ -82,14 +82,20 @@ describe('双雄引妖王', () => {
       b.forceClearWaveForTest();
     }
     expect(b.isBossWave(b.wave)).toBe(false);
-    const planned = (b as unknown as { wavePressure: { bossHp: number } | null }).wavePressure?.bossHp;
+    const planned = (b as unknown as { computeCurrentBossHp: () => number }).computeCurrentBossHp();
     expect(planned).toBeGreaterThan(0);
-    (b as unknown as { spawnRemaining: number }).spawnRemaining = 50;
+    (b as unknown as { spawnRemaining: number }).spawnRemaining = 0;
+    (b as unknown as { spawnTimer: number }).spawnTimer = 999;
     (b as unknown as { heroBossTimer: number }).heroBossTimer = 0.01;
     b.step(0.05);
     const boss = b.monsters.find((m) => m.isBoss);
+    const escorts = b.monsters.filter(
+      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist && m.dist >= boss.dist - 2,
+    );
     expect(boss).toBeTruthy();
-    expect(boss!.maxHp).toBeCloseTo(planned!, 5);
+    expect(escorts.length).toBeGreaterThanOrEqual(TUNING.bossEscortMin);
+    const totalHp = boss!.maxHp + escorts.reduce((s, m) => s + m.maxHp, 0);
+    expect(totalHp).toBeCloseTo(planned, 4);
   });
 
   it('英雄不足时重置计时，再凑齐后需重新等满间隔', () => {
@@ -135,7 +141,7 @@ describe('双雄引妖王', () => {
     expect(spawns).toBeGreaterThanOrEqual(1);
   });
 
-  it('双雄引妖王血量按当前阵容实时重算（开波后增兵会抬高）', () => {
+  it('双雄引妖王血量按当前阵容实时重算（开波后增兵会抬高总池）', () => {
     const b = new Battle(11);
     placeHeroes(b, 2);
     for (let i = 0; i < 20; i++) {
@@ -152,11 +158,16 @@ describe('双雄引妖王', () => {
     }
     const strongHp = (b as unknown as { computeCurrentBossHp: () => number }).computeCurrentBossHp();
     expect(strongHp).toBeGreaterThan(weakHp);
-    (b as unknown as { spawnRemaining: number }).spawnRemaining = 50;
+    (b as unknown as { spawnRemaining: number }).spawnRemaining = 0;
+    (b as unknown as { spawnTimer: number }).spawnTimer = 999;
     (b as unknown as { heroBossTimer: number }).heroBossTimer = 0.01;
     b.step(0.05);
     const boss = b.monsters.find((m) => m.isBoss);
+    const escorts = b.monsters.filter(
+      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist && m.dist >= boss.dist - 2,
+    );
     expect(boss).toBeTruthy();
-    expect(boss!.maxHp).toBeCloseTo(strongHp, 5);
+    const totalHp = boss!.maxHp + escorts.reduce((s, m) => s + m.maxHp, 0);
+    expect(totalHp).toBeCloseTo(strongHp, 4);
   });
 });

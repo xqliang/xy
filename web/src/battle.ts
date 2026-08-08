@@ -92,6 +92,10 @@ export const TUNING = {
   bossHpMulEarly: 8, // 前期(约第5波)BOSS 血量倍数；随波次线性爬升到 bossHpMul
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   bossHpRampWaves: 20, // 血量倍数从 early 爬到满所用波跨度（自 bossFirstSegLo 起算）
+  bossEscortMin: 4, // 妖王出场护卫最少只数
+  bossEscortMax: 8, // 妖王出场护卫最多只数
+  bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
+  bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
   // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
   cavalryWaveChance: 0.5, // 达到后期后，每波有 50% 概率成为骑兵波
@@ -147,7 +151,7 @@ export const TUNING = {
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 4.0, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
-  eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 5 倍，血量需相应更高，否则性价比失衡
+  eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
   knockdownDur: 2.0, // 倒下：武器横躺、无法攻击（秒）
   hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
   hasteSpdMul: 1.25, // 加速期间移速倍率
@@ -229,6 +233,27 @@ function heroSkillFocusDps(def: GeneralDef, atk: number): number {
 export function heroBossIntervalHi(heroCount: number): number {
   const shrink = Math.min(TUNING.heroBossIntervalShrinkCap, Math.max(0, heroCount - 1));
   return Math.max(TUNING.heroBossIntervalMin, TUNING.heroBossIntervalMaxBase - shrink);
+}
+
+/** 妖王总血池在妖王本体与护卫间拆分（护卫总血 + 妖王血 ≈ totalHp） */
+export function splitBossHpBudget(
+  totalHp: number,
+  escortCount: number,
+  normalHp: number,
+  escortHpShare: number,
+): { bossHp: number; escortHpEach: number } {
+  if (escortCount <= 0 || escortHpShare <= 0) {
+    return { bossHp: totalHp, escortHpEach: 0 };
+  }
+  const share = Math.min(0.75, Math.max(0, escortHpShare));
+  const escortPool = totalHp * share;
+  const bossHp = Math.max(normalHp, totalHp - escortPool);
+  const actualPool = totalHp - bossHp;
+  if (actualPool <= 0) {
+    return { bossHp: totalHp, escortHpEach: 0 };
+  }
+  const escortHpEach = actualPool / escortCount;
+  return { bossHp, escortHpEach };
 }
 
 // 攻击命中判定：以 (ax,ay) 为圆心、半径 (rgeCells + 0.5) 格的攻击圆(与范围环显示同一个圆)，
@@ -809,6 +834,9 @@ export class Battle {
   // 某格是否有字牌
   private wordAt(c: number, r: number): PlacedWord | undefined {
     return this.words.get(cellKey(c, r));
+  }
+  private aiWordAt(c: number, r: number): PlacedWord | undefined {
+    return this.aiWords.get(cellKey(c, r));
   }
 
   // 该格是否空闲（无兵、无字牌、且无延迟落子预占）
@@ -1817,7 +1845,7 @@ export class Battle {
       heroCount >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(heroCount) : -1;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
-    if (bossWave) this.message = '⚠ 妖王来袭！';
+    if (bossWave) this.message = '⚠ 妖王携护卫来袭！';
     else if (this.waveMiniBoss) this.message = `⚠ ${MINI_BOSS_META[this.waveMiniBoss].name}来袭！`;
     else if (this.cavalryWave) this.message = '骑兵突袭！';
     else this.message = '妖怪来袭！';
@@ -2146,8 +2174,13 @@ export class Battle {
   /** 波中额外刷一只大 Boss（不占用 spawnRemaining） */
   private spawnHeroSummonedBoss(): void {
     this.spawnMonster(0, { forceBoss: true });
-    this.message = '⚠ 英雄引来妖王！';
+    this.message = '⚠ 英雄引来妖王携护卫！';
     this.emit('wave');
+  }
+
+  private rollBossEscortCount(): number {
+    const span = TUNING.bossEscortMax - TUNING.bossEscortMin + 1;
+    return TUNING.bossEscortMin + this.rng.int(span);
   }
 
   /** @param distOffset 相对出怪口沿路偏移（负值=尚未走到门口，用于同批错位） */
@@ -2169,24 +2202,32 @@ export class Battle {
     const isElite = !isBoss && !isMiniBoss && skill !== null; // 精英=非BOSS/非小Boss但带词条
 
     let hp = this.normalMonsterHp();
+    let bossEscortCount = 0;
+    let bossEscortHpEach = 0;
     if (isBoss) {
       // 双雄引妖王：按当前阵容实时重算（开波后增兵/升阶/新激活英雄会抬高血量）
+      let totalHp: number;
       if (opts?.forceBoss) {
-        hp = this.computeCurrentBossHp();
+        totalHp = this.computeCurrentBossHp();
       } else {
         // 正式妖王波：开波压力方案；无方案时回退旧倍乘
         const planned = this.wavePressure?.bossHp;
         if (planned != null && planned > 0) {
-          hp = planned;
+          totalHp = planned;
         } else {
           const t = Math.max(0, Math.min(1, (this.wave - TUNING.bossFirstSegLo) / Math.max(1, TUNING.bossHpRampWaves)));
-          hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+          totalHp = hp * (TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t);
         }
       }
+      bossEscortCount = this.rollBossEscortCount();
+      const split = splitBossHpBudget(totalHp, bossEscortCount, hp, TUNING.bossEscortHpShare);
+      hp = split.bossHp;
+      bossEscortHpEach = split.escortHpEach;
+      if (bossEscortHpEach <= 0) bossEscortCount = 0;
     } else if (isMiniBoss) {
       hp *= TUNING.miniBossHpMul;
     } else if (isElite) {
-      // 精英击杀给普通妖 5 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
+      // 精英击杀给普通妖 4 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
       hp *= TUNING.eliteHpMul;
     }
 
@@ -2200,19 +2241,28 @@ export class Battle {
           : 1;
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
     const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
-    const makeOne = (dist: number, spd: number): Monster => ({
+    type MonsterSpec = {
+      hp: number;
+      isBoss: boolean;
+      isMiniBoss: boolean;
+      miniBossKind: MiniBossKind | null;
+      isCavalry: boolean;
+      skill: MonsterSkill | null;
+      skillCd: number;
+    };
+    const makeOne = (dist: number, spd: number, spec: MonsterSpec): Monster => ({
       id: this.nextMonsterId++,
       dist,
-      hp,
-      maxHp: hp,
+      hp: spec.hp,
+      maxHp: spec.hp,
       spd,
-      isBoss,
-      isMiniBoss,
-      miniBossKind: miniKind,
-      isCavalry,
+      isBoss: spec.isBoss,
+      isMiniBoss: spec.isMiniBoss,
+      miniBossKind: spec.miniBossKind,
+      isCavalry: spec.isCavalry,
       hitFlash: 0,
-      skill,
-      skillCd,
+      skill: spec.skill,
+      skillCd: spec.skillCd,
       castFlash: 0,
       spawnT: 0,
       stunT: 0,
@@ -2222,13 +2272,41 @@ export class Battle {
       burnT: 0,
       burnDps: 0,
     });
+    const bossSpec: MonsterSpec = {
+      hp,
+      isBoss,
+      isMiniBoss,
+      miniBossKind: miniKind,
+      isCavalry,
+      skill,
+      skillCd,
+    };
     const off = Math.min(0, distOffset);
-    this.monsters.push(
-      makeOne(this.entranceDist + off, TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul),
-    );
-    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）。无尽模式无对手，跳过。
+    const playerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul;
+    const aiSpd = TUNING.monsterSpd * diffSpd * spdMul;
+    this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
     if (!this.endless) {
-      this.aiMonsters.push(makeOne(this.aiEntranceDist + off, TUNING.monsterSpd * diffSpd * spdMul));
+      this.aiMonsters.push(makeOne(this.aiEntranceDist + off, aiSpd, bossSpec));
+    }
+    if (isBoss && bossEscortCount > 0) {
+      const escortSpec: MonsterSpec = {
+        hp: bossEscortHpEach,
+        isBoss: false,
+        isMiniBoss: false,
+        miniBossKind: null,
+        isCavalry: false,
+        skill: null,
+        skillCd: TUNING.skillFirstDelay,
+      };
+      const escortPlayerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd;
+      const escortAiSpd = TUNING.monsterSpd * diffSpd;
+      for (let i = 0; i < bossEscortCount; i++) {
+        const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * SPAWN_DIST_JITTER;
+        this.monsters.push(makeOne(this.entranceDist + escortOff, escortPlayerSpd, escortSpec));
+        if (!this.endless) {
+          this.aiMonsters.push(makeOne(this.aiEntranceDist + escortOff, escortAiSpd, escortSpec));
+        }
+      }
     }
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
@@ -2289,12 +2367,12 @@ export class Battle {
   }
 
   // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分，但用基础数值
-  //（无武器加成 / 无 this.mods / 无羁绊），且无玩家专属副作用（不产 bursts/emit/exp）。
-  // 主动技能（眩晕/治疗等）本阶段有意不镜像——仅基础普攻。对 this.aiMonsters 造成伤害。
+  //（无武器加成 / 无 this.mods / 无羁绊）；主动技能（眩晕/治疗等）本阶段有意不镜像——仅基础普攻。
   private updateAiGenerals(dt: number): void {
     for (const g of this.aiActiveGenerals()) {
       const stat = generalStat(g.def, g.tier);
       const s = g.state;
+      s.firePulse = Math.max(0, s.firePulse - dt * 6);
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
       const inRange = this.aiMonsters
@@ -2314,6 +2392,10 @@ export class Battle {
         t.m.hitFlash = 0.12;
         this.pushGeneralAttackFx(g, t.p);
         hit++;
+      }
+      if (hit > 0) {
+        s.firePulse = 1;
+        this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
       s.cooldown = 1 / stat.frq;
     }
@@ -2480,9 +2562,16 @@ export class Battle {
   static expToNext(level: number): number {
     return 10 * level;
   }
-  addGeneralCombatExp(g: ActiveGeneral, amount: number): void {
-    const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
-    const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
+  /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
+  static combatExpFromHits(dmg: number, hit: number): number {
+    if (hit <= 0) return 0;
+    const weightedHits = 1 + 0.35 * (hit - 1);
+    return dmg * weightedHits * 0.05;
+  }
+  addGeneralCombatExp(g: ActiveGeneral, amount: number, ai = false): void {
+    const wordAt = ai ? (c: number, r: number) => this.aiWordAt(c, r) : (c: number, r: number) => this.wordAt(c, r);
+    const wa = wordAt(g.cells[0].c, g.cells[0].r);
+    const wb = wordAt(g.cells[1].c, g.cells[1].r);
     if (!wa || !wb) return;
     const cap = g.def.maxTier;
     if (wa.tier >= cap && wb.tier >= cap) return; // 双字已达该武将满级：丢弃经验
@@ -2490,8 +2579,8 @@ export class Battle {
     const s = g.state;
     s.exp += amount;
     while (s.exp >= Battle.expToNext(s.level)) {
-      const wa2 = this.wordAt(g.cells[0].c, g.cells[0].r);
-      const wb2 = this.wordAt(g.cells[1].c, g.cells[1].r);
+      const wa2 = wordAt(g.cells[0].c, g.cells[0].r);
+      const wb2 = wordAt(g.cells[1].c, g.cells[1].r);
       if (!wa2 || !wb2) break;
       const can = wa2.tier < cap || wb2.tier < cap;
       if (!can) {
@@ -2502,9 +2591,11 @@ export class Battle {
       if (wa2.tier < cap) wa2.tier += 1;
       if (wb2.tier < cap) wb2.tier += 1;
       s.level += 1;
-      this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
-      this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
-      this.message = `${g.def.name} 升为 ${Math.min(wa2.tier, wb2.tier, cap)} 阶`;
+      if (!ai) {
+        this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
+        this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });
+        this.message = `${g.def.name} 升为 ${Math.min(wa2.tier, wb2.tier, cap)} 阶`;
+      }
     }
   }
   // 含品质阶的武将实际攻击力
@@ -2579,7 +2670,7 @@ export class Battle {
       }
       if (hit > 0) {
         s.firePulse = 1;
-        this.addGeneralCombatExp(g, dmg * hit * 0.05); // 输出转升阶进度
+        this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit));
       }
       s.cooldown = 1 / this.generalFrq(g);
     }
@@ -2942,7 +3033,7 @@ export class Battle {
             : isElite
               ? PEACH_PER_ELITE
               : PEACH_PER_KILL;
-        const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英5 / 小Boss10 / 大Boss20，+道具）
+        const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英4 / 小Boss6 / 大Boss10，+道具）
         this.peach += amount;
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({

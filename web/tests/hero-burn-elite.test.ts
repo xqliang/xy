@@ -30,7 +30,7 @@ function spawnOneMonsterHp(eliteChance: number): number {
   }
 }
 
-describe('精英血量倍数（精英掉落是普通妖 5 倍蟠桃，血量需相应提高）', () => {
+describe('精英血量倍数（精英掉落是普通妖 4 倍蟠桃，血量需相应提高）', () => {
   it('精英血量 = 普通血量 × TUNING.eliteHpMul', () => {
     const normalHp = spawnOneMonsterHp(0);
     const eliteHp = spawnOneMonsterHp(1);
