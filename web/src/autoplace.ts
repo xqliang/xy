@@ -63,6 +63,21 @@ export interface AutoPlaceOpts {
   rangeTolerance?: number; // 默认 0.5，与战斗判定一致
   /** AI 对手：每次挖铲在 [DIG_EXIT_WEIGHT_AI_MIN, MAX] 随机出口权重，增加挖格随机性 */
   randomDigExitWeight?: boolean;
+  /** 至多执行几步；默认不限（一键布阵） */
+  maxSteps?: number;
+}
+
+/** AI 战中调位：普通兵器 1.5–4s；待补英雄配对字 0.5–1s */
+export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1.5;
+export const AI_WEAPON_ADJUST_INTERVAL_MAX = 4;
+export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.5;
+export const AI_PARTNER_ADJUST_INTERVAL_MAX = 1;
+
+export function rollAiAdjustInterval(partnerPending: boolean, rng: () => number): number {
+  const r = rng();
+  return partnerPending
+    ? AI_PARTNER_ADJUST_INTERVAL_MIN + r * (AI_PARTNER_ADJUST_INTERVAL_MAX - AI_PARTNER_ADJUST_INTERVAL_MIN)
+    : AI_WEAPON_ADJUST_INTERVAL_MIN + r * (AI_WEAPON_ADJUST_INTERVAL_MAX - AI_WEAPON_ADJUST_INTERVAL_MIN);
 }
 
 /**
@@ -250,13 +265,63 @@ function isCharPartner(charA: string, charB: string, view: AutoPlaceView, genera
   return !!resolveHeroPair(charA, charB, view, generalHint);
 }
 
+/** 下一步调整是否为「补英雄另一半字」：tray↔棋盘配对、棋盘两字合对、tray 内成对 */
+export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
+  const orphans = view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
+  const tray = view.tray();
+
+  for (const w of orphans) {
+    for (const t of tray) {
+      if (t.kind !== 'word') continue;
+      if (resolveHeroPair(w.char, t.char, view, w.general === t.general ? w.general : undefined)) return true;
+    }
+  }
+
+  for (let i = 0; i < orphans.length; i++) {
+    for (let j = i + 1; j < orphans.length; j++) {
+      const def = pairDefForChars(orphans[i]!.char, orphans[j]!.char);
+      if (!def) continue;
+      const left =
+        orphans[i]!.char === def.chars[0] ? orphans[i]!
+        : orphans[j]!.char === def.chars[0] ? orphans[j]!
+        : null;
+      const right =
+        orphans[i]!.char === def.chars[1] ? orphans[i]!
+        : orphans[j]!.char === def.chars[1] ? orphans[j]!
+        : null;
+      if (!left || !right) continue;
+      if (!sameCell(right.cell, { c: left.cell.c + 1, r: left.cell.r })) return true;
+    }
+  }
+
+  for (let i = 0; i < tray.length; i++) {
+    const a = tray[i]!;
+    if (a.kind !== 'word') continue;
+    for (let j = i + 1; j < tray.length; j++) {
+      const b = tray[j]!;
+      if (b.kind !== 'word') continue;
+      if (resolveHeroPair(a.char, b.char, view, a.general === b.general ? a.general : undefined)) return true;
+    }
+  }
+
+  return false;
+}
+
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
+  planAutoPlaceSteps(view, opts);
+}
+
+/** 执行至多 maxSteps 步布阵；返回实际步数 */
+export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): number {
   const tol = opts.rangeTolerance ?? 0.5;
   const pSub = opts.pSubOptimal ?? 0;
   const subopt = () => pSub > 0 && opts.rng() < pSub;
+  const maxSteps = opts.maxSteps ?? Infinity;
   let guard = 0;
-  while (guard++ < 500) {
-    if (!step()) break; // 一整轮找不到可执行动作 → 停（剩余令牌保留在 tray）
+  let steps = 0;
+  while (guard++ < 500 && steps < maxSteps) {
+    if (!step()) break;
+    steps++;
   }
 
   /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；危险时追加靠唐僧加权 */
@@ -914,6 +979,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     }
     return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
   }
+
+  return steps;
 }
 
 /** 战中动态调位视图：依据当前存活怪群评估座位，每次至多执行一次 move/swap */
@@ -949,7 +1016,7 @@ function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolea
 
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位。
- * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧用 ≥1.5s 间隔节流。
+ * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧兵器调位 1.5–4s 随机节流。
  */
 export function planBattleReposition(
   view: BattleRepositionView,
@@ -1017,7 +1084,7 @@ export function planBattleReposition(
   return { ok: true, pair: bestPair ?? undefined };
 }
 
-/** 连续调位；maxSteps=1 用于 AI 1.5s 节流，更大值用于玩家一键布阵 */
+/** 连续调位；maxSteps=1 用于 AI 随机节流，更大值用于玩家一键布阵 */
 export function runBattleReposition(view: BattleRepositionView, maxSteps = 1): number {
   let steps = 0;
   while (steps < maxSteps && planBattleReposition(view).ok) steps++;

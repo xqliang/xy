@@ -2,8 +2,15 @@
 import { it, expect } from 'vitest';
 import {
   planAutoPlace,
+  planAutoPlaceSteps,
   planBattleReposition,
   runBattleReposition,
+  aiHeroPartnerAdjustPending,
+  rollAiAdjustInterval,
+  AI_WEAPON_ADJUST_INTERVAL_MIN,
+  AI_WEAPON_ADJUST_INTERVAL_MAX,
+  AI_PARTNER_ADJUST_INTERVAL_MIN,
+  AI_PARTNER_ADJUST_INTERVAL_MAX,
   dangerSeatBonus,
   imminentPathScore,
   dangerPlacementBonus,
@@ -802,4 +809,25 @@ it('危险时优先把兵力往怪物即将路过的路段调度', () => {
 
 it('dangerSeatBonus：沿路径更靠唐僧且欧氏更近则分更高', () => {
   expect(dangerSeatBonus(6, 2)).toBeGreaterThan(dangerSeatBonus(1, 8));
+});
+
+it('rollAiAdjustInterval：兵器 1.5–4s、配对字 0.5–1s', () => {
+  expect(rollAiAdjustInterval(false, () => 0)).toBe(AI_WEAPON_ADJUST_INTERVAL_MIN);
+  expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
+  expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);
+  expect(rollAiAdjustInterval(true, () => 1)).toBe(AI_PARTNER_ADJUST_INTERVAL_MAX);
+});
+
+it('aiHeroPartnerAdjustPending：tray 有棋盘孤儿的配对字', () => {
+  const v = new FakeView([], [{ c: 3, r: 5 }, { c: 4, r: 5 }]);
+  v.wordsMap.set('3,5', { char: '铁', general: 'tieshan', cell: { c: 3, r: 5 }, tier: 1 });
+  v.trayArr = [{ kind: 'word', char: '扇', general: 'tieshan', tier: 1 }];
+  expect(aiHeroPartnerAdjustPending(v)).toBe(true);
+});
+
+it('aiHeroPartnerAdjustPending：仅有单字孤儿且无配对 tray 字时为 false', () => {
+  const v = new FakeView([], [{ c: 3, r: 5 }]);
+  v.wordsMap.set('3,5', { char: '铁', general: 'tieshan', cell: { c: 3, r: 5 }, tier: 1 });
+  v.trayArr = [{ kind: 'unit', type: 'dao', tier: 1 }];
+  expect(aiHeroPartnerAdjustPending(v)).toBe(false);
 });

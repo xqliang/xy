@@ -37,7 +37,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, planBattleReposition, runBattleReposition, imminentPathScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, imminentPathScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -497,9 +497,8 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调位节流（≥1.5s 一次）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
-  static readonly AI_REPOSITION_INTERVAL = 1.5;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
   // 道具与修正器
@@ -1225,7 +1224,7 @@ export class Battle {
     };
   }
 
-  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（1.5s 节流），玩家一键布阵可连续多步 */
+  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（随机节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
       if (this.aiMonsters.length === 0 || this.aiUnits.length === 0) return 0;
@@ -1239,6 +1238,22 @@ export class Battle {
       return 0;
     }
     return runBattleReposition(this.buildBattleRepositionView('player'), maxSteps);
+  }
+
+  /** AI 战中调整：有待补英雄配对字时单步布阵，否则兵器调位；下次间隔按类型随机 */
+  private tickAiBattleAdjust(pSubOptimal: number): void {
+    const view = this.buildAiAutoView();
+    if (aiHeroPartnerAdjustPending(view)) {
+      planAutoPlaceSteps(view, {
+        rng: () => this.aiRng.next(),
+        pSubOptimal,
+        randomDigExitWeight: true,
+        maxSteps: 1,
+      });
+    } else {
+      this.tickBattleReposition('ai', 1);
+    }
+    this.aiRepositionTimer = rollAiAdjustInterval(aiHeroPartnerAdjustPending(this.buildAiAutoView()), () => this.aiRng.next());
   }
 
   private aiPathCoverAt(ax: number, ay: number, rge: number): number {
@@ -2065,11 +2080,10 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（AI 1.5s 至多一次）
+    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
-      this.aiRepositionTimer = Battle.AI_REPOSITION_INTERVAL;
-      this.tickBattleReposition('ai', 1);
+      this.tickAiBattleAdjust(knobs.pSubOptimal);
     }
     // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
     this.updateAiUnits(dt);
