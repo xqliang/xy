@@ -164,6 +164,20 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/** 按最大宽度逐字换行（中英文混排）；支持显式 \\n */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const ch of text) {
+    if (ch === '\n') { lines.push(line); line = ''; continue; }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
 /** 确定性伪随机 0..1（开垦格纹理用，同格稳定） */
 function cellHash01(c: number, r: number, salt: number): number {
   let x = (c * 374761393 + r * 668265263 + salt * 982451653) | 0;
@@ -3145,11 +3159,16 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
   const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
   const remain = b.treeCountdown(t);
   const ratio = Math.max(0, Math.min(1, 1 - remain / iv));
-  const pw = 196;
-  const ph = 118;
+  const pw = 220;
+  const pad = 12;
+  const desc = `每 ${iv}s 产 1 蟠桃 · 同级拖动可合并升级(≤${PEACH_TREE_MAX_LEVEL})`;
+  ctx.save();
+  ctx.font = '12px "PingFang SC", sans-serif';
+  const descLines = wrapText(ctx, desc, pw - pad * 2);
+  const lineH = 16;
+  const ph = 52 + descLines.length * lineH + 44;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = BOARD_Y + (FENCE_ROW * CELL) / 2 - ph / 2;
-  ctx.save();
   roundRect(ctx, px, py, pw, ph, 10);
   ctx.fillStyle = 'rgba(28,22,14,0.94)';
   ctx.fill();
@@ -3161,18 +3180,22 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#c9f0b0';
   ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText('蟠桃园·桃树', px + 12, py + 18);
+  ctx.fillText('蟠桃园·桃树', px + pad, py + 18);
   ctx.textAlign = 'right';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 14px "PingFang SC", sans-serif';
-  ctx.fillText(`Lv.${t.level}`, px + pw - 12, py + 18);
-  // 说明
+  ctx.fillText(`Lv.${t.level}`, px + pw - pad, py + 18);
+  // 说明（换行，避免超出面板）
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,240,210,0.75)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`每 ${iv}s 产 1 蟠桃 · 同级拖动可合并升级(≤${PEACH_TREE_MAX_LEVEL})`, px + 12, py + 44);
+  let ty = py + 40;
+  for (const ln of descLines) {
+    ctx.fillText(ln, px + pad, ty);
+    ty += lineH;
+  }
   // 产桃进度条
-  const bx = px + 12, by = py + 66, bw = pw - 24, bh = 14;
+  const bx = px + pad, by = ty + 6, bw = pw - pad * 2, bh = 14;
   roundRect(ctx, bx, by, bw, bh, 7);
   ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.fill();
@@ -4467,9 +4490,12 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   if (!slot) return;
   const def = activeById(slot.id);
   if (!def) return;
-  const w = 264, h = 108;
-  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  const w = 280, pad = 16, lineH = 18;
   ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const descLines = wrapText(ctx, def.desc, w - pad * 2);
+  const h = 66 + descLines.length * lineH + 14;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
   roundRect(ctx, x, y, w, h, 12);
   ctx.fillStyle = 'rgba(30,24,18,0.94)';
   ctx.fill();
@@ -4480,13 +4506,17 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#fff6e6';
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + 16, y + 12);
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 12);
   ctx.fillStyle = '#8fd3ff';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`冷却 ${def.cd}s · 冷却中 ${Math.ceil(slot.cd)}s`, x + 16, y + 40);
+  ctx.fillText(`冷却 ${def.cd}s · 冷却中 ${Math.ceil(slot.cd)}s`, x + pad, y + 40);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(def.desc, x + 16, y + 66);
+  let ty = y + 62;
+  for (const ln of descLines) {
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
+  }
   ctx.restore();
 }
 
@@ -4495,9 +4525,13 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   if (ui.passivePopup === null) return;
   const def = passiveById(b.pickedItems[ui.passivePopup] ?? '');
   if (!def) return;
-  const w = 264, h = 112;
-  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  const w = 300, pad = 16, lineH = 18;
+  const prog = b.passiveProgress(def.id);
   ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const descLines = wrapText(ctx, def.desc, w - pad * 2);
+  const h = 56 + descLines.length * lineH + (prog ? 36 : 18);
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
   roundRect(ctx, x, y, w, h, 12);
   ctx.fillStyle = 'rgba(30,24,18,0.94)';
   ctx.fill();
@@ -4508,20 +4542,23 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#fff6e6';
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + 16, y + 14);
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 14);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(def.desc, x + 16, y + 62);
-  const prog = b.passiveProgress(def.id);
+  let ty = y + 48;
+  for (const ln of descLines) {
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
+  }
   if (prog) {
-    const by = y + h - 20, bw = w - 32;
+    const by = y + h - 20, bw = w - pad * 2;
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(x + 16, by, bw, 8);
+    ctx.fillRect(x + pad, by, bw, 8);
     ctx.fillStyle = '#ffd24d';
-    ctx.fillRect(x + 16, by, bw * Math.max(0, Math.min(1, prog.ratio)), 8);
+    ctx.fillRect(x + pad, by, bw * Math.max(0, Math.min(1, prog.ratio)), 8);
     ctx.fillStyle = '#fff';
     ctx.font = '11px "PingFang SC", sans-serif';
-    ctx.fillText(prog.text, x + 16, by - 13);
+    ctx.fillText(prog.text, x + pad, by - 13);
   }
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = '11px "PingFang SC", sans-serif';
