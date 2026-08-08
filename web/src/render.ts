@@ -16,7 +16,7 @@ import {
 } from './board';
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
-import { activeById } from './actives';
+import { activeById, type ActiveSkillDef } from './actives';
 import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
@@ -100,6 +100,51 @@ export function getButtons(b: Battle): Button[] {
   return btns;
 }
 
+// 对手(AI)技能图标簇：地图右上角，展示 AI 本局购得的主动+被动技能，供玩家点击查看详情。
+// 无尽模式无 AI 对手，b.aiActivesEquipped/aiPassivesEquipped 恒为空数组，自然不渲染。
+export interface AiSkillIconRef {
+  kind: 'active' | 'passive';
+  id: string;
+}
+export interface AiSkillIcon extends AiSkillIconRef {
+  x: number; y: number; w: number; h: number;
+}
+const AI_SKILL_ICON = 26;
+const AI_SKILL_GAP = 6;
+const AI_SKILL_MARGIN = 8;
+const AI_SKILL_PER_ROW = 4;
+
+/** 主动在前、被动在后，从地图右上角向左/向下排列的图标几何（供绘制与点击命中共用） */
+export function getAiSkillIcons(b: Battle): AiSkillIcon[] {
+  if (b.endless) return [];
+  const refs: AiSkillIconRef[] = [
+    ...b.aiActivesEquipped.map((id) => ({ kind: 'active' as const, id })),
+    ...b.aiPassivesEquipped.map((id) => ({ kind: 'passive' as const, id })),
+  ];
+  const rightX = BOARD_X + CELL * COLS - AI_SKILL_MARGIN;
+  const topY = BOARD_Y + AI_SKILL_MARGIN;
+  return refs.map((ref, i) => {
+    const row = Math.floor(i / AI_SKILL_PER_ROW);
+    const col = i % AI_SKILL_PER_ROW;
+    return {
+      ...ref,
+      x: rightX - AI_SKILL_ICON - col * (AI_SKILL_ICON + AI_SKILL_GAP),
+      y: topY + row * (AI_SKILL_ICON + AI_SKILL_GAP),
+      w: AI_SKILL_ICON,
+      h: AI_SKILL_ICON,
+    };
+  });
+}
+
+/** 命中测试：点在某个 AI 技能图标上则返回其引用，否则 null */
+export function aiSkillIconAt(b: Battle, x: number, y: number): AiSkillIconRef | null {
+  if (b.status !== 'playing' && b.status !== 'ready') return null;
+  for (const ic of getAiSkillIcons(b)) {
+    if (x >= ic.x && x <= ic.x + ic.w && y >= ic.y && y <= ic.y + ic.h) return { kind: ic.kind, id: ic.id };
+  }
+  return null;
+}
+
 export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
@@ -109,6 +154,7 @@ export interface UiState {
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
+  aiSkillPopup: AiSkillIconRef | null; // 点击的对手技能图标（显示详情弹窗，点任意处关闭）
   paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
 }
 
@@ -773,9 +819,11 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawButtons(ctx, b);
   drawActiveIcons(ctx, b);
   drawPassiveRow(ctx, b);
+  drawAiSkillIcons(ctx, b);
   drawPauseBtn(ctx, b);
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
+  drawAiSkillPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
   if (ui.paused) drawPauseOverlay(ctx, b);
@@ -4918,6 +4966,83 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.fillRect(btn.x + 4, by, (btn.w - 8) * Math.max(0, Math.min(1, prog.ratio)), 3);
     }
   }
+}
+
+// 对手(AI)技能图标簇：地图右上角小图标，主动带 CD 扇形（镜像我方两翼主动样式，但更小巧不占布局）
+function drawAiSkillIcons(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.status !== 'playing' && b.status !== 'ready') return;
+  for (const ic of getAiSkillIcons(b)) {
+    const def = ic.kind === 'active' ? activeById(ic.id) : passiveById(ic.id);
+    if (!def) continue;
+    const cx = ic.x + ic.w / 2, cy = ic.y + ic.h / 2;
+    const r = ic.w / 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = ic.kind === 'active' ? 'rgba(90,52,20,0.85)' : 'rgba(30,58,38,0.85)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = ic.kind === 'active' ? '#e0a86a' : '#6ab07a';
+    ctx.stroke();
+    ctx.fillStyle = '#fff6e6';
+    ctx.font = `${Math.round(ic.w * 0.52)}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.icon ?? def.name[0]!, cx, cy);
+    if (ic.kind === 'active') {
+      const slot = b.aiActiveSlots.find((s) => s.id === ic.id);
+      if (slot && !slot.ready) {
+        const frac = slot.cdMax > 0 ? slot.cd / slot.cdMax : 0;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+// 对手(AI)技能详情弹窗：点击右上角图标展示（名称+说明；主动附带CD状态），点任意处关闭
+function drawAiSkillPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  const ref = ui.aiSkillPopup;
+  if (!ref) return;
+  const def = ref.kind === 'active' ? activeById(ref.id) : passiveById(ref.id);
+  if (!def) return;
+  const w = 280, pad = 16, lineH = 18;
+  ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const descLines = wrapText(ctx, def.desc, w - pad * 2);
+  const h = 62 + descLines.length * lineH + 14;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fillStyle = 'rgba(30,24,18,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = ref.kind === 'active' ? '#e0a86a' : '#6ab07a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 12);
+  ctx.fillStyle = '#ffcf87';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  const activeSlot = ref.kind === 'active' ? b.aiActiveSlots.find((s) => s.id === ref.id) : undefined;
+  const subLabel = ref.kind === 'active'
+    ? `对手主动技能 · 冷却 ${(def as ActiveSkillDef).cd}s${activeSlot && !activeSlot.ready ? ` · 冷却中 ${Math.ceil(activeSlot.cd)}s` : ''}`
+    : '对手被动技能 · 开局生效';
+  ctx.fillText(subLabel, x + pad, y + 40);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ty = y + 62;
+  for (const ln of descLines) {
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
+  }
+  ctx.restore();
 }
 
 // 主动技能介绍弹窗：CD 中点击技能图标时展示（就绪时点击是释放，不弹），定时自动淡出

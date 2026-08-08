@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Battle, TUNING } from '../src/battle';
 import { PEACH_PER_KILL } from '@core';
+import { AI_SKILL_MIN } from '../src/ai-skill';
 
 describe('AI 落子与激活', () => {
   it('aiPlaceFromTray：铲子只挖锁定 AI 格并解锁', () => {
@@ -63,8 +64,10 @@ describe('AI 经济与征兵', () => {
     expect(b.aiTray.length).toBe(0);
   });
 
-  it('AI 击杀普通怪产基础桃 PEACH_PER_KILL（无玩家加成）', () => {
-    const b = new Battle(3);
+  it('AI 击杀普通怪产基础桃 PEACH_PER_KILL（无玩家加成，AI 强度地板即无技能加成）', () => {
+    // 显式用 AI_SKILL_MIN：此强度下虚拟预算为 0，AI 不购买任何主动/被动，
+    // 排除随机购得 killBonus 类被动（聚宝盆）对本测试的干扰。
+    const b = new Battle(3, 1, undefined, undefined, undefined, undefined, undefined, false, AI_SKILL_MIN);
     const before = b.aiPeach;
     (b as any).creditAiKill(false, false);
     expect(b.aiPeach - before).toBe(PEACH_PER_KILL);

@@ -50,6 +50,7 @@ import {
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
 import { DEFAULT_AI_SKILL, skillToKnobs } from './ai-skill';
+import { pickAiLoadout } from './ai-loadout';
 import {
   COLS,
   ROWS,
@@ -554,7 +555,6 @@ export class Battle {
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = TANGSENG_INITIAL_HP;
-  aiFrqMul = 1; // AI 侧全体攻速倍率（预留：对称道具可同时抬高敌我）
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
@@ -582,6 +582,19 @@ export class Battle {
   private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
+
+  // —— AI 对手的主动/被动技能（开局按 aiSkill 虚拟预算"购买"，见 ai-loadout.ts）——
+  aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
+  aiActivesEquipped: string[] = []; // 本局购得的主动技能 id（供地图右上角 UI 展示/单测）
+  aiPassivesEquipped: string[] = []; // 本局购得的被动技能 id（同上）
+  aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
+  private aiShovelTimer = 0; // 镜像 shovelTimer：AI 洛阳铲产铲计时
+  private aiMeteorPending = false; // 镜像 meteorPending：AI 陨石被动本波是否待触发
+  private aiTierBoosted = new Set<string>(); // 镜像 tierBoosted：AI 法宝符已应用首次激活升阶的武将 id
+  aiAtkBuffT = 0; aiAtkBuffMul = 1; // AI 仙丹主动技能：全体攻击临时增益
+  aiFrqBuffT = 0; aiFrqBuffMul = 1; // AI 风火轮主动技能：全体攻速临时增益
+  /** AI 侧按自身场上战力算出的压力方案（开波时刷新；供 AI Boss 出怪血量使用，独立于玩家账本） */
+  private aiWavePressure: PressurePlan | null = null;
 
   // 道具与修正器
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
@@ -668,6 +681,22 @@ export class Battle {
       this.applyItem(id);
       this.pickedItems.push(id);
     }
+    // AI 对手"开局购买"：按 aiSkill 虚拟预算挑选主动/被动技能（无尽模式无对手，跳过）。
+    if (!this.endless) {
+      const aiLoadout = pickAiLoadout(this.aiSkill, () => this.aiRng.next());
+      this.aiActivesEquipped = aiLoadout.actives;
+      for (const id of aiLoadout.actives) {
+        const def = activeById(id);
+        if (!def || def.disabled) continue;
+        this.aiActiveSlots.push({ id, cd: def.cd * 0.5, cdMax: def.cd, ready: false, flash: 0 });
+      }
+      this.aiPassivesEquipped = aiLoadout.passives;
+      for (const id of aiLoadout.passives) {
+        if (!isPassiveEnabled(id)) continue;
+        if (id === 'pas_pantao') continue; // AI 暂不种桃树，避免另建一套 AI 桃树系统
+        this.aiApplyItem(id);
+      }
+    }
   }
 
   // AI 唐僧当前渲染位置（同玩家入场节奏沿镜像路走向归位）
@@ -684,6 +713,11 @@ export class Battle {
   /** 淤泥被动：出怪口附近 3 格内妖怪移速降低 */
   monsterInMudZone(m: Monster): boolean {
     return this.mods.mud && m.dist - this.entranceDist < 3;
+  }
+
+  /** 镜像 monsterInMudZone：AI 购得「淤泥」被动时，AI 出怪口附近的 aiMonsters 减速 */
+  private aiMonsterInMudZone(m: Monster): boolean {
+    return this.aiMods.mud && m.dist - this.aiEntranceDist < 3;
   }
 
   // 该格是否已解锁
@@ -1031,7 +1065,7 @@ export class Battle {
   }
 
   // AI 侧武将激活扫描（镜像 activeGenerals：matchGeneral 配对 + 继承对齐，读 aiWords/aiGeneralStates）。
-  // AI 基础经济：不享法宝符 generalTierDelta 加成。
+  // AI 若购得「法宝符」被动，享 aiMods.generalTierDelta 首次激活升阶加成（镜像玩家 tierBoosted）。
   aiActiveGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
@@ -1051,6 +1085,13 @@ export class Battle {
       if (right.tier < target) right.tier = target;
       w.general = def.id;
       right.general = def.id;
+      if (this.aiMods.generalTierDelta > 0 && !this.aiTierBoosted.has(def.id)) {
+        this.aiTierBoosted.add(def.id);
+        for (let i = 0; i < this.aiMods.generalTierDelta; i++) {
+          if (w.tier < cap) w.tier += 1;
+          if (right.tier < cap) right.tier += 1;
+        }
+      }
       let s = this.aiGeneralStates.get(def.id);
       if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
       out.push({ def, tier: Math.min(w.tier, right.tier, cap), cells: [w.cell, right.cell], state: s });
@@ -1080,6 +1121,7 @@ export class Battle {
       this.aiUnlocked.add(k);
       this.aiDigFx.push({ c: to.c, r: to.r, t: 0 }); // 开格动画（对称展示；延迟落子据此判定）
       this.aiTray.splice(index, 1);
+      if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach; // 摸金校尉
       return true;
     }
     if (!this.aiUnlocked.has(k)) return false;
@@ -1125,10 +1167,16 @@ export class Battle {
     return min;
   }
 
+  // AI 当前征兵成本（含仙缘幡 aiMods.summonCostDelta，镜像玩家 effectiveSummonCost）
+  private aiEffectiveSummonCost(): number {
+    return Math.max(1, this.aiSummonCost + this.aiMods.summonCostDelta);
+  }
+
   // AI 征兵：与玩家同生成策略（drawSummonTray + 字牌转化），用 aiRng，够桃才征
   private aiSummon(): boolean {
-    if (this.aiPeach < this.aiSummonCost) return false;
-    this.aiPeach -= this.aiSummonCost;
+    const cost = this.aiEffectiveSummonCost();
+    if (this.aiPeach < cost) return false;
+    this.aiPeach -= cost;
     this.aiSummonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.aiSummonCount === 0;
@@ -1165,7 +1213,7 @@ export class Battle {
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance) {
+      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance + this.aiMods.wordRateBonus) {
         return drawOneWord(forcePartner && !partnerForced);
       }
       return tok;
@@ -1186,7 +1234,7 @@ export class Battle {
     return true;
   }
 
-  // AI 击杀产桃（基础值，无 mods.killBonus/摸金/蟠桃园）
+  // AI 击杀产桃（基础值 + 聚宝盆 aiMods.killBonus；无蟠桃园，AI 不种树）
   private creditAiKill(isBoss: boolean, isElite: boolean, isMiniBoss = false): void {
     const base = isBoss
       ? PEACH_PER_BOSS
@@ -1195,7 +1243,7 @@ export class Battle {
         : isElite
           ? PEACH_PER_ELITE
           : PEACH_PER_KILL;
-    this.aiPeach += base;
+    this.aiPeach += base + this.aiMods.killBonus;
   }
 
   // AI 布阵视图（喂给共享 planAutoPlace）
@@ -1782,6 +1830,8 @@ export class Battle {
     this.wavePressure = this.computeWavePressure(this.wave);
     this.spawnRemaining = this.wavePressure.count;
     this.waveMonsterCount = this.spawnRemaining; // 记录总数用于骑兵半数判定
+    // AI 侧独立账本：只用其 bossHp（出怪数/间隔仍统一用玩家方案，双方同波同步出怪）
+    if (!this.endless) this.aiWavePressure = this.computeAiWavePressure(this.wave);
     const bossWave = this.isBossWave(this.wave);
     // 后期(第 6 波起)随机某波成为骑兵波：半数怪替换为骑兵（移速翻倍、血量相同）
     this.cavalryWave =
@@ -1801,6 +1851,7 @@ export class Battle {
       this.wavePressure = this.computeWavePressure(this.wave, true);
       this.spawnRemaining = this.wavePressure.count;
       this.waveMonsterCount = this.spawnRemaining;
+      if (!this.endless) this.aiWavePressure = this.computeAiWavePressure(this.wave, true);
       // 避开首尾：中间段出场，避免与开波/收波节奏抢戏
       const lo = 1;
       const hi = Math.max(lo, this.spawnRemaining - 2);
@@ -1809,6 +1860,7 @@ export class Battle {
     this.spawnTimer = 0;
     this.heroBossTimer = 0; // 本波重新计时；凑齐双雄后 roll 间隔
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
+    this.aiMeteorPending = this.aiMods.meteor; // AI 侧同一时机待触发（镜像）
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
     if (bossWave) this.message = '⚠ 妖王来袭！';
     else if (this.waveMiniBoss) this.message = `⚠ ${MINI_BOSS_META[this.waveMiniBoss].name}来袭！`;
@@ -1828,6 +1880,11 @@ export class Battle {
   // 把玩家场上所有妖怪沿路击退若干格（如来神掌；不再重置到起点）
   private pushMonstersBack(cells: number): void {
     for (const m of this.monsters) m.dist = Math.max(0, m.dist - cells);
+  }
+
+  // 镜像 pushMonstersBack：AI 如来神掌把 aiMonsters 沿 aiPath 击退
+  private aiPushMonstersBack(cells: number): void {
+    for (const m of this.aiMonsters) m.dist = Math.max(0, m.dist - cells);
   }
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
@@ -1856,11 +1913,41 @@ export class Battle {
     }
   }
 
+  // AI 对手每项被动的数值强度相对玩家打折：与仓库既有"给 AI 的对称道具打折"惯例一致
+  // （如 tongxin/jifeng 玩家侧文档注释"我方收益优于AI对手"），避免 AI 买了技能就单方面碾压平衡。
+  private static readonly AI_EFFECT_SCALE = 0.5;
+
+  // AI 对手版被动效果引擎：镜像 applyItem，写入 aiMods/aiTangsengHP/aiUnlocked（数值打 AI_EFFECT_SCALE 折）。
+  // tongxin/hushen 只让 AI 自身受益（不像玩家买它时反向让对手也沾光），避免"AI 买被动却顺手强化玩家"的怪异感。
+  private aiApplyItem(id: string): void {
+    const k = Battle.AI_EFFECT_SCALE;
+    switch (id) {
+      case 'xiandan': this.aiMods.atkMul += 0.10 * k; break;
+      case 'fenghuolun': this.aiMods.frqMul += 0.10 * k; break;
+      case 'fabaofu': this.aiMods.generalTierDelta += 1; break;
+      case 'zhaoxian': this.aiMods.wordRateBonus += 0.1 * k; break;
+      case 'mojin': this.aiMods.shovelPeach += 6 * k; break;
+      case 'luoyangchan': this.aiMods.autoShovel = true; break;
+      case 'yunshi': this.aiMods.meteor = true; break;
+      case 'yuni': this.aiMods.mud = true; break;
+      case 'xianyuan': this.aiMods.summonCostDelta -= 1; break;
+      case 'jubaopen': this.aiMods.killBonus += 1; break;
+      case 'hushen': this.aiTangsengHP += 1; break;
+      case 'tongxin': this.aiTangsengHP += 2; break;
+      case 'zhuwang': this.aiMods.monsterSpdMul = Math.max(0.4, this.aiMods.monsterSpdMul - 0.10 * k); break;
+      case 'dinghai': { const lc = this.aiLockedCells(); if (lc[0]) this.aiUnlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
+    }
+  }
+
   // 被动道具的持续效果：洛阳铲产铲
   private updateItemEffects(dt: number): void {
     if (this.mods.autoShovel) {
       this.shovelTimer += dt;
       if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; }
+    }
+    if (this.aiMods.autoShovel) {
+      this.aiShovelTimer += dt;
+      if (this.aiShovelTimer >= 45) { this.aiShovelTimer = 0; this.aiShovels += 1; }
     }
   }
 
@@ -1950,6 +2037,25 @@ export class Battle {
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
+      if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) { m.hp -= dmg; m.hitFlash = 0.2; }
+    }
+    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+  }
+
+  // AI 对手版陨石被动：镜像 castMeteor/doMeteor，目标 aiMonsters、沿 aiPath 取点。
+  private castAiMeteor(): void {
+    if (!this.aiMods.meteor || this.aiMonsters.length === 0) return;
+    this.doAiMeteor(TUNING.meteorPassiveDmgMul * Battle.AI_EFFECT_SCALE);
+  }
+
+  private doAiMeteor(mul: number = TUNING.meteorDmgMul): void {
+    if (this.aiMonsters.length === 0) return;
+    let front = this.aiMonsters[0]!;
+    for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * mul;
+    const p = posAlong(this.aiPath, front.dist);
+    for (const m of this.aiMonsters) {
+      const q = posAlong(this.aiPath, m.dist);
       if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) { m.hp -= dmg; m.hitFlash = 0.2; }
     }
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
@@ -2048,6 +2154,17 @@ export class Battle {
     return this.normalMonsterSpeed(wave) * TUNING.bossSpdMul;
   }
 
+  /** 镜像 normalMonsterSpeed：AI 侧（含 aiMods.monsterSpdMul，如 AI 买了淤泥/绊妖蛛网） */
+  private aiNormalMonsterSpeed(wave: number = this.wave): number {
+    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
+    return TUNING.monsterSpd * this.aiMods.monsterSpdMul * diffSpd;
+  }
+
+  /** 镜像 bossSpeed：AI 侧 */
+  private aiBossSpeed(wave: number = this.wave): number {
+    return this.aiNormalMonsterSpeed(wave) * TUNING.bossSpdMul;
+  }
+
   /**
    * 当前地图下，把战场兵种按最优重排后的输出（含被动攻速/伤害、武将神兵/羁绊）。
    * 不计主动技能临时增益，避免开波瞬间吃 Buff 抬高整波难度。
@@ -2088,6 +2205,43 @@ export class Battle {
   }
 
   /**
+   * 镜像 estimateOptimalPower：AI 场上（aiUnits/aiActiveGenerals + 已购主被动技能 aiMods）的最优重排输出。
+   * 用 AI 自己的镜像路径 aiPath（借 GameMap 形状复用 estimateOptimalBoardPower，仅替换 path）；
+   * 无武器加成/羁绊（AI 无神兵背包），无武将大招专注秒伤（AI 大招暂不镜像，见 updateAiGenerals 注释）。
+   */
+  estimateAiOptimalPower(): BoardPowerResult {
+    const atkMul = this.aiMods.atkMul;
+    const frqMul = this.aiMods.frqMul;
+    const wordKeys = new Set(this.aiWords.keys());
+    const freeCells = this.aiUnlockedCells().filter((c) => !wordKeys.has(cellKey(c.c, c.r)));
+    const units = this.aiUnits.map((u) => ({ type: u.type, tier: u.tier }));
+    const generals = this.aiActiveGenerals().map((g) => {
+      const base = generalStat(g.def, g.tier);
+      return {
+        atk: base.atk * atkMul,
+        frq: base.frq * frqMul,
+        rge: base.rge,
+        targets: base.targets,
+        ax: (g.cells[0].c + g.cells[1].c) / 2,
+        ay: (g.cells[0].r + g.cells[1].r) / 2,
+      };
+    });
+    const aiMap: GameMap = { ...this.map, path: this.aiPath };
+    return estimateOptimalBoardPower({
+      map: aiMap,
+      entranceDist: this.aiEntranceDist,
+      pathLen: this.aiPathLen,
+      units,
+      freeCells,
+      nearestPathDist: (cell) => this.aiNearestPathDist(cell),
+      generals,
+      atkMul,
+      frqMul,
+      rangeTolerance: TUNING.rangeTolerance,
+    });
+  }
+
+  /**
    * 按最优 DPS 规划本波出怪数、Boss 血量与出怪间隔（约 70% 压力）。
    * @param hasMiniBoss 本波是否预定顶替 1 只普通怪刷小 Boss：其额外血量需占预算，
    *   否则怪量不变但血量更高会让实际压力悄悄超出规划比例（见 planWavePressure）。
@@ -2102,6 +2256,28 @@ export class Battle {
       isBossWave: this.isBossWave(wave),
       bossSpd: this.bossSpeed(wave),
       monsterSpd: this.normalMonsterSpeed(wave),
+      baseSpawnInterval: TUNING.spawnInterval,
+      difficultySpawnFactor: 1 + 0.07 * (this.effectiveDifficulty(wave) - 1),
+      minSpawnInterval: TUNING.spawnIntervalMin,
+      power,
+      miniBossExtraHp: hasMiniBoss ? normalHp * (TUNING.miniBossHpMul - 1) : 0,
+    });
+  }
+
+  /**
+   * 镜像 computeWavePressure：AI 侧 Boss 血量方案，按 AI 自己的场上战力(estimateAiOptimalPower)独立核算。
+   * 只取 bossHp 使用（count/spawnInterval 仍用玩家侧方案统一双方出怪节奏，见 spawnMonster）。
+   */
+  private computeAiWavePressure(wave: number, hasMiniBoss = false): PressurePlan {
+    const power = this.estimateAiOptimalPower();
+    const normalHp = this.normalMonsterHp(wave);
+    return planWavePressure({
+      wave,
+      baselineCount: this.baselineWaveSpawnCount(wave),
+      normalHp,
+      isBossWave: this.isBossWave(wave),
+      bossSpd: this.aiBossSpeed(wave),
+      monsterSpd: this.aiNormalMonsterSpeed(wave),
       baseSpawnInterval: TUNING.spawnInterval,
       difficultySpawnFactor: 1 + 0.07 * (this.effectiveDifficulty(wave) - 1),
       minSpawnInterval: TUNING.spawnIntervalMin,
@@ -2170,6 +2346,14 @@ export class Battle {
       // 精英击杀给普通妖 5 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
       hp *= TUNING.eliteHpMul;
     }
+    // AI 侧 Boss 血：按 AI 自己场上战力(单位/武将/已购主被动技能)独立核算的压力账本，
+    // 而不是简单复用玩家 hp——AI 变强(买了技能)理应刷出更扛打的 Boss，与玩家侧完全对称。
+    // 非 Boss 怪双方共享同一 hp（普通/小Boss/精英倍率与场上战力无关，无需分账）。
+    let aiHp = hp;
+    if (isBoss) {
+      const plannedAi = this.aiWavePressure?.bossHp;
+      aiHp = plannedAi != null && plannedAi > 0 ? plannedAi : hp;
+    }
 
     // 移速倍率：BOSS/小 Boss 略慢、骑兵翻倍（互斥）
     const spdMul = isBoss
@@ -2181,11 +2365,11 @@ export class Battle {
           : 1;
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
     const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
-    const makeOne = (dist: number, spd: number): Monster => ({
+    const makeOne = (dist: number, spd: number, hpVal: number): Monster => ({
       id: this.nextMonsterId++,
       dist,
-      hp,
-      maxHp: hp,
+      hp: hpVal,
+      maxHp: hpVal,
       spd,
       isBoss,
       isMiniBoss,
@@ -2205,11 +2389,13 @@ export class Battle {
     });
     const off = Math.min(0, distOffset);
     this.monsters.push(
-      makeOne(this.entranceDist + off, TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul),
+      makeOne(this.entranceDist + off, TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul, hp),
     );
-    // AI 对手同波同步出怪（镜像路，无玩家的 monsterSpdMul 道具加成）。无尽模式无对手，跳过。
+    // AI 对手同波同步出怪（镜像路；移速享 aiMods.monsterSpdMul，Boss 血量按 aiWavePressure 独立核算）。无尽模式无对手，跳过。
     if (!this.endless) {
-      this.aiMonsters.push(makeOne(this.aiEntranceDist + off, TUNING.monsterSpd * diffSpd * spdMul));
+      this.aiMonsters.push(
+        makeOne(this.aiEntranceDist + off, TUNING.monsterSpd * this.aiMods.monsterSpdMul * diffSpd * spdMul, aiHp),
+      );
     }
     this.spawnGateT = 0.5; // 触发出怪口"开合"动画
     this.aiSpawnGateT = 0.5;
@@ -2233,8 +2419,10 @@ export class Battle {
     return null;
   }
 
-  // AI 单位攻击 AI 怪（与玩家同一套战斗数值；出招特效走共用 this.fx）
+  // AI 单位攻击 AI 怪（与玩家同一套战斗数值 + aiMods 攻击/攻速加成 + 仙丹/风火轮主动临时增益）
   private updateAiUnits(dt: number): void {
+    const atkMul = this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? this.aiAtkBuffMul : 1);
+    const frqMul = this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? this.aiFrqBuffMul : 1);
     for (const u of this.aiUnits) {
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
@@ -2247,7 +2435,7 @@ export class Battle {
         .filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p))
         .sort((a, b) => b.m.dist - a.m.dist);
       if (inRange.length === 0) continue;
-      const dmg = damage(stat.atk);
+      const dmg = damage(stat.atk * atkMul);
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
@@ -2265,14 +2453,16 @@ export class Battle {
         const tp = posAlong(this.aiPath, inRange[0]!.m.dist);
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
-      u.cooldown = 1 / (stat.frq * this.aiFrqMul);
+      u.cooldown = 1 / (stat.frq * frqMul);
     }
   }
 
-  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分，但用基础数值
-  //（无武器加成 / 无 this.mods / 无羁绊），且无玩家专属副作用（不产 bursts/emit/exp）。
+  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分，基础数值 + aiMods 攻击/攻速加成
+  //（无武器加成 / 无羁绊），且无玩家专属副作用（不产 bursts/emit/exp）。
   // 主动技能（眩晕/治疗等）本阶段有意不镜像——仅基础普攻。对 this.aiMonsters 造成伤害。
   private updateAiGenerals(dt: number): void {
+    const atkMul = this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? this.aiAtkBuffMul : 1);
+    const frqMul = this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? this.aiFrqBuffMul : 1);
     for (const g of this.aiActiveGenerals()) {
       const stat = generalStat(g.def, g.tier);
       const s = g.state;
@@ -2287,7 +2477,7 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(stat.atk); // 基础，无 bond/weapon/mods
+      const dmg = damage(stat.atk * atkMul); // 无 bond/weapon，含 aiMods 攻击加成
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -2296,7 +2486,7 @@ export class Battle {
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
-      s.cooldown = 1 / stat.frq;
+      s.cooldown = 1 / (stat.frq * frqMul);
     }
   }
 
@@ -2321,7 +2511,8 @@ export class Battle {
     if (this.aiRepositionTimer <= 0) {
       this.tickAiBattleAdjust(knobs.pSubOptimal);
     }
-    // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
+    // 3) 战斗：AI 主动技能自动释放 + AI 兵 + AI 武将攻击 aiMonsters
+    this.updateAiActives(dt);
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
@@ -2333,7 +2524,8 @@ export class Battle {
         this.creditAiKill(m.isBoss, !m.isBoss && !m.isMiniBoss && !!m.skill, m.isMiniBoss);
         continue;
       } // 击杀产桃（精英/小Boss/大Boss 分档，对齐玩家语义）
-      m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1) * dt;
+      const mudMul = this.aiMonsterInMudZone(m) ? 0.82 : 1; // 淤泥：AI 出怪口附近减速
+      m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1) * mudMul * dt;
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
       if (m.dist >= this.aiPathLen) {
         this.aiTangsengHP -= 1;
@@ -2904,6 +3096,83 @@ export class Battle {
     this.message = '紧箍咒！金光横扫';
   }
 
+  // 镜像 doJingu：AI 紧箍咒，目标 aiMonsters、以 aiPath 上最前妖怪为爆心。
+  private doAiJingu(dmgScale: number = 1): void {
+    if (this.aiMonsters.length === 0) return;
+    let front = this.aiMonsters[0]!;
+    for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+    const center = posAlong(this.aiPath, front.dist);
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * TUNING.jingguDmgMul * dmgScale;
+    for (const m of this.aiMonsters) {
+      const p = posAlong(this.aiPath, m.dist);
+      if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.aiClearRadius) {
+        m.hp -= dmg;
+        m.hitFlash = 0.15;
+      }
+    }
+    this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
+  }
+
+  // AI 主动技能：每帧推进各槽冷却与临时增益计时，就绪即自动释放（AI 无手动操作，就绪就是决策）。
+  private updateAiActives(dt: number): void {
+    for (const slot of this.aiActiveSlots) {
+      if (slot.cd > 0) {
+        slot.cd = Math.max(0, slot.cd - dt);
+        if (slot.cd === 0) slot.ready = true;
+      } else {
+        slot.ready = true;
+      }
+      if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt);
+    }
+    if (this.aiAtkBuffT > 0) this.aiAtkBuffT = Math.max(0, this.aiAtkBuffT - dt);
+    if (this.aiFrqBuffT > 0) this.aiFrqBuffT = Math.max(0, this.aiFrqBuffT - dt);
+    for (let i = 0; i < this.aiActiveSlots.length; i++) {
+      if (this.aiActiveSlots[i]!.ready) this.aiTriggerActive(i);
+    }
+  }
+
+  // 触发 AI 第 i 个主动技能（镜像 triggerActive，不改动共享 this.message/sfx，避免抢玩家侧提示）。
+  private aiTriggerActive(i: number): boolean {
+    if (this.status !== 'playing') return false;
+    const slot = this.aiActiveSlots[i];
+    if (!slot || !slot.ready) return false;
+    const def = activeById(slot.id);
+    if (!def) return false;
+    const needsMonsters: ActiveEffect[] = ['palm', 'meteor', 'freeze', 'jinggu'];
+    if (needsMonsters.includes(def.effect) && this.aiMonsters.length === 0) return false;
+    // 增益类技能：AI 场上无兵无将时先待命，避免空放浪费一次冷却
+    const needsBoard: ActiveEffect[] = ['atkBuff', 'frqBuff'];
+    if (needsBoard.includes(def.effect) && this.aiUnits.length === 0 && this.aiActiveGenerals().length === 0) return false;
+    const k = Battle.AI_EFFECT_SCALE; // AI 主动技能强度同样打折，避免自动释放的爆发清场过强
+    switch (def.effect) {
+      case 'palm':
+        for (const m of this.aiMonsters) { const p = posAlong(this.aiPath, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' }); }
+        this.aiPushMonstersBack(Math.max(1, Math.round(TUNING.palmPushCells * k)));
+        break;
+      case 'meteor':
+        this.doAiMeteor(TUNING.meteorDmgMul * k);
+        break;
+      case 'atkBuff':
+        this.aiAtkBuffT = 5; this.aiAtkBuffMul = 1 + (TUNING.atkBuffMul - 1) * k;
+        for (const u of this.aiUnits) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ff7a3c' });
+        break;
+      case 'frqBuff':
+        this.aiFrqBuffT = 5; this.aiFrqBuffMul = 1 + (TUNING.frqBuffMul - 1) * k;
+        for (const u of this.aiUnits) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ffd76a' });
+        break;
+      case 'freeze':
+        for (const m of this.aiMonsters) { m.stunT = Math.max(m.stunT, TUNING.freezeStunDur * k); const p = posAlong(this.aiPath, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' }); }
+        break;
+      case 'jinggu':
+        this.doAiJingu(k);
+        break;
+    }
+    slot.cd = slot.cdMax;
+    slot.ready = false;
+    slot.flash = 0.6;
+    return true;
+  }
+
   private updateMonsters(dt: number): void {
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
@@ -3078,6 +3347,7 @@ export class Battle {
     }
     this.updateUnits(dt);
     if (this.meteorPending && this.monsters.length >= 3) { this.meteorPending = false; this.castMeteor(); }
+    if (this.aiMeteorPending && this.aiMonsters.length >= 3) { this.aiMeteorPending = false; this.castAiMeteor(); }
     this.updateMonsterSkills(dt);
     this.updateGenerals(dt);
     this.updateActives(dt);
@@ -3286,6 +3556,10 @@ export class Battle {
       waveCount: this.waveMonsterCount,
       bossHpPlan: this.wavePressure?.bossHp != null ? Math.round(this.wavePressure.bossHp) : null,
       spawnInterval: this.wavePressure != null ? Math.round(this.wavePressure.spawnInterval * 100) / 100 : null,
+      aiOptimalDps: Math.round(this.estimateAiOptimalPower().optimalDps),
+      aiBossHpPlan: this.aiWavePressure?.bossHp != null ? Math.round(this.aiWavePressure.bossHp) : null,
+      aiActives: this.aiActivesEquipped,
+      aiPassives: this.aiPassivesEquipped,
       generals: this.activeGenerals().length,
       words: this.words.size,
       drops: this.droppedWeapons.length,

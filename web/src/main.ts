@@ -13,6 +13,7 @@ import {
   hitMonsterAt,
   isPlayerTangsengCell,
   isAiTangsengCell,
+  aiSkillIconAt,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -135,7 +136,7 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, aiSkillPopup: null, paused: false };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
@@ -407,6 +408,11 @@ function onPointerDown(e: PointerEvent) {
   }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
+  // 对手技能详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
+  if (ui.aiSkillPopup !== null) { ui.aiSkillPopup = null; return; }
+  // 地图右上角对手技能图标：点击查看详情
+  const aiSkillHit = aiSkillIconAt(battle, x, y);
+  if (aiSkillHit) { ui.aiSkillPopup = aiSkillHit; return; }
   if (handleButton(x, y)) { clearBoardSelect(); return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
