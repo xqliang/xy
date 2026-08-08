@@ -40,7 +40,7 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'huntianling', name: '混天绫', general: 'honghaier', stat: 'frq' },
   { id: 'chiyanpao', name: '赤焰袍', general: 'hongpao', stat: 'frq' },
   { id: 'jiuchidingba', name: '九齿钉耙', general: 'bajie', stat: 'atk' },
-  { id: 'duandingpa', name: '短钉耙', general: 'xiaojie', stat: 'atk' },
+  { id: 'duandingpa', name: '仙葫芦', general: 'baxian', stat: 'atk' },
   { id: 'niujiao', name: '混铁棍', general: 'niumowang', stat: 'atk' },
   { id: 'qingniujiao', name: '青牛角', general: 'qingniu', stat: 'atk' },
   { id: 'bajiaoshan', name: '芭蕉扇', general: 'tieshan', stat: 'rge' },

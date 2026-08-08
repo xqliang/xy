@@ -74,13 +74,13 @@ export const GENERALS: GeneralDef[] = [
     skillName: '赤焰', skillDesc: '小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
     maxTier: 3, atkStyle: '范围灼烧', family: '红' },
 
-  // ——— 戒：定身控制 ———
+  // ——— 八：定身控制 ———
   { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
     skillName: '钉耙震地', skillDesc: '大范围长时间定身', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
-    maxTier: 5, atkStyle: '定身控制', family: '戒' },
-  { id: 'xiaojie', name: '小戒', chars: ['小', '戒'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '短耙震地', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
-    maxTier: 3, atkStyle: '定身控制', family: '戒' },
+    maxTier: 5, atkStyle: '定身控制', family: '八' },
+  { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
+    skillName: '仙缘定身', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
+    maxTier: 3, atkStyle: '定身控制', family: '八' },
 
   // ——— 牛：冲撞击晕 ———
   { id: 'niumowang', name: '牛魔', chars: ['牛', '魔'], role: '控制', rank: 'T1', skill: 'stun',

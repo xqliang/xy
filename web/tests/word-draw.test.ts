@@ -63,14 +63,14 @@ describe('征兵阶段权重', () => {
   });
 
   it('出现次数越多，后续抽到同字的概率越低', () => {
-    const counts = new Map<string, number>([['小', 4]]);
-    let xiao = 0;
+    const counts = new Map<string, number>([['仙', 4]]);
+    let xian = 0;
     for (let i = 0; i < 300; i++) {
       const rng = new FakeRng([i / 300, 0.2]);
       const pick = pickWordChar(rng, 5, [], [], false, [], counts);
-      if (pick.char === '小') xiao++;
+      if (pick.char === '仙') xian++;
     }
-    expect(xiao).toBeLessThan(20);
+    expect(xian).toBeLessThan(20);
   });
 });
 

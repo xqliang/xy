@@ -2232,7 +2232,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     switch (f.heroId) {
       // —— 暴击（哪吒/二郎）——
       case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
-      case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier); break;
+      case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
       // —— 群攻 ——
       case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R, f.fromC, f.fromR); break;
       case 'honghaier': drawUltHonghaier(ctx, x, y, prog, fade, f.tier, R); break;
@@ -2293,23 +2293,84 @@ function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
   }
 }
 
-// 二郎 天眼诛邪：竖向贯穿光束 + 睁开的天眼
-function drawUltErlang(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number) {
-  const beamW = (6 + tier * 2) * (0.4 + easeOut(Math.min(1, p / 0.5)) * 0.6);
-  const h = CELL * 2.6;
+// 二郎 天眼诛邪：天眼睁开 → 自眼眶横向射出贯穿光束打向目标
+function drawUltErlang(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  p: number, fade: number, tier: number,
+  fromC?: number, fromR?: number,
+) {
+  const hasOrigin = fromC != null && fromR != null;
+  const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : { x: x - CELL * 2.4, y };
+  // 天眼略高于武将中心（额中）
+  const eyeX = fromPx.x;
+  const eyeY = fromPx.y - CELL * 0.18;
+  const dx = x - eyeX;
+  const dy = y - eyeY;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ang = Math.atan2(dy, dx);
+
+  const open = easeOut(Math.min(1, p / 0.35));
+  const beamReach = easeOut(Math.max(0, Math.min(1, (p - 0.12) / 0.55)));
+  const reach = dist * beamReach;
+
+  // 天眼（在二郎身上）
   ctx.globalAlpha = fade;
-  const grad = ctx.createLinearGradient(x, y - h, x, y + CELL * 0.6);
-  grad.addColorStop(0, 'rgba(180,235,255,0)');
-  grad.addColorStop(0.7, 'rgba(150,216,255,0.7)');
-  grad.addColorStop(1, 'rgba(255,255,255,0.95)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(x - beamW / 2, y - h, beamW, h + CELL * 0.6);
-  const open = easeOut(Math.min(1, p / 0.4));
   ctx.strokeStyle = '#bfe9ff';
   ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.ellipse(x, y - CELL * 1.4, CELL * 0.32, CELL * 0.5 * open, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(eyeX, eyeY, CELL * 0.3, CELL * 0.18 * Math.max(0.08, open), 0, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.fillStyle = '#3a6ea5';
-  ctx.beginPath(); ctx.arc(x, y - CELL * 1.4, CELL * 0.12 * open, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(eyeX, eyeY, CELL * 0.1 * open, 0, Math.PI * 2);
+  ctx.fill();
+  if (open > 0.45) {
+    ctx.fillStyle = 'rgba(220,245,255,0.95)';
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, CELL * 0.045 * open, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (beamReach <= 0.01) return;
+
+  const beamW = (5 + tier * 1.8) * (0.45 + open * 0.55);
+  const tipX = eyeX + Math.cos(ang) * reach;
+  const tipY = eyeY + Math.sin(ang) * reach;
+
+  // 沿眼→目标方向的横向光束（本地 +x）
+  ctx.save();
+  ctx.translate(eyeX, eyeY);
+  ctx.rotate(ang);
+  ctx.globalAlpha = fade;
+  const grad = ctx.createLinearGradient(0, 0, reach, 0);
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+  grad.addColorStop(0.2, 'rgba(150,216,255,0.85)');
+  grad.addColorStop(1, 'rgba(180,235,255,0.12)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, -beamW * 0.32);
+  ctx.lineTo(reach, -beamW * 0.55);
+  ctx.lineTo(reach, beamW * 0.55);
+  ctx.lineTo(0, beamW * 0.32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = `rgba(255,255,255,${0.65 * fade})`;
+  ctx.fillRect(0, -beamW * 0.12, reach, beamW * 0.24);
+  ctx.restore();
+
+  // 命中爆点
+  if (beamReach > 0.65) {
+    const bp = (beamReach - 0.65) / 0.35;
+    const rad = CELL * (0.28 + tier * 0.08) * (0.55 + bp);
+    ctx.globalAlpha = (1 - bp * 0.45) * fade;
+    const g2 = ctx.createRadialGradient(tipX, tipY, 1, tipX, tipY, rad);
+    g2.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g2.addColorStop(0.45, 'rgba(150,216,255,0.5)');
+    g2.addColorStop(1, 'rgba(180,235,255,0)');
+    ctx.fillStyle = g2;
+    ctx.beginPath(); ctx.arc(tipX, tipY, rad, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 // —— 输出群攻 ——
@@ -2436,25 +2497,139 @@ function drawUltTieshan(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
 }
 
 // —— 击退群攻 ——
-// 沙僧 宝杖横扫 + 击退拖影
-function drawUltShaseng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+// 沙僧大佛珠单颗：骨色珠 + 骷髅面
+function drawShasengBead(ctx: CanvasRenderingContext2D, bx: number, by: number, r: number, fade: number) {
+  ctx.save();
+  ctx.translate(bx, by);
   ctx.globalAlpha = fade;
-  const rad = R * 0.9;
-  const sweepA = -Math.PI * 0.5 + easeOut(p) * Math.PI;
-  ctx.strokeStyle = 'rgba(154,208,255,0.5)'; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.arc(x, y, rad, -Math.PI * 0.5, sweepA); ctx.stroke();
-  ctx.strokeStyle = '#cfe6ff'; ctx.lineWidth = 4 + tier * 0.6;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(sweepA) * rad, y + Math.sin(sweepA) * rad); ctx.stroke();
-  for (let i = 0; i < 4 + tier; i++) {
-    const a = -Math.PI * 0.5 + (i / (4 + tier)) * Math.PI;
-    if (a > sweepA) continue;
-    ctx.strokeStyle = 'rgba(200,230,255,0.4)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * rad * 0.7, y + Math.sin(a) * rad * 0.7);
-    ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); ctx.stroke();
-  }
+  ctx.fillStyle = '#e8dcc8';
+  ctx.strokeStyle = '#6a5038';
+  ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 眼窝
+  ctx.fillStyle = '#2e261c';
+  ctx.beginPath(); ctx.ellipse(-r * 0.3, -r * 0.12, r * 0.2, r * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r * 0.3, -r * 0.12, r * 0.2, r * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+  // 鼻孔三角
+  ctx.beginPath();
+  ctx.moveTo(0, r * 0.02);
+  ctx.lineTo(-r * 0.12, r * 0.32);
+  ctx.lineTo(r * 0.12, r * 0.32);
+  ctx.closePath();
+  ctx.fill();
+  // 齿缝
+  ctx.strokeStyle = 'rgba(60,45,30,0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-r * 0.28, r * 0.42); ctx.lineTo(r * 0.28, r * 0.42); ctx.stroke();
+  ctx.restore();
 }
 
-// 牛魔 蛮牛冲撞·直线尘土拖尾
+// 沙僧 大佛珠甩击：念珠环旋扩 + 珠粒外甩击退拖影
+function drawUltShaseng(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const expand = easeOut(p);
+  const rad = R * (0.18 + expand * 0.72);
+  const n = 9; // 九颗骷髅佛珠
+  const spin = p * Math.PI * 2.4;
+  const beadR = CELL * (0.12 + tier * 0.018);
+
+  // 串绳环
+  ctx.globalAlpha = fade * 0.65;
+  ctx.strokeStyle = 'rgba(90,70,48,0.7)';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+
+  // 内层淡金扫痕（旋甩感）
+  ctx.globalAlpha = fade * 0.35;
+  ctx.strokeStyle = 'rgba(220,190,130,0.55)';
+  ctx.lineWidth = 5 + tier;
+  ctx.beginPath();
+  ctx.arc(x, y, rad * 0.92, spin, spin + Math.PI * 1.1);
+  ctx.stroke();
+
+  for (let i = 0; i < n; i++) {
+    const a = spin + (i / n) * Math.PI * 2;
+    const bx = x + Math.cos(a) * rad;
+    const by = y + Math.sin(a) * rad;
+    // 外甩拖影（击退方向）
+    const trail = CELL * (0.2 + expand * 0.35);
+    ctx.globalAlpha = fade * 0.4;
+    ctx.strokeStyle = 'rgba(230,210,175,0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bx - Math.cos(a) * trail, by - Math.sin(a) * trail);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    drawShasengBead(ctx, bx, by, beadR * (i % 3 === 0 ? 1.15 : 1), fade);
+  }
+
+  // 中心绳结
+  ctx.globalAlpha = fade;
+  ctx.fillStyle = '#5a4030';
+  ctx.beginPath(); ctx.arc(x, y, 3 + tier * 0.4, 0, Math.PI * 2); ctx.fill();
+}
+
+// 牛魔冲撞前端：朝冲撞方向的牛头剪影（角 + 脸 + 鼻吻）
+function drawBullHeadGlyph(ctx: CanvasRenderingContext2D, hx: number, hy: number, size: number, fade: number) {
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.globalAlpha = fade;
+  const s = size;
+
+  // 双角（外撇上弯）
+  const drawHorn = (side: 1 | -1) => {
+    ctx.beginPath();
+    ctx.moveTo(side * s * 0.28, -s * 0.18);
+    ctx.quadraticCurveTo(side * s * 0.95, -s * 0.55, side * s * 0.72, -s * 1.05);
+    ctx.quadraticCurveTo(side * s * 0.42, -s * 0.55, side * s * 0.12, -s * 0.12);
+    ctx.closePath();
+    ctx.fillStyle = '#f0e6d0';
+    ctx.strokeStyle = '#6a5030';
+    ctx.lineWidth = 1.4;
+    ctx.fill();
+    ctx.stroke();
+  };
+  drawHorn(-1);
+  drawHorn(1);
+
+  // 头颅
+  ctx.fillStyle = '#8a6a3a';
+  ctx.strokeStyle = '#5a4020';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s * 0.52, s * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // 耳
+  for (const side of [-1, 1] as const) {
+    ctx.fillStyle = '#7a5a32';
+    ctx.beginPath();
+    ctx.ellipse(side * s * 0.48, s * 0.02, s * 0.14, s * 0.1, side * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 鼻吻
+  ctx.fillStyle = '#6a5030';
+  ctx.beginPath();
+  ctx.ellipse(0, s * 0.3, s * 0.34, s * 0.24, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#3a2810';
+  ctx.beginPath(); ctx.ellipse(-s * 0.1, s * 0.32, s * 0.07, s * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(s * 0.1, s * 0.32, s * 0.07, s * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+
+  // 眼（怒黄）
+  ctx.fillStyle = '#ffcc44';
+  ctx.beginPath(); ctx.arc(-s * 0.2, -s * 0.06, s * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.2, -s * 0.06, s * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a1810';
+  ctx.beginPath(); ctx.arc(-s * 0.2, -s * 0.06, s * 0.04, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.2, -s * 0.06, s * 0.04, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+}
+
+// 牛魔 蛮牛冲撞·直线尘土拖尾 + 牛头冲击
 function drawUltNiumowang(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
   ctx.globalAlpha = fade;
   const len = R * 1.1;
@@ -2463,15 +2638,19 @@ function drawUltNiumowang(ctx: CanvasRenderingContext2D, x: number, y: number, p
   const hx = x + dirX * headD, hy = y + dirY * headD;
   ctx.strokeStyle = 'rgba(201,162,106,0.8)'; ctx.lineWidth = 8 + tier;
   ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(hx, hy); ctx.stroke();
-  for (let i = 0; i < 8 + tier; i++) {
-    const t = i / (8 + tier);
-    const px = x + dirX * headD * t + (Math.random() - 0.5) * 6;
-    const py = y + dirY * headD * t + (Math.random() - 0.5) * 6;
+  const n = 8 + tier;
+  for (let i = 0; i < n; i++) {
+    const t = i / n;
+    // 确定性偏移，避免每帧 random 闪烁
+    const jigX = Math.sin(i * 2.7 + p * 3) * 5;
+    const jigY = Math.cos(i * 1.9 + p * 2.4) * 4;
+    const px = x + dirX * headD * t + jigX;
+    const py = y + dirY * headD * t + jigY;
     ctx.fillStyle = `rgba(180,150,110,${0.5 * (1 - t)})`;
     ctx.beginPath(); ctx.arc(px, py, 4 + tier * 0.5, 0, Math.PI * 2); ctx.fill();
   }
-  ctx.fillStyle = '#8a6a3a';
-  ctx.beginPath(); ctx.arc(hx, hy, 5 + tier, 0, Math.PI * 2); ctx.fill();
+  const headSize = CELL * (0.22 + tier * 0.035);
+  drawBullHeadGlyph(ctx, hx, hy, headSize, fade);
 }
 
 // —— 辅助/过渡 ——
@@ -3506,7 +3685,7 @@ function drawHeroAttackFx(
       }
       break;
     }
-    case 'xiaojie': {
+    case 'baxian': {
       const ring = easeOut(Math.min(1, prog / 0.55));
       const rad = CELL * (0.15 + ring * (0.35 + sc * 0.25));
       ctx.translate(tx, ty);

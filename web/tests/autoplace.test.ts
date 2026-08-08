@@ -767,8 +767,8 @@ it('已激活高阶同字时，只回收未激活的低阶重复', () => {
   expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
 });
 
-it('满槽时 tray「郎」可换下邻格孤儿「小」原地激活二郎', () => {
-  // 截图2：金吒已激活；二|小 相邻；无空位；tray 有郎 → 郎换小，组成二郎
+it('满槽时 tray「郎」可换下邻格孤儿「仙」原地激活二郎', () => {
+  // 截图2：金吒已激活；二|仙 相邻；无空位；tray 有郎 → 郎换仙，组成二郎
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 },
     { c: 0, r: 1 }, { c: 1, r: 1 },
@@ -787,7 +787,7 @@ it('满槽时 tray「郎」可换下邻格孤儿「小」原地激活二郎', ()
   v.wordChars = (g: string) => {
     if (g === 'jinzha') return ['金', '吒'] as const;
     if (g === 'erlang') return ['二', '郎'] as const;
-    if (g === 'xiaojie') return ['小', '戒'] as const;
+    if (g === 'baxian') return ['八', '仙'] as const;
     if (g === 'bajie') return ['八', '戒'] as const;
     return undefined;
   };
@@ -796,7 +796,7 @@ it('满槽时 tray「郎」可换下邻格孤儿「小」原地激活二郎', ()
   v.wordsMap.set('0,1', { char: '金', general: 'jinzha', cell: { c: 0, r: 1 }, tier: 2 });
   v.wordsMap.set('1,1', { char: '吒', general: 'jinzha', cell: { c: 1, r: 1 }, tier: 2 });
   v.wordsMap.set('0,2', { char: '二', general: 'erlang', cell: { c: 0, r: 2 }, tier: 1 });
-  v.wordsMap.set('1,2', { char: '小', general: 'xiaojie', cell: { c: 1, r: 2 }, tier: 1 });
+  v.wordsMap.set('1,2', { char: '仙', general: 'baxian', cell: { c: 1, r: 2 }, tier: 1 });
   expect(v.freeCells()).toHaveLength(0);
   planAutoPlace(v, { rng });
   const er = v.placedWords().find((w) => w.char === '二');
@@ -805,10 +805,10 @@ it('满槽时 tray「郎」可换下邻格孤儿「小」原地激活二郎', ()
   expect(lang).toBeDefined();
   expect(lang!.cell).toEqual({ c: er!.cell.c + 1, r: er!.cell.r });
   expect(v.isActiveHeroCell(er!.cell)).toBe(true);
-  // 「小」被换下：在候选区，或随后与 tray「戒」再组小戒
-  const xiaoOnBoard = v.placedWords().find((w) => w.char === '小');
-  const xiaoInTray = v.tray().some((t) => t.kind === 'word' && t.char === '小');
-  expect(xiaoOnBoard || xiaoInTray).toBeTruthy();
+  // 「仙」被换下：在候选区，或随后与 tray「八」再组八仙
+  const xianOnBoard = v.placedWords().find((w) => w.char === '仙');
+  const xianInTray = v.tray().some((t) => t.kind === 'word' && t.char === '仙');
+  expect(xianOnBoard || xianInTray).toBeTruthy();
 });
 
 it('「骨」贴已激活英雄时，tray「白」可与邻格兵交换激活白骨', () => {
