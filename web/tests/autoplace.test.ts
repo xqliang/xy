@@ -29,6 +29,7 @@ import {
 import { getUnitStat } from '@core';
 import { posAlong } from '../src/board';
 import { inAttackRange } from '../src/battle';
+import { matchGeneral } from '../src/generals';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
 // 唐僧在 (7,5)：单字偏好高 r（远路）且靠近 (7,5)
@@ -89,7 +90,7 @@ class FakeView implements AutoPlaceView {
       if (!this.unlocked.has(k) || this.wordsMap.has(k)) return false;
       this.unitsMap.set(k, { type: t.type, tier: t.tier, cell: to }); this.trayArr.splice(index, 1); return true;
     }
-    // word：同字同阶不可合并；同字异阶或异字 → 交换
+    // word：同字同阶不可合并；同字异阶或异字 → 交换；有兵 → 与兵交换（对齐 battle.placeFromTray）
     const ex = this.wordsMap.get(k);
     if (ex) {
       if (ex.char === t.char && ex.tier === t.tier) return false;
@@ -97,7 +98,14 @@ class FakeView implements AutoPlaceView {
       this.trayArr[index] = { kind: 'word', char: ex.char, general: ex.general, tier: ex.tier };
       return true;
     }
-    if (!this.unlocked.has(k) || this.unitsMap.has(k)) return false;
+    const uex = this.unitsMap.get(k);
+    if (uex) {
+      this.unitsMap.delete(k);
+      this.wordsMap.set(k, { char: t.char, general: t.general, cell: to, tier: t.tier });
+      this.trayArr[index] = { kind: 'unit', type: uex.type, tier: uex.tier };
+      return true;
+    }
+    if (!this.unlocked.has(k)) return false;
     this.wordsMap.set(k, { char: t.char, general: t.general, cell: to, tier: t.tier }); this.trayArr.splice(index, 1); return true;
   }
   moveUnit(from: Cell, to: Cell): boolean {
@@ -115,6 +123,20 @@ class FakeView implements AutoPlaceView {
     this.unitsMap.set(kb, ua); this.unitsMap.set(ka, ub);
     return true;
   }
+  swapUnitWord(unitCell: Cell, wordCell: Cell): boolean {
+    const uk = this.key(unitCell.c, unitCell.r);
+    const wk = this.key(wordCell.c, wordCell.r);
+    const u = this.unitsMap.get(uk);
+    const w = this.wordsMap.get(wk);
+    if (!u || !w || this.isActiveHeroCell(wordCell)) return false;
+    this.unitsMap.delete(uk);
+    this.wordsMap.delete(wk);
+    u.cell = { ...wordCell };
+    w.cell = { ...unitCell };
+    this.unitsMap.set(wk, u);
+    this.wordsMap.set(uk, w);
+    return true;
+  }
   moveWord(from: Cell, to: Cell): boolean {
     const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
     const w = this.wordsMap.get(kf); if (!w) return false;
@@ -122,18 +144,18 @@ class FakeView implements AutoPlaceView {
     this.wordsMap.delete(kf); w.cell = to; this.wordsMap.set(kt, w); return true;
   }
   isActiveHeroCell(cell: Cell): boolean {
+    // 与 battle.activeGenerals 一致：按左右连读匹配，不要求 general 字段相同
+    const paired = (leftChar: string, rightChar: string, hintGeneral: string) => {
+      if (matchGeneral(leftChar, rightChar)) return true;
+      const chars = this.wordChars(hintGeneral);
+      return !!(chars && chars[0] === leftChar && chars[1] === rightChar);
+    };
     const w = this.wordsMap.get(this.key(cell.c, cell.r));
     if (!w) return false;
-    const chars = this.wordChars(w.general);
-    if (!chars) return false;
-    if (w.char === chars[0]) {
-      const r = this.wordsMap.get(this.key(cell.c + 1, cell.r));
-      return !!(r && r.char === chars[1] && r.general === w.general);
-    }
-    if (w.char === chars[1]) {
-      const l = this.wordsMap.get(this.key(cell.c - 1, cell.r));
-      return !!(l && l.char === chars[0] && l.general === w.general);
-    }
+    const right = this.wordsMap.get(this.key(cell.c + 1, cell.r));
+    if (right && paired(w.char, right.char, w.general)) return true;
+    const left = this.wordsMap.get(this.key(cell.c - 1, cell.r));
+    if (left && paired(left.char, w.char, w.general)) return true;
     return false;
   }
   dangerNearFlag = false;
@@ -153,6 +175,26 @@ class FakeView implements AutoPlaceView {
     if (!a || !b || a.type !== b.type || a.tier !== b.tier) return false;
     b.tier += 1;
     this.unitsMap.delete(kf);
+    return true;
+  }
+  trayCap = 5;
+  displaceToTray(cell: Cell): boolean {
+    if (this.isActiveHeroCell(cell)) return false;
+    const k = this.key(cell.c, cell.r);
+    const w = this.wordsMap.get(k);
+    if (w) {
+      if (this.trayArr.length >= this.trayCap) return false;
+      this.wordsMap.delete(k);
+      this.trayArr.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      return true;
+    }
+    const u = this.unitsMap.get(k);
+    if (u) {
+      if (this.trayArr.length >= this.trayCap) return false;
+      this.unitsMap.delete(k);
+      this.trayArr.push({ kind: 'unit', type: u.type, tier: u.tier });
+      return true;
+    }
     return true;
   }
 }
@@ -338,8 +380,7 @@ it('激活武将：宁可覆盖高的中段，不追贴出口列', () => {
 });
 
 it('激活武将：邻格被武器占时可挪开再落字', () => {
-  // 「大」在 (1,0)；最优对为 (0,0)-(1,0)。可把「大」迁到 (0,0)，「圣」落 (1,0)；
-  // 若落在 (1,0)-(2,0) 则需挪开 (2,0) 的 dao。
+  // 「大」在 (1,0)；可迁到 (0,0)-(1,0)，或原地以 (1,0)-(2,0) 挪开 dao 后落「圣」
   const v = new FakeView(
     [{ kind: 'word', char: '圣', general: 'g', tier: 1 }],
     [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }],
@@ -348,8 +389,11 @@ it('激活武将：邻格被武器占时可挪开再落字', () => {
   v.unitsMap.set('2,0', { type: 'dao', tier: 1, cell: { c: 2, r: 0 } });
   planAutoPlace(v, { rng });
   const byChar = new Map(v.placedWords().map((w) => [w.char, w.cell]));
-  expect(byChar.get('大')).toEqual({ c: 0, r: 0 });
-  expect(byChar.get('圣')).toEqual({ c: 1, r: 0 });
+  const da = byChar.get('大');
+  const sheng = byChar.get('圣');
+  expect(da).toBeDefined();
+  expect(sheng).toBeDefined();
+  expect(sheng).toEqual({ c: da!.c + 1, r: da!.r });
   expect(v.placedUnits().length).toBe(1); // 武器保留
 });
 
@@ -679,8 +723,95 @@ it('已激活高阶同字时，只回收未激活的低阶重复', () => {
   expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
 });
 
+it('满槽时 tray「郎」可换下邻格孤儿「小」原地激活二郎', () => {
+  // 截图2：金吒已激活；二|小 相邻；无空位；tray 有郎 → 郎换小，组成二郎
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 },
+    { c: 0, r: 1 }, { c: 1, r: 1 },
+    { c: 0, r: 2 }, { c: 1, r: 2 },
+  ];
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '戒', general: 'bajie', tier: 1 },
+      { kind: 'unit', type: 'cavalry', tier: 1 },
+      { kind: 'word', char: '铁', general: 'tieshan', tier: 1 },
+      { kind: 'unit', type: 'cavalry', tier: 1 },
+      { kind: 'word', char: '郎', general: 'erlang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    if (g === 'erlang') return ['二', '郎'] as const;
+    if (g === 'xiaojie') return ['小', '戒'] as const;
+    if (g === 'bajie') return ['八', '戒'] as const;
+    return undefined;
+  };
+  v.unitsMap.set('0,0', { type: 'archer', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,0', { type: 'spear', tier: 2, cell: { c: 1, r: 0 } });
+  v.wordsMap.set('0,1', { char: '金', general: 'jinzha', cell: { c: 0, r: 1 }, tier: 2 });
+  v.wordsMap.set('1,1', { char: '吒', general: 'jinzha', cell: { c: 1, r: 1 }, tier: 2 });
+  v.wordsMap.set('0,2', { char: '二', general: 'erlang', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('1,2', { char: '小', general: 'xiaojie', cell: { c: 1, r: 2 }, tier: 1 });
+  expect(v.freeCells()).toHaveLength(0);
+  planAutoPlace(v, { rng });
+  const er = v.placedWords().find((w) => w.char === '二');
+  const lang = v.placedWords().find((w) => w.char === '郎');
+  expect(er).toBeDefined();
+  expect(lang).toBeDefined();
+  expect(lang!.cell).toEqual({ c: er!.cell.c + 1, r: er!.cell.r });
+  expect(v.isActiveHeroCell(er!.cell)).toBe(true);
+  // 「小」被换下：在候选区，或随后与 tray「戒」再组小戒
+  const xiaoOnBoard = v.placedWords().find((w) => w.char === '小');
+  const xiaoInTray = v.tray().some((t) => t.kind === 'word' && t.char === '小');
+  expect(xiaoOnBoard || xiaoInTray).toBeTruthy();
+});
+
+it('「骨」贴已激活英雄时，tray「白」可与邻格兵交换激活白骨', () => {
+  // 截图1：大蟒已激活，骨在其右（左邻不可用）；无空位且无同阶可合兵 → 白与邻格兵交换后组成白骨
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+    { c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 },
+  ];
+  const v = new FakeView(
+    [{ kind: 'word', char: '白', general: 'bailong', tier: 1 }],
+    cells,
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'damang') return ['大', '蟒'] as const;
+    if (g === 'baigujing') return ['白', '骨'] as const;
+    if (g === 'bailong') return ['白', '龙'] as const;
+    return undefined;
+  };
+  // 异型/异阶填满，避免「棋盘同阶合」腾位掩盖 bug
+  const fillers: { type: 'dao' | 'spear' | 'archer' | 'cavalry'; tier: number }[] = [
+    { type: 'dao', tier: 1 }, { type: 'dao', tier: 2 }, { type: 'spear', tier: 1 }, { type: 'spear', tier: 2 },
+    { type: 'archer', tier: 1 }, { type: 'archer', tier: 2 }, { type: 'cavalry', tier: 1 }, { type: 'cavalry', tier: 2 },
+  ];
+  cells.forEach((cell, i) => {
+    const f = fillers[i]!;
+    v.unitsMap.set(`${cell.c},${cell.r}`, { type: f.type, tier: f.tier, cell: { ...cell } });
+  });
+  v.unitsMap.delete('0,0');
+  v.unitsMap.delete('1,0');
+  v.unitsMap.delete('2,0');
+  v.wordsMap.set('0,0', { char: '大', general: 'damang', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '蟒', general: 'damang', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,0', { char: '骨', general: 'baigujing', cell: { c: 2, r: 0 }, tier: 1 });
+  expect(v.freeCells()).toHaveLength(0);
+  planAutoPlace(v, { rng });
+  const gu = v.placedWords().find((w) => w.char === '骨');
+  const bai = v.placedWords().find((w) => w.char === '白');
+  expect(gu).toBeDefined();
+  expect(bai).toBeDefined();
+  expect(bai!.cell.c + 1).toBe(gu!.cell.c);
+  expect(bai!.cell.r).toBe(gu!.cell.r);
+  expect(v.isActiveHeroCell(bai!.cell)).toBe(true);
+});
+
 class FakeRepositionView implements BattleRepositionView {
   unitsMap = new Map<string, { type: 'dao' | 'spear' | 'archer' | 'cavalry'; tier: number; cell: Cell }>();
+  wordsMap = new Map<string, { char: string; general: string; cell: Cell; tier: number }>();
   free: Cell[] = [];
   heroCells = new Set<string>();
   monsterCells: Cell[] = [];
@@ -693,6 +824,9 @@ class FakeRepositionView implements BattleRepositionView {
   placedUnits() {
     return [...this.unitsMap.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell }));
   }
+  orphanWords() {
+    return [...this.wordsMap.values()].filter((w) => !this.isActiveHeroCell(w.cell));
+  }
   freeCells() { return this.free.slice(); }
   isActiveHeroCell(cell: Cell) { return this.heroCells.has(`${cell.c},${cell.r}`); }
   dangerNear() { return this.dangerNearFlag; }
@@ -700,6 +834,12 @@ class FakeRepositionView implements BattleRepositionView {
   tangsengDist(cell: Cell) { return Math.hypot(cell.c - 7, cell.r - 5); }
   imminentPathScore(cell: Cell) {
     return imminentPathScore(this.fakePath, this.pathLen, this.entranceDist, this.monsterDists, cell);
+  }
+  seatScore(cell: Cell, type: 'dao' | 'spear' | 'archer' | 'cavalry', tier: number) {
+    // 假座位：越靠近假路径(r=0)且越靠出口列(c 小)越好；远程略放大覆盖
+    const rge = getUnitStat(type, tier).rge;
+    const cover = Math.max(0, rge - cell.r + 1);
+    return placeCellScore(cover, cell.c, rge, cell.r);
   }
   canEngage(cell: Cell, type: 'dao' | 'spear' | 'archer' | 'cavalry', tier: number) {
     return this.engageScore(cell, type, tier) > 0;
@@ -737,7 +877,57 @@ class FakeRepositionView implements BattleRepositionView {
     this.unitsMap.set(`${a.c},${a.r}`, ub);
     return true;
   }
+  swapUnitWord(unitCell: Cell, wordCell: Cell) {
+    const uk = `${unitCell.c},${unitCell.r}`;
+    const wk = `${wordCell.c},${wordCell.r}`;
+    const u = this.unitsMap.get(uk);
+    const w = this.wordsMap.get(wk);
+    if (!u || !w || this.isActiveHeroCell(wordCell)) return false;
+    this.unitsMap.delete(uk);
+    this.wordsMap.delete(wk);
+    u.cell = { ...wordCell };
+    w.cell = { ...unitCell };
+    this.unitsMap.set(wk, u);
+    this.wordsMap.set(uk, w);
+    return true;
+  }
 }
+
+it('未激活孤儿字让出高覆盖攻位给兵器', () => {
+  // 「骨」占贴路高分格 (0,0)；射手在远位 (0,3) → 布阵后射手占前排，骨让到后排
+  const v = new FakeView([], [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 3 }, { c: 1, r: 3 },
+  ]);
+  v.wordsMap.set('0,0', { char: '骨', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
+  v.unitsMap.set('0,3', { type: 'archer', tier: 1, cell: { c: 0, r: 3 } });
+  planAutoPlace(v, { rng });
+  expect(v.unitsMap.get('0,0')?.type).toBe('archer');
+  const gu = v.placedWords().find((w) => w.char === '骨');
+  expect(gu).toBeDefined();
+  expect(gu!.cell.r).toBeGreaterThan(0); // 不再贴路
+  expect(v.wordsMap.has('0,0')).toBe(false);
+});
+
+it('孤儿字迁到更远离路径的空位', () => {
+  const v = new FakeView([], [
+    { c: 0, r: 0 }, { c: 7, r: 4 },
+  ]);
+  v.wordsMap.set('0,0', { char: '红', general: 'honghaier', cell: { c: 0, r: 0 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  expect(v.wordsMap.get('7,4')?.char).toBe('红');
+  expect(v.wordsMap.has('0,0')).toBe(false);
+});
+
+it('战中调位：兵与孤儿字互换以提升威胁/座位', () => {
+  const v = new FakeRepositionView();
+  // 射手在差位；骨占能打怪的好位
+  v.unitsMap.set('0,3', { type: 'archer', tier: 1, cell: { c: 0, r: 3 } });
+  v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
+  v.monsterCells = [{ c: 5, r: 0 }];
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.get('5,0')?.type).toBe('archer');
+  expect(v.wordsMap.get('0,3')?.char).toBe('骨');
+});
 
 it('战中调位：前排高阶够不着时与后方低阶互换', () => {
   const v = new FakeRepositionView();

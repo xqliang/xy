@@ -3,6 +3,8 @@
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
+// 满盘凑对：优先伴侣已在位的邻格；占位可顶回候选或与 tray 字直接交换（place）。
+// 未激活孤儿字不占前线：与兵器换高覆盖座，或迁到远离路径/靠唐僧的空位。
 // 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
@@ -43,8 +45,15 @@ export interface AutoPlaceView {
   moveUnit(from: Cell, to: Cell): boolean;  // 把已上场单位从 from 挪到空 to
   /** 交换两格已上场单位位置（用于高阶抢占低阶更好座位） */
   swapUnits(a: Cell, b: Cell): boolean;
+  /** 兵与未激活孤儿字换位（字牌让出前线攻位） */
+  swapUnitWord(unitCell: Cell, wordCell: Cell): boolean;
   /** 把已上场字牌挪到空 to（不与其他字/兵重叠） */
   moveWord(from: Cell, to: Cell): boolean;
+  /**
+   * 满槽腾位：把该格普通武器或未激活孤儿顶回候选区（候选未满时）。
+   * 已激活武将格必须失败。空格视为成功。
+   */
+  displaceToTray(cell: Cell): boolean;
   /** 该格是否属于已激活武将（禁止拆散） */
   isActiveHeroCell(cell: Cell): boolean;
   /** 危险提示：怪物逼近唐僧，布阵/调位优先往唐僧方向靠拢 */
@@ -428,6 +437,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
     // 5c) 空位更优则迁座：新挖出的近出口/高覆盖空格，把已上场兵迁过去（如枪迁到贴口空位）
     if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
+    // 5d) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
+    if (!subopt() && tryYieldOrphanSeatsToUnits()) return true;
+    // 5e) 孤儿字迁到更远离路径/靠唐僧的空位
+    if (!subopt() && tryRelocateOrphansToRear()) return true;
     // 6–7) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
@@ -491,6 +504,44 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     if (!best) return false;
     return view.moveUnit(best.from, best.to);
+  }
+
+  /**
+   * 未激活孤儿字占着兵器更高座位分的格 → 与该兵交换。
+   * 字牌本身不输出，不应堵在贴路/高覆盖前线（如「红」「沙」「骨」）。
+   */
+  function tryYieldOrphanSeatsToUnits(): boolean {
+    let best: { unit: PlacedUnitLite; orphan: PlacedWordLite; gain: number } | null = null;
+    for (const orphan of orphanWords()) {
+      for (const u of view.placedUnits()) {
+        if (view.isActiveHeroCell(u.cell)) continue;
+        const rge = getUnitStat(u.type, u.tier).rge;
+        if (view.nearestPathDist(orphan.cell) > rge + tol) continue;
+        const gain = scoreCell(orphan.cell, u.type, u.tier) - scoreCell(u.cell, u.type, u.tier);
+        if (gain <= 0.15) continue;
+        if (!best || gain > best.gain) best = { unit: u, orphan, gain };
+      }
+    }
+    if (!best) return false;
+    return view.swapUnitWord(best.unit.cell, best.orphan.cell);
+  }
+
+  /** 孤儿字迁到 singleWordScore 更高的空位（远离路径、靠唐僧） */
+  function tryRelocateOrphansToRear(): boolean {
+    const free = view.freeCells();
+    if (free.length === 0) return false;
+    let best: { from: Cell; to: Cell; gain: number } | null = null;
+    for (const w of orphanWords()) {
+      const cur = singleWordScore(view.nearestPathDist(w.cell), view.tangsengDist(w.cell));
+      for (const c of free) {
+        const sc = singleWordScore(view.nearestPathDist(c), view.tangsengDist(c));
+        const gain = sc - cur;
+        if (gain <= 0.15) continue;
+        if (!best || gain > best.gain) best = { from: w.cell, to: c, gain };
+      }
+    }
+    if (!best) return false;
+    return view.moveWord(best.from, best.to);
   }
 
   /** 可挖格：离路~1格优先，贴边数弱加权；平时叠加近出口，危险时改优先靠近唐僧 */
@@ -600,7 +651,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   /**
-   * 为激活武将腾格：空→成功；武器→挪走；孤儿字→挪走；已激活英雄格→失败。
+   * 为激活武将腾格：空→成功；武器/孤儿→优先挪到空位，满盘则顶回候选区；已激活英雄格→失败。
    * allowMate：该格上的伴侣字可保留（即将迁走或已在位）。
    */
   function clearForHero(
@@ -614,9 +665,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       // 仅当目标格上就是指定伴侣实例时保留（避免重复同字误判）
       if (allowMate && sameCell(cell, allowMate.cell)) return true;
       if (view.isActiveHeroCell(cell)) return false;
-      return clearOrphanWordFrom(cell, reserved, extraFree);
+      if (clearOrphanWordFrom(cell, reserved, extraFree)) return true;
+      return view.displaceToTray(cell);
     }
-    return clearUnitFrom(cell, reserved, extraFree);
+    if (clearUnitFrom(cell, reserved, extraFree)) return true;
+    // 有兵但无处可挪：顶回候选区
+    if (view.placedUnits().some((u) => sameCell(u.cell, cell))) return view.displaceToTray(cell);
+    return true;
   }
 
   function wordAt(cell: Cell): PlacedWordLite | undefined {
@@ -848,13 +903,24 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   ): boolean {
     const tier = Math.max(t.tier, boardMate?.tier ?? t.tier);
     const pairs = rankedHeroPairs(general, tier);
+    // 棋盘伴侣已在正确左/右位时优先原地凑对（少迁座、满盘也能换）
+    if (boardMate) {
+      const mateIsLeftChar = boardMate.char === chars[0];
+      pairs.sort((a, b) => {
+        const fit = (p: { left: Cell; right: Cell }) =>
+          sameCell(boardMate.cell, mateIsLeftChar ? p.left : p.right) ? 1 : 0;
+        const d = fit(b) - fit(a);
+        return d !== 0 ? d : b.score - a.score;
+      });
+    }
 
     for (const { left, right } of pairs) {
       // —— 候选区已有配对字：两字一起落到最优对 ——
       if (!boardMate && partnerJ >= 0) {
         const reserved = new Set([cellKey(left), cellKey(right)]);
         if (view.isActiveHeroCell(left) || view.isActiveHeroCell(right)) continue;
-        if (!clearForHero(left, reserved, null) || !clearForHero(right, reserved, null)) continue;
+        clearForHero(left, reserved, null);
+        clearForHero(right, reserved, null);
         const leftChar = chars[0];
         const rightChar = chars[1];
         const trayNow = view.tray();
@@ -883,17 +949,17 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
         const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
         const mateOld = { ...boardMate.cell };
+        const mateAlreadySeated = sameCell(boardMate.cell, needMate);
 
-        // 1) 先腾伴侣目标格（允许伴侣已在位；可把占位物暂放到伴侣旧格以外）
-        if (!clearForHero(needMate, reserved, boardMate)) continue;
-        // 2) 迁伴侣（按原格 / 同字同阶定位，避免重复字找错）
-        const mateNow = resolveTrackedWord(boardMate);
-        if (!mateNow) continue;
-        if (!sameCell(mateNow.cell, needMate)) {
+        // 1) 腾伴侣目标格并迁座（已在位则跳过）
+        if (!mateAlreadySeated) {
+          if (!clearForHero(needMate, reserved, null)) continue;
+          const mateNow = resolveTrackedWord(boardMate);
+          if (!mateNow) continue;
           if (!view.moveWord(mateNow.cell, needMate)) continue;
         }
-        // 3) 腾 tray 落点（伴侣旧格现已空，可作为 extraFree）
-        if (!clearForHero(needTray, reserved, null, [mateOld])) continue;
+        // 2) 落 tray 字：优先挪开占位，满盘挪不开时直接 place（与孤儿/兵交换）
+        clearForHero(needTray, reserved, null, [mateOld]);
         const idx = view.tray().findIndex(
           (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
         );
@@ -986,12 +1052,18 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 /** 战中动态调位视图：依据当前存活怪群评估座位，每次至多执行一次 move/swap */
 export interface BattleRepositionView {
   placedUnits(): PlacedUnitLite[];
+  /** 未激活孤儿字（已激活武将格不要列入） */
+  orphanWords(): PlacedWordLite[];
   freeCells(): Cell[];
   moveUnit(from: Cell, to: Cell): boolean;
   swapUnits(a: Cell, b: Cell): boolean;
+  /** 兵与孤儿字换位 */
+  swapUnitWord(unitCell: Cell, wordCell: Cell): boolean;
   isActiveHeroCell(cell: Cell): boolean;
   canEngage(cell: Cell, type: UnitType, tier: number): boolean;
   engageScore(cell: Cell, type: UnitType, tier: number): number;
+  /** 静态座位分（pathCover/近出怪口）；无怪或字牌让位时用 */
+  seatScore(cell: Cell, type: UnitType, tier: number): number;
   dangerNear(): boolean;
   exitDist(cell: Cell): number;
   tangsengDist(cell: Cell): number;
@@ -1015,7 +1087,8 @@ function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolea
 }
 
 /**
- * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位。
+ * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位；
+ * 亦可与未激活孤儿字换位（字牌不输出，让出攻位）。
  * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧兵器调位 1.5–4s 随机节流。
  */
 export function planBattleReposition(
@@ -1076,6 +1149,25 @@ export function planBattleReposition(
       bestGain = gain;
       bestPair = { a: a.cell, b: b.cell };
       bestAction = () => view.swapUnits(a.cell, b.cell);
+    }
+  }
+
+  // 3) 兵 ↔ 未激活孤儿字：字牌让出更高威胁/座位分的格
+  for (const u of units) {
+    if (view.isActiveHeroCell(u.cell)) continue;
+    const curEngage = cellValue(u.cell, u.type, u.tier);
+    const curSeat = view.seatScore(u.cell, u.type, u.tier);
+    for (const w of view.orphanWords()) {
+      if (view.isActiveHeroCell(w.cell)) continue;
+      if (isBlockedPair(u.cell, w.cell, opts?.blockedPair)) continue;
+      const engGain = cellValue(w.cell, u.type, u.tier) - curEngage;
+      const seatGain = view.seatScore(w.cell, u.type, u.tier) - curSeat;
+      // 威胁分提升，或静态座位明显更好（怪在入口时也能把攻位让给射手盖出口段）
+      const gain = engGain > 0.05 ? engGain : seatGain > 0.35 ? seatGain * 0.5 : 0;
+      if (gain <= bestGain) continue;
+      bestGain = gain;
+      bestPair = { a: u.cell, b: w.cell };
+      bestAction = () => view.swapUnitWord(u.cell, w.cell);
     }
   }
 

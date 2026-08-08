@@ -37,7 +37,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, imminentPathScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -726,6 +726,79 @@ export class Battle {
     return !this.units.has(cellKey(c, r)) && !this.words.has(cellKey(c, r)) && !this.pendingPlace.some((p) => p.c === c && p.r === r);
   }
 
+  /** 自动布阵腾位：未激活字/普通武器顶回候选（候选未满）；已激活武将格失败 */
+  private displaceToTray(cell: Cell): boolean {
+    if (this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r))) return false;
+    const k = cellKey(cell.c, cell.r);
+    const w = this.words.get(k);
+    if (w) {
+      if (this.tray.length >= TUNING.traySize) return false;
+      this.words.delete(k);
+      this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      return true;
+    }
+    const u = this.units.get(k);
+    if (u) {
+      if (this.tray.length >= TUNING.traySize) return false;
+      this.units.delete(k);
+      this.tray.push({ kind: 'unit', type: u.type, tier: u.tier });
+      return true;
+    }
+    return true;
+  }
+
+  private aiDisplaceToTray(cell: Cell): boolean {
+    if (this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r))) return false;
+    const k = cellKey(cell.c, cell.r);
+    const w = this.aiWords.get(k);
+    if (w) {
+      if (this.aiTray.length >= TUNING.traySize) return false;
+      this.aiWords.delete(k);
+      this.aiTray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      return true;
+    }
+    const ui = this.aiUnits.findIndex((x) => x.cell.c === cell.c && x.cell.r === cell.r);
+    if (ui >= 0) {
+      if (this.aiTray.length >= TUNING.traySize) return false;
+      const u = this.aiUnits[ui]!;
+      this.aiUnits.splice(ui, 1);
+      this.aiTray.push({ kind: 'unit', type: u.type, tier: u.tier });
+      return true;
+    }
+    return true;
+  }
+
+  private swapUnitWord(unitCell: Cell, wordCell: Cell): boolean {
+    if (this.activeGenerals().some((g) => g.cells.some((c) => c.c === wordCell.c && c.r === wordCell.r))) return false;
+    const uk = cellKey(unitCell.c, unitCell.r);
+    const wk = cellKey(wordCell.c, wordCell.r);
+    const u = this.units.get(uk);
+    const w = this.words.get(wk);
+    if (!u || !w) return false;
+    this.units.delete(uk);
+    this.words.delete(wk);
+    u.cell = { c: wordCell.c, r: wordCell.r };
+    w.cell = { c: unitCell.c, r: unitCell.r };
+    u.fireDir = faceDirToward(u.cell, this.unitFaceGate());
+    this.units.set(wk, u);
+    this.words.set(uk, w);
+    return true;
+  }
+
+  private aiSwapUnitWord(unitCell: Cell, wordCell: Cell): boolean {
+    if (this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === wordCell.c && c.r === wordCell.r))) return false;
+    const u = this.aiUnits.find((x) => x.cell.c === unitCell.c && x.cell.r === unitCell.r);
+    const wk = cellKey(wordCell.c, wordCell.r);
+    const w = this.aiWords.get(wk);
+    if (!u || !w) return false;
+    this.aiWords.delete(wk);
+    u.cell = { c: wordCell.c, r: wordCell.r };
+    w.cell = { c: unitCell.c, r: unitCell.r };
+    u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
+    this.aiWords.set(cellKey(unitCell.c, unitCell.r), w);
+    return true;
+  }
+
   // 计入道具修正后的当前征兵成本
   effectiveSummonCost(): number {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
@@ -1093,6 +1166,7 @@ export class Battle {
         ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
         return true;
       },
+      swapUnitWord: (unitCell, wordCell) => this.aiSwapUnitWord(unitCell, wordCell),
       moveWord: (from, to) => {
         const kFrom = cellKey(from.c, from.r);
         const kTo = cellKey(to.c, to.r);
@@ -1104,6 +1178,7 @@ export class Battle {
         this.aiWords.set(kTo, w);
         return true;
       },
+      displaceToTray: (cell) => this.aiDisplaceToTray(cell),
       isActiveHeroCell: (cell) =>
         this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       dangerNear: () => this.aiDangerNear(),
@@ -1165,29 +1240,47 @@ export class Battle {
           u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
           return true;
         },
-        swapUnits: (a, b) => {
-          const ua = this.aiUnits.find((x) => x.cell.c === a.c && x.cell.r === a.r);
-          const ub = this.aiUnits.find((x) => x.cell.c === b.c && x.cell.r === b.r);
-          if (!ua || !ub) return false;
-          ua.cell = { c: b.c, r: b.r };
-          ub.cell = { c: a.c, r: a.r };
-          ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
-          ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
-          return true;
-        },
-        isActiveHeroCell: (cell) =>
-          this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
-        canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier) > 0,
-        engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier),
-        dangerNear: () => this.aiDangerNear(),
-        exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
-        tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
-        imminentPathScore: (cell) =>
-          this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
+      swapUnits: (a, b) => {
+        const ua = this.aiUnits.find((x) => x.cell.c === a.c && x.cell.r === a.r);
+        const ub = this.aiUnits.find((x) => x.cell.c === b.c && x.cell.r === b.r);
+        if (!ua || !ub) return false;
+        ua.cell = { c: b.c, r: b.r };
+        ub.cell = { c: a.c, r: a.r };
+        ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
+        ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
+        return true;
+      },
+      swapUnitWord: (unitCell, wordCell) => this.aiSwapUnitWord(unitCell, wordCell),
+      orphanWords: () =>
+        [...this.aiWords.values()]
+          .filter((w) => !this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === w.cell.c && c.r === w.cell.r)))
+          .map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
+      isActiveHeroCell: (cell) =>
+        this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
+      canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier) > 0,
+      engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier),
+      seatScore: (cell, type, tier) => {
+        const rge = getUnitStat(type, tier).rge;
+        return placeCellScore(
+          this.aiPathCoverAt(cell.c, cell.r, rge),
+          this.distToPathEntrance(this.aiPath, cell),
+          rge,
+          this.aiNearestPathDist(cell),
+        );
+      },
+      dangerNear: () => this.aiDangerNear(),
+      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
+      imminentPathScore: (cell) =>
+        this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
       };
     }
     return {
       placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
+      orphanWords: () =>
+        [...this.words.values()]
+          .filter((w) => !this.activeGenerals().some((g) => g.cells.some((c) => c.c === w.cell.c && c.r === w.cell.r)))
+          .map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       freeCells: () => this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)),
       moveUnit: (from, to) => {
         const u = this.units.get(cellKey(from.c, from.r));
@@ -1215,10 +1308,20 @@ export class Battle {
         this.units.set(ka, ub);
         return true;
       },
+      swapUnitWord: (unitCell, wordCell) => this.swapUnitWord(unitCell, wordCell),
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier) > 0,
       engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier),
+      seatScore: (cell, type, tier) => {
+        const rge = getUnitStat(type, tier).rge;
+        return placeCellScore(
+          pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, rge),
+          this.distToPathEntrance(this.map.path, cell),
+          rge,
+          this.nearestPathDist(cell),
+        );
+      },
       dangerNear: () => this.dangerNear(),
       exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
@@ -2867,6 +2970,7 @@ export class Battle {
         this.units.set(ka, ub);
         return true;
       },
+      swapUnitWord: (unitCell, wordCell) => this.swapUnitWord(unitCell, wordCell),
       moveWord: (from, to) => {
         const kFrom = cellKey(from.c, from.r);
         const kTo = cellKey(to.c, to.r);
@@ -2878,6 +2982,7 @@ export class Battle {
         this.words.set(kTo, w);
         return true;
       },
+      displaceToTray: (cell) => this.displaceToTray(cell),
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       dangerNear: () => this.dangerNear(),
