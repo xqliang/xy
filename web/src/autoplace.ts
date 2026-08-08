@@ -949,7 +949,7 @@ function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolea
 
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位。
- * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧用 ≥1s 间隔节流。
+ * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧用 ≥1.5s 间隔节流。
  */
 export function planBattleReposition(
   view: BattleRepositionView,
@@ -1017,7 +1017,7 @@ export function planBattleReposition(
   return { ok: true, pair: bestPair ?? undefined };
 }
 
-/** 连续调位；maxSteps=1 用于 AI 1s 节流，更大值用于玩家一键布阵 */
+/** 连续调位；maxSteps=1 用于 AI 1.5s 节流，更大值用于玩家一键布阵 */
 export function runBattleReposition(view: BattleRepositionView, maxSteps = 1): number {
   let steps = 0;
   while (steps < maxSteps && planBattleReposition(view).ok) steps++;

@@ -495,9 +495,9 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调位节流（≥1s 一次）
+  private aiRepositionTimer = 0;            // 战中调位节流（≥1.5s 一次）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
-  static readonly AI_REPOSITION_INTERVAL = 1;
+  static readonly AI_REPOSITION_INTERVAL = 1.5;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
   // 道具与修正器
@@ -1223,7 +1223,7 @@ export class Battle {
     };
   }
 
-  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（1s 节流），玩家一键布阵可连续多步 */
+  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（1.5s 节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
       if (this.aiMonsters.length === 0 || this.aiUnits.length === 0) return 0;
@@ -2072,7 +2072,7 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（AI 1s 至多一次）
+    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（AI 1.5s 至多一次）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       this.aiRepositionTimer = Battle.AI_REPOSITION_INTERVAL;
