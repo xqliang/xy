@@ -27,7 +27,7 @@ export const MAX_EQUIPPED_ACTIVES = 2;
 
 // 主动技能池（数值为初版估计，后续用 tools/sweep*.mjs 做平衡）
 export const ACTIVE_SKILLS: ActiveSkillDef[] = [
-  { id: 'act_palm', name: '如来神掌', icon: '🖐', cd: 25, cost: 60, effect: 'palm',
+  { id: 'act_palm', name: '如来神掌', icon: '🖐', cd: 60, cost: 60, effect: 'palm',
     desc: '把场上所有妖怪推回起点（绝境救命）' },
   { id: 'act_meteor', name: '天降陨石', icon: '☄', cd: 18, cost: 60, effect: 'meteor',
     desc: '对最前方妖怪群砸下大额伤害' },
@@ -37,7 +37,7 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
     desc: '5 秒内全体武将攻速 +40%' },
   { id: 'act_freeze', name: '冰封定身', icon: '❄', cd: 22, cost: 70, effect: 'freeze',
     desc: '全体妖怪定身 2 秒' },
-  { id: 'act_jinggu', name: '紧箍咒', icon: '💫', cd: 20, cost: 70, effect: 'jinggu',
+  { id: 'act_jinggu', name: '紧箍咒', icon: '💫', cd: 60, cost: 70, effect: 'jinggu',
     desc: '以最前妖怪为中心大范围爆发伤害' },
 ];
 
