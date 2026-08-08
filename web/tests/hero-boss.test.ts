@@ -103,6 +103,60 @@ describe('双雄引妖王', () => {
     b.words.delete(`${g0.cells[0]!.c},${g0.cells[0]!.r}`);
     expect(b.activeGenerals().length).toBeLessThan(2);
     b.step(0.05);
-    expect((b as unknown as { heroBossTimer: number }).heroBossTimer).toBe(0);
+    expect((b as unknown as { heroBossTimer: number }).heroBossTimer).toBe(-1);
+  });
+
+  it('双雄引妖王每波有上限，不会长波连刷 20+', () => {
+    const b = new Battle(11);
+    placeHeroes(b, 2);
+    for (let i = 0; i < 20; i++) {
+      b.startNextWave();
+      if (!b.isBossWave(b.wave)) break;
+      b.forceClearWaveForTest();
+    }
+    b.startNextWave();
+    (b as unknown as { spawnRemaining: number }).spawnRemaining = 999;
+    b.monsters.push({
+      id: 99999, dist: 0, hp: 999999, maxHp: 999999, spd: 0.01,
+      isBoss: false, isMiniBoss: false, miniBossKind: null, isCavalry: false,
+      hitFlash: 0, skill: null, skillCd: 0, castFlash: 0, spawnT: 0,
+      stunT: 0, slowT: 0, hasteT: 0, healFlash: 0, burnT: 0, burnDps: 0,
+    });
+    let spawns = 0;
+    const dt = 1 / 60;
+    for (let t = 0; t < 300; t += dt) {
+      const before = b.monsters.filter((m) => m.isBoss && !m.isMiniBoss && m.id !== 99999).length;
+      b.step(dt);
+      const after = b.monsters.filter((m) => m.isBoss && !m.isMiniBoss && m.id !== 99999).length;
+      if (after > before) spawns++;
+      b.monsters = b.monsters.filter((m) => m.id === 99999 || !m.isBoss);
+    }
+    expect(spawns).toBeLessThanOrEqual(Math.min(TUNING.heroBossMaxPerWave, 2));
+    expect(spawns).toBeGreaterThanOrEqual(1);
+  });
+
+  it('双雄引妖王血量按当前阵容实时重算（开波后增兵会抬高）', () => {
+    const b = new Battle(11);
+    placeHeroes(b, 2);
+    for (let i = 0; i < 20; i++) {
+      b.startNextWave();
+      if (!b.isBossWave(b.wave)) break;
+      b.forceClearWaveForTest();
+    }
+    b.startNextWave();
+    const weakHp = (b as unknown as { computeCurrentBossHp: () => number }).computeCurrentBossHp();
+    const cells = b.unlockedCells().filter((c) => b.cellFree(c.c, c.r));
+    for (let i = 0; i < Math.min(4, cells.length); i++) {
+      b.tray = [{ kind: 'unit', type: 'archer', tier: 5 }];
+      b.placeFromTray(0, cells[i]!);
+    }
+    const strongHp = (b as unknown as { computeCurrentBossHp: () => number }).computeCurrentBossHp();
+    expect(strongHp).toBeGreaterThan(weakHp);
+    (b as unknown as { spawnRemaining: number }).spawnRemaining = 50;
+    (b as unknown as { heroBossTimer: number }).heroBossTimer = 0.01;
+    b.step(0.05);
+    const boss = b.monsters.find((m) => m.isBoss);
+    expect(boss).toBeTruthy();
+    expect(boss!.maxHp).toBeCloseTo(strongHp, 5);
   });
 });

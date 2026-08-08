@@ -42,6 +42,7 @@ import {
   estimateOptimalBoardPower,
   pathCoverageLen,
   planWavePressure,
+  PRESSURE_RATIO,
   spawnBatchCap,
   SPAWN_DIST_JITTER,
   type BoardPowerResult,
@@ -191,6 +192,7 @@ export const TUNING = {
   heroBossIntervalMin: 8, // 间隔下界（秒）
   heroBossIntervalMaxBase: 15, // 间隔上界基数（秒）
   heroBossIntervalShrinkCap: 4, // 英雄越多上界越压，最多压 shrinkCap 秒
+  heroBossMaxPerWave: 4, // 每波最多额外引妖王次数（与英雄数取 min，防长波连刷）
 };
 
 /**
@@ -603,8 +605,10 @@ export class Battle {
   private cavalryWave = false; // 本波是否为骑兵波（半数怪为骑兵）
   private waveMiniBoss: MiniBossKind | null = null; // 本波预定的小 Boss 种类（非 BOSS 波才可能）
   private miniBossSpawnIdx = -1; // 小 Boss 出场序号（0-based）；-1 表示本波无
-  /** 双雄引妖王：距下次额外大 Boss 的秒数；英雄不足时置 0，重新凑齐后重 roll 满间隔 */
-  private heroBossTimer = 0;
+  /** 双雄引妖王：距下次额外大 Boss 的秒数；英雄不足时为 -1，重新凑齐后重 roll 满间隔 */
+  private heroBossTimer = -1;
+  /** 本波已通过双雄机制额外刷出的大 Boss 数 */
+  private heroBossSpawnsThisWave = 0;
   private nextMonsterId = 1;
   private waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
@@ -1807,7 +1811,10 @@ export class Battle {
       this.miniBossSpawnIdx = lo + this.rng.int(hi - lo + 1);
     }
     this.spawnTimer = 0;
-    this.heroBossTimer = 0; // 本波重新计时；凑齐双雄后 roll 间隔
+    this.heroBossSpawnsThisWave = 0;
+    const heroCount = this.activeGenerals().length;
+    this.heroBossTimer =
+      heroCount >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(heroCount) : -1;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
     if (bossWave) this.message = '⚠ 妖王来袭！';
@@ -2092,6 +2099,13 @@ export class Battle {
    * @param hasMiniBoss 本波是否预定顶替 1 只普通怪刷小 Boss：其额外血量需占预算，
    *   否则怪量不变但血量更高会让实际压力悄悄超出规划比例（见 planWavePressure）。
    */
+  /** 按当前战场最优输出 × 路径覆盖 × Boss 移速，估算妖王血量（正式妖王波与双雄引妖王共用口径） */
+  private computeCurrentBossHp(): number {
+    const power = this.estimateOptimalPower();
+    const pathDmg = power.pathDamage(this.bossSpeed());
+    return Math.max(this.normalMonsterHp(), pathDmg * PRESSURE_RATIO);
+  }
+
   private computeWavePressure(wave: number, hasMiniBoss = false): PressurePlan {
     const power = this.estimateOptimalPower();
     const normalHp = this.normalMonsterHp(wave);
@@ -2156,13 +2170,18 @@ export class Battle {
 
     let hp = this.normalMonsterHp();
     if (isBoss) {
-      // Boss 血：当前地图最优重排全路集火伤害 × ~70%；无方案时回退旧倍乘
-      const planned = this.wavePressure?.bossHp;
-      if (planned != null && planned > 0) {
-        hp = planned;
+      // 双雄引妖王：按当前阵容实时重算（开波后增兵/升阶/新激活英雄会抬高血量）
+      if (opts?.forceBoss) {
+        hp = this.computeCurrentBossHp();
       } else {
-        const t = Math.max(0, Math.min(1, (this.wave - TUNING.bossFirstSegLo) / Math.max(1, TUNING.bossHpRampWaves)));
-        hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+        // 正式妖王波：开波压力方案；无方案时回退旧倍乘
+        const planned = this.wavePressure?.bossHp;
+        if (planned != null && planned > 0) {
+          hp = planned;
+        } else {
+          const t = Math.max(0, Math.min(1, (this.wave - TUNING.bossFirstSegLo) / Math.max(1, TUNING.bossHpRampWaves)));
+          hp *= TUNING.bossHpMulEarly + (TUNING.bossHpMul - TUNING.bossHpMulEarly) * t;
+        }
       }
     } else if (isMiniBoss) {
       hp *= TUNING.miniBossHpMul;
@@ -3061,19 +3080,25 @@ export class Battle {
         this.spawnTimer = this.currentSpawnInterval();
       }
     }
-    // 双雄及以上：当前波随机间隔刷额外大 Boss（不占本波定额）
+    // 双雄及以上：当前波随机间隔刷额外大 Boss（不占本波定额；每波有上限）
     if (this.waveActive) {
       const heroCount = this.activeGenerals().length;
       if (heroCount >= TUNING.heroBossFromCount) {
-        if (this.heroBossTimer <= 0) this.heroBossTimer = this.rollHeroBossInterval(heroCount);
-        this.heroBossTimer -= dt;
-        if (this.heroBossTimer <= 0) {
-          this.spawnHeroSummonedBoss();
-          const n2 = this.activeGenerals().length;
-          this.heroBossTimer = n2 >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(n2) : 0;
+        if (this.heroBossTimer < 0) {
+          this.heroBossTimer = this.rollHeroBossInterval(heroCount);
+        } else {
+          this.heroBossTimer -= dt;
+          if (this.heroBossTimer <= 0) {
+            const maxSpawns = Math.min(TUNING.heroBossMaxPerWave, heroCount);
+            if (this.heroBossSpawnsThisWave < maxSpawns) {
+              this.spawnHeroSummonedBoss();
+              this.heroBossSpawnsThisWave++;
+            }
+            this.heroBossTimer = this.rollHeroBossInterval(heroCount);
+          }
         }
       } else {
-        this.heroBossTimer = 0;
+        this.heroBossTimer = -1;
       }
     }
     this.updateUnits(dt);
