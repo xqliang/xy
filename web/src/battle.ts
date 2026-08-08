@@ -48,7 +48,7 @@ import {
   type PressurePlan,
 } from './board-power';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
-import { MAX_EQUIPPED_PASSIVES } from './passives';
+import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
 import { DEFAULT_AI_SKILL, skillToKnobs } from './ai-skill';
 import {
   COLS,
@@ -485,7 +485,7 @@ export class Battle {
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = TANGSENG_INITIAL_HP;
-  aiFrqMul = 1; // AI 侧全体攻速倍率（双刃道具「疾风咒」会同时抬高敌我两侧）
+  aiFrqMul = 1; // AI 侧全体攻速倍率（预留：对称道具可同时抬高敌我）
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
@@ -575,7 +575,7 @@ export class Battle {
     // 装备的主动技能（最多 MAX_EQUIPPED_ACTIVES 个）建运行时槽；初始给半程 CD，避免开局即放
     for (const id of actives.slice(0, MAX_EQUIPPED_ACTIVES)) {
       const def = activeById(id);
-      if (!def) continue;
+      if (!def || def.disabled) continue; // 下架技能不注入
       this.activeSlots.push({ id, cd: def.cd * 0.5, cdMax: def.cd, ready: false, flash: 0 });
     }
     // 初始解锁：地图的初始 6 格 + 功德额外阵位
@@ -592,6 +592,7 @@ export class Battle {
     // 每日被动技能：开局按 id 注入本局。蟠桃园走桃树系统；其余复用 applyItem 效果引擎。
     // 只取前 MAX_EQUIPPED_PASSIVES 个作防御（正常 loadout 已保证 ≤N，且为最新 N）。
     for (const id of passives.slice(0, MAX_EQUIPPED_PASSIVES)) {
+      if (!isPassiveEnabled(id)) continue; // 下架技能不注入
       if (id === 'pas_pantao') { this.gardenOn = true; this.pickedItems.push(id); continue; } // 蟠桃园走桃树系统，同时进被动栏展示
       this.applyItem(id);
       this.pickedItems.push(id);
@@ -1761,7 +1762,7 @@ export class Battle {
   private applyItem(id: string): void {
     switch (id) {
       case 'xiandan': this.mods.atkMul += 0.15; break;
-      case 'fenghuolun': this.mods.frqMul += 0.2; break;
+      case 'fenghuolun': this.mods.frqMul += 0.15; break;
       case 'fabaofu': this.mods.generalTierDelta += 1; break;
       case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
       case 'mojin': this.mods.shovelPeach += 6; break;
@@ -1772,7 +1773,6 @@ export class Battle {
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
       // 非对称正向：我方收益优于 AI 对手
-      case 'jifeng': this.mods.frqMul += 0.5; this.aiFrqMul += 0.25; break;
       case 'tongxin': this.tangsengMaxHP += 3; this.tangsengHP += 3; this.aiTangsengHP += 2; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }

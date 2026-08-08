@@ -7,6 +7,8 @@ export interface PassiveSkillDef {
   icon: string; // 图标（emoji 或 1 个汉字，Canvas fillText 渲染）
   cost: number; // 购买消耗功德
   desc: string; // 商店说明（新人能看懂）
+  /** true = 下架：商店不展示、不可购买、开局不注入（改配置即可禁用） */
+  disabled?: boolean;
 }
 
 // 最多「生效」的被动技能数（购买不设上限，仅保留最新 N 个生效）
@@ -21,9 +23,8 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
     desc: '每40s在空地自动种下1棵桃树；桃树按等级产桃(20/10/5/3/2s)，同级拖动可合并升级，最高5级',
   },
   { id: 'xiandan', name: '仙丹', icon: '💊', cost: 60, desc: '全体攻击 +15%' },
-  { id: 'fenghuolun', name: '风火轮符', icon: '🌀', cost: 60, desc: '全体攻速 +20%' },
+  { id: 'fenghuolun', name: '风火轮符', icon: '🌀', cost: 60, desc: '全体攻速 +15%' },
   { id: 'fabaofu', name: '法宝符', icon: '📜', cost: 80, desc: '武将初始品质阶 +1' },
-  { id: 'jifeng', name: '疾风咒', icon: '💨', cost: 70, desc: '全体攻速 +50%（AI 对手仅 +25%）' },
   { id: 'zhaoxian', name: '招贤榜', icon: '📋', cost: 40, desc: '武将字牌掉率 +10%' },
   { id: 'mojin', name: '摸金校尉', icon: '⛏', cost: 40, desc: '每次用铲子额外 +6 蟠桃' },
   { id: 'luoyangchan', name: '洛阳铲', icon: '🥄', cost: 50, desc: '每 45 秒自动获得 1 把铲子' },
@@ -39,4 +40,15 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
 
 export function passiveById(id: string): PassiveSkillDef | undefined {
   return PASSIVE_SKILLS.find((p) => p.id === id);
+}
+
+/** 是否可上架/装备（未标记 disabled） */
+export function isPassiveEnabled(id: string): boolean {
+  const def = passiveById(id);
+  return !!def && !def.disabled;
+}
+
+/** 商店与布局用：仅启用中的被动技能 */
+export function enabledPassives(): PassiveSkillDef[] {
+  return PASSIVE_SKILLS.filter((p) => !p.disabled);
 }

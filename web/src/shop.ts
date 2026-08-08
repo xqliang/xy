@@ -1,8 +1,8 @@
 // 「神秘商人」功德商店界面：展示功德余额与可升级项 + 主动技能（每日重置）购买，点击卡片购买，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
 import { UPGRADES, levelOf, upgradeById, RARITY_COLOR, type MeritState } from './merit';
-import { ACTIVE_SKILLS, MAX_EQUIPPED_ACTIVES, activeById } from './actives';
-import { PASSIVE_SKILLS, MAX_EQUIPPED_PASSIVES, passiveById } from './passives';
+import { MAX_EQUIPPED_ACTIVES, activeById, enabledActives } from './actives';
+import { MAX_EQUIPPED_PASSIVES, passiveById, enabledPassives } from './passives';
 import { isEquipped, isPassiveEquipped, type LoadoutState } from './loadout';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -33,29 +33,64 @@ function cardRect(i: number): { x: number; y: number } {
   return { x: GRID_LEFT + col * (CARD_W + GAP), y: GRID_TOP + row * (CARD_H + GAP) };
 }
 
-// 主动技能区（功德升级卡片下方）：紧凑卡片
+// 分区标题行（标题 + 描述）高度；卡片从其后开始排
 const ACT_CARD_H = 90;
-const ACT_TOP = GRID_TOP + Math.ceil(UPGRADES.length / COLS_N) * (CARD_H + GAP) + 30;
+const SEC_HEAD_H = 54;
+const SEC_GAP = 28;
+
+function upgradesBlockH(): number {
+  if (UPGRADES.length === 0) return 0;
+  const rows = Math.ceil(UPGRADES.length / COLS_N);
+  return rows * (CARD_H + GAP) - GAP + SEC_GAP;
+}
+
+/** 主动技能区：标题行顶边（滚动内容坐标） */
+function activeSectionTop(): number {
+  return GRID_TOP + upgradesBlockH();
+}
+function activeCardsTop(): number {
+  return activeSectionTop() + SEC_HEAD_H;
+}
 function activeCardRect(i: number): { x: number; y: number } {
   const col = i % COLS_N;
   const row = Math.floor(i / COLS_N);
-  return { x: GRID_LEFT + col * (CARD_W + GAP), y: ACT_TOP + row * (ACT_CARD_H + GAP) };
+  return { x: GRID_LEFT + col * (CARD_W + GAP), y: activeCardsTop() + row * (ACT_CARD_H + GAP) };
 }
 
-// 被动技能区（主动技能区下方）：与主动技能同样的紧凑卡片
-const PAS_TOP = ACT_TOP + Math.ceil(ACTIVE_SKILLS.length / COLS_N) * (ACT_CARD_H + GAP) + 30;
+/** 被动技能区：标题行顶边 */
+function passiveSectionTop(): number {
+  const rows = Math.max(1, Math.ceil(enabledActives().length / COLS_N));
+  return activeCardsTop() + rows * (ACT_CARD_H + GAP) - GAP + SEC_GAP;
+}
+function passiveCardsTop(): number {
+  return passiveSectionTop() + SEC_HEAD_H;
+}
 function passiveCardRect(i: number): { x: number; y: number } {
   const col = i % COLS_N;
   const row = Math.floor(i / COLS_N);
-  return { x: GRID_LEFT + col * (CARD_W + GAP), y: PAS_TOP + row * (ACT_CARD_H + GAP) };
+  return { x: GRID_LEFT + col * (CARD_W + GAP), y: passiveCardsTop() + row * (ACT_CARD_H + GAP) };
+}
+
+/** 画分区标题 + 一行说明（不挡卡片） */
+function drawSectionHeader(ctx: CanvasRenderingContext2D, top: number, title: string, desc: string): void {
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 20px "PingFang SC", sans-serif';
+  ctx.fillText(title, GRID_LEFT, top);
+  ctx.fillStyle = 'rgba(224,200,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.fillText(desc, GRID_LEFT, top + 26);
 }
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
 
 // 商城可滚动内容的总高度（最后一个被动卡片底部 + 底部留白）
 export function shopContentHeight(): number {
-  const passiveRows = Math.ceil(PASSIVE_SKILLS.length / COLS_N);
-  const lastBottom = PAS_TOP + (passiveRows - 1) * (ACT_CARD_H + GAP) + ACT_CARD_H;
+  const pass = enabledPassives();
+  const cardsTop = passiveCardsTop();
+  const passiveRows = Math.max(1, Math.ceil(pass.length / COLS_N));
+  const lastBottom = cardsTop + (passiveRows - 1) * (ACT_CARD_H + GAP) + ACT_CARD_H;
   return lastBottom + 24; // 底部留白
 }
 export const SHOP_MAX_SCROLL = () => Math.max(0, shopContentHeight() - VIEW_H);
@@ -67,13 +102,15 @@ export function shopHitAt(x: number, y: number, scrollY = 0): ShopHit | null {
     const { x: cx, y: cy } = cardRect(i);
     if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + CARD_H) return { kind: 'buy', id: UPGRADES[i]!.id };
   }
-  for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
+  const acts = enabledActives();
+  for (let i = 0; i < acts.length; i++) {
     const { x: cx, y: cy } = activeCardRect(i);
-    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyActive', id: ACTIVE_SKILLS[i]!.id };
+    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyActive', id: acts[i]!.id };
   }
-  for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
+  const pass = enabledPassives();
+  for (let i = 0; i < pass.length; i++) {
     const { x: cx, y: cy } = passiveCardRect(i);
-    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyPassive', id: PASSIVE_SKILLS[i]!.id };
+    if (x >= cx && x <= cx + CARD_W && cy0 >= cy && cy0 <= cy + ACT_CARD_H) return { kind: 'buyPassive', id: pass[i]!.id };
   }
   return null;
 }
@@ -141,14 +178,17 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillText(maxed ? '——' : `购买 · ${cost} 功德`, x + 14 + bw / 2, by + 12);
   }
 
-  // —— 主动技能区（每日重置）——
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 20px "PingFang SC", sans-serif';
-  ctx.fillText(`主动技能（每日重置，最多装备 ${MAX_EQUIPPED_ACTIVES} 个）`, GRID_LEFT, ACT_TOP - 16);
-  for (let i = 0; i < ACTIVE_SKILLS.length; i++) {
-    const act = ACTIVE_SKILLS[i]!;
+  // —— 主动技能区（标题 + 描述；已 disabled 的不展示）——
+  const shopActives = enabledActives();
+  drawSectionHeader(
+    ctx,
+    activeSectionTop(),
+    '主动技能',
+    `战斗中手动释放，每日重置，最多启用 ${MAX_EQUIPPED_ACTIVES} 个；满额需先禁用再买`,
+  );
+  const actFull = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES;
+  for (let i = 0; i < shopActives.length; i++) {
+    const act = shopActives[i]!;
     const equipped = isEquipped(loadout, act.id);
     const afford = merit.merit >= act.cost;
     const { x, y } = activeCardRect(i);
@@ -169,27 +209,36 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     ctx.fillStyle = 'rgba(255,240,210,0.8)';
     ctx.font = '12px "PingFang SC", sans-serif';
     ctx.fillText(fitText(ctx, act.desc, CARD_W - 64), x + 52, y + 40);
-    // 购买/已装备条
+    // 购买 / 已启用(可禁用) / 槽满提示
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 30;
     roundRect(ctx, x + 12, by, bw, 22, 7);
-    ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
+    const barOk = equipped || (!actFull && afford);
+    ctx.fillStyle = equipped ? '#2f5a3a' : barOk ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${act.cost} 功德 · CD${act.cd}s`, x + 12 + bw / 2, by + 11);
+    const barText = equipped
+      ? '✓ 已启用 · 点击禁用'
+      : actFull
+        ? '已满，请先禁用'
+        : `购买启用 · ${act.cost} 功德 · CD${act.cd}s`;
+    ctx.fillText(barText, x + 12 + bw / 2, by + 11);
   }
 
-  // —— 被动技能区（每日重置）——
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 20px "PingFang SC", sans-serif';
-  ctx.fillText(`被动技能（每日重置，最多装备 ${MAX_EQUIPPED_PASSIVES} 个）`, GRID_LEFT, PAS_TOP - 16);
-  for (let i = 0; i < PASSIVE_SKILLS.length; i++) {
-    const pas = PASSIVE_SKILLS[i]!;
+  // —— 被动技能区（标题 + 描述；已 disabled 的不展示）——
+  const shopPassives = enabledPassives();
+  drawSectionHeader(
+    ctx,
+    passiveSectionTop(),
+    '被动技能',
+    `开局自动生效，每日重置，最多启用 ${MAX_EQUIPPED_PASSIVES} 个；满额需先禁用再买`,
+  );
+  const pasFull = loadout.passives.length >= MAX_EQUIPPED_PASSIVES;
+  for (let i = 0; i < shopPassives.length; i++) {
+    const pas = shopPassives[i]!;
     const equipped = isPassiveEquipped(loadout, pas.id);
     const afford = merit.merit >= pas.cost;
     const { x, y } = passiveCardRect(i);
@@ -212,13 +261,19 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
     const bw = CARD_W - 24;
     const by = y + ACT_CARD_H - 30;
     roundRect(ctx, x + 12, by, bw, 22, 7);
-    ctx.fillStyle = equipped ? '#2f5a3a' : afford ? '#c8792b' : '#4a3a30';
+    const barOk = equipped || (!pasFull && afford);
+    ctx.fillStyle = equipped ? '#2f5a3a' : barOk ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = equipped ? '#9bffb0' : afford ? '#fff6e6' : '#9a8a7a';
+    ctx.fillStyle = equipped ? '#9bffb0' : barOk ? '#fff6e6' : '#9a8a7a';
     ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.fillText(equipped ? '✓ 已装备' : `购买装备 · ${pas.cost} 功德`, x + 12 + bw / 2, by + 11);
+    const barText = equipped
+      ? '✓ 已启用 · 点击禁用'
+      : pasFull
+        ? '已满，请先禁用'
+        : `购买启用 · ${pas.cost} 功德`;
+    ctx.fillText(barText, x + 12 + bw / 2, by + 11);
   }
 
   // —— 结束滚动内容 ——
@@ -310,10 +365,13 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
   return lines;
 }
 
-// 汇总某商品的展示信息（名称/图标/色/副标题/使用说明/花费/是否可购买/按钮文案）
+// 汇总某商品的展示信息（名称/图标/色/副标题/使用说明/花费/按钮动作）
 interface PopupInfo {
   icon: string; name: string; color: string; sub: string;
-  usage: string; cost: number; canBuy: boolean; blockLabel: string;
+  usage: string; cost: number;
+  /** buy=购买确认；unequip=禁用已启用；none=置灰不可点 */
+  actionKind: 'buy' | 'unequip' | 'none';
+  actionLabel: string;
 }
 function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: LoadoutState): PopupInfo | null {
   if (kind === 'buy') {
@@ -325,37 +383,72 @@ function popupInfo(kind: ShopKind, id: string, merit: MeritState, loadout: Loado
     const usage = maxed
       ? '已达最高等级，无需继续购买。'
       : `永久成长：每局开局自动注入本局，可累计升级。\n下一级效果：${up.desc(lv)}`;
+    const can = !maxed && merit.merit >= cost;
     return {
       icon: up.icon, name: up.name, color: RARITY_COLOR[up.rarity],
       sub: `${up.rarity} · Lv.${lv}/${up.maxLevel}`,
       usage, cost,
-      canBuy: !maxed && merit.merit >= cost,
-      blockLabel: maxed ? '已满级' : merit.merit >= cost ? '' : '功德不足',
+      actionKind: can ? 'buy' : 'none',
+      actionLabel: can ? `购买 · ${cost} 功德` : maxed ? '已满级' : '功德不足',
     };
   }
   if (kind === 'buyActive') {
     const act = activeById(id);
     if (!act) return null;
     const equipped = isEquipped(loadout, id);
-    const usage = `${act.desc}。\n战斗中点击技能图标手动释放，冷却 ${act.cd}s。每日重置，最多装备 ${MAX_EQUIPPED_ACTIVES} 个。`;
+    const usage = `${act.desc}。\n战斗中点击技能图标手动释放，冷却 ${act.cd}s。每日重置，最多启用 ${MAX_EQUIPPED_ACTIVES} 个；满额需先禁用再买。`;
+    const down = !!act.disabled;
+    const full = loadout.equipped.length >= MAX_EQUIPPED_ACTIVES;
+    if (down) {
+      return {
+        icon: act.icon, name: act.name, color: '#6ab0ff',
+        sub: `主动技能 · CD ${act.cd}s`,
+        usage, cost: act.cost, actionKind: 'none', actionLabel: '已下架',
+      };
+    }
+    if (equipped) {
+      return {
+        icon: act.icon, name: act.name, color: '#6ab0ff',
+        sub: `主动技能 · CD ${act.cd}s · 已启用`,
+        usage, cost: act.cost, actionKind: 'unequip', actionLabel: '禁用',
+      };
+    }
+    const can = !full && merit.merit >= act.cost;
     return {
       icon: act.icon, name: act.name, color: '#6ab0ff',
       sub: `主动技能 · CD ${act.cd}s`,
       usage, cost: act.cost,
-      canBuy: !equipped && merit.merit >= act.cost,
-      blockLabel: equipped ? '已装备' : merit.merit >= act.cost ? '' : '功德不足',
+      actionKind: can ? 'buy' : 'none',
+      actionLabel: can ? `购买 · ${act.cost} 功德` : full ? '请先禁用才能购买' : '功德不足',
     };
   }
   const pas = passiveById(id);
   if (!pas) return null;
   const equipped = isPassiveEquipped(loadout, id);
-  const usage = `${pas.desc}。\n被动技能：购买后当日生效，开局自动注入本局。每日重置，最多装备 ${MAX_EQUIPPED_PASSIVES} 个。`;
+  const usage = `${pas.desc}。\n被动技能：购买后当日生效，开局自动注入本局。每日重置，最多启用 ${MAX_EQUIPPED_PASSIVES} 个；满额需先禁用再买。`;
+  const down = !!pas.disabled;
+  const full = loadout.passives.length >= MAX_EQUIPPED_PASSIVES;
+  if (down) {
+    return {
+      icon: pas.icon, name: pas.name, color: '#7ec46a',
+      sub: '被动技能 · 每日生效',
+      usage, cost: pas.cost, actionKind: 'none', actionLabel: '已下架',
+    };
+  }
+  if (equipped) {
+    return {
+      icon: pas.icon, name: pas.name, color: '#7ec46a',
+      sub: '被动技能 · 已启用',
+      usage, cost: pas.cost, actionKind: 'unequip', actionLabel: '禁用',
+    };
+  }
+  const can = !full && merit.merit >= pas.cost;
   return {
     icon: pas.icon, name: pas.name, color: '#7ec46a',
     sub: '被动技能 · 每日生效',
     usage, cost: pas.cost,
-    canBuy: !equipped && merit.merit >= pas.cost,
-    blockLabel: equipped ? '已装备' : merit.merit >= pas.cost ? '' : '功德不足',
+    actionKind: can ? 'buy' : 'none',
+    actionLabel: can ? `购买 · ${pas.cost} 功德` : full ? '请先禁用才能购买' : '功德不足',
   };
 }
 
@@ -445,16 +538,17 @@ export function drawShopPopup(
 
   // 底部动作区
   if (popup.phase === 'detail') {
-    // 单条购买按钮（不可购买时置灰并显示原因）
+    // 购买 / 禁用 / 置灰原因（满额文案可能较长，用略小字号）
     roundRect(ctx, ACTION_R.x, ACTION_R.y, ACTION_R.w, ACTION_R.h, 10);
-    ctx.fillStyle = info.canBuy ? '#c8792b' : '#4a3a30';
+    const interactive = info.actionKind === 'buy' || info.actionKind === 'unequip';
+    ctx.fillStyle = info.actionKind === 'unequip' ? '#5a3a2a' : interactive ? '#c8792b' : '#4a3a30';
     ctx.fill();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = info.canBuy ? '#fff6e6' : '#9a8a7a';
-    ctx.font = 'bold 17px "PingFang SC", sans-serif';
-    const label = info.canBuy ? `购买 · ${info.cost} 功德` : info.blockLabel || '无法购买';
-    ctx.fillText(label, ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
+    ctx.fillStyle = interactive ? '#fff6e6' : '#9a8a7a';
+    const long = info.actionLabel.length > 14;
+    ctx.font = `bold ${long ? 13 : 17}px "PingFang SC", sans-serif`;
+    ctx.fillText(info.actionLabel, ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
   } else {
     // 确认阶段：问句（含花费与余额）+ 取消/确认
     ctx.textAlign = 'center';

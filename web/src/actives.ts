@@ -20,6 +20,8 @@ export interface ActiveSkillDef {
   cost: number; // 购买消耗功德
   effect: ActiveEffect;
   desc: string; // 商店说明（新人能看懂）
+  /** true = 下架：商店不展示、不可购买、开局不注入（改配置即可禁用） */
+  disabled?: boolean;
 }
 
 // 最多可装备（购买）的主动技能数
@@ -43,4 +45,15 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
 
 export function activeById(id: string): ActiveSkillDef | undefined {
   return ACTIVE_SKILLS.find((a) => a.id === id);
+}
+
+/** 是否可上架/装备（未标记 disabled） */
+export function isActiveEnabled(id: string): boolean {
+  const def = activeById(id);
+  return !!def && !def.disabled;
+}
+
+/** 商店与布局用：仅启用中的主动技能 */
+export function enabledActives(): ActiveSkillDef[] {
+  return ACTIVE_SKILLS.filter((a) => !a.disabled);
 }

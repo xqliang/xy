@@ -18,22 +18,9 @@ export interface MeritUpgrade {
   cost: (lv: number) => number; // 从 lv→lv+1 的功德花费
 }
 
-// 稀有度→基础成本系数
-const RARITY_COST: Record<Rarity, number> = { 普通: 30, 稀有: 60, 史诗: 120 };
-const costFor = (rarity: Rarity) => (lv: number) => Math.round(RARITY_COST[rarity] * (lv + 1));
-
-export const UPGRADES: MeritUpgrade[] = [
-  { id: 'peach', name: '蟠桃加持', icon: '🍑', rarity: '普通', maxLevel: 5, cost: costFor('普通'),
-    desc: (lv) => `开局蟠桃 +${(lv + 1) * 8}` },
-  { id: 'slot', name: '洞天福地', icon: '⛰', rarity: '稀有', maxLevel: 3, cost: costFor('稀有'),
-    desc: (lv) => `额外初始阵位 +${lv + 1}` },
-  { id: 'hp', name: '金刚之躯', icon: '🛡', rarity: '史诗', maxLevel: 2, cost: costFor('史诗'),
-    desc: (lv) => `唐僧初始血 +${lv + 1}` },
-  { id: 'atk', name: '神兵淬炼', icon: '⚔', rarity: '稀有', maxLevel: 4, cost: costFor('稀有'),
-    desc: (lv) => `全体攻击 +${(lv + 1) * 5}%` },
-  { id: 'frq', name: '疾风咒', icon: '🌀', rarity: '稀有', maxLevel: 4, cost: costFor('稀有'),
-    desc: (lv) => `全体攻速 +${(lv + 1) * 5}%` },
-];
+// 永久成长升级池已清空：蟠桃加持/洞天福地/金刚之躯/神兵淬炼等下架。
+// 同类效果改由每日主动/被动技能提供。保留类型与购买 API 以便日后加项。
+export const UPGRADES: MeritUpgrade[] = [];
 
 export function upgradeById(id: string): MeritUpgrade | undefined {
   return UPGRADES.find((u) => u.id === id);
@@ -95,16 +82,9 @@ export function buyUpgrade(s: MeritState, id: string): { state: MeritState; ok: 
   return { state: next, ok: true };
 }
 
-// 汇总已购等级 → 开局注入的加成
-export function metaBonuses(s: MeritState): MetaBonuses {
-  const lv = (id: string) => levelOf(s, id);
-  return {
-    bonusPeach: lv('peach') * 8,
-    bonusHp: lv('hp'),
-    bonusSlots: lv('slot'),
-    atkPct: lv('atk') * 0.05,
-    frqPct: lv('frq') * 0.05,
-  };
+// 汇总已购等级 → 开局注入的加成（永久升级池为空时恒为 0，旧存档等级也不再生效）
+export function metaBonuses(_s: MeritState): MetaBonuses {
+  return { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, atkPct: 0, frqPct: 0 };
 }
 
 // 扣除功德（用于购买主动技能等每日消耗；不校验余额，调用方自行保证 merit>=amount）

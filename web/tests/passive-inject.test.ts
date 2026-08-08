@@ -9,10 +9,8 @@ describe('被动技能开局注入', () => {
     expect(make(['xiandan']).mods.atkMul).toBeCloseTo(1.15, 5);
   });
 
-  it('疾风咒：我方攻速 +50%，AI 对手 +25%', () => {
-    const b = make(['jifeng']);
-    expect(b.mods.frqMul).toBeCloseTo(1.5, 5);
-    expect(b.aiFrqMul).toBeCloseTo(1.25, 5);
+  it('风火轮符：全体攻速 +15%', () => {
+    expect(make(['fenghuolun']).mods.frqMul).toBeCloseTo(1.15, 5);
   });
 
   it('同心咒：我方唐僧 +3、对手唐僧 +2', () => {

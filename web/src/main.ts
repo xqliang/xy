@@ -24,7 +24,18 @@ import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } fr
 import { loadStamina, addStamina, spendStamina, syncStamina, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
-import { loadLoadout, buyActive, buyPassive, type LoadoutState } from './loadout';
+import {
+  loadLoadout,
+  buyActive,
+  buyPassive,
+  unequipActive,
+  unequipPassive,
+  ACTIVE_FULL_HINT,
+  PASSIVE_FULL_HINT,
+  type LoadoutState,
+} from './loadout';
+import { MAX_EQUIPPED_ACTIVES } from './actives';
+import { MAX_EQUIPPED_PASSIVES } from './passives';
 import { drawShop, shopHitAt, SHOP_MAX_SCROLL, drawShopPopup, shopPopupHitAt, type ShopPopupState } from './shop';
 import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
@@ -205,12 +216,38 @@ function handleShop(x: number, y: number) {
   if (hit.id) shopPopup = { kind: hit.kind, id: hit.id, phase: 'detail' };
 }
 
-// 处理商品弹窗点击：detail 阶段点购买→进入 confirm；confirm 阶段确认才真正扣费。
+// 处理商品弹窗点击：detail 阶段点购买→进入 confirm；已启用点「禁用」立即卸下；confirm 才扣费。
 function handleShopPopup(x: number, y: number) {
   if (!shopPopup) return;
   const r = shopPopupHitAt(x, y, shopPopup);
   if (r === 'close' || r === 'outside') { shopPopup = null; return; }
-  if (r === 'action') { shopPopup = { ...shopPopup, phase: 'confirm' }; return; }
+  if (r === 'action') {
+    const { kind, id } = shopPopup;
+    // 已启用技能：动作键为「禁用」，直接腾槽（不退功德）
+    if (kind === 'buyActive' && loadout.equipped.includes(id)) {
+      loadout = unequipActive(loadout, id);
+      shopToast = '已禁用';
+      shopPopup = null;
+      return;
+    }
+    if (kind === 'buyPassive' && loadout.passives.includes(id)) {
+      loadout = unequipPassive(loadout, id);
+      shopToast = '已禁用';
+      shopPopup = null;
+      return;
+    }
+    // 满额时置灰按钮不可进入确认（并 toast 完整提示）
+    if (kind === 'buyActive' && loadout.equipped.length >= MAX_EQUIPPED_ACTIVES) {
+      shopToast = ACTIVE_FULL_HINT;
+      return;
+    }
+    if (kind === 'buyPassive' && loadout.passives.length >= MAX_EQUIPPED_PASSIVES) {
+      shopToast = PASSIVE_FULL_HINT;
+      return;
+    }
+    shopPopup = { ...shopPopup, phase: 'confirm' };
+    return;
+  }
   if (r === 'cancel') { shopPopup = { ...shopPopup, phase: 'detail' }; return; }
   if (r === 'confirm') {
     const { kind, id } = shopPopup;
@@ -221,11 +258,11 @@ function handleShopPopup(x: number, y: number) {
     } else if (kind === 'buyActive') {
       const res = buyActive(loadout, merit, id);
       loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok ? '已装备（今日有效）' : res.reason ?? '无法购买';
+      shopToast = res.ok ? '已启用（今日有效）' : res.reason ?? '无法购买';
     } else {
       const res = buyPassive(loadout, merit, id);
       loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok ? '已装备（今日有效）' : res.reason ?? '无法购买';
+      shopToast = res.ok ? '已启用（今日有效）' : res.reason ?? '无法购买';
     }
     shopPopup = null;
   }
