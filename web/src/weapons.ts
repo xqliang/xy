@@ -1,6 +1,6 @@
 // 武器（神兵）系统：每位武将一件专属神兵，五级品质 白/绿/蓝/紫/金。
 // 对局中随机掉落；重复掉落自动升品质；背包内最多装备 3 件（形成取舍）。
-// 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.5 格（格数加成）。
+// 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.35 格（格数加成）。
 import { GENERALS, generalById } from './generals';
 import { storeGet, storeSet } from './storage';
 
@@ -60,7 +60,7 @@ export function weaponOfGeneral(generalId: string): WeaponDef | undefined {
   return WEAPONS.find((w) => w.general === generalId);
 }
 
-export const WEAPON_RANGE_STEP = 0.5; // 神兵范围：每品质阶 +0.5 格
+export const WEAPON_RANGE_STEP = 0.35; // 神兵范围：每品质阶 +0.35 格（金阶 +1.75）
 
 // 品质 → 攻击/攻速比例加成（+4%/级，金阶 +20%）
 export function weaponPctBonus(tier: number): number {
@@ -72,7 +72,7 @@ export function weaponBonus(tier: number): number {
   return weaponPctBonus(tier);
 }
 
-/** 神兵范围：每品质阶 +0.5 格（白 +0.5 … 金 +2.5） */
+/** 神兵范围：每品质阶 +0.35 格（白 +0.35 … 金 +1.75） */
 export function weaponRangeBonusGrids(tier: number): number {
   return WEAPON_RANGE_STEP * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
 }

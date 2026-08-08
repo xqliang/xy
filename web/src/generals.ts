@@ -6,8 +6,8 @@ import { TIER_COEFFICIENTS, MAX_TIER } from '@core';
 
 export type GeneralRole = '输出' | '控制' | '辅助' | '过渡';
 export type GeneralTierRank = 'T0' | 'T1' | 'T2';
-// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复 none=无技能
-export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'none';
+// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复 burn=灼烧(命中+持续掉血) none=无技能
+export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'burn' | 'none';
 
 export const QUALITY_NAMES = ['白', '绿', '蓝', '紫', '橙'] as const;
 // 白阶用纯白（一级英雄名）；其后绿/蓝/紫/橙
@@ -60,26 +60,26 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 吒：远程清场 ———
   { id: 'nezha', name: '哪吒', chars: ['哪', '吒'], role: '输出', rank: 'T0', skill: 'burst',
-    skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发并灼烧', atk: 4.0, frq: 1.5, rge: 3.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-nezha',
+    skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发', atk: 4.0, frq: 1.5, rge: 3.0, targets: 1.5, skillCd: 10, weight: 1, asset: 'hero-nezha',
     maxTier: 5, atkStyle: '远程清场', family: '吒' },
   { id: 'jinzha', name: '金吒', chars: ['金', '吒'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '砍妖刀', skillDesc: '小范围火焰（过渡）', atk: 2.8, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-nezha',
+    skillName: '砍妖刀', skillDesc: '小范围火焰爆发（过渡）', atk: 2.8, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-nezha',
     maxTier: 3, atkStyle: '远程清场', family: '吒' },
 
   // ——— 红：范围灼烧 ———
-  { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burst',
-    skillName: '三昧真火', skillDesc: '范围灼烧爆发', atk: 3.0, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-honghaier',
+  { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burn',
+    skillName: '三昧真火', skillDesc: '命中后持续灼烧掉血', atk: 3.0, frq: 1.6, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-honghaier',
     maxTier: 5, atkStyle: '范围灼烧', family: '红' },
-  { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '赤焰', skillDesc: '小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
+  { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burn',
+    skillName: '赤焰', skillDesc: '命中后小范围灼烧（过渡）', atk: 2.2, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-honghaier',
     maxTier: 3, atkStyle: '范围灼烧', family: '红' },
 
   // ——— 八：定身控制 ———
   { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
-    skillName: '钉耙震地', skillDesc: '大范围长时间定身', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
+    skillName: '钉耙震地', skillDesc: '大范围长时间定身并轻伤', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '八' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '仙缘定身', skillDesc: '小范围短定身（过渡）', atk: 2.4, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
+    skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 2.4, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-bajie',
     maxTier: 3, atkStyle: '定身控制', family: '八' },
 
   // ——— 牛：冲撞击晕 ———
@@ -87,31 +87,31 @@ export const GENERALS: GeneralDef[] = [
     skillName: '蛮牛冲撞', skillDesc: '近身重创并短晕', atk: 4.8, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '牛角顶', skillDesc: '短距撞击轻晕（过渡）', atk: 3.2, frq: 1.0, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-niumowang',
+    skillName: '牛角顶', skillDesc: '短距撞击轻晕并轻伤（过渡）', atk: 3.2, frq: 1.0, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-niumowang',
     maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
 
   // ——— 铁：狂风击退 ———
   { id: 'tieshan', name: '铁扇', chars: ['铁', '扇'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退', atk: 2.8, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
+    skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退并轻伤', atk: 2.8, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
     maxTier: 5, atkStyle: '狂风击退', family: '铁' },
   { id: 'tiebei', name: '铁背', chars: ['铁', '背'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '铁背开山', skillDesc: '小范围击退（过渡）', atk: 2.2, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tieshan',
+    skillName: '铁背开山', skillDesc: '小范围击退并轻伤（过渡）', atk: 2.2, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tieshan',
     maxTier: 3, atkStyle: '狂风击退', family: '铁' },
 
   // ——— 沙：杖扫击退 ———
   { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 3.2, frq: 1.3, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-shaseng',
+    skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 3.2, frq: 1.3, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-shaseng',
     maxTier: 5, atkStyle: '杖扫击退', family: '沙' },
   { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '流沙涌', skillDesc: '短距轻击退（过渡）', atk: 2.2, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-shaseng',
+    skillName: '流沙涌', skillDesc: '短距轻击退并轻伤（过渡）', atk: 2.2, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-shaseng',
     maxTier: 3, atkStyle: '杖扫击退', family: '沙' },
 
   // ——— 白：单体突进 ———
   { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
-    skillName: '龙牙突进', skillDesc: '单体突进撕咬', atk: 3.6, frq: 1.4, rge: 2.5, targets: 1, skillCd: 9, weight: 1, asset: 'hero-baigujing',
+    skillName: '龙牙突进', skillDesc: '突进撕咬并减速', atk: 3.8, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-baigujing',
     maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '骨雾', skillDesc: '单体减速（前期过渡）', atk: 2.8, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
+    skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 2.8, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
     maxTier: 3, atkStyle: '单体突进', family: '白' },
 
   // ——— 音：辅助治疗 ———
@@ -176,7 +176,7 @@ export function generalPOW(def: GeneralDef, tier: number): number {
 // 羁绊：大圣上场 → 全队攻击 +12%
 export const BOND_GENERAL = 'dasheng';
 export const BOND_NAME = '大圣护法';
-export const BOND_ATK_BONUS = 0.12;
+export const BOND_ATK_BONUS = 0.10;
 
 // 字牌掉落基础池（按 weight 展开）；实际抽字见 word-draw.ts（阶段权重 + 孤儿）
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>

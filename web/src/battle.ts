@@ -141,19 +141,44 @@ export const TUNING = {
   // —— 小 Boss（第 4 波之后、非妖王波：有概率刷出跨地图小头目，各带独立光环技能）——
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.42, // 非 BOSS 波出现小 Boss 的概率
-  miniBossHpMul: 4.2, // 血量相对普通妖倍数（介于精英与妖王之间）
+  miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
   miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口
-  miniBossRadius: 2.8, // 光环作用半径（格）
+  miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 4.0, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
-  knockdownDur: 2.2, // 倒下：武器横躺、无法攻击（秒）
-  hasteDur: 3.5, // 疾风：周围妖怪加速持续（秒）
-  hasteSpdMul: 1.45, // 加速期间移速倍率
-  healPct: 0.14, // 血泉：每次回复目标最大生命的比例
-  // —— AI 清场（AI 对手定期释放的大范围爆发，维持伪竞技对称；玩家侧无此机制）——
+  eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 5 倍，血量需相应更高，否则性价比失衡
+  knockdownDur: 2.0, // 倒下：武器横躺、无法攻击（秒）
+  hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
+  hasteSpdMul: 1.25, // 加速期间移速倍率
+  healPct: 0.08, // 血泉：每次回复目标最大生命的比例
+  // —— AI 清场 / 紧箍咒 ——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
-  aiClearRadius: 2.5, // AI 清场作用半径（格）
-  aiClearDmgMul: 2.6, // AI 清场伤害 = 当前波基础怪血 × 该系数
+  aiClearRadius: 2.5, // AI 清场 / 紧箍咒作用半径（格）
+  aiClearDmgMul: 2.4, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
+  // —— 主动技能数值 ——
+  palmPushCells: 7, // 如来神掌沿路击退格数（不再重置到 0）
+  meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
+  meteorRadius: 1.4, // 主动陨石半径
+  meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
+  jingguDmgMul: 2.4, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
+  atkBuffMul: 1.3, // 主动仙丹攻击倍率（与风火轮对齐，收窄叠乘峰值）
+  frqBuffMul: 1.3, // 主动风火轮攻速倍率
+  freezeStunDur: 1.8, // 冰封定身时长
+  // —— 武将大招控制分档 ——
+  heroStunDurMain: 2.0, // 满5 定身时长
+  heroStunDurTransit: 1.4, // 满3 定身时长
+  heroKnockPushMain: 2, // 满5 击退格数
+  heroKnockPushTransit: 1.5, // 满3 击退格数
+  heroStunDmgMul: 0.8, // 定身附带轻伤（牛魔线另乘冲撞倍率）
+  heroChargeStunDmgMul: 2.0, // 牛魔/青牛定身附带重创
+  heroKnockDmgMul: 1.2, // 击退附带轻伤
+  heroSlowDmgMulMain: 2.8, // 白龙减速附带撕咬（再加强，弥补其单体定位的总量短板）
+  heroSlowDmgMulTransit: 1.5, // 白骨减速附带轻伤
+  heroSlowDur: 3,
+  heroHealSlowDur: 2.5,
+  heroBurnHitMul: 1.6, // 红孩/红袍：大招瞬时命中倍率（低于纯爆发系，余量转入灼烧 DoT）
+  heroBurnDpsMul: 0.6, // 灼烧每秒伤害 = atk × 该系数
+  heroBurnDur: 3, // 灼烧持续时间（秒）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
@@ -204,7 +229,7 @@ export const MINI_BOSS_META: Record<
   blight: { name: '蚀甲妖', skillName: '蚀甲', color: '#c77dff', icon: '☠', desc: '范围内兵器伤害↓' },
   quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '💥', desc: '范围内兵器倒下' },
   gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '💨', desc: '周围妖怪加速' },
-  blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '🩸', desc: '周围妖怪回血' },
+  blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '🩸', desc: '周围妖怪少量回血' },
 };
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
@@ -218,12 +243,13 @@ export const UNIT_STATUS_META: Record<UnitStatusId, { name: string; color: strin
 };
 
 // 妖怪侧状态（武将控制 + 小 Boss 光环）
-export type MonsterStatusId = 'stun' | 'slow' | 'haste' | 'heal';
+export type MonsterStatusId = 'stun' | 'slow' | 'haste' | 'heal' | 'burn';
 export const MONSTER_STATUS_META: Record<MonsterStatusId, { name: string; color: string; icon: string }> = {
   stun: { name: '定身', color: '#ffd34d', icon: '💫' },
   slow: { name: '迟滞', color: '#5bd1ff', icon: '🐌' },
   haste: { name: '疾风', color: '#7dffb0', icon: '💨' },
   heal: { name: '回春', color: '#ff6a7a', icon: '💚' },
+  burn: { name: '灼烧', color: '#ff8a3d', icon: '🔥' },
 };
 
 // 每张地图的专属技能主题：该图 Boss 必带、精英小怪也带同一技能（不再随机三选一）
@@ -308,7 +334,7 @@ export interface PeachTree {
 // 各等级产 1 桃的间隔（秒）：1级20s / 2级10s / 3级5s / 4级3s / 5级2s
 export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
 export const PEACH_TREE_MAX_LEVEL = 5;
-export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
+export const PEACH_TREE_PLANT_INTERVAL = 50; // 蟠桃园每 50s 自动种 1 棵
 
 // 武将的持续状态（按武将 id 记录，拆分再重组可延续升阶进度）
 // level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
@@ -348,6 +374,8 @@ export interface Monster {
   slowT: number; // 被武将减速剩余(秒)：>0 时移速降低
   hasteT: number; // 疾风加速剩余(秒)：>0 时移速提高
   healFlash: number; // 刚被血泉治疗的闪光(1→0)，用于 UI
+  burnT: number; // 灼烧剩余(秒)：>0 时每秒按 burnDps 掉血（红孩/红袍大招）
+  burnDps: number; // 灼烧每秒伤害（施法时写入，刷新取更高值）
 }
 
 /** 弹道/命中特效种类：四兵种 + 英雄悟空金箍棒（原棍兵特效迁至此） */
@@ -1728,7 +1756,7 @@ export class Battle {
     // 后期(第 6 波起)随机某波成为骑兵波：半数怪替换为骑兵（移速翻倍、血量相同）
     this.cavalryWave =
       this.wave >= TUNING.cavalryFromWave && this.rng.next() < TUNING.cavalryWaveChance;
-    // 第 4 波之后、非妖王波：有概率刷出 1 只跨地图小 Boss
+    // 第 4 波之后、非妖王波：有概率刷出 1 只跨地图小 Boss（顶替本波 1 只普通怪出场）
     this.waveMiniBoss = null;
     this.miniBossSpawnIdx = -1;
     if (
@@ -1738,6 +1766,11 @@ export class Battle {
       this.rng.next() < TUNING.miniBossChance
     ) {
       this.waveMiniBoss = MINI_BOSS_KINDS[this.rng.int(MINI_BOSS_KINDS.length)]!;
+      // 二次核算压力账本：小 Boss 比普通怪多出的血量需占预算，否则怪量不变、
+      // 血量却更高，实际压力会悄悄超出规划比例（见 computeWavePressure）
+      this.wavePressure = this.computeWavePressure(this.wave, true);
+      this.spawnRemaining = this.wavePressure.count;
+      this.waveMonsterCount = this.spawnRemaining;
       // 避开首尾：中间段出场，避免与开波/收波节奏抢戏
       const lo = 1;
       const hi = Math.max(lo, this.spawnRemaining - 2);
@@ -1762,9 +1795,9 @@ export class Battle {
     return posAtDistance(this.map, p * this.pathLen);
   }
 
-  // 把玩家场上所有妖怪推回起点（神掌按钮与「如来神掌」主动技能共用）
-  private pushMonstersToStart(): void {
-    for (const m of this.monsters) m.dist = 0;
+  // 把玩家场上所有妖怪沿路击退若干格（如来神掌；不再重置到起点）
+  private pushMonstersBack(cells: number): void {
+    for (const m of this.monsters) m.dist = Math.max(0, m.dist - cells);
   }
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
@@ -1775,8 +1808,8 @@ export class Battle {
 
   private applyItem(id: string): void {
     switch (id) {
-      case 'xiandan': this.mods.atkMul += 0.15; break;
-      case 'fenghuolun': this.mods.frqMul += 0.15; break;
+      case 'xiandan': this.mods.atkMul += 0.10; break;
+      case 'fenghuolun': this.mods.frqMul += 0.10; break;
       case 'fabaofu': this.mods.generalTierDelta += 1; break;
       case 'zhaoxian': this.mods.wordRateBonus += 0.1; break;
       case 'mojin': this.mods.shovelPeach += 6; break;
@@ -1788,7 +1821,7 @@ export class Battle {
       case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
       // 非对称正向：我方收益优于 AI 对手
       case 'tongxin': this.tangsengMaxHP += 3; this.tangsengHP += 3; this.aiTangsengHP += 2; break;
-      case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.12); break;
+      case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.10); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
   }
@@ -1801,7 +1834,7 @@ export class Battle {
     }
   }
 
-  // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
+  // 蟠桃园：每 50s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
   // 仅在 status 为 playing/ready（对局进行中）推进，由 updateFx 调用。
   private updatePeachTrees(dt: number): void {
     if (this.gardenOn) {
@@ -1875,19 +1908,19 @@ export class Battle {
   // 陨石：每波开始时砸向最前妖怪（容错保险）。被动「陨石」道具触发，带 mods.meteor 守卫。
   private castMeteor(): void {
     if (!this.mods.meteor || this.monsters.length === 0) return;
-    this.doMeteor();
+    this.doMeteor(TUNING.meteorPassiveDmgMul);
   }
 
-  // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用
-  private doMeteor(): void {
+  // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
+  private doMeteor(mul: number = TUNING.meteorDmgMul): void {
     if (this.monsters.length === 0) return;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
-    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * 3;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * mul;
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
-      if (Math.hypot(q.c - p.c, q.r - p.r) <= 1.6) { m.hp -= dmg; m.hitFlash = 0.2; }
+      if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) { m.hp -= dmg; m.hitFlash = 0.2; }
     }
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
@@ -2022,13 +2055,18 @@ export class Battle {
     });
   }
 
-  /** 按最优 DPS 规划本波出怪数、Boss 血量与出怪间隔（约 70% 压力） */
-  private computeWavePressure(wave: number): PressurePlan {
+  /**
+   * 按最优 DPS 规划本波出怪数、Boss 血量与出怪间隔（约 70% 压力）。
+   * @param hasMiniBoss 本波是否预定顶替 1 只普通怪刷小 Boss：其额外血量需占预算，
+   *   否则怪量不变但血量更高会让实际压力悄悄超出规划比例（见 planWavePressure）。
+   */
+  private computeWavePressure(wave: number, hasMiniBoss = false): PressurePlan {
     const power = this.estimateOptimalPower();
+    const normalHp = this.normalMonsterHp(wave);
     return planWavePressure({
       wave,
       baselineCount: this.baselineWaveSpawnCount(wave),
-      normalHp: this.normalMonsterHp(wave),
+      normalHp,
       isBossWave: this.isBossWave(wave),
       bossSpd: this.bossSpeed(wave),
       monsterSpd: this.normalMonsterSpeed(wave),
@@ -2036,6 +2074,7 @@ export class Battle {
       difficultySpawnFactor: 1 + 0.07 * (this.effectiveDifficulty(wave) - 1),
       minSpawnInterval: TUNING.spawnIntervalMin,
       power,
+      miniBossExtraHp: hasMiniBoss ? normalHp * (TUNING.miniBossHpMul - 1) : 0,
     });
   }
 
@@ -2079,6 +2118,10 @@ export class Battle {
     const isMiniBoss = miniKind != null;
     const isCavalry = this.cavalryWave && !isBoss && !isMiniBoss && spawnedIdx % 2 === 0;
 
+    // 小 Boss 带独立光环；精英/妖王带地图技能；普通妖无
+    const skill = isMiniBoss ? null : this.rollMonsterSkill(isBoss);
+    const isElite = !isBoss && !isMiniBoss && skill !== null; // 精英=非BOSS/非小Boss但带词条
+
     let hp = this.normalMonsterHp();
     if (isBoss) {
       // Boss 血：当前地图最优重排全路集火伤害 × ~70%；无方案时回退旧倍乘
@@ -2091,6 +2134,9 @@ export class Battle {
       }
     } else if (isMiniBoss) {
       hp *= TUNING.miniBossHpMul;
+    } else if (isElite) {
+      // 精英击杀给普通妖 5 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
+      hp *= TUNING.eliteHpMul;
     }
 
     // 移速倍率：BOSS/小 Boss 略慢、骑兵翻倍（互斥）
@@ -2102,9 +2148,6 @@ export class Battle {
           ? TUNING.cavalrySpdMul
           : 1;
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
-
-    // 小 Boss 带独立光环；精英/妖王带地图技能；普通妖无
-    const skill = isMiniBoss ? null : this.rollMonsterSkill(isBoss);
     const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
     const makeOne = (dist: number, spd: number): Monster => ({
       id: this.nextMonsterId++,
@@ -2125,6 +2168,8 @@ export class Battle {
       slowT: 0,
       hasteT: 0,
       healFlash: 0,
+      burnT: 0,
+      burnDps: 0,
     });
     const off = Math.min(0, distOffset);
     this.monsters.push(
@@ -2338,8 +2383,8 @@ export class Battle {
         .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p))
         .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
       if (inRange.length === 0) continue;
-      // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益临时抬高攻击
-      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (this.atkBuffT > 0 ? this.atkBuffMul : 1);
+      // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊抬高攻击
+      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
       const dmg = damage(stat.atk * atkMul); // 道具增伤 + 减益
       const color = this.unitColor(u.type);
       let hitCount = 0;
@@ -2510,24 +2555,58 @@ export class Battle {
         break;
       }
       case 'stun': {
-        for (const t of inRange) t.m.stunT = Math.max(t.m.stunT, 1.8);
+        const dur = g.def.maxTier === 5 ? TUNING.heroStunDurMain : TUNING.heroStunDurTransit;
+        const isCharge = g.def.id === 'niumowang' || g.def.id === 'qingniu';
+        const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
+        for (const t of inRange) {
+          t.m.stunT = Math.max(t.m.stunT, dur);
+          t.m.hp -= damage(atk * dmgMul);
+          t.m.hitFlash = 0.12;
+        }
         break;
       }
       case 'knock': {
-        for (const t of inRange) t.m.dist = Math.max(this.entranceDist, t.m.dist - 2);
+        const push = g.def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
+        for (const t of inRange) {
+          t.m.dist = Math.max(this.entranceDist, t.m.dist - push);
+          t.m.hp -= damage(atk * TUNING.heroKnockDmgMul);
+          t.m.hitFlash = 0.12;
+        }
         break;
       }
       case 'slow': {
-        for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, 3);
+        const dmgMul = g.def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
+        for (const t of inRange) {
+          t.m.slowT = Math.max(t.m.slowT, TUNING.heroSlowDur);
+          t.m.hp -= damage(atk * dmgMul);
+          t.m.hitFlash = 0.12;
+        }
         break;
       }
       case 'heal': {
-        for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, 2.5);
+        for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, TUNING.heroHealSlowDur);
         if (!this.healUsedThisWave && this.tangsengHP < this.tangsengMaxHP) {
           this.tangsengHP += 1;
           this.healUsedThisWave = true;
-          this.message = '观音甘露：唐僧回复 1 血';
+          this.message = `${g.def.name}甘露：唐僧回复 1 血`;
         }
+        break;
+      }
+      case 'burn': {
+        // 红孩/红袍：瞬时命中较轻，余量转为持续灼烧（真正的 DoT，区别于哪吒/金吒的纯爆发）
+        for (const t of inRange) {
+          t.m.hp -= damage(atk * TUNING.heroBurnHitMul);
+          t.m.hitFlash = 0.15;
+          t.m.burnT = Math.max(t.m.burnT, TUNING.heroBurnDur);
+          t.m.burnDps = Math.max(t.m.burnDps, atk * TUNING.heroBurnDpsMul);
+        }
+        break;
+      }
+      case 'none':
+        break;
+      default: {
+        const _exhaustive: never = g.def.skill;
+        void _exhaustive;
         break;
       }
     }
@@ -2734,29 +2813,29 @@ export class Battle {
       case 'palm':
         // 推回前在每只妖怪处爆冲击环，让"推"看得见
         for (const m of this.monsters) { const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' }); }
-        this.pushMonstersToStart();
-        this.message = '如来神掌！妖怪被推回起点';
+        this.pushMonstersBack(TUNING.palmPushCells);
+        this.message = `如来神掌！妖怪被击退 ${TUNING.palmPushCells} 格`;
         this.emit('palm');
         break;
       case 'meteor':
-        this.doMeteor();
+        this.doMeteor(TUNING.meteorDmgMul);
         this.message = '天降陨石！';
         this.emit('ult');
         break;
       case 'atkBuff':
-        this.atkBuffT = 5; this.atkBuffMul = 1.5;
+        this.atkBuffT = 5; this.atkBuffMul = TUNING.atkBuffMul;
         for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ff7a3c' }); // 己方单位泛红光
         this.message = '仙丹！全体攻击提升';
         this.emit('item');
         break;
       case 'frqBuff':
-        this.frqBuffT = 5; this.frqBuffMul = 1.4;
+        this.frqBuffT = 5; this.frqBuffMul = TUNING.frqBuffMul;
         for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ffd76a' }); // 己方单位泛金光
         this.message = '风火轮！全体攻速提升';
         this.emit('item');
         break;
       case 'freeze':
-        for (const m of this.monsters) { m.stunT = Math.max(m.stunT, 2); const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' }); } // 每只妖怪冰霜爆
+        for (const m of this.monsters) { m.stunT = Math.max(m.stunT, TUNING.freezeStunDur); const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' }); } // 每只妖怪冰霜爆
         this.message = '冰封定身！';
         this.emit('item');
         break;
@@ -2778,8 +2857,8 @@ export class Battle {
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
     const center = posAtDistance(this.map, front.dist);
-    // 伤害以"当前波基础怪血 × 系数"封顶，保证不喧宾夺主，不改动武将基础数值
-    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.difficultyMul * TUNING.aiClearDmgMul;
+    // 伤害以"当前波基础怪血 × 有效难度 × 系数"封顶，与陨石同一缩放基线
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * TUNING.jingguDmgMul;
     for (const m of this.monsters) {
       const p = posAtDistance(this.map, m.dist);
       if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.aiClearRadius) {
@@ -2798,6 +2877,11 @@ export class Battle {
     for (const m of this.monsters) {
       m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
+      if (m.burnT > 0) {
+        m.hp -= m.burnDps * dt;
+        m.burnT = Math.max(0, m.burnT - dt);
+        if (m.burnT <= 0) m.burnDps = 0;
+      }
       if (m.hp <= 0) {
         const isElite = !m.isBoss && !m.isMiniBoss && m.skill !== null; // 精英=非BOSS/非小Boss但带词条
         const base = m.isBoss

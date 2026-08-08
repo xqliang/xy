@@ -254,11 +254,18 @@ export interface PressurePlanInput {
   windowSec?: number;
   fromWave?: number;
   minSpawnInterval?: number;
+  /**
+   * 本波若预定刷 1 只小 Boss，其相对普通怪多出的血量（miniBossHp − normalHp）。
+   * 小 Boss 是从原定怪量中「顶替」1 只普通怪出场（不额外加量），若不占预算，
+   * 会导致本波实际的怪血总量超出压力比规划值 —— 与正式 Boss 波扣 bossTank 同一账本口径。
+   */
+  miniBossExtraHp?: number;
 }
 
 export interface PressurePlan {
   count: number;
-  bossHp: number | null;
+  /** 妖王/双雄召唤 Boss 血量参考（始终有值） */
+  bossHp: number;
   optimalDps: number;
   trashBudget: number;
   /** 本波出怪间隔（秒）；基础节奏 + 门口防秒压间隔（叠怪密度见 spawnBatchCap） */
@@ -301,9 +308,9 @@ export function planSpawnInterval(input: {
 
 /**
  * 按最优输出 × 压力比规划本波出怪数、Boss 血量与出怪间隔。
- * - Boss 血 ≈ 全路集火伤害 × pressure（走完路约 70% 血量压力）
+ * - Boss 血参考 ≈ 全路集火伤害 × pressure（正式妖王波与双雄召唤共用）
  * - 第 fromWave 波起：窗口内总血预算 = dps × window × pressure；
- *   有 Boss 时先扣 Boss 血，剩余预算给小怪；数量不低于 baseline。
+ *   正式 Boss 波先扣 Boss 血，剩余预算给小怪；数量不低于 baseline。
  * - 出怪间隔：基础节奏 + 门口 DPS 防灭队；同批随机 1..N 叠怪见 spawnBatchCap。
  */
 export function planWavePressure(input: PressurePlanInput): PressurePlan {
@@ -324,11 +331,9 @@ export function planWavePressure(input: PressurePlanInput): PressurePlan {
     minInterval: input.minSpawnInterval,
   });
 
-  let bossHp: number | null = null;
-  if (isBossWave) {
-    const pathDmg = power.pathDamage(input.bossSpd);
-    bossHp = Math.max(normalHp, pathDmg * ratio);
-  }
+  // 始终给出 Boss 血量参考，供正式妖王波与双雄召唤共用（消灭静态×8~14 双轨）
+  const pathDmg = power.pathDamage(input.bossSpd);
+  const bossHp = Math.max(normalHp, pathDmg * ratio);
 
   if (input.wave < fromWave) {
     return { count: baselineCount, bossHp, optimalDps, trashBudget: 0, spawnInterval };
@@ -336,10 +341,15 @@ export function planWavePressure(input: PressurePlanInput): PressurePlan {
 
   const budget = optimalDps * window * ratio;
   let trashBudget = budget;
-  if (bossHp != null) {
+  if (isBossWave) {
     // Boss 占用预算：窗口内它能抗的输出上限为 dps×window，实际按血量扣
     const bossTank = Math.min(bossHp, optimalDps * window);
     trashBudget = Math.max(0, budget - bossTank);
+  } else if (input.miniBossExtraHp && input.miniBossExtraHp > 0) {
+    // 小 Boss 顶替 1 只普通怪出场，多出的血量同样先从预算扣，
+    // 否则「怪量不变但血量更高」会让本波实际压力悄悄超出规划比例
+    const miniTank = Math.min(input.miniBossExtraHp, optimalDps * window);
+    trashBudget = Math.max(0, budget - miniTank);
   }
 
   const hp = Math.max(1, normalHp);

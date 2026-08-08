@@ -58,6 +58,33 @@ describe('mini-boss spawn & skills', () => {
     expect(seen).toBe(true);
   });
 
+  it('小 Boss 排定后，本波压力账本会二次核算并扣除其多出的血量', () => {
+    const origChance = TUNING.miniBossChance;
+    (TUNING as { miniBossChance: number }).miniBossChance = 1;
+    try {
+      let checked = false;
+      for (let seed = 1; seed < 60 && !checked; seed++) {
+        const b = new Battle(seed);
+        for (let w = 1; w <= 15 && !checked; w++) {
+          (b as unknown as { waveActive: boolean }).waveActive = false;
+          (b as unknown as { status: string }).status = 'ready';
+          b.startNextWave();
+          const kind = (b as unknown as { waveMiniBoss: string | null }).waveMiniBoss;
+          if (kind == null) continue;
+          checked = true;
+          const withMini = (b as unknown as { wavePressure: { trashBudget: number; count: number } }).wavePressure;
+          const withoutMini = (
+            b as unknown as { computeWavePressure: (wave: number, hasMiniBoss?: boolean) => { trashBudget: number; count: number } }
+          ).computeWavePressure(w, false);
+          expect(withMini.trashBudget).toBeLessThanOrEqual(withoutMini.trashBudget);
+        }
+      }
+      expect(checked).toBe(true);
+    } finally {
+      (TUNING as { miniBossChance: number }).miniBossChance = origChance;
+    }
+  });
+
   it('quake mini-boss can knock down nearby weapons', () => {
     const map = MAPS[0]!;
     const b = new Battle(1, 1, map);

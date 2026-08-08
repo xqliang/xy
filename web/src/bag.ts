@@ -202,7 +202,7 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
     ? `+${weaponRangeBonusGrids(MAX_WEAPON_TIER)}格`
     : `+${Math.round(weaponPctBonus(MAX_WEAPON_TIER) * 100)}%`;
   const bonusExplain = w.stat === 'rge'
-    ? `范围每升一阶 +0.5 格（金阶满 ${maxBonus}）`
+    ? `范围每升一阶 +0.35 格（金阶满 ${maxBonus}）`
     : `随品质提升（金阶满 ${maxBonus}）`;
   const usage =
     `专属「${gname}」神兵，装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +

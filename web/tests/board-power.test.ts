@@ -177,7 +177,7 @@ describe('planWavePressure', () => {
       ...spawnOpts,
     });
     expect(p.count).toBe(12);
-    expect(p.bossHp).toBeNull();
+    expect(p.bossHp).toBeCloseTo(power.pathDamage(0.4) * PRESSURE_RATIO, 5);
     expect(p.spawnInterval).toBeCloseTo(1.25, 5);
   });
 
@@ -193,6 +193,36 @@ describe('planWavePressure', () => {
     });
     const budget = 100 * PRESSURE_WINDOW_SEC * PRESSURE_RATIO; // 700
     expect(p.count).toBe(Math.max(5, Math.ceil(budget / 50)));
+  });
+
+  it('小 Boss 顶替 1 只普通怪出场：多出的血量占预算，避免实际压力超出规划比例', () => {
+    const normalHp = 50;
+    const noMini = planWavePressure({
+      wave: 4,
+      baselineCount: 1,
+      normalHp,
+      isBossWave: false,
+      bossSpd: 0.4,
+      power,
+      ...spawnOpts,
+    });
+    const withMini = planWavePressure({
+      wave: 4,
+      baselineCount: 1,
+      normalHp,
+      isBossWave: false,
+      bossSpd: 0.4,
+      power,
+      miniBossExtraHp: normalHp * (TUNING.miniBossHpMul - 1),
+      ...spawnOpts,
+    });
+    // 扣除小 Boss 多出的血量后，预算与由此推出的数量应相应下降
+    expect(withMini.trashBudget).toBeLessThan(noMini.trashBudget);
+    expect(withMini.count).toBeLessThanOrEqual(noMini.count);
+    // 换算成「怪血总量」应大致对齐（不再因为小 Boss 而超出规划预算太多）
+    const noMiniTotalHp = noMini.count * normalHp;
+    const withMiniTotalHp = (withMini.count - 1) * normalHp + normalHp * TUNING.miniBossHpMul;
+    expect(withMiniTotalHp).toBeLessThanOrEqual(noMiniTotalHp + normalHp);
   });
 
   it('Boss 血量 ≈ 全路集火伤害 × 70%，且数量综合 Boss 抗伤后仍 ≥ 保底', () => {

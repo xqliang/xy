@@ -34,6 +34,8 @@ function eliteMonster(partial: Partial<Monster> & { dist: number }): Monster {
     slowT: 0,
     hasteT: 0,
     healFlash: 0,
+    burnT: 0,
+    burnDps: 0,
     ...partial,
   };
 }

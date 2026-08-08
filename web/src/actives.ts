@@ -4,12 +4,12 @@
 // 本文件只放纯数据/类型，不 import Battle，避免与 battle.ts 循环依赖。
 
 // 技能效果种类：
-// - palm    如来神掌：把场上所有妖怪推回起点
-// - meteor  天降陨石：对最靠前的妖怪群造成大额伤害
+// - palm    如来神掌：把场上所有妖怪沿路击退若干格
+// - meteor  天降陨石：对最靠前的妖怪群造成波血比例伤害
 // - atkBuff 仙丹：短时间全体攻击力提升
 // - frqBuff 风火轮：短时间全体攻速提升
 // - freeze  冰封定身：全体妖怪短暂定身
-// - jinggu  紧箍咒：以最前妖怪为中心的大范围 AOE 爆发（复用原英雄绝招效果）
+// - jinggu  紧箍咒：以最前妖怪为中心的大范围 AOE 爆发
 export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' | 'jinggu';
 
 export interface ActiveSkillDef {
@@ -27,20 +27,20 @@ export interface ActiveSkillDef {
 // 最多可装备（购买）的主动技能数
 export const MAX_EQUIPPED_ACTIVES = 2;
 
-// 主动技能池（数值为初版估计，后续用 tools/sweep*.mjs 做平衡）
+// 主动技能池（数值经平衡修订：压掌/陨石节奏，统一大招缩放）
 export const ACTIVE_SKILLS: ActiveSkillDef[] = [
-  { id: 'act_palm', name: '如来神掌', icon: '🖐', cd: 60, cost: 60, effect: 'palm',
-    desc: '把场上所有妖怪推回起点（绝境救命）' },
-  { id: 'act_meteor', name: '天降陨石', icon: '☄', cd: 18, cost: 60, effect: 'meteor',
-    desc: '对最前方妖怪群砸下大额伤害' },
-  { id: 'act_atk', name: '仙丹', icon: '🔴', cd: 20, cost: 50, effect: 'atkBuff',
-    desc: '5 秒内全体武将攻击 +50%' },
-  { id: 'act_frq', name: '风火轮', icon: '🔥', cd: 20, cost: 50, effect: 'frqBuff',
-    desc: '5 秒内全体武将攻速 +40%' },
-  { id: 'act_freeze', name: '冰封定身', icon: '❄', cd: 22, cost: 70, effect: 'freeze',
-    desc: '全体妖怪定身 2 秒' },
-  { id: 'act_jinggu', name: '紧箍咒', icon: '💫', cd: 60, cost: 70, effect: 'jinggu',
-    desc: '以最前妖怪为中心大范围爆发伤害' },
+  { id: 'act_palm', name: '如来神掌', icon: '🖐', cd: 75, cost: 65, effect: 'palm',
+    desc: '把场上所有妖怪沿路击退 7 格（绝境续命，不再重置到起点）' },
+  { id: 'act_meteor', name: '天降陨石', icon: '☄', cd: 28, cost: 60, effect: 'meteor',
+    desc: '对最前方妖怪群砸下波血×2.2 的伤害（半径 1.4）' },
+  { id: 'act_atk', name: '仙丹', icon: '🔴', cd: 22, cost: 50, effect: 'atkBuff',
+    desc: '5 秒内全体攻击 +30%' },
+  { id: 'act_frq', name: '风火轮', icon: '🔥', cd: 22, cost: 50, effect: 'frqBuff',
+    desc: '5 秒内全体攻速 +30%' },
+  { id: 'act_freeze', name: '冰封定身', icon: '❄', cd: 24, cost: 70, effect: 'freeze',
+    desc: '全体妖怪定身 1.8 秒' },
+  { id: 'act_jinggu', name: '紧箍咒', icon: '💫', cd: 55, cost: 70, effect: 'jinggu',
+    desc: '以最前妖怪为中心大范围爆发（波血×2.4，半径 2.5）' },
 ];
 
 export function activeById(id: string): ActiveSkillDef | undefined {

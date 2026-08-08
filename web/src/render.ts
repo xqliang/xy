@@ -336,13 +336,15 @@ function monsterStatusItems(m: {
   slowT: number;
   hasteT: number;
   healFlash: number;
+  burnT: number;
 }): { icon: string; color: string; name: string }[] {
-  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal'];
+  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal', 'burn'];
   const on: Record<MonsterStatusId, boolean> = {
     stun: m.stunT > 0,
     slow: m.slowT > 0,
     haste: m.hasteT > 0,
     heal: m.healFlash > 0.05,
+    burn: m.burnT > 0,
   };
   return order.filter((id) => on[id]).map((id) => MONSTER_STATUS_META[id]);
 }
@@ -384,13 +386,15 @@ function monsterStatusEntries(m: {
   slowT: number;
   hasteT: number;
   healFlash: number;
+  burnT: number;
 }): { meta: (typeof MONSTER_STATUS_META)[MonsterStatusId]; remain: number }[] {
-  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal'];
+  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal', 'burn'];
   const timers: Record<MonsterStatusId, number> = {
     stun: m.stunT,
     slow: m.slowT,
     haste: m.hasteT,
     heal: m.healFlash > 0.05 ? m.healFlash / 2.5 : 0,
+    burn: m.burnT,
   };
   return order
     .filter((id) => timers[id] > 0)
@@ -1891,6 +1895,7 @@ function drawMonsterAt(
     slowT?: number;
     hasteT?: number;
     healFlash?: number;
+    burnT?: number;
   },
   mapId: string,
   trailDir = 1,
@@ -2030,12 +2035,13 @@ function drawMonsterAt(
     drawStatusChip(ctx, x, y - rad - 14, ringMeta.icon, ringMeta.color, Math.max(8, rad * 0.55));
     ctx.restore();
   }
-  // 妖怪身上的控制/增益状态（定身/减速/疾风/回春）
+  // 妖怪身上的控制/增益状态（定身/减速/疾风/回春/灼烧）
   const mStatuses = monsterStatusItems({
     stunT: m.stunT ?? 0,
     slowT: m.slowT ?? 0,
     hasteT: m.hasteT ?? 0,
     healFlash: m.healFlash ?? 0,
+    burnT: m.burnT ?? 0,
   });
   if (mStatuses.length > 0) {
     drawStatusRow(ctx, x, y + rad0 + 8, mStatuses, 7);

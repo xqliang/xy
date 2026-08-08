@@ -5,12 +5,12 @@ import { Battle } from '../src/battle';
 const make = (passives: string[]) => new Battle(1, 1, undefined, undefined, undefined, [], passives);
 
 describe('被动技能开局注入', () => {
-  it('仙丹：全体攻击 +15%', () => {
-    expect(make(['xiandan']).mods.atkMul).toBeCloseTo(1.15, 5);
+  it('仙丹：全体攻击 +10%', () => {
+    expect(make(['xiandan']).mods.atkMul).toBeCloseTo(1.10, 5);
   });
 
-  it('风火轮符：全体攻速 +15%', () => {
-    expect(make(['fenghuolun']).mods.frqMul).toBeCloseTo(1.15, 5);
+  it('风火轮符：全体攻速 +10%', () => {
+    expect(make(['fenghuolun']).mods.frqMul).toBeCloseTo(1.10, 5);
   });
 
   it('同心咒：我方唐僧 +3、对手唐僧 +2', () => {

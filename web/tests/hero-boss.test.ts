@@ -73,6 +73,25 @@ describe('双雄引妖王', () => {
     expect(b.monsters.some((m) => m.isBoss && !m.isMiniBoss)).toBe(true);
   });
 
+  it('双雄召唤 Boss 血量走压力公式（非静态×8~14）', () => {
+    const b = new Battle(11);
+    placeHeroes(b, 2);
+    for (let i = 0; i < 20; i++) {
+      b.startNextWave();
+      if (!b.isBossWave(b.wave)) break;
+      b.forceClearWaveForTest();
+    }
+    expect(b.isBossWave(b.wave)).toBe(false);
+    const planned = (b as unknown as { wavePressure: { bossHp: number } | null }).wavePressure?.bossHp;
+    expect(planned).toBeGreaterThan(0);
+    (b as unknown as { spawnRemaining: number }).spawnRemaining = 50;
+    (b as unknown as { heroBossTimer: number }).heroBossTimer = 0.01;
+    b.step(0.05);
+    const boss = b.monsters.find((m) => m.isBoss);
+    expect(boss).toBeTruthy();
+    expect(boss!.maxHp).toBeCloseTo(planned!, 5);
+  });
+
   it('英雄不足时重置计时，再凑齐后需重新等满间隔', () => {
     const b = new Battle(5);
     placeHeroes(b, 2);
