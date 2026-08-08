@@ -190,4 +190,19 @@ export function ultTypeOf(def: GeneralDef): UltType {
   return def.skill === 'ranged' ? 'crit' : 'aoe';
 }
 
+/** 普攻特效时长：高阶更慢一拍、更有存在感（可按英雄微调 base） */
+const HERO_FX_TTL_BASE: Partial<Record<string, number>> = {
+  dasheng: 0.58,
+  tieshan: 0.44,
+  liusha: 0.4,
+  nezha: 0.38,
+  niumowang: 0.36,
+};
+
+export function heroAttackFxTtl(def: GeneralDef, tier: number): number {
+  const s = 0.55 + 0.45 * ((tier - 1) / Math.max(1, def.maxTier - 1));
+  const base = HERO_FX_TTL_BASE[def.id] ?? 0.34;
+  return base + (tier - 1) * 0.055 * s;
+}
+
 export const CRIT_MULT = 1.5;

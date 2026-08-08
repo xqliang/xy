@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -3251,6 +3251,432 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
+/** 武将普攻规模：白阶偏小，满阶拉满（过渡将 maxTier=3 也归一化） */
+function heroFxScale(tier: number, maxTier: number): number {
+  return 0.58 + 0.42 * ((tier - 1) / Math.max(1, maxTier - 1));
+}
+
+/** 铁扇/流沙等：沿弹道移动的迷你旋涡 */
+function drawHeroFxTornado(
+  ctx: CanvasRenderingContext2D,
+  ax: number, ay: number, tx: number, ty: number,
+  prog: number, tier: number, sc: number, fade: number,
+  palette: { stroke: string; debris: string; core: string },
+) {
+  const cx = ax + (tx - ax) * prog;
+  const cy = ay + (ty - ay) * prog;
+  const height = CELL * (0.5 + sc * 0.42);
+  const arms = 2 + Math.min(2, tier - 1);
+  const spins = prog * (4 + tier * 1.5);
+  ctx.globalAlpha = fade * (0.45 + sc * 0.45);
+  for (let arm = 0; arm < arms; arm++) {
+    ctx.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24;
+      const yOff = -height * (1 - t);
+      const wobble = Math.sin(t * Math.PI * 4 + spins + arm * 2.1) * CELL * (0.08 + sc * 0.06) * (1 - t * 0.5);
+      const px = cx + wobble + Math.cos(spins + t * 6 + arm) * CELL * (0.05 + t * 0.12 * sc);
+      const py = cy + yOff;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = palette.stroke;
+    ctx.lineWidth = 1.5 + tier * 0.35;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+  const n = 3 + tier;
+  for (let i = 0; i < n; i++) {
+    const a = spins * 2 + i * (Math.PI * 2 / n);
+    const r = CELL * (0.12 + sc * 0.08);
+    ctx.globalAlpha = fade * (0.55 + sc * 0.35);
+    ctx.fillStyle = palette.debris;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * r * 2, cy - height * 0.4 + Math.sin(a) * r, 2 + tier * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = fade * sc * 0.35;
+  ctx.fillStyle = palette.core;
+  ctx.beginPath();
+  ctx.arc(cx, cy - height * 0.55, CELL * (0.06 + sc * 0.05), 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawHeroAttackFx(
+  ctx: CanvasRenderingContext2D,
+  f: HitFx,
+  ax: number, ay: number,
+  tx: number, ty: number,
+  prog: number,
+  ang: number,
+  tier: number,
+  heroId: string,
+  maxTier: number,
+) {
+  const sc = heroFxScale(tier, maxTier);
+  const fade = prog < 0.72 ? 1 : Math.max(0, 1 - (prog - 0.72) / 0.28);
+  ctx.save();
+  switch (heroId) {
+    case 'dasheng':
+      drawStaffBoomerang(ctx, ax, ay, tx, ty, prog, tier);
+      break;
+    case 'damang': {
+      const snap = Math.min(1, prog / 0.28);
+      const ease = 1 - Math.pow(1 - snap, 3);
+      const side = ax > tx ? 1 : -1;
+      const r = CELL * (0.38 + sc * 0.16);
+      ctx.translate(tx, ty);
+      ctx.globalAlpha = fade * (0.5 + sc * 0.5);
+      ctx.strokeStyle = '#6ecf78';
+      ctx.lineWidth = 2.5 + tier * 0.55;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 0, r, -Math.PI / 2 + side * 0.8, -Math.PI / 2 - side * 0.9 * ease, side > 0);
+      ctx.stroke();
+      if (ease > 0.5) {
+        ctx.globalAlpha = fade * sc * 0.45;
+        ctx.fillStyle = '#3a8a48';
+        ctx.beginPath();
+        ctx.arc(Math.cos(-Math.PI / 2 - side * 0.9 * ease) * r * 0.85, Math.sin(-Math.PI / 2 - side * 0.9 * ease) * r * 0.85, 3 + tier * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'erlang': {
+      const grow = easeOut(Math.min(1, prog / 0.45));
+      const w = (2.5 + tier * 1.2) * sc * grow;
+      const h = CELL * (1.2 + sc * 0.9);
+      ctx.globalAlpha = fade * (0.55 + sc * 0.45);
+      const grad = ctx.createLinearGradient(tx, ty - h, tx, ty + CELL * 0.25);
+      grad.addColorStop(0, 'rgba(180,235,255,0)');
+      grad.addColorStop(0.65, 'rgba(140,210,255,0.75)');
+      grad.addColorStop(1, f.color);
+      ctx.fillStyle = grad;
+      ctx.fillRect(tx - w / 2, ty - h, w, h + CELL * 0.25);
+      if (tier >= 2) {
+        ctx.globalAlpha = fade * sc * 0.5;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.ellipse(tx, ty - h * 0.75, w * 0.35, CELL * 0.12 * sc, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'niulang': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rad = CELL * (0.1 + sc * 0.08);
+      ctx.globalAlpha = fade * sc * 0.55;
+      ctx.strokeStyle = '#c8d8ff';
+      ctx.lineWidth = 1.2 + tier * 0.3;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * 2);
+      g.addColorStop(0, 'rgba(255,248,220,0.9)');
+      g.addColorStop(0.5, 'rgba(180,200,255,0.5)');
+      g.addColorStop(1, 'rgba(120,160,255,0)');
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, rad * 1.6, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'nezha': {
+      const jab = Math.sin(Math.min(1, prog / 0.5) * Math.PI);
+      const dist = Math.hypot(tx - ax, ty - ay);
+      const tipD = dist * (0.15 + 0.85 * jab);
+      const shaft = CELL * (0.38 + sc * 0.22);
+      ctx.globalAlpha = fade;
+      ctx.translate(ax, ay);
+      ctx.rotate(ang);
+      ctx.strokeStyle = '#8a4a18';
+      ctx.lineWidth = 2 + tier * 0.45;
+      ctx.beginPath(); ctx.moveTo(tipD - shaft, 0); ctx.lineTo(tipD - 6, 0); ctx.stroke();
+      ctx.fillStyle = '#ffcf5a';
+      ctx.strokeStyle = '#ff6a20';
+      ctx.lineWidth = 1;
+      const hl = 8 + tier * 2.2 * sc;
+      ctx.beginPath();
+      ctx.moveTo(tipD, 0);
+      ctx.lineTo(tipD - hl * 0.5, -2.5 - tier * 0.4);
+      ctx.lineTo(tipD - hl, 0);
+      ctx.lineTo(tipD - hl * 0.5, 2.5 + tier * 0.4);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      if (jab > 0.2) {
+        ctx.globalAlpha = fade * jab * sc * 0.5;
+        ctx.strokeStyle = '#ff9040';
+        ctx.lineWidth = 3 + tier * 0.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(tipD - shaft * 0.3, 0); ctx.lineTo(tipD + 4, 0); ctx.stroke();
+      }
+      break;
+    }
+    case 'jinzha': {
+      const snap = Math.min(1, prog / 0.22);
+      const ease = 1 - Math.pow(1 - snap, 3.4);
+      const side = ax > tx ? 1 : -1;
+      const daoS = CELL * (0.42 + sc * 0.12);
+      const startAng = -Math.PI / 2 + side * 0.65;
+      const chopAng = startAng - side * Math.PI * 0.55 * ease;
+      ctx.translate(tx, ty);
+      ctx.globalAlpha = fade * (0.55 + sc * 0.45);
+      ctx.strokeStyle = '#ffd878';
+      ctx.lineWidth = 2 + tier * 0.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(0, 0, daoS, startAng, chopAng, side > 0); ctx.stroke();
+      break;
+    }
+    case 'honghaier': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rad = CELL * (0.18 + sc * 0.14);
+      ctx.globalAlpha = fade * sc * 0.45;
+      ctx.strokeStyle = '#ff6020';
+      ctx.lineWidth = 2.5 + tier * 0.55;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * (1.4 + tier * 0.2));
+      g.addColorStop(0, '#fff6c8');
+      g.addColorStop(0.4, '#ff6020');
+      g.addColorStop(1, 'rgba(255,20,10,0)');
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, rad * (1.4 + tier * 0.2), 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'hongpao': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rad = CELL * (0.1 + sc * 0.06);
+      ctx.globalAlpha = fade * sc * 0.5;
+      ctx.strokeStyle = '#ff9060';
+      ctx.lineWidth = 1.5 + tier * 0.35;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * 1.5);
+      g.addColorStop(0, 'rgba(255,200,140,0.85)');
+      g.addColorStop(1, 'rgba(255,80,30,0)');
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, rad * 1.5, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'bajie': {
+      const snap = Math.min(1, prog / 0.24);
+      const ease = 1 - Math.pow(1 - snap, 3);
+      const side = ax > tx ? 1 : -1;
+      const r = CELL * (0.48 + sc * 0.2);
+      const a0 = -Math.PI / 2 + side * 0.6;
+      const a1 = a0 - side * Math.PI * 0.55 * ease;
+      ctx.translate(tx, ty);
+      ctx.globalAlpha = fade * (0.5 + sc * 0.5);
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 2.5 + tier * 0.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(0, 0, r, a0, a1, side > 0); ctx.stroke();
+      for (let t = 0; t < 3 + tier; t++) {
+        const ta = a0 + (a1 - a0) * (t + 0.5) / (3 + tier);
+        ctx.globalAlpha = fade * sc * 0.5;
+        ctx.strokeStyle = '#fff8e0';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ta) * r * 0.7, Math.sin(ta) * r * 0.7);
+        ctx.lineTo(Math.cos(ta) * r * 1.05, Math.sin(ta) * r * 1.05);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'xiaojie': {
+      const ring = easeOut(Math.min(1, prog / 0.55));
+      const rad = CELL * (0.15 + ring * (0.35 + sc * 0.25));
+      ctx.translate(tx, ty);
+      ctx.globalAlpha = fade * (1 - ring * 0.65);
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 1.5 + tier * 0.4;
+      ctx.beginPath(); ctx.ellipse(0, CELL * 0.1, rad, rad * 0.35, 0, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case 'niumowang': {
+      const dash = easeOut(Math.min(1, prog / 0.4));
+      const x = ax + (tx - ax) * dash;
+      const y = ay + (ty - ay) * dash;
+      ctx.globalAlpha = fade;
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 3.5 + tier * 0.85;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      ctx.fillStyle = '#e8dcc8';
+      ctx.strokeStyle = '#6a5030';
+      ctx.lineWidth = 1.2;
+      const horn = CELL * (0.14 + sc * 0.1);
+      ctx.beginPath();
+      ctx.moveTo(horn * 1.2, -horn * 0.9);
+      ctx.lineTo(horn * 2.4, 0);
+      ctx.lineTo(horn * 1.2, horn * 0.9);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      for (let i = 0; i < 3 + tier; i++) {
+        const t = i / (3 + tier);
+        ctx.globalAlpha = fade * (1 - t) * 0.4;
+        ctx.fillStyle = 'rgba(180,150,110,0.6)';
+        ctx.beginPath();
+        ctx.arc(-horn * t * 3, (Math.random() - 0.5) * horn, 2 + tier * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'qingniu': {
+      const jab = Math.sin(Math.min(1, prog / 0.48) * Math.PI);
+      const dist = Math.hypot(tx - ax, ty - ay);
+      const tipD = dist * (0.2 + 0.8 * jab);
+      ctx.globalAlpha = fade;
+      ctx.translate(ax, ay);
+      ctx.rotate(ang);
+      ctx.strokeStyle = '#7a9a70';
+      ctx.lineWidth = 2 + tier * 0.45;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tipD - CELL * 0.35, 0); ctx.lineTo(tipD + 2, 0); ctx.stroke();
+      ctx.fillStyle = '#c8e0b8';
+      ctx.beginPath();
+      ctx.moveTo(tipD + 4, 0);
+      ctx.lineTo(tipD - 4, -3 - tier * 0.3);
+      ctx.lineTo(tipD - 4, 3 + tier * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'tieshan':
+      drawHeroFxTornado(ctx, ax, ay, tx, ty, prog, tier, sc, fade, {
+        stroke: `rgba(142,230,192,${0.35 + sc * 0.35})`,
+        debris: 'rgba(180,255,220,0.7)',
+        core: 'rgba(120,220,180,0.45)',
+      });
+      break;
+    case 'tiebei': {
+      const wave = easeOut(Math.min(1, prog / 0.5));
+      const w = CELL * (0.35 + wave * (0.55 + sc * 0.35));
+      const h = CELL * (0.12 + sc * 0.08);
+      ctx.translate(tx, ty);
+      ctx.rotate(ang);
+      ctx.globalAlpha = fade * (1 - wave * 0.5);
+      ctx.fillStyle = `rgba(120,130,140,${0.45 + sc * 0.35})`;
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.strokeStyle = '#d0d8e0';
+      ctx.lineWidth = 1.5 + tier * 0.35;
+      ctx.strokeRect(-w / 2, -h / 2, w, h);
+      break;
+    }
+    case 'shaseng': {
+      const sweep = easeOut(Math.min(1, prog / 0.48));
+      const r = CELL * (0.52 + sc * 0.38);
+      const a0 = ang - Math.PI * 0.55;
+      const a1 = a0 + sweep * Math.PI * 1.1;
+      ctx.translate(tx, ty);
+      ctx.globalAlpha = fade * (0.55 + sc * 0.45);
+      ctx.strokeStyle = '#c9a86a';
+      ctx.lineWidth = 3.5 + tier * 0.75;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(0, 0, r, a0, a1); ctx.stroke();
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 1.5 + tier * 0.35;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.92, a0, a1); ctx.stroke();
+      break;
+    }
+    case 'liusha':
+      drawHeroFxTornado(ctx, ax, ay, tx, ty, prog, tier, sc, fade, {
+        stroke: `rgba(210,180,120,${0.4 + sc * 0.35})`,
+        debris: 'rgba(230,200,140,0.65)',
+        core: 'rgba(180,150,90,0.4)',
+      });
+      break;
+    case 'bailong': {
+      const dash = easeOut(Math.min(1, prog / 0.42));
+      const x = ax + (tx - ax) * dash;
+      const y = ay + (ty - ay) * dash;
+      ctx.translate(x, y);
+      ctx.rotate(ang + Math.PI / 2);
+      ctx.globalAlpha = fade;
+      const claw = CELL * (0.12 + sc * 0.1);
+      ctx.strokeStyle = '#e8f4ff';
+      ctx.lineWidth = 2.5 + tier * 0.55;
+      ctx.lineCap = 'round';
+      for (const s of [-1, 0, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(s * claw * 0.8, -claw);
+        ctx.lineTo(s * claw * 0.35, claw * 0.65);
+        ctx.stroke();
+      }
+      if (tier >= 2) {
+        ctx.globalAlpha = fade * sc * 0.4;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(0, -claw * 1.3); ctx.lineTo(0, claw * 0.9); ctx.stroke();
+      }
+      break;
+    }
+    case 'baigujing': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const n = 2 + tier;
+      for (let i = 0; i < n; i++) {
+        const a = ang + (i - (n - 1) / 2) * 0.35 + prog * 1.5;
+        const r = CELL * (0.08 + sc * 0.06) * (1 + i * 0.15);
+        ctx.globalAlpha = fade * (0.35 + sc * 0.35);
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(220,210,240,0.7)' : 'rgba(180,160,200,0.55)';
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(a) * r * 3, y + Math.sin(a) * r * 3, r * 1.2, r * 0.6, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'guanyin': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rad = CELL * (0.14 + sc * 0.12);
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * 2.2);
+      g.addColorStop(0, 'rgba(220,255,230,0.95)');
+      g.addColorStop(0.5, 'rgba(120,220,160,0.55)');
+      g.addColorStop(1, 'rgba(80,180,140,0)');
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, rad * 2, 0, Math.PI * 2); ctx.fill();
+      const petals = 3 + Math.min(4, tier);
+      ctx.globalAlpha = fade * sc * 0.65;
+      ctx.fillStyle = '#b8f0c8';
+      for (let i = 0; i < petals; i++) {
+        const a = (i / petals) * Math.PI * 2 + prog * 2;
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(a) * rad * 1.4, y + Math.sin(a) * rad * 1.4, rad * 0.55, rad * 0.28, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'fanyin': {
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rings = 1 + Math.min(2, tier - 1);
+      for (let i = 0; i < rings; i++) {
+        const ring = easeOut(Math.min(1, Math.max(0, prog * 1.2 - i * 0.15)));
+        const rad = CELL * (0.12 + ring * (0.35 + sc * 0.25) + i * 0.08);
+        ctx.globalAlpha = fade * (1 - ring * 0.6) * (0.55 + sc * 0.35);
+        ctx.strokeStyle = '#ffe8a0';
+        ctx.lineWidth = 1.5 + tier * 0.3;
+        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+      }
+      break;
+    }
+    default: {
+      const grow = easeOut(Math.min(1, prog / 0.45));
+      const w = (2 + tier) * sc * grow;
+      const h = CELL * (0.9 + sc * 0.6);
+      ctx.globalAlpha = fade * 0.6;
+      ctx.fillStyle = f.color;
+      ctx.fillRect(tx - w / 2, ty - h, w, h);
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const f of b.fx) {
     const a = cellCenterPx(f.from.c, f.from.r);
@@ -3264,7 +3690,12 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = f.color;
     ctx.lineCap = 'round';
     const tier = f.tier ?? 1; // 特效随阶数加大：圈数/范围/长度/粗细
-    switch (f.wtype) {
+    if (f.heroId) {
+      const def = generalById(f.heroId);
+      if (def) {
+        drawHeroAttackFx(ctx, f, a.x, a.y, t.x, t.y, prog, ang, tier, f.heroId, def.maxTier);
+      }
+    } else switch (f.wtype) {
       case 'staff': {
         // 大圣金箍棒：从大圣飞出变大，命中后飞回缩小隐藏
         drawStaffBoomerang(ctx, a.x, a.y, t.x, t.y, prog, tier);

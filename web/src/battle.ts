@@ -30,6 +30,7 @@ import {
   BOND_ATK_BONUS,
   BOND_NAME,
   ultTypeOf,
+  heroAttackFxTtl,
   CRIT_MULT,
   type GeneralDef,
 } from './generals';
@@ -336,6 +337,7 @@ export interface HitFx {
   color: string;
   wtype?: HitFxStyle; // 攻击来源：刀/枪/骑/弓，或英雄悟空金箍棒 staff
   tier?: number; // 攻击者阶数，用于让特效随等级加大(圈数/范围/时长)
+  heroId?: string; // 武将普攻：按 heroId 渲染专属特效
 }
 
 // 爆发型特效（命中/击杀/合成），渲染于格坐标
@@ -2040,16 +2042,7 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
-        const isStaff = g.def.id === 'dasheng';
-        const ttl = isStaff ? 0.58 + (g.tier - 1) * 0.06 : 0.16;
-        this.fx.push({
-          from: { c: ax, r: ay },
-          to: t.p,
-          ttl,
-          maxTtl: ttl,
-          color: qualityColor(g.tier),
-          ...(isStaff ? { wtype: 'staff' as const, tier: g.tier } : {}),
-        });
+        this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
       s.cooldown = 1 / stat.frq;
@@ -2257,6 +2250,22 @@ export class Battle {
     return generalStat(g.def, g.tier).rge + (wb?.rge ?? 0);
   }
 
+  /** 武将普攻命中特效：按 heroId 分派，阶数越高 ttl/规模越大 */
+  private pushGeneralAttackFx(g: ActiveGeneral, to: { c: number; r: number }): void {
+    const ax = (g.cells[0].c + g.cells[1].c) / 2;
+    const ay = (g.cells[0].r + g.cells[1].r) / 2;
+    const ttl = heroAttackFxTtl(g.def, g.tier);
+    this.fx.push({
+      from: { c: ax, r: ay },
+      to,
+      ttl,
+      maxTtl: ttl,
+      color: qualityColor(g.tier),
+      tier: g.tier,
+      heroId: g.def.id,
+    });
+  }
+
   // 已激活武将的攻击 + 定期技能（未相邻的字牌不产生任何输出）
   private updateGenerals(dt: number): void {
     for (const g of this.activeGenerals()) {
@@ -2291,17 +2300,7 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
-        // 悟空普攻：复用原棍兵金箍棒旋转特效；其余武将仍用短线弹道
-        const isStaff = g.def.id === 'dasheng';
-        const ttl = isStaff ? 0.58 + (g.tier - 1) * 0.06 : 0.16;
-        this.fx.push({
-          from: { c: ax, r: ay },
-          to: t.p,
-          ttl,
-          maxTtl: ttl,
-          color: qualityColor(g.tier),
-          ...(isStaff ? { wtype: 'staff' as const, tier: g.tier } : {}),
-        });
+        this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
       if (hit > 0) {
