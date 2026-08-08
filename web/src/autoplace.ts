@@ -385,24 +385,25 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
-    // 2d) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray）
+    // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
+    //     （必须在单字落位之前，否则字会占住贴路优位；延迟落子时事后让位也看不到 pending 字）
+    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
+    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
+    // 2e) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (view.placedWords().some((w) => w.char === t.char)) continue;
       if (placeSingleWord(i)) return true;
     }
-    // 3) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
-    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
-    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
-    // 4) tray 同型同阶落到棋盘合升阶
+    // 3) tray 同型同阶落到棋盘合升阶
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && !subopt()) { if (view.place(i, mate.cell)) return true; }
     }
-    // 5) tray 合出更高阶 → 与地图上更低阶的异型武器交换上板（空位不如该座时）
+    // 4) tray 合出更高阶 → 与地图上更低阶的异型武器交换上板（空位不如该座时）
     if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
-    // 6) 射程感知铺格：短射程先占位；各自在可达格中选座位分最高的格
+    // 5) 射程感知铺格：短射程先占位；各自在可达格中选座位分最高的格
     const free = view.freeCells();
     const unitIdx = tray
       .map((t, i) => ({ t, i }))
@@ -417,11 +418,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         : pickReachCell(reach, t.type, t.tier);
       if (view.place(i, cell)) return true;
     }
-    // 7) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
+    // 6) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
     //    且该占位兵能挪到更远的可达空格 → 挪走占位兵、腾出近格给短兵。尽量少扰动现有布局。
     for (const { t, i } of unitIdx) {
       const rge = getUnitStat(t.type, t.tier).rge;
-      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步6已放），跳过
+      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步5已放），跳过
       for (const occ of view.placedUnits()) {
         if (view.nearestPathDist(occ.cell) > rge + tol) continue; // 占位兵不在短兵可达格，挪它无益
         const occRge = getUnitStat(occ.type, occ.tier).rge;
@@ -440,11 +441,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         }
       }
     }
-    // 8) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
+    // 7) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
     if (!subopt() && tryYieldOrphanSeatsToUnits()) return true;
-    // 9) 孤儿字迁到更远离路径/靠唐僧的空位
+    // 8) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!subopt() && tryRelocateOrphansToRear()) return true;
-    // 10) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
+    // 9) 地图槽位已满：先 tray 内合再上棋盘合；否则棋盘同阶合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
       if (tryBoardMergeThenPlace()) return true;

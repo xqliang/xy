@@ -937,6 +937,26 @@ class FakeRepositionView implements BattleRepositionView {
   }
 }
 
+it('挖出贴路优位：先迁刀再落单字，字不抢前线', () => {
+  // 复现截图：铲挖 (0,1)；刀在较差格 (2,2)；tray 有「金」。
+  // 关掉事后让位，只验证「挖完先迁兵再落字」的顺序（延迟落子时让位看不到 pending 字）。
+  const v = new FakeView(
+    [
+      { kind: 'shovel' },
+      { kind: 'word', char: '金', general: 'jinzha', tier: 1 },
+    ],
+    [{ c: 2, r: 2 }],
+    [{ c: 0, r: 1 }],
+  );
+  v.unitsMap.set('2,2', { type: 'dao', tier: 1, cell: { c: 2, r: 2 } });
+  v.swapUnitWord = () => false;
+  v.moveWord = () => false;
+  planAutoPlace(v, { rng });
+  expect(v.unitsMap.get('0,1')?.type).toBe('dao');
+  expect(v.wordsMap.get('2,2')?.char).toBe('金');
+  expect(v.wordsMap.has('0,1')).toBe(false);
+});
+
 it('未激活孤儿字让出高覆盖攻位给兵器', () => {
   // 「骨」占贴路高分格 (0,0)；射手在远位 (0,3) → 布阵后射手占前排，骨让到后排
   const v = new FakeView([], [
