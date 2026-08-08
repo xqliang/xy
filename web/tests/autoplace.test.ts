@@ -845,13 +845,7 @@ it('贴路行满槽：tray白与骨凑对可交换拆散金吒占位', () => {
     { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 },
   ];
   const v = new FakeView(
-    [
-      { kind: 'unit', type: 'dao', tier: 1 },
-      { kind: 'word', char: '白', general: 'baigujing', tier: 1 },
-      { kind: 'unit', type: 'cavalry', tier: 1 },
-      { kind: 'unit', type: 'cavalry', tier: 1 },
-      { kind: 'unit', type: 'archer', tier: 1 },
-    ],
+    [{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }],
     cells,
   );
   v.wordChars = (g: string) => {

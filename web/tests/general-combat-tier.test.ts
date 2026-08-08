@@ -90,4 +90,8 @@ describe('攻击升品质阶', () => {
     expect(Battle.expToNext(4)).toBe(104);
     expect(Battle.expToNext(4)).toBeGreaterThan(Battle.expToNext(2) * 2);
   });
+
+  it('heroSkillExp 低于首档升阶阈值', () => {
+    expect(Battle.heroSkillExp).toBeLessThan(Battle.expToNext(1));
+  });
 });

@@ -1274,9 +1274,10 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
     drawPansidongWebGate(ctx, x - off, y, -1);
     drawPansidongWebGate(ctx, x + off, y, 1);
   } else if (id === 'baiguling') {
-    // 白骨岭：两座白骨门柱左右开合（默认合拢于中心，出怪时随 off 分开）
-    drawBaigulingGateLeaf(ctx, x - off, y, -1);
-    drawBaigulingGateLeaf(ctx, x + off, y, 1);
+    // 白骨岭：两扇骷髅门柱闭合时相邻（各距中心半宽，不重叠）；出怪时再随 off 拉开
+    const half = CELL * 0.11;
+    drawBaigulingGateLeaf(ctx, x - half - off, y, -1);
+    drawBaigulingGateLeaf(ctx, x + half + off, y, 1);
   } else if (id === 'huoyanshan') {
     // 火焰山：两柱火焰门，默认合拢，出怪时左右分开
     drawHuoyanshanFlameGate(ctx, x - off, y, -1);

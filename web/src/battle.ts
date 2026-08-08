@@ -2568,6 +2568,8 @@ export class Battle {
     const weightedHits = 1 + 0.35 * (hit - 1);
     return dmg * weightedHits * 0.042;
   }
+  /** 大招命中转升阶经验（固定值，低于普攻累积） */
+  static heroSkillExp = 1.5;
   addGeneralCombatExp(g: ActiveGeneral, amount: number, ai = false): void {
     const wordAt = ai ? (c: number, r: number) => this.aiWordAt(c, r) : (c: number, r: number) => this.wordAt(c, r);
     const wa = wordAt(g.cells[0].c, g.cells[0].r);
@@ -2766,7 +2768,7 @@ export class Battle {
       critDmg,
       ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
     });
-    this.addGeneralCombatExp(g, 3);
+    this.addGeneralCombatExp(g, Battle.heroSkillExp);
   }
 
   // 怪物施法：精英/BOSS 对最近 1 格内最近一件兵器施加地图减益；小 Boss 施展跨地图光环

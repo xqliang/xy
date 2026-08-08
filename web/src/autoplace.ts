@@ -372,6 +372,27 @@ function isObsoleteTransitionVariant(view: AutoPlaceView, char: string): boolean
   return false;
 }
 
+/** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 白骨 在场时 skip 吒/金 组 金吒） */
+function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+  if (isObsoleteTransitionVariant(view, t.char)) return true;
+  const mate = pickBestBoardMateView(view, t.char, t.general);
+  if (!mate) return false;
+  const pair = resolveHeroPair(t.char, mate.char, view, t.general === mate.general ? t.general : undefined);
+  if (!pair) return false;
+  const forming = matchGeneral(pair.chars[0], pair.chars[1]);
+  if (!forming || forming.maxTier !== 3) return false;
+  for (const p of scanActivePairs(view)) {
+    if (p.def.maxTier >= forming.maxTier && p.def.id !== forming.id) {
+      const dist = Math.min(
+        Math.abs(p.left.cell.c - mate.cell.c) + Math.abs(p.left.cell.r - mate.cell.r),
+        Math.abs(p.right.cell.c - mate.cell.c) + Math.abs(p.right.cell.r - mate.cell.r),
+      );
+      if (dist <= 2) return true;
+    }
+  }
+  return false;
+}
+
 type ActivePair = { def: GeneralDef; left: PlacedWordLite; right: PlacedWordLite; tier: number };
 
 function wordTierOf(w: { tier?: number }): number {
@@ -551,8 +572,8 @@ function trySwapGrowingHeroBeforeMaxed(view: AutoPlaceView): boolean {
       if (growing.left.cell.c !== maxed.right.cell.c + 1) continue;
       const row = maxed.left.cell.r;
       const c0 = maxed.left.cell.c;
-      const tmpL = { c: maxed.right.cell.c + 2, r: row };
-      const tmpR = { c: maxed.right.cell.c + 3, r: row };
+      const tmpL = { c: growing.right.cell.c + 1, r: row };
+      const tmpR = { c: growing.right.cell.c + 2, r: row };
       if (!isCellEmptyView(view, tmpL) || !isCellEmptyView(view, tmpR)) continue;
       if (!view.moveWord(maxed.left.cell, tmpL)) continue;
       const maxedRight = view.placedWords().find(
@@ -633,18 +654,19 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) return true;
-    // 2a-0b) 贴路行左移 / 未升满前置：为 tray 与棋盘孤儿凑对腾位（如 白+骨）
+    // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
+    if (!subopt() && tryPairBoardOrphans()) return true;
+    // 2b) 字牌激活：tray 与棋盘孤儿凑对（含交换拆散占位激活武将，如 白+骨）
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!; if (t.kind !== 'word') continue;
+      if (shouldSkipTrayWordActivation(view, t)) continue;
+      if (tryActivateTrayWord(i, t)) return true;
+    }
+    // 2b-1) 贴路行左移 / 未升满前置（凑对失败后再整行腾位）
     if (!subopt() && tryShiftPathRowLeft(view)) return true;
     if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) return true;
     // 2a0) 同字高阶上板：tray 更高阶与棋盘低阶孤儿互换
     if (!subopt() && tryPromoteHigherTierWords()) return true;
-    // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
-    if (!subopt() && tryPairBoardOrphans()) return true;
-    // 2b) 字牌激活：能配对则按武将座位分选双格（可挪武器）；先不单放，留给回收步骤用 tray
-    for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!; if (t.kind !== 'word') continue;
-      if (tryActivateTrayWord(i, t)) return true;
-    }
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
@@ -1222,7 +1244,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const needMate = mateIsLeftChar ? left : right;
         const needTray = mateIsLeftChar ? right : left;
 
-        // 目标对占用其他已激活英雄 → 尝试 tray 字直接交换拆散（如 白 换 吒 与骨 组 白骨）
+        // 只处理伴侣已在目标位的对（避免误换到 c3 等非目标左格）
+        if (!sameCell(boardMate.cell, needMate)) continue;
+
+        // 目标格被占且属于其它已激活武将 → 仅当本次凑对需要拆散它时才交换（如 白 换 吒，骨 已就位）
         if (view.isActiveHeroCell(needTray)) {
           const idx = view.tray().findIndex(
             (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
