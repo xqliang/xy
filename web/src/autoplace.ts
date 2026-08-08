@@ -1138,7 +1138,8 @@ function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolea
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位；
  * 亦可与未激活孤儿字换位（字牌不输出，让出攻位）。
- * 危险时优先往怪物即将路过路段调度。每次调用至多成功一次 move/swap；AI 侧兵器调位 1.5–4s 随机节流。
+ * 危险时优先把「打不到」的兵换到能打到怪的座位；禁止仅因贴路启发在两格间来回抖。
+ * 每次调用至多成功一次 move/swap；AI 侧兵器调位 1.5–4s 随机节流。
  */
 export function planBattleReposition(
   view: BattleRepositionView,
@@ -1155,6 +1156,9 @@ export function planBattleReposition(
   const cellValue = (cell: Cell, type: UnitType, tier: number) =>
     view.engageScore(cell, type, tier) + placementBonus(cell);
 
+  /** 解锁交战加权：让打不到的兵换上能打的座位，压过微弱贴路分差 */
+  const ENGAGE_UNLOCK_BONUS = 4;
+
   let bestGain = 0.05;
   let bestPair: { a: Cell; b: Cell } | null = null;
   let bestAction: (() => boolean) | null = null;
@@ -1169,7 +1173,8 @@ export function planBattleReposition(
       const canEng = view.canEngage(to, u.type, u.tier);
       if (!canEng && (!danger || placementBonus(to) <= placementBonus(u.cell) + 0.05)) continue;
       if (!idle && !canEng) continue; // 已在打怪时不挪到够不着的格
-      const gain = cellValue(to, u.type, u.tier) - curVal;
+      let gain = cellValue(to, u.type, u.tier) - curVal;
+      if (idle && canEng) gain += ENGAGE_UNLOCK_BONUS;
       if (gain <= bestGain) continue;
       const from = u.cell;
       if (isBlockedPair(from, to, opts?.blockedPair)) continue;
@@ -1179,21 +1184,37 @@ export function planBattleReposition(
     }
   }
 
-  // 2) 互换：至少一方原先够不着、换后总威胁分更高（典型：前排高阶 ↔ 后方低阶）
+  // 2) 互换：至少一方由「打不到 → 打得到」，或总交战威胁分上升（不用纯贴路分在两空闲兵间对抖）
   for (let i = 0; i < units.length; i++) {
     for (let j = i + 1; j < units.length; j++) {
       const a = units[i]!;
       const b = units[j]!;
       if (view.isActiveHeroCell(a.cell) || view.isActiveHeroCell(b.cell)) continue;
-      const before = cellValue(a.cell, a.type, a.tier) + cellValue(b.cell, b.type, b.tier);
-      const after = cellValue(b.cell, a.type, a.tier) + cellValue(a.cell, b.type, b.tier);
-      const gain = after - before;
-      if (gain <= bestGain) continue;
       const aIdle = !view.canEngage(a.cell, a.type, a.tier);
       const bIdle = !view.canEngage(b.cell, b.type, b.tier);
       const aEngagesAfter = view.canEngage(b.cell, a.type, a.tier);
       const bEngagesAfter = view.canEngage(a.cell, b.type, b.tier);
-      if (!(aIdle && aEngagesAfter) && !(bIdle && bEngagesAfter) && !(danger && gain > 0.1)) continue;
+      const unlocks = (aIdle && aEngagesAfter) || (bIdle && bEngagesAfter);
+      const engBefore =
+        view.engageScore(a.cell, a.type, a.tier) + view.engageScore(b.cell, b.type, b.tier);
+      const engAfter =
+        view.engageScore(b.cell, a.type, a.tier) + view.engageScore(a.cell, b.type, b.tier);
+      const engageGain = engAfter - engBefore;
+      // 禁止：两边换完仍都打不到、仅靠危险贴路启发来回换位
+      if (!unlocks && engageGain <= 0.05) continue;
+      let gain = engageGain;
+      if (aIdle && aEngagesAfter) gain += ENGAGE_UNLOCK_BONUS;
+      if (bIdle && bEngagesAfter) gain += ENGAGE_UNLOCK_BONUS;
+      // 危险且都能打时：略偏好把交战单位放在更贴近即将路过路段的格
+      if (danger && engageGain >= -0.01) {
+        const prefer =
+          (aEngagesAfter ? placementBonus(b.cell) : 0) +
+          (bEngagesAfter ? placementBonus(a.cell) : 0) -
+          (!aIdle ? placementBonus(a.cell) : 0) -
+          (!bIdle ? placementBonus(b.cell) : 0);
+        gain += 0.15 * prefer;
+      }
+      if (gain <= bestGain) continue;
       if (isBlockedPair(a.cell, b.cell, opts?.blockedPair)) continue;
       bestGain = gain;
       bestPair = { a: a.cell, b: b.cell };
@@ -1204,15 +1225,22 @@ export function planBattleReposition(
   // 3) 兵 ↔ 未激活孤儿字：字牌让出更高威胁/座位分的格
   for (const u of units) {
     if (view.isActiveHeroCell(u.cell)) continue;
+    const idle = !view.canEngage(u.cell, u.type, u.tier);
     const curEngage = cellValue(u.cell, u.type, u.tier);
     const curSeat = view.seatScore(u.cell, u.type, u.tier);
     for (const w of view.orphanWords()) {
       if (view.isActiveHeroCell(w.cell)) continue;
       if (isBlockedPair(u.cell, w.cell, opts?.blockedPair)) continue;
-      const engGain = cellValue(w.cell, u.type, u.tier) - curEngage;
+      const canEng = view.canEngage(w.cell, u.type, u.tier);
+      let engGain = cellValue(w.cell, u.type, u.tier) - curEngage;
+      if (idle && canEng) engGain += ENGAGE_UNLOCK_BONUS;
       const seatGain = view.seatScore(w.cell, u.type, u.tier) - curSeat;
       // 威胁分提升，或静态座位明显更好（怪在入口时也能把攻位让给射手盖出口段）
-      const gain = engGain > 0.05 ? engGain : seatGain > 0.35 ? seatGain * 0.5 : 0;
+      // 危险且本兵仍打不到怪时：勿用纯座位分与孤儿换位抢戏（把「换到能打的枪位」让给步骤 2）
+      const gain =
+        engGain > 0.05 ? engGain
+        : (!danger || !idle) && seatGain > 0.35 ? seatGain * 0.5
+        : 0;
       if (gain <= bestGain) continue;
       bestGain = gain;
       bestPair = { a: u.cell, b: w.cell };
@@ -1225,9 +1253,31 @@ export function planBattleReposition(
   return { ok: true, pair: bestPair ?? undefined };
 }
 
+function repositionBoardKey(view: BattleRepositionView): string {
+  const units = view.placedUnits()
+    .map((u) => `${u.type}:${u.tier}@${u.cell.c},${u.cell.r}`)
+    .sort()
+    .join(';');
+  const words = view.orphanWords()
+    .map((w) => `${w.char}@${w.cell.c},${w.cell.r}`)
+    .sort()
+    .join(';');
+  return `${units}|${words}`;
+}
+
 /** 连续调位；maxSteps=1 用于 AI 随机节流，更大值用于玩家一键布阵 */
 export function runBattleReposition(view: BattleRepositionView, maxSteps = 1): number {
   let steps = 0;
-  while (steps < maxSteps && planBattleReposition(view).ok) steps++;
+  let lastPair: { a: Cell; b: Cell } | undefined;
+  const seen = new Set<string>([repositionBoardKey(view)]);
+  while (steps < maxSteps) {
+    const r = planBattleReposition(view, { blockedPair: lastPair });
+    if (!r.ok) break;
+    const key = repositionBoardKey(view);
+    if (seen.has(key)) break; // 局面重复 → 停（防止 A↔B 对抖）
+    seen.add(key);
+    lastPair = r.pair;
+    steps++;
+  }
   return steps;
 }

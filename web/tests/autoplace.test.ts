@@ -1047,6 +1047,41 @@ it('runBattleReposition 可连续多步', () => {
   expect(steps).toBeGreaterThanOrEqual(1);
 });
 
+it('危险时：打不到的弓应换到能打到怪的枪位', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [7];
+  // 怪在 (7,0)：枪 rge2 在 (4,0) 打不到，弓从枪位 rge3 打得到，从 (2,2) 打不到
+  v.monsterCells = [{ c: 7, r: 0 }];
+  v.unitsMap.set('4,0', { type: 'spear', tier: 2, cell: { c: 4, r: 0 } });
+  v.unitsMap.set('2,2', { type: 'archer', tier: 1, cell: { c: 2, r: 2 } });
+  v.wordsMap.set('2,3', { char: '沙', general: 'shaseng', cell: { c: 2, r: 3 }, tier: 1 });
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.get('4,0')?.type).toBe('archer');
+  expect(v.unitsMap.get('2,2')?.type).toBe('spear');
+});
+
+it('危险时：两空闲兵不因贴路分来回对抖', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [7];
+  v.monsterCells = [{ c: 7, r: 0 }]; // 双方都打不到
+  v.unitsMap.set('0,0', { type: 'dao', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('4,0', { type: 'spear', tier: 2, cell: { c: 4, r: 0 } });
+  expect(planBattleReposition(v).ok).toBe(false);
+});
+
+it('runBattleReposition 不会 A↔B 无限对抖', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [7];
+  v.monsterCells = [{ c: 7, r: 0 }];
+  v.unitsMap.set('0,0', { type: 'dao', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('4,0', { type: 'spear', tier: 2, cell: { c: 4, r: 0 } });
+  const steps = runBattleReposition(v, 50);
+  expect(steps).toBe(0);
+});
+
 it('危险时优先把兵力往怪物即将路过的路段调度', () => {
   const v = new FakeRepositionView();
   v.dangerNearFlag = true;
