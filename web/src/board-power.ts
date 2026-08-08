@@ -46,6 +46,11 @@ export interface PowerGeneral {
   targets: number;
   ax: number;
   ay: number;
+  /**
+   * 大招对单体(专注火力)的平均秒伤，例如二郎「天眼诛邪」= atk×5×CRIT_MULT / skillCd。
+   * 大招命中往往落在集火目标(含 Boss)上，若不计入会让 Boss 压力估算游离于实际输出账本外。
+   */
+  skillFocusDps?: number;
 }
 
 export interface BoardPowerInput {
@@ -80,6 +85,7 @@ interface PlacedAttacker {
   targets: number;
   ax: number;
   ay: number;
+  skillFocusDps?: number;
 }
 
 function inRange(
@@ -130,6 +136,7 @@ export function estimateOptimalBoardPower(input: BoardPowerInput): BoardPowerRes
       targets: g.targets,
       ax: g.ax,
       ay: g.ay,
+      skillFocusDps: g.skillFocusDps,
     });
   }
 
@@ -161,6 +168,8 @@ export function estimateOptimalBoardPower(input: BoardPowerInput): BoardPowerRes
       // 集火单体：目标数超过 1 的溢出对 Boss 无额外收益
       const focusTargets = Math.min(1, a.targets);
       dmg += a.atk * a.frq * focusTargets * (cov / spd);
+      // 大招专注秒伤（如二郎暴击）按覆盖时长同口径折算，避免游离于 Boss 压力账本外
+      if (a.skillFocusDps) dmg += a.skillFocusDps * (cov / spd);
     }
     return dmg;
   };

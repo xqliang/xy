@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getUnitStat } from '@core';
-import { MAPS, entranceDistance, pathTotalLen, placeableByProximity } from '../src/board';
+import { MAPS, entranceDistance, pathTotalLen, placeableByProximity, posAtDistance } from '../src/board';
 import {
   estimateOptimalBoardPower,
   planWavePressure,
@@ -100,6 +100,32 @@ describe('estimateOptimalBoardPower', () => {
       frqMul: 1.5,
     });
     expect(buffed.optimalDps).toBeCloseTo(base.optimalDps * 1.5, 5);
+  });
+
+  it('武将 skillFocusDps（如二郎暴击）计入 pathDamage/Boss 压力，但不计入 optimalDps 清怪预算', () => {
+    const p = posAtDistance(map, entranceDist);
+    const general = { atk: 3.8, frq: 1.5, rge: 3, targets: 1.5, ax: p.c, ay: p.r };
+    const noSkill = estimateOptimalBoardPower({
+      map, entranceDist, pathLen, units: [], freeCells, nearestPathDist,
+      generals: [general],
+      atkMul: 1, frqMul: 1,
+    });
+    const skillFocusDps = 28.5 / 9; // 二郎：atk×5×CRIT_MULT / skillCd
+    const withSkill = estimateOptimalBoardPower({
+      map, entranceDist, pathLen, units: [], freeCells, nearestPathDist,
+      generals: [{ ...general, skillFocusDps }],
+      atkMul: 1, frqMul: 1,
+    });
+    // 清怪预算（对多目标 AOE 清场）不含大招专注伤害
+    expect(withSkill.optimalDps).toBeCloseTo(noSkill.optimalDps, 5);
+    // Boss 压力估算（集火单体）应按覆盖时长把大招秒伤折算进去
+    const spd = 0.5;
+    const cov = noSkill.coverageTotal;
+    expect(cov).toBeGreaterThan(0);
+    expect(withSkill.pathDamage(spd)).toBeCloseTo(
+      noSkill.pathDamage(spd) + skillFocusDps * (cov / spd),
+      5,
+    );
   });
 });
 

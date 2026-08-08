@@ -193,6 +193,36 @@ export const TUNING = {
   heroBossIntervalShrinkCap: 4, // 英雄越多上界越压，最多压 shrinkCap 秒
 };
 
+/**
+ * 武将大招对单体(专注火力)的平均秒伤估算：与 castGeneralSkill 的各分支伤害公式同口径，
+ * 供 estimateOptimalPower 并入 Boss 压力账本，避免大招（尤其二郎暴击）游离于难度曲线外。
+ * 不含主动技能临时增益（与 estimateOptimalPower 整体口径一致，见其函数注释）。
+ */
+function heroSkillFocusDps(def: GeneralDef, atk: number): number {
+  const cd = def.skillCd;
+  if (def.skill === 'none' || cd <= 0) return 0;
+  switch (def.skill) {
+    case 'burst': return (atk * 3) / cd;
+    case 'ranged': return (atk * 5 * CRIT_MULT) / cd;
+    case 'stun': {
+      const isCharge = def.id === 'niumowang' || def.id === 'qingniu';
+      const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
+      return (atk * dmgMul) / cd;
+    }
+    case 'knock': return (atk * TUNING.heroKnockDmgMul) / cd;
+    case 'slow': {
+      const dmgMul = def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
+      return (atk * dmgMul) / cd;
+    }
+    case 'burn': return (atk * TUNING.heroBurnHitMul + atk * TUNING.heroBurnDpsMul * TUNING.heroBurnDur) / cd;
+    case 'heal': return 0;
+    default: {
+      const _exhaustive: never = def.skill;
+      return _exhaustive;
+    }
+  }
+}
+
 /** 双雄引妖王：间隔上界 = maxBase - min(shrinkCap, heroCount-1) */
 export function heroBossIntervalHi(heroCount: number): number {
   const shrink = Math.min(TUNING.heroBossIntervalShrinkCap, Math.max(0, heroCount - 1));
@@ -2032,13 +2062,15 @@ export class Battle {
     const generals = this.activeGenerals().map((g) => {
       const base = generalStat(g.def, g.tier);
       const wb = this.weaponBonuses[g.def.id];
+      const atk = base.atk * (1 + (wb?.atk ?? 0)) * atkMul;
       return {
-        atk: base.atk * (1 + (wb?.atk ?? 0)) * atkMul,
+        atk,
         frq: base.frq * (1 + (wb?.frq ?? 0)) * frqMul,
         rge: base.rge + (wb?.rge ?? 0),
         targets: base.targets,
         ax: (g.cells[0].c + g.cells[1].c) / 2,
         ay: (g.cells[0].r + g.cells[1].r) / 2,
+        skillFocusDps: heroSkillFocusDps(g.def, atk),
       };
     });
     return estimateOptimalBoardPower({
