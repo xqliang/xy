@@ -839,8 +839,7 @@ it('金吒已激活时 tray「哪」布阵替换「金」组成哪吒', () => {
   expect(v.tray()).toContainEqual({ kind: 'word', char: '金', general: 'jinzha', tier: 3 });
 });
 
-it('贴路行满槽：牛郎+金吒占中，tray白与骨凑对应左移腾位', () => {
-  // 截图：骑兵占出口；牛郎满3；金吒激活；骨在右；tray 白 → 左移一行后白+骨激活
+it('贴路行满槽：tray白与骨凑对可交换拆散金吒占位', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 },
@@ -868,20 +867,44 @@ it('贴路行满槽：牛郎+金吒占中，tray白与骨凑对应左移腾位',
   v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
   v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
   v.unitsMap.set('6,0', { type: 'archer', tier: 3, cell: { c: 6, r: 0 } });
-  expect(v.freeCells()).toHaveLength(0);
-  expect(v.isActiveHeroCell({ c: 4, r: 0 })).toBe(true);
   planAutoPlace(v, { rng });
   const bai = v.placedWords().find((w) => w.char === '白');
   const gu = v.placedWords().find((w) => w.char === '骨');
-  expect(bai).toBeDefined();
-  expect(gu).toBeDefined();
-  expect(bai!.cell.c + 1).toBe(gu!.cell.c);
-  expect(bai!.cell.r).toBe(gu!.cell.r);
-  expect(bai!.cell.r).toBe(0);
-  expect(bai!.cell.c).toBe(4);
-  expect(gu!.cell.c).toBe(5);
+  expect(bai?.cell).toEqual({ c: 4, r: 0 });
+  expect(gu?.cell).toEqual({ c: 5, r: 0 });
   expect(matchGeneral(bai!.char, gu!.char)?.id).toBe('baigujing');
-  // 金吒应比满级牛郎更靠前（更靠近出口 c=0）
+});
+
+it('仅 tray 白时可直接交换吒位激活白骨', () => {
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+    { c: 4, r: 0 }, { c: 5, r: 0 },
+  ];
+  const v = new FakeView([{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }], cells);
+  v.wordsMap.set('3,0', { char: '金', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
+  v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.placedWords().find((w) => w.char === '白')?.cell).toEqual({ c: 4, r: 0 });
+});
+
+it('满级牛郎在前时布阵将未升满金吒前移', () => {
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+    { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 }, { c: 7, r: 0 },
+  ];
+  const v = new FakeView([], cells);
+  v.wordChars = (g: string) => {
+    if (g === 'niulang') return ['牛', '郎'] as const;
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    return undefined;
+  };
+  v.unitsMap.set('0,0', { type: 'cavalry', tier: 5, cell: { c: 0, r: 0 } });
+  v.wordsMap.set('1,0', { char: '牛', general: 'niulang', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,0', { char: '郎', general: 'niulang', cell: { c: 2, r: 0 }, tier: 3 });
+  v.wordsMap.set('3,0', { char: '金', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
+  v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 8 });
   const jin = v.placedWords().find((w) => w.char === '金');
   const niu = v.placedWords().find((w) => w.char === '牛');
   expect(jin!.cell.c).toBeLessThan(niu!.cell.c);

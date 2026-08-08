@@ -16,6 +16,7 @@ import {
   mainGeneralForVariantChar,
   transitGeneralInFamily,
   variantChar,
+  type GeneralDef,
 } from './generals';
 
 export interface Cell { c: number; r: number; }
@@ -371,6 +372,209 @@ function isObsoleteTransitionVariant(view: AutoPlaceView, char: string): boolean
   return false;
 }
 
+type ActivePair = { def: GeneralDef; left: PlacedWordLite; right: PlacedWordLite; tier: number };
+
+function wordTierOf(w: { tier?: number }): number {
+  return w.tier ?? 1;
+}
+
+function wordAtView(view: AutoPlaceView, cell: Cell): PlacedWordLite | undefined {
+  return view.placedWords().find((w) => w.cell.c === cell.c && w.cell.r === cell.r);
+}
+
+function isCellEmptyView(view: AutoPlaceView, cell: Cell): boolean {
+  return !wordAtView(view, cell) && !view.placedUnits().some((u) => u.cell.c === cell.c && u.cell.r === cell.r);
+}
+
+function orphanWordsView(view: AutoPlaceView): PlacedWordLite[] {
+  return view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
+}
+
+function pickBestBoardMateView(view: AutoPlaceView, char: string, generalHint?: string): PlacedWordLite | null {
+  let best: PlacedWordLite | null = null;
+  for (const w of orphanWordsView(view)) {
+    if (!isCharPartner(char, w.char, view, generalHint && w.general === generalHint ? generalHint : undefined)) {
+      continue;
+    }
+    if (!best || wordTierOf(w) > wordTierOf(best)) best = w;
+  }
+  return best;
+}
+
+function scanActivePairs(view: AutoPlaceView): ActivePair[] {
+  const out: ActivePair[] = [];
+  const used = new Set<string>();
+  for (const w of view.placedWords()) {
+    const k = cellKey(w.cell);
+    if (used.has(k)) continue;
+    const right = view.placedWords().find((r) => r.cell.c === w.cell.c + 1 && r.cell.r === w.cell.r);
+    if (!right) continue;
+    const def = matchGeneral(w.char, right.char);
+    if (!def) continue;
+    used.add(k);
+    used.add(cellKey(right.cell));
+    const tier = Math.min(wordTierOf(w), wordTierOf(right));
+    out.push({ def, left: w, right, tier });
+  }
+  return out;
+}
+
+function isHeroMaxed(pair: ActivePair): boolean {
+  return pair.tier >= pair.def.maxTier;
+}
+
+/** tray 字与棋盘伴侣凑对所需落点被占（常见：金吒占骨左侧） */
+function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
+  const out: Cell[] = [];
+  for (const t of view.tray()) {
+    if (t.kind !== 'word') continue;
+    const mate = pickBestBoardMateView(view, t.char, t.general);
+    if (!mate) continue;
+    const pair = resolveHeroPair(
+      t.char,
+      mate.char,
+      view,
+      t.general === mate.general ? t.general : undefined,
+    );
+    if (!pair) continue;
+    const def = matchGeneral(pair.chars[0], pair.chars[1]);
+    if (!def) continue;
+    let need: Cell;
+    if (mate.char === def.chars[1]) need = { c: mate.cell.c - 1, r: mate.cell.r };
+    else if (mate.char === def.chars[0]) need = { c: mate.cell.c + 1, r: mate.cell.r };
+    else continue;
+    if (need.c < 0) continue;
+    if (isCellEmptyView(view, need)) continue;
+    if (view.isActiveHeroCell(need) || view.placedUnits().some((u) => u.cell.c === need.c && u.cell.r === need.r)) {
+      out.push(need);
+    }
+  }
+  return out;
+}
+
+function evacuateCell(view: AutoPlaceView, cell: Cell): boolean {
+  const u = view.placedUnits().find((x) => x.cell.c === cell.c && x.cell.r === cell.r);
+  if (u) {
+    if (view.displaceToTray(cell)) return true;
+    const far = view.freeCells()
+      .slice()
+      .sort((a, b) => view.nearestPathDist(b) - view.nearestPathDist(a));
+    if (far.length > 0) return view.moveUnit(u.cell, far[0]!);
+    const row = cell.r;
+    const swapMate = view.placedUnits()
+      .filter(
+        (x) =>
+          x.cell.r === row &&
+          (x.cell.c !== cell.c || x.cell.r !== cell.r) &&
+          !view.isActiveHeroCell(x.cell),
+      )
+      .sort((a, b) => b.cell.c - a.cell.c)[0];
+    if (swapMate && view.swapUnits(cell, swapMate.cell)) return true;
+    return false;
+  }
+  const w = wordAtView(view, cell);
+  if (!w) return true;
+  if (view.isActiveHeroCell(cell)) return false;
+  const free = view.freeCells();
+  if (free.length === 0) return view.displaceToTray(cell);
+  const dest = free.reduce((best, c) => {
+    const s = singleWordScore(view.nearestPathDist(c), view.tangsengDist(c));
+    const bs = singleWordScore(view.nearestPathDist(best), view.tangsengDist(best));
+    return s > bs ? c : best;
+  }, free[0]!);
+  return view.moveWord(w.cell, dest);
+}
+
+function moveActivePairLeft(view: AutoPlaceView, pair: ActivePair): boolean {
+  if (pair.left.cell.c <= 0) return false;
+  const destL = { c: pair.left.cell.c - 1, r: pair.left.cell.r };
+  if (!isCellEmptyView(view, destL) && !evacuateCell(view, destL)) return false;
+  if (!isCellEmptyView(view, destL)) return false;
+  const rightFrom = { ...pair.right.cell };
+  if (!view.moveWord(pair.left.cell, destL)) return false;
+  const rightNow = view.placedWords().find(
+    (w) => w.char === pair.right.char && w.cell.c === rightFrom.c && w.cell.r === rightFrom.r,
+  );
+  if (!rightNow) return true;
+  const destR = { c: rightNow.cell.c - 1, r: rightNow.cell.r };
+  if (!isCellEmptyView(view, destR) && !evacuateCell(view, destR)) return true;
+  if (isCellEmptyView(view, destR)) view.moveWord(rightNow.cell, destR);
+  return true;
+}
+
+/** 贴路行整体左移一格：腾出出口侧空位，便于 tray 字与右侧孤儿凑对（如 白+骨） */
+function tryShiftPathRowLeft(view: AutoPlaceView): boolean {
+  const blocked = blockedTrayHeroNeedCells(view);
+  if (blocked.length === 0) return false;
+  const row = blocked[0]!.r;
+
+  const pairs = scanActivePairs(view)
+    .filter((p) => p.left.cell.r === row)
+    .sort((a, b) => a.left.cell.c - b.left.cell.c);
+  for (const p of pairs) {
+    if (moveActivePairLeft(view, p)) return true;
+  }
+
+  const orphans = orphanWordsView(view)
+    .filter((w) => w.cell.r === row)
+    .sort((a, b) => a.cell.c - b.cell.c);
+  for (const w of orphans) {
+    if (w.cell.c <= 0) continue;
+    const dest = { c: w.cell.c - 1, r: row };
+    if (!isCellEmptyView(view, dest) && !evacuateCell(view, dest)) continue;
+    if (isCellEmptyView(view, dest) && view.moveWord(w.cell, dest)) return true;
+  }
+
+  for (const u of view.placedUnits().filter((x) => x.cell.r === row).sort((a, b) => a.cell.c - b.cell.c)) {
+    if (u.cell.c <= 0 || view.isActiveHeroCell(u.cell)) continue;
+    const dest = { c: u.cell.c - 1, r: row };
+    if (!isCellEmptyView(view, dest) && !evacuateCell(view, dest)) continue;
+    if (isCellEmptyView(view, dest) && view.moveUnit(u.cell, dest)) return true;
+  }
+  return false;
+}
+
+/** 满级武将占前、未升满在后时，相邻两对互换（让未升满更靠出口拿经验） */
+function trySwapGrowingHeroBeforeMaxed(view: AutoPlaceView): boolean {
+  const byRow = new Map<number, ActivePair[]>();
+  for (const p of scanActivePairs(view)) {
+    const list = byRow.get(p.left.cell.r) ?? [];
+    list.push(p);
+    byRow.set(p.left.cell.r, list);
+  }
+  for (const list of byRow.values()) {
+    list.sort((a, b) => a.left.cell.c - b.left.cell.c);
+    for (let i = 0; i < list.length - 1; i++) {
+      const maxed = list[i]!;
+      const growing = list[i + 1]!;
+      if (!isHeroMaxed(maxed) || isHeroMaxed(growing)) continue;
+      if (growing.left.cell.c !== maxed.right.cell.c + 1) continue;
+      const row = maxed.left.cell.r;
+      const c0 = maxed.left.cell.c;
+      const tmpL = { c: maxed.right.cell.c + 2, r: row };
+      const tmpR = { c: maxed.right.cell.c + 3, r: row };
+      if (!isCellEmptyView(view, tmpL) || !isCellEmptyView(view, tmpR)) continue;
+      if (!view.moveWord(maxed.left.cell, tmpL)) continue;
+      const maxedRight = view.placedWords().find(
+        (w) => w.char === maxed.right.char && w.cell.r === row && w.cell.c === maxed.right.cell.c,
+      );
+      if (!maxedRight || !view.moveWord(maxedRight.cell, tmpR)) continue;
+      if (!view.moveWord(growing.left.cell, { c: c0, r: row })) continue;
+      const growingRight = view.placedWords().find(
+        (w) => w.char === growing.right.char && w.cell.r === row,
+      );
+      if (!growingRight) return true;
+      view.moveWord(growingRight.cell, { c: c0 + 1, r: row });
+      const tmpLeft = view.placedWords().find((w) => w.cell.c === tmpL.c && w.cell.r === row);
+      const tmpRight = view.placedWords().find((w) => w.cell.c === tmpR.c && w.cell.r === row);
+      if (tmpLeft) view.moveWord(tmpLeft.cell, { c: c0 + 2, r: row });
+      if (tmpRight) view.moveWord(tmpRight.cell, { c: c0 + 3, r: row });
+      return true;
+    }
+  }
+  return false;
+}
+
 export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   planAutoPlaceSteps(view, opts);
 }
@@ -429,6 +633,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) return true;
+    // 2a-0b) 贴路行左移 / 未升满前置：为 tray 与棋盘孤儿凑对腾位（如 白+骨）
+    if (!subopt() && tryShiftPathRowLeft(view)) return true;
+    if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) return true;
     // 2a0) 同字高阶上板：tray 更高阶与棋盘低阶孤儿互换
     if (!subopt() && tryPromoteHigherTierWords()) return true;
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
@@ -1015,9 +1222,15 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const needMate = mateIsLeftChar ? left : right;
         const needTray = mateIsLeftChar ? right : left;
 
-        // 目标对占用其他已激活英雄 → 跳过
+        // 目标对占用其他已激活英雄 → 尝试 tray 字直接交换拆散（如 白 换 吒 与骨 组 白骨）
+        if (view.isActiveHeroCell(needTray)) {
+          const idx = view.tray().findIndex(
+            (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
+          );
+          if (idx >= 0 && view.place(idx, needTray)) return true;
+          continue;
+        }
         if (view.isActiveHeroCell(needMate) && !sameCell(boardMate.cell, needMate)) continue;
-        if (view.isActiveHeroCell(needTray)) continue;
 
         const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
         const mateOld = { ...boardMate.cell };

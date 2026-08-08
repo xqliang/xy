@@ -79,8 +79,15 @@ describe('攻击升品质阶', () => {
   });
 
   it('combatExpFromHits：额外目标折计，避免 multi-target 刷经验', () => {
-    expect(Battle.combatExpFromHits(10, 1)).toBeCloseTo(0.5, 5);
-    expect(Battle.combatExpFromHits(10, 3)).toBeCloseTo(0.85, 5); // 旧公式为 1.5
+    expect(Battle.combatExpFromHits(10, 1)).toBeCloseTo(0.42, 5);
+    expect(Battle.combatExpFromHits(10, 3)).toBeCloseTo(0.714, 5);
     expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
+  });
+
+  it('expToNext：高阶经验需求显著高于低阶', () => {
+    expect(Battle.expToNext(1)).toBe(11);
+    expect(Battle.expToNext(2)).toBe(32);
+    expect(Battle.expToNext(4)).toBe(104);
+    expect(Battle.expToNext(4)).toBeGreaterThan(Battle.expToNext(2) * 2);
   });
 });

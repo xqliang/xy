@@ -2558,15 +2558,15 @@ export class Battle {
     return msg;
   }
 
-  // 武将升阶进度：每级所需经验 = 10 × 当前 level；满条时双字各 +1 阶（level 仅作阈值曲线，不参与攻力）
+  // 武将升阶进度：经验需求 = 6×level + 5×level²（低阶温和、高阶明显变慢）；满条时双字各 +1 阶
   static expToNext(level: number): number {
-    return 10 * level;
+    return 6 * level + 5 * level * level;
   }
   /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
   static combatExpFromHits(dmg: number, hit: number): number {
     if (hit <= 0) return 0;
     const weightedHits = 1 + 0.35 * (hit - 1);
-    return dmg * weightedHits * 0.05;
+    return dmg * weightedHits * 0.042;
   }
   addGeneralCombatExp(g: ActiveGeneral, amount: number, ai = false): void {
     const wordAt = ai ? (c: number, r: number) => this.aiWordAt(c, r) : (c: number, r: number) => this.wordAt(c, r);
@@ -2766,7 +2766,7 @@ export class Battle {
       critDmg,
       ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
     });
-    this.addGeneralCombatExp(g, 4);
+    this.addGeneralCombatExp(g, 3);
   }
 
   // 怪物施法：精英/BOSS 对最近 1 格内最近一件兵器施加地图减益；小 Boss 施展跨地图光环
