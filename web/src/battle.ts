@@ -126,7 +126,8 @@ export const TUNING = {
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
   eliteFromWave: 3, // 第 3 波起可能刷出精英妖
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
-  skillRadius: 2.2, // 技能作用半径（格）
+  eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
+  skillRadius: 1, // 控制技能最多作用到最近 1 格内的兵器
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 1.4, // 眩晕：武将暂停攻击（秒）
@@ -136,6 +137,7 @@ export const TUNING = {
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
   webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
   webbindRangeCut: 0.5, // 缠丝：有效射程 -0.5 格（见 updateUnits）
+  debuffImmuneDur: 4.5, // 兵器对同一种 debuff 的免疫时间（秒，含效果期内）
   // —— 小 Boss（第 4 波之后、非妖王波：有概率刷出跨地图小头目，各带独立光环技能）——
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.42, // 非 BOSS 波出现小 Boss 的概率
@@ -242,6 +244,12 @@ export interface PlacedUnit {
   weakenT: number; // 降攻剩余(秒)：>0 时伤害削弱
   rangeCutT: number; // 缠丝剩余(秒)：>0 时有效射程削减
   knockdownT: number; // 倒下剩余(秒)：>0 时无法攻击，立绘横躺
+  // 同种 debuff 免疫剩余(秒)：>0 时再被同类型控制无效
+  stunImmuneT: number;
+  slowImmuneT: number;
+  weakenImmuneT: number;
+  rangeCutImmuneT: number;
+  knockdownImmuneT: number;
 }
 
 /** 新建落位兵器的公共初始状态（含减益计时器）；可选朝向出怪口 */
@@ -264,6 +272,11 @@ export function makePlacedUnit(
     weakenT: 0,
     rangeCutT: 0,
     knockdownT: 0,
+    stunImmuneT: 0,
+    slowImmuneT: 0,
+    weakenImmuneT: 0,
+    rangeCutImmuneT: 0,
+    knockdownImmuneT: 0,
   };
 }
 
@@ -516,6 +529,7 @@ export class Battle {
   private slotOrder: Cell[];
   private spawnRemaining = 0;
   private spawnTimer = 0;
+  private sinceLastElite = Number.POSITIVE_INFINITY; // 距上一只带技能精英已刷出的普通妖数
   private waveMonsterCount = 0; // 本波出怪总数（含后期堆量），用于骑兵半数判定
   private cavalryWave = false; // 本波是否为骑兵波（半数怪为骑兵）
   private waveMiniBoss: MiniBossKind | null = null; // 本波预定的小 Boss 种类（非 BOSS 波才可能）
@@ -2094,12 +2108,21 @@ export class Battle {
     this.aiSpawnGateT = 0.5;
   }
 
-  // 决定怪物携带的技能：BOSS 必带（随机一种），精英按概率带，普通妖无
+  // 决定怪物携带的技能：BOSS 必带，精英按概率带且两次精英之间至少隔 eliteMinGap 只普通妖
   private rollMonsterSkill(isBoss: boolean): MonsterSkill | null {
     // 技能按地图主题固定（该图 Boss 必带；精英小怪按概率带同一技能）；未配置的地图回退定身。
     const skill = MAP_SKILL[this.map.id] ?? 'stun';
     if (isBoss) return skill;
-    if (this.wave >= TUNING.eliteFromWave && this.rng.next() < TUNING.eliteChance) return skill;
+    if (this.wave < TUNING.eliteFromWave) return null;
+    if (this.sinceLastElite < TUNING.eliteMinGap) {
+      this.sinceLastElite++;
+      return null;
+    }
+    if (this.rng.next() < TUNING.eliteChance) {
+      this.sinceLastElite = 0;
+      return skill;
+    }
+    this.sinceLastElite++;
     return null;
   }
 
@@ -2264,6 +2287,11 @@ export class Battle {
       if (u.weakenT > 0) u.weakenT = Math.max(0, u.weakenT - dt);
       if (u.rangeCutT > 0) u.rangeCutT = Math.max(0, u.rangeCutT - dt);
       if (u.knockdownT > 0) u.knockdownT = Math.max(0, u.knockdownT - dt);
+      if (u.stunImmuneT > 0) u.stunImmuneT = Math.max(0, u.stunImmuneT - dt);
+      if (u.slowImmuneT > 0) u.slowImmuneT = Math.max(0, u.slowImmuneT - dt);
+      if (u.weakenImmuneT > 0) u.weakenImmuneT = Math.max(0, u.weakenImmuneT - dt);
+      if (u.rangeCutImmuneT > 0) u.rangeCutImmuneT = Math.max(0, u.rangeCutImmuneT - dt);
+      if (u.knockdownImmuneT > 0) u.knockdownImmuneT = Math.max(0, u.knockdownImmuneT - dt);
       if (u.stunT > 0 || u.knockdownT > 0) continue; // 眩晕/倒下：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
@@ -2490,7 +2518,7 @@ export class Battle {
     this.addGeneralCombatExp(g, 4);
   }
 
-  // 怪物施法：精英/BOSS 对半径内兵器施加地图减益；小 Boss 施展跨地图光环
+  // 怪物施法：精英/BOSS 对最近 1 格内最近一件兵器施加地图减益；小 Boss 施展跨地图光环
   private updateMonsterSkills(dt: number): void {
     for (const m of this.monsters) {
       if (m.hp <= 0) continue;
@@ -2503,25 +2531,36 @@ export class Battle {
         this.castMiniBossSkill(m);
         continue;
       }
-      // 精英 / 妖王：地图专属减益
+      // 精英 / 妖王：地图专属减益（只打半径内最近一把兵器）
       if (!m.skill) continue;
       m.skillCd -= dt;
       if (m.skillCd > 0) continue;
       m.skillCd = TUNING.skillInterval;
       const mp = posAtDistance(this.map, m.dist);
+      const target = this.nearestUnitInRadius(mp.c, mp.r, TUNING.skillRadius);
       let affected = 0;
-      for (const u of this.units.values()) {
-        const d = Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r);
-        if (d > TUNING.skillRadius) continue;
-        this.applyDebuff(u, m.skill);
-        affected++;
-      }
+      if (target && this.applyDebuff(target, m.skill)) affected++;
       if (affected > 0) {
         m.castFlash = 1;
         this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.4, maxTtl: 0.4, big: true, color: SKILL_META[m.skill].color });
         this.message = `${m.isBoss ? 'BOSS' : '精英妖'}施展「${SKILL_META[m.skill].name}」`;
       }
     }
+  }
+
+  /** 半径内最近的兵器；无人则 null */
+  private nearestUnitInRadius(c: number, r: number, radius: number): PlacedUnit | null {
+    let best: PlacedUnit | null = null;
+    let bestD = Infinity;
+    for (const u of this.units.values()) {
+      const d = Math.hypot(c - u.cell.c, r - u.cell.r);
+      if (d > radius) continue;
+      if (d < bestD) {
+        bestD = d;
+        best = u;
+      }
+    }
+    return best;
   }
 
   private castMiniBossSkill(m: Monster): void {
@@ -2534,13 +2573,11 @@ export class Battle {
       case 'frost':
       case 'blight':
       case 'quake': {
-        for (const u of this.units.values()) {
-          const d = Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r);
-          if (d > TUNING.miniBossRadius) continue;
-          if (kind === 'frost') u.slowT = Math.max(u.slowT, TUNING.slowDur);
-          else if (kind === 'blight') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
-          else u.knockdownT = Math.max(u.knockdownT, TUNING.knockdownDur);
-          affected++;
+        // 对兵器的控制：与精英同口径——最近 1 格内最近一把 + 同种免疫
+        const target = this.nearestUnitInRadius(mp.c, mp.r, TUNING.skillRadius);
+        if (target) {
+          const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
+          if (this.applyUnitStatus(target, status)) affected++;
         }
         break;
       }
@@ -2579,14 +2616,53 @@ export class Battle {
     }
   }
 
-  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): void {
-    if (skill === 'stun') u.stunT = Math.max(u.stunT, TUNING.stunDur);
-    else if (skill === 'slow') u.slowT = Math.max(u.slowT, TUNING.slowDur);
-    else if (skill === 'weaken') u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
-    else if (skill === 'webbind') u.rangeCutT = Math.max(u.rangeCutT, TUNING.webbindDur);
-    else {
-      const _exhaustive: never = skill;
-      void _exhaustive;
+  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): boolean {
+    switch (skill) {
+      case 'stun': return this.applyUnitStatus(u, 'stun');
+      case 'slow': return this.applyUnitStatus(u, 'slow');
+      case 'weaken': return this.applyUnitStatus(u, 'weaken');
+      case 'webbind': return this.applyUnitStatus(u, 'webbind');
+      default: {
+        const _exhaustive: never = skill;
+        void _exhaustive;
+        return false;
+      }
+    }
+  }
+
+  /** 对兵器施加状态；同种免疫期内返回 false */
+  private applyUnitStatus(u: PlacedUnit, status: UnitStatusId): boolean {
+    switch (status) {
+      case 'stun':
+        if (u.stunImmuneT > 0) return false;
+        u.stunT = Math.max(u.stunT, TUNING.stunDur);
+        u.stunImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'slow':
+        if (u.slowImmuneT > 0) return false;
+        u.slowT = Math.max(u.slowT, TUNING.slowDur);
+        u.slowImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'weaken':
+        if (u.weakenImmuneT > 0) return false;
+        u.weakenT = Math.max(u.weakenT, TUNING.weakenDur);
+        u.weakenImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'webbind':
+        if (u.rangeCutImmuneT > 0) return false;
+        u.rangeCutT = Math.max(u.rangeCutT, TUNING.webbindDur);
+        u.rangeCutImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'knockdown':
+        if (u.knockdownImmuneT > 0) return false;
+        u.knockdownT = Math.max(u.knockdownT, TUNING.knockdownDur);
+        u.knockdownImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      default: {
+        const _exhaustive: never = status;
+        void _exhaustive;
+        return false;
+      }
     }
   }
 

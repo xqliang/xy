@@ -104,7 +104,7 @@ describe('mini-boss spawn & skills', () => {
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
     const u = b.units.get(`${cell.c},${cell.r}`)!;
-    expect(near.d).toBeLessThanOrEqual(TUNING.miniBossRadius + 0.5);
+    expect(near.d).toBeLessThanOrEqual(TUNING.skillRadius + 0.5);
     expect(u.knockdownT).toBeGreaterThan(0);
   });
 
