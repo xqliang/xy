@@ -3,6 +3,7 @@
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
+// 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
 import { matchGeneral } from './generals';
@@ -223,12 +224,22 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
+    // 2a0) 同字高阶上板：tray 更高阶与棋盘低阶孤儿互换
+    if (!subopt() && tryPromoteHigherTierWords()) return true;
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) return true;
-    // 2b) 字牌：能激活则按武将 placeCellScore 选双格（可挪武器）；单字远离路径、靠近唐僧
+    // 2b) 字牌激活：能配对则按武将座位分选双格（可挪武器）；先不单放，留给回收步骤用 tray
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
-      if (tryPlaceWord(i, t)) return true;
+      if (tryActivateTrayWord(i, t)) return true;
+    }
+    // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
+    if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
+    // 2d) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray）
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!; if (t.kind !== 'word') continue;
+      if (view.placedWords().some((w) => w.char === t.char)) continue;
+      if (placeSingleWord(i)) return true;
     }
     // 3) 兵种合成：同型同阶 → 合成升阶（"合成英雄"/升级武器）
     for (let i = 0; i < tray.length; i++) {
@@ -448,7 +459,8 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   ): boolean {
     const w = wordAt(cell);
     if (w) {
-      if (allowMate && w.char === allowMate.char && w.general === allowMate.general) return true;
+      // 仅当目标格上就是指定伴侣实例时保留（避免重复同字误判）
+      if (allowMate && sameCell(cell, allowMate.cell)) return true;
       if (view.isActiveHeroCell(cell)) return false;
       return clearOrphanWordFrom(cell, reserved, extraFree);
     }
@@ -459,13 +471,103 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     return view.placedWords().find((w) => sameCell(w.cell, cell));
   }
 
-  function tryPlaceWord(i: number, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
-    const free = view.freeCells();
-    if (free.length === 0 && view.placedUnits().length === 0 && view.placedWords().length === 0) return false;
-    if (subopt()) {
-      const cell = free[0];
-      return !!(cell && view.place(i, cell));
+  function wordTier(w: { tier?: number }): number {
+    return w.tier ?? 1;
+  }
+
+  function orphanWords(): PlacedWordLite[] {
+    return view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
+  }
+
+  /** 未激活孤儿中可与 char 配对者，优先最高阶 */
+  function pickBestBoardMate(char: string, generalHint?: string): PlacedWordLite | null {
+    let best: PlacedWordLite | null = null;
+    for (const w of orphanWords()) {
+      if (!isCharPartner(char, w.char, view, generalHint && w.general === generalHint ? generalHint : undefined)) continue;
+      if (!best || wordTier(w) > wordTier(best)) best = w;
     }
+    return best;
+  }
+
+  /** tray 更高阶同字 ↔ 棋盘更低阶孤儿 */
+  function tryPromoteHigherTierWords(): boolean {
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      let target: PlacedWordLite | null = null;
+      for (const w of orphanWords()) {
+        if (w.char !== t.char) continue;
+        if (wordTier(w) >= t.tier) continue;
+        if (!target || wordTier(w) < wordTier(target)) target = w;
+      }
+      if (target && view.place(i, target.cell)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 棋盘同字只留最高阶（含已激活）：其余未激活低阶/重复用 tray 异字换下。
+   */
+  function tryEjectLowerDuplicateOrphans(): boolean {
+    const byChar = new Map<string, PlacedWordLite[]>();
+    for (const w of view.placedWords()) {
+      const list = byChar.get(w.char) ?? [];
+      list.push(w);
+      byChar.set(w.char, list);
+    }
+    const expendable: PlacedWordLite[] = [];
+    for (const list of byChar.values()) {
+      if (list.length < 2) continue;
+      // 保留：最高阶；同阶优先已激活
+      list.sort((a, b) => {
+        const td = wordTier(b) - wordTier(a);
+        if (td !== 0) return td;
+        return (view.isActiveHeroCell(b.cell) ? 1 : 0) - (view.isActiveHeroCell(a.cell) ? 1 : 0);
+      });
+      for (let k = 1; k < list.length; k++) {
+        const w = list[k]!;
+        if (view.isActiveHeroCell(w.cell)) continue; // 绝不拆激活武将
+        expendable.push(w);
+      }
+    }
+    if (expendable.length === 0) return false;
+    expendable.sort((a, b) => wordTier(a) - wordTier(b));
+
+    for (const junk of expendable) {
+      const tray = view.tray();
+      let bestIdx = -1;
+      let bestScore = -Infinity;
+      for (let i = 0; i < tray.length; i++) {
+        const t = tray[i]!;
+        if (t.kind !== 'word') continue;
+        if (t.char === junk.char) continue;
+        let score = t.tier;
+        const hasBoardMate = orphanWords().some(
+          (w) =>
+            !sameCell(w.cell, junk.cell) &&
+            isCharPartner(t.char, w.char, view, t.general === w.general ? t.general : undefined),
+        );
+        const hasTrayMate = tray.some(
+          (x, j) =>
+            j !== i &&
+            x.kind === 'word' &&
+            isCharPartner(t.char, x.char, view, t.general === x.general ? t.general : undefined),
+        );
+        if (hasBoardMate || hasTrayMate) score += 10;
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0 && view.place(bestIdx, junk.cell)) return true;
+    }
+    return false;
+  }
+
+  /** 仅尝试激活（tray 配对或最高阶棋盘伴侣）；单放见 step 2d */
+  function tryActivateTrayWord(i: number, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    if (subopt()) return false;
 
     const tray = view.tray();
     let partnerJ = -1;
@@ -481,9 +583,7 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         break;
       }
     }
-    const boardMate = view.placedWords().find(
-      (w) => !view.isActiveHeroCell(w.cell) && isCharPartner(t.char, w.char, view, t.general === w.general ? t.general : undefined),
-    ) ?? null;
+    const boardMate = pickBestBoardMate(t.char, t.general);
 
     const pair = boardMate
       ? resolveHeroPair(t.char, boardMate.char, view, t.general === boardMate.general ? t.general : undefined)
@@ -491,15 +591,15 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         ? resolveHeroPair(t.char, partnerChar, view, t.general === partnerGeneral ? t.general : undefined)
         : undefined;
     if (pair && (boardMate || partnerJ >= 0)) {
-      if (tryActivateHero(i, t, pair.chars, pair.general, boardMate, partnerJ)) return true;
+      return tryActivateHero(i, t, pair.chars, pair.general, boardMate, partnerJ);
     }
-    return placeSingleWord(i);
+    return false;
   }
 
-  /** 棋盘上已有可配对两字但未相邻 → 迁到 pathCover 最高的左右邻格对 */
+  /** 棋盘上已有可配对两字但未相邻 → 迁到 pathCover 最高的左右邻格对（同覆盖偏好更高阶） */
   function tryPairBoardOrphans(): boolean {
-    const orphans = view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
-    type Cand = { left: PlacedWordLite; right: PlacedWordLite; general: string; score: number };
+    const orphans = orphanWords();
+    type Cand = { left: PlacedWordLite; right: PlacedWordLite; general: string; score: number; tierSum: number };
     let best: Cand | null = null;
 
     for (let i = 0; i < orphans.length; i++) {
@@ -513,38 +613,49 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
         if (!left || !right) continue;
         if (sameCell(right.cell, { c: left.cell.c + 1, r: left.cell.r })) continue;
 
-        const tier = Math.max(left.tier ?? 1, right.tier ?? 1);
+        const tier = Math.max(wordTier(left), wordTier(right));
         const pairs = rankedHeroPairs(def.id, tier);
         if (pairs.length === 0) continue;
         const score = pairs[0]!.score;
-        if (!best || score > best.score) best = { left, right, general: def.id, score };
+        const tierSum = wordTier(left) + wordTier(right);
+        if (!best || score > best.score || (score === best.score && tierSum > best.tierSum)) {
+          best = { left, right, general: def.id, score, tierSum };
+        }
       }
     }
     if (!best) return false;
     return moveBoardPairToActivate(best.left, best.right, best.general);
   }
 
-  function findWordByChar(char: string): PlacedWordLite | undefined {
-    return view.placedWords().find((w) => w.char === char);
+  /** 按原格定位；若已挪走则取同字最高阶实例 */
+  function resolveTrackedWord(ref: PlacedWordLite): PlacedWordLite | undefined {
+    const at = wordAt(ref.cell);
+    if (at && at.char === ref.char) return at;
+    let best: PlacedWordLite | undefined;
+    for (const w of view.placedWords()) {
+      if (w.char !== ref.char) continue;
+      if (!best || wordTier(w) > wordTier(best)) best = w;
+    }
+    return best;
   }
 
   function moveBoardPairToActivate(leftW: PlacedWordLite, rightW: PlacedWordLite, general: string): boolean {
-    const tier = Math.max(leftW.tier ?? 1, rightW.tier ?? 1);
+    const tier = Math.max(wordTier(leftW), wordTier(rightW));
     for (const { left, right } of rankedHeroPairs(general, tier)) {
       if (view.isActiveHeroCell(left) || view.isActiveHeroCell(right)) continue;
       const reserved = new Set([cellKey(left), cellKey(right)]);
 
-      const lw0 = findWordByChar(leftW.char);
-      const rw0 = findWordByChar(rightW.char);
+      const lw0 = resolveTrackedWord(leftW);
+      const rw0 = resolveTrackedWord(rightW);
       if (!lw0 || !rw0) return false;
       if (!clearForHero(left, reserved, sameCell(lw0.cell, left) ? lw0 : null)) continue;
       if (!clearForHero(right, reserved, sameCell(rw0.cell, right) ? rw0 : null)) continue;
 
-      const lw = findWordByChar(leftW.char);
-      const rw = findWordByChar(rightW.char);
+      const lw = resolveTrackedWord(leftW);
+      const rw = resolveTrackedWord(rightW);
       if (!lw || !rw) continue;
       if (!sameCell(lw.cell, left) && !view.moveWord(lw.cell, left)) continue;
-      const rw2 = findWordByChar(rightW.char);
+      const rw2 = resolveTrackedWord(rightW);
       if (!rw2) continue;
       if (!sameCell(rw2.cell, right) && !view.moveWord(rw2.cell, right)) continue;
       return true;
@@ -616,13 +727,10 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
 
         // 1) 先腾伴侣目标格（允许伴侣已在位；可把占位物暂放到伴侣旧格以外）
         if (!clearForHero(needMate, reserved, boardMate)) continue;
-        // 2) 迁伴侣（腾出旧格可供后续占位物落脚）
-        if (!sameCell(boardMate.cell, needMate)) {
-          // 刷新 mate 引用：clear 可能未动伴侣，但仍在原格
-          const mateNow = view.placedWords().find(
-            (w) => w.char === boardMate.char && w.general === boardMate.general,
-          );
-          if (!mateNow) continue;
+        // 2) 迁伴侣（按原格 / 同字同阶定位，避免重复字找错）
+        const mateNow = resolveTrackedWord(boardMate);
+        if (!mateNow) continue;
+        if (!sameCell(mateNow.cell, needMate)) {
           if (!view.moveWord(mateNow.cell, needMate)) continue;
         }
         // 3) 腾 tray 落点（伴侣旧格现已空，可作为 extraFree）
@@ -712,4 +820,73 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
     }
     return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
   }
+}
+
+/** 战中动态调位视图：依据当前存活怪群评估座位，每次至多执行一次 move/swap */
+export interface BattleRepositionView {
+  placedUnits(): PlacedUnitLite[];
+  freeCells(): Cell[];
+  moveUnit(from: Cell, to: Cell): boolean;
+  swapUnits(a: Cell, b: Cell): boolean;
+  isActiveHeroCell(cell: Cell): boolean;
+  canEngage(cell: Cell, type: UnitType, tier: number): boolean;
+  engageScore(cell: Cell, type: UnitType, tier: number): number;
+}
+
+/**
+ * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位。
+ * 每次调用至多成功一次 move/swap；宿主侧用 ≥200ms 间隔节流。
+ */
+export function planBattleReposition(view: BattleRepositionView): boolean {
+  const units = view.placedUnits();
+  if (units.length === 0) return false;
+
+  let bestGain = 0.05;
+  let bestAction: (() => boolean) | null = null;
+
+  // 1) 空闲高价值武器 → 能打怪的空格
+  for (const u of units) {
+    if (view.isActiveHeroCell(u.cell)) continue;
+    if (view.canEngage(u.cell, u.type, u.tier)) continue;
+    const cur = view.engageScore(u.cell, u.type, u.tier);
+    for (const to of view.freeCells()) {
+      if (!view.canEngage(to, u.type, u.tier)) continue;
+      const gain = view.engageScore(to, u.type, u.tier) - cur;
+      if (gain <= bestGain) continue;
+      bestGain = gain;
+      const from = u.cell;
+      bestAction = () => view.moveUnit(from, to);
+    }
+  }
+
+  // 2) 互换：至少一方原先够不着、换后总威胁分更高（典型：前排高阶 ↔ 后方低阶）
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const a = units[i]!;
+      const b = units[j]!;
+      if (view.isActiveHeroCell(a.cell) || view.isActiveHeroCell(b.cell)) continue;
+      const before =
+        view.engageScore(a.cell, a.type, a.tier) + view.engageScore(b.cell, b.type, b.tier);
+      const after =
+        view.engageScore(b.cell, a.type, a.tier) + view.engageScore(a.cell, b.type, b.tier);
+      const gain = after - before;
+      if (gain <= bestGain) continue;
+      const aIdle = !view.canEngage(a.cell, a.type, a.tier);
+      const bIdle = !view.canEngage(b.cell, b.type, b.tier);
+      const aEngagesAfter = view.canEngage(b.cell, a.type, a.tier);
+      const bEngagesAfter = view.canEngage(a.cell, b.type, b.tier);
+      if (!(aIdle && aEngagesAfter) && !(bIdle && bEngagesAfter)) continue;
+      bestGain = gain;
+      bestAction = () => view.swapUnits(a.cell, b.cell);
+    }
+  }
+
+  return bestAction ? bestAction() : false;
+}
+
+/** 连续调位；maxSteps=1 用于 AI 200ms 节流，更大值用于玩家一键布阵 */
+export function runBattleReposition(view: BattleRepositionView, maxSteps = 1): number {
+  let steps = 0;
+  while (steps < maxSteps && planBattleReposition(view)) steps++;
+  return steps;
 }

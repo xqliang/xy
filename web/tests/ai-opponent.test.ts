@@ -1,5 +1,5 @@
 // web/tests/ai-opponent.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Battle, TUNING } from '../src/battle';
 import { PEACH_PER_KILL } from '@core';
 
@@ -84,6 +84,24 @@ describe('updateAi 真玩家循环', () => {
     const b = new Battle(7, 1, undefined, undefined, undefined, undefined, undefined, true);
     for (let t = 0; t < 100; t++) (b as any).updateAi(0.1);
     expect(b.aiUnits.length).toBe(0);
+  });
+
+  it('战中调位节流：200ms 内至多一次互换', () => {
+    const b = new Battle(7) as any;
+    b.aiMonsters = [{ dist: 10, hp: 100, spd: 1, isBoss: true, isMiniBoss: false, spawnT: 0, hitFlash: 0, hasteT: 0, stunT: 0, slowT: 0 }];
+    b.aiPathLen = 20;
+    b.aiPath = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 }, { c: 4, r: 0 }];
+    b.aiUnits = [
+      { type: 'archer', tier: 3, cell: { c: 0, r: 0 }, cooldown: 0, combo: 0, firePulse: 0, fireDir: 0 },
+      { type: 'dao', tier: 1, cell: { c: 4, r: 0 }, cooldown: 0, combo: 0, firePulse: 0, fireDir: 0 },
+    ];
+    const spy = vi.spyOn(b, 'tickBattleReposition');
+    b.updateAi(0.05);
+    b.updateAi(0.05);
+    b.updateAi(0.05);
+    expect(spy.mock.calls.length).toBe(1);
+    expect(spy.mock.calls.every((c) => c[0] === 'ai' && c[1] === 1)).toBe(true);
+    spy.mockRestore();
   });
 });
 

@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName } from './generals';
@@ -72,14 +72,13 @@ export function getButtons(b: Battle): Button[] {
   if (b.status === 'won' || b.status === 'lost') {
     return [{ id: 'restart', label: '重新开始', x: 24, y, w: VIEW_W - 48, h, enabled: true }];
   }
-  const trayEmpty = b.tray.length === 0;
   const canSummon = b.peach >= b.effectiveSummonCost(); // 桃够即可征兵(不看候选槽；点后清空残余)
   // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，左端「布阵」，
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
   const trayRightX = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 8; // 候选槽右侧
   const btns: Button[] = [
-    // 布阵：移到候选区(tray)右端，与候选槽同高，便于拿到令牌后就近一键落位
-    { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: !trayEmpty },
+    // 布阵：常亮；候选区有牌则落子/合成，无牌也可依当前怪群动态调整已上场武器
+    { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: true },
     // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免部署令牌时误点
     { id: 'summon', label: `征兵${b.effectiveSummonCost()}`, x: 180, y, w: 200, h: 78, enabled: canSummon },
   ];
@@ -332,6 +331,83 @@ function monsterStatusItems(m: {
     heal: m.healFlash > 0.05,
   };
   return order.filter((id) => on[id]).map((id) => MONSTER_STATUS_META[id]);
+}
+
+function formatRemainT(t: number): string {
+  return t >= 10 ? `${Math.ceil(t)}s` : `${t.toFixed(1)}s`;
+}
+
+function unitStatusEntries(u: {
+  stunT: number;
+  slowT: number;
+  weakenT: number;
+  rangeCutT: number;
+  knockdownT: number;
+}): { meta: (typeof UNIT_STATUS_META)[UnitStatusId]; remain: number }[] {
+  const order: UnitStatusId[] = ['knockdown', 'stun', 'slow', 'weaken', 'webbind'];
+  const timers: Record<UnitStatusId, number> = {
+    knockdown: u.knockdownT,
+    stun: u.stunT,
+    slow: u.slowT,
+    weaken: u.weakenT,
+    webbind: u.rangeCutT,
+  };
+  return order
+    .filter((id) => timers[id] > 0)
+    .map((id) => ({ meta: UNIT_STATUS_META[id], remain: timers[id] }));
+}
+
+function monsterStatusEntries(m: {
+  stunT: number;
+  slowT: number;
+  hasteT: number;
+  healFlash: number;
+}): { meta: (typeof MONSTER_STATUS_META)[MonsterStatusId]; remain: number }[] {
+  const order: MonsterStatusId[] = ['stun', 'slow', 'haste', 'heal'];
+  const timers: Record<MonsterStatusId, number> = {
+    stun: m.stunT,
+    slow: m.slowT,
+    haste: m.hasteT,
+    heal: m.healFlash > 0.05 ? m.healFlash / 2.5 : 0,
+  };
+  return order
+    .filter((id) => timers[id] > 0)
+    .map((id) => ({ meta: MONSTER_STATUS_META[id], remain: timers[id] }));
+}
+
+function formatStatusLine(
+  entries: { meta: { icon: string; name: string }; remain: number }[],
+): string {
+  return entries.map((e) => `${e.meta.icon}${e.meta.name} ${formatRemainT(e.remain)}`).join(' · ');
+}
+
+/** 全局主动/被动增益文案（用于信息弹窗） */
+function battleBuffLines(
+  b: Battle,
+  ctx: 'unit' | 'general' | 'monster',
+  monster?: Monster,
+  monsterSide: 'player' | 'ai' = 'player',
+): string[] {
+  const lines: string[] = [];
+  if (ctx !== 'monster') {
+    if (b.atkBuffT > 0) {
+      lines.push(`🔴仙丹 攻击+${Math.round((b.atkBuffMul - 1) * 100)}% ${formatRemainT(b.atkBuffT)}`);
+    }
+    if (b.frqBuffT > 0) {
+      lines.push(`🔥风火轮 攻速+${Math.round((b.frqBuffMul - 1) * 100)}% ${formatRemainT(b.frqBuffT)}`);
+    }
+    if (b.mods.atkMul > 1.001) lines.push(`💊被动 攻击×${b.mods.atkMul.toFixed(2)}`);
+    if (b.mods.frqMul > 1.001) lines.push(`💨被动 攻速×${b.mods.frqMul.toFixed(2)}`);
+  }
+  if (ctx === 'monster' && monsterSide === 'player') {
+    if (b.mods.monsterSpdMul < 0.999) {
+      lines.push(`🕸被动 移速×${b.mods.monsterSpdMul.toFixed(2)}`);
+    }
+    if (monster && b.monsterInMudZone(monster)) {
+      lines.push(`🟤淤泥 移速×0.82`);
+    }
+  }
+  return lines;
 }
 
 function drawUnit(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, size: number, faceLeft = false, badge?: { x: number; y: number; s: number }, fallen = false) {
@@ -2456,8 +2532,9 @@ function drawWordSelection(
   ctx.restore();
 
   // 信息面板：放在另一半场中央，避免遮住攻击范围环
+  const buffLines = !fromAi && active ? battleBuffLines(b, 'general') : [];
   const pw = 194;
-  const ph = active ? 150 : 146;
+  const ph = (active ? 150 : 146) + buffLines.length * 16;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -2519,6 +2596,15 @@ function drawWordSelection(
     ctx.textAlign = 'right';
     ctx.fillStyle = '#fff6e6';
     ctx.fillText(v, px + pw - 12, ry);
+    ry += 16;
+  }
+  for (const line of buffLines) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#a0e8b0';
+    ctx.fillText('增益', px + 12, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#c8ffd8';
+    ctx.fillText(line, px + pw - 12, ry);
     ry += 16;
   }
   // 底部状态提示
@@ -2628,7 +2714,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.stroke();
     ctx.restore();
     // 玩家单位：面板放 AI 半场，避免挡自己的范围环
-    drawUnitInfoPanel(ctx, u.type, u.tier, 'ai');
+    drawUnitInfoPanel(ctx, u.type, u.tier, 'ai', { unit: u, b });
     return;
   }
   // AI 侧单位 / 字牌
@@ -2646,7 +2732,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.stroke();
     ctx.restore();
     // AI 单位：面板放玩家半场，避免挡 AI 侧范围环
-    drawUnitInfoPanel(ctx, aiU.type, aiU.tier, 'player');
+    drawUnitInfoPanel(ctx, aiU.type, aiU.tier, 'player', { unit: aiU, b });
     return;
   }
   const aiW = b.aiWords.get(`${ui.selected.c},${ui.selected.r}`);
@@ -2675,10 +2761,12 @@ function drawMonsterSelection(
 
   const mini = m.isMiniBoss && m.miniBossKind ? MINI_BOSS_META[m.miniBossKind] : null;
   const skill = m.skill ? SKILL_META[m.skill] : null;
-  const statuses = monsterStatusItems(m);
+  const statusEntries = monsterStatusEntries(m);
+  const buffLines = battleBuffLines(b, 'monster', m, sel.side);
   const panelHalf: 'ai' | 'player' = sel.side === 'player' ? 'ai' : 'player';
   const pw = 200;
-  const ph = mini || skill || statuses.length > 0 ? 148 : 118;
+  const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length;
+  const ph = (mini || skill ? 148 : 118) + extraRows * 17;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -2712,19 +2800,21 @@ function drawMonsterSelection(
     rows.push(['技能', '无']);
   }
   if (m.isCavalry) rows.push(['特性', '骑兵·移速翻倍']);
-  if (statuses.length > 0) {
-    rows.push(['状态', statuses.map((s) => `${s.icon}${s.name}`).join(' ')]);
+  if (statusEntries.length > 0) {
+    rows.push(['状态', formatStatusLine(statusEntries)]);
+  }
+  for (const line of buffLines) {
+    rows.push(['增益', line]);
   }
   ctx.font = '13px "PingFang SC", sans-serif';
   let ry = py + 42;
   for (const [k, v] of rows) {
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillStyle = k === '状态' ? '#ffb0a0' : k === '增益' ? '#a0e8b0' : 'rgba(255,240,210,0.7)';
     ctx.fillText(k, px + 12, ry);
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#fff6e6';
-    // 长文案略缩，避免溢出面板
-    const shown = v.length > 14 ? `${v.slice(0, 13)}…` : v;
+    ctx.fillStyle = k === '状态' ? '#ffd0c0' : k === '增益' ? '#c8ffd8' : '#fff6e6';
+    const shown = k === '状态' || k === '增益' ? v : v.length > 14 ? `${v.slice(0, 13)}…` : v;
     ctx.fillText(shown, px + pw - 12, ry);
     ry += 17;
   }
@@ -2807,11 +2897,15 @@ function drawUnitInfoPanel(
   type: UnitType,
   tier: number,
   panelHalf: 'ai' | 'player' = 'ai',
+  opts?: { unit?: PlacedUnit; b?: Battle },
 ) {
   const cfg = UNITS[type];
   const stat = getUnitStat(type, tier);
+  const statusEntries = opts?.unit ? unitStatusEntries(opts.unit) : [];
+  const buffLines = opts?.b ? battleBuffLines(opts.b, 'unit') : [];
+  const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length;
   const pw = 176;
-  const ph = 120;
+  const ph = 120 + extraRows * 16;
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -2842,14 +2936,20 @@ function drawUnitInfoPanel(
     ['目标数', stat.targets.toFixed(1)],
     ['法宝', cfg.origin],
   ];
+  if (statusEntries.length > 0) {
+    rows.push(['状态', formatStatusLine(statusEntries)]);
+  }
+  for (const line of buffLines) {
+    rows.push(['增益', line]);
+  }
   ctx.font = '13px "PingFang SC", sans-serif';
   let ry = py + 40;
   for (const [k, v] of rows) {
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,240,210,0.7)';
+    ctx.fillStyle = k === '状态' ? '#ffb0a0' : k === '增益' ? '#a0e8b0' : 'rgba(255,240,210,0.7)';
     ctx.fillText(k, px + 12, ry);
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#fff6e6';
+    ctx.fillStyle = k === '状态' ? '#ffd0c0' : k === '增益' ? '#c8ffd8' : '#fff6e6';
     ctx.fillText(v, px + pw - 12, ry);
     ry += 16;
   }

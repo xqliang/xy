@@ -18,4 +18,12 @@ describe('玩家 autoPlaceTray（共享策略接入）', () => {
     const cells = [...b.units.values()].map((u) => u.cell);
     expect(cells.length).toBeGreaterThan(0);
   });
+
+  it('候选区空时仍可点布阵（动态调位/棋盘整理）', () => {
+    const b = new Battle(1);
+    b.grantPeach(9999);
+    for (let n = 0; n < 4; n++) { b.summon(); b.autoPlaceTray(); }
+    b.tray.length = 0;
+    expect(() => b.autoPlaceTray()).not.toThrow();
+  });
 });

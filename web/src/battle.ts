@@ -35,7 +35,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, type AutoPlaceView } from './autoplace';
+import { planAutoPlace, runBattleReposition, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -491,6 +491,8 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
+  private aiRepositionTimer = 0;            // 战中调位节流（≥200ms 一次）
+  static readonly AI_REPOSITION_INTERVAL = 0.2;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
   // 道具与修正器
@@ -585,6 +587,11 @@ export class Battle {
 
   aiMonsterPos(m: Monster): { c: number; r: number } {
     return posAlong(this.aiPath, m.dist);
+  }
+
+  /** 淤泥被动：出怪口附近 3 格内妖怪移速降低 */
+  monsterInMudZone(m: Monster): boolean {
+    return this.mods.mud && m.dist - this.entranceDist < 3;
   }
 
   // 该格是否已解锁
@@ -914,8 +921,11 @@ export class Battle {
     if (token.kind === 'word') {
       const exist = this.aiWords.get(k);
       if (exist) {
-        if (exist.char === token.char && exist.tier === token.tier && exist.tier < MAX_TIER) { exist.tier += 1; this.aiTray.splice(index, 1); return true; }
-        return false;
+        // 与玩家一致：同字同阶不可合并；同字异阶或异字 → 交换
+        if (exist.char === token.char && exist.tier === token.tier) return false;
+        this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+        this.aiTray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
+        return true;
       }
       if (!this.aiCellFree(to.c, to.r)) return false;
       this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
@@ -1095,6 +1105,99 @@ export class Battle {
     };
   }
 
+  /** 该格兵种对指定怪群的路径威胁分（范围内怪 atk 之和） */
+  private engageScoreAt(
+    monsters: Monster[],
+    path: Cell[],
+    cell: Cell,
+    type: UnitType,
+    tier: number,
+  ): number {
+    if (monsters.length === 0) return 0;
+    const stat = getUnitStat(type, tier);
+    let score = 0;
+    for (const m of monsters) {
+      const p = posAlong(path, m.dist);
+      if (inAttackRange(cell.c, cell.r, stat.rge, p)) score += stat.atk;
+    }
+    return score;
+  }
+
+  private buildBattleRepositionView(side: 'player' | 'ai'): BattleRepositionView {
+    if (side === 'ai') {
+      return {
+        placedUnits: () => this.aiUnits.map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
+        freeCells: () => this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r)),
+        moveUnit: (from, to) => {
+          const u = this.aiUnits.find((x) => x.cell.c === from.c && x.cell.r === from.r);
+          if (!u) return false;
+          if (!this.aiUnlocked.has(cellKey(to.c, to.r)) || !this.aiCellFree(to.c, to.r)) return false;
+          u.cell = { c: to.c, r: to.r };
+          u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
+          return true;
+        },
+        swapUnits: (a, b) => {
+          const ua = this.aiUnits.find((x) => x.cell.c === a.c && x.cell.r === a.r);
+          const ub = this.aiUnits.find((x) => x.cell.c === b.c && x.cell.r === b.r);
+          if (!ua || !ub) return false;
+          ua.cell = { c: b.c, r: b.r };
+          ub.cell = { c: a.c, r: a.r };
+          ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
+          ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
+          return true;
+        },
+        isActiveHeroCell: (cell) =>
+          this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
+        canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier) > 0,
+        engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, cell, type, tier),
+      };
+    }
+    return {
+      placedUnits: () => [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier, cell: u.cell })),
+      freeCells: () => this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)),
+      moveUnit: (from, to) => {
+        const u = this.units.get(cellKey(from.c, from.r));
+        if (!u) return false;
+        if (!this.isUnlocked(to.c, to.r) || !this.cellFree(to.c, to.r)) return false;
+        this.units.delete(cellKey(from.c, from.r));
+        u.cell = { c: to.c, r: to.r };
+        u.fireDir = faceDirToward(u.cell, this.unitFaceGate());
+        this.units.set(cellKey(to.c, to.r), u);
+        return true;
+      },
+      swapUnits: (a, b) => {
+        const ka = cellKey(a.c, a.r);
+        const kb = cellKey(b.c, b.r);
+        const ua = this.units.get(ka);
+        const ub = this.units.get(kb);
+        if (!ua || !ub) return false;
+        this.units.delete(ka);
+        this.units.delete(kb);
+        ua.cell = { c: b.c, r: b.r };
+        ub.cell = { c: a.c, r: a.r };
+        ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate());
+        ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate());
+        this.units.set(kb, ua);
+        this.units.set(ka, ub);
+        return true;
+      },
+      isActiveHeroCell: (cell) =>
+        this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
+      canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier) > 0,
+      engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, cell, type, tier),
+    };
+  }
+
+  /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（200ms 节流），玩家一键布阵可连续多步 */
+  private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
+    if (side === 'ai') {
+      if (this.aiMonsters.length === 0 || this.aiUnits.length === 0) return 0;
+    } else if (this.monsters.length === 0 || this.units.size === 0) {
+      return 0;
+    }
+    return runBattleReposition(this.buildBattleRepositionView(side), maxSteps);
+  }
+
   private aiPathCoverAt(ax: number, ay: number, rge: number): number {
     const step = 0.25;
     let covered = 0;
@@ -1206,13 +1309,16 @@ export class Battle {
       }
       const exist = this.wordAt(to.c, to.r);
       if (exist) {
-        if (exist.char === token.char) {
+        // 同字同阶不可合并；同字异阶或异字 → 与该格字牌交换（便于高阶上板 / 回收低阶）
+        if (exist.char === token.char && exist.tier === token.tier) {
           this.message = '单字不可合并，需凑对激活后升阶';
           return false;
         }
-        // 不同字 → 与该格字牌交换
         this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
         this.tray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
+        this.message = exist.char === token.char
+          ? `「${token.char}」${token.tier} 阶与棋盘 ${exist.tier} 阶交换`
+          : `与字牌「${exist.char}」交换`;
         return true;
       }
       // 该格有兵 → 字牌与兵交换（字牌落格，兵回候选槽），与「不同型兵交换」一致
@@ -1919,10 +2025,16 @@ export class Battle {
         });
       }
     }
-    // 2) 战斗：AI 兵 + AI 武将攻击 aiMonsters
+    // 2) 战中调位：怪群前移后前排高阶够不着 → 与后方互换或挪到空位（200ms 至多一次）
+    this.aiRepositionTimer -= dt;
+    if (this.aiRepositionTimer <= 0) {
+      this.aiRepositionTimer = Battle.AI_REPOSITION_INTERVAL;
+      this.tickBattleReposition('ai', 1);
+    }
+    // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
-    // 3) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
+    // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
       m.spawnT += dt;
@@ -2437,7 +2549,7 @@ export class Battle {
       if (m.stunT > 0) {
         m.stunT = Math.max(0, m.stunT - dt);
       } else {
-        const mudMul = this.mods.mud && m.dist - this.entranceDist < 3 ? 0.82 : 1; // 淤泥：出怪口附近减速
+        const mudMul = this.monsterInMudZone(m) ? 0.82 : 1; // 淤泥：出怪口附近减速
         const slowMul = m.slowT > 0 ? 0.5 : 1;
         const hasteMul = m.hasteT > 0 ? TUNING.hasteSpdMul : 1;
         m.dist += m.spd * slowMul * hasteMul * mudMul * dt;
@@ -2709,6 +2821,8 @@ export class Battle {
 
   autoPlaceTray(): void {
     planAutoPlace(this.buildPlayerAutoView(), { rng: () => this.rng.next(), pSubOptimal: 0 });
+    // 战中动态调位：一键布阵可连续多步，不限 200ms（候选区空时仍可调已上场武器）
+    this.tickBattleReposition('player', 50);
   }
 
   // 便于自测/渲染读取的快照
