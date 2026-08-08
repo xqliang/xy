@@ -3115,12 +3115,12 @@ function drawWordSelection(
   ctx.lineWidth = 2;
   ctx.strokeStyle = active ? '#f0b93c' : qualityColor(w.tier);
   ctx.stroke();
-  // 标题：武将名 + 品质阶
+  // 标题：武将名 + 攻击方式 + 满级；右侧当前品质阶
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe6b0';
-  ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText(def.name, px + 12, py + 18);
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.name} · ${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 18);
   ctx.textAlign = 'right';
   ctx.fillStyle = qualityColor(w.tier);
   ctx.font = 'bold 13px "PingFang SC", sans-serif';

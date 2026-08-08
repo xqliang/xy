@@ -811,6 +811,34 @@ it('满槽时 tray「郎」可换下邻格孤儿「仙」原地激活二郎', ()
   expect(xianOnBoard || xianInTray).toBeTruthy();
 });
 
+it('金吒已激活时 tray「哪」布阵替换「金」组成哪吒', () => {
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 },
+    { c: 0, r: 1 }, { c: 1, r: 1 },
+  ];
+  const v = new FakeView(
+    [{ kind: 'word', char: '哪', general: 'nezha', tier: 1 }],
+    cells,
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    if (g === 'nezha') return ['哪', '吒'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,1', { char: '金', general: 'jinzha', cell: { c: 0, r: 1 }, tier: 3 });
+  v.wordsMap.set('1,1', { char: '吒', general: 'jinzha', cell: { c: 1, r: 1 }, tier: 3 });
+  expect(v.isActiveHeroCell({ c: 0, r: 1 })).toBe(true);
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  const ne = v.placedWords().find((w) => w.char === '哪');
+  const zha = v.placedWords().find((w) => w.char === '吒');
+  expect(ne).toBeDefined();
+  expect(zha).toBeDefined();
+  expect(ne!.cell).toEqual({ c: 0, r: 1 });
+  expect(zha!.cell).toEqual({ c: 1, r: 1 });
+  expect(matchGeneral(ne!.char, zha!.char)?.id).toBe('nezha');
+  expect(v.tray()).toContainEqual({ kind: 'word', char: '金', general: 'jinzha', tier: 3 });
+});
+
 it('「骨」贴已激活英雄时，tray「白」可与邻格兵交换激活白骨', () => {
   // 截图1：大蟒已激活，骨在其右（左邻不可用）；无空位且无同阶可合兵 → 白与邻格兵交换后组成白骨
   const cells = [

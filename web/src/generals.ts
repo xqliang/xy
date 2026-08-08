@@ -144,6 +144,21 @@ export function hintGeneralForChar(char: string): string {
   return pref?.id ?? '';
 }
 
+/** 门派内满 5 武将：char 为其非共享字（如 哪→哪吒） */
+export function mainGeneralForVariantChar(char: string): GeneralDef | undefined {
+  return GENERALS.find((g) => g.maxTier === 5 && g.chars.includes(char) && char !== g.family);
+}
+
+/** 同门派满 3 过渡武将 */
+export function transitGeneralInFamily(family: string): GeneralDef | undefined {
+  return GENERALS.find((g) => g.family === family && g.maxTier === 3);
+}
+
+/** 武将中非门派共享的那一字（如 金吒→金，哪吒→哪） */
+export function variantChar(def: GeneralDef): string {
+  return def.chars[0] === def.family ? def.chars[1]! : def.chars[0]!;
+}
+
 /** 可与该字组成武将的另一侧字（去重） */
 export function partnerChars(char: string): string[] {
   const out = new Set<string>();

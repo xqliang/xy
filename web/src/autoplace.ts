@@ -11,7 +11,12 @@
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
 import { posAlong } from './board';
-import { matchGeneral } from './generals';
+import {
+  matchGeneral,
+  mainGeneralForVariantChar,
+  transitGeneralInFamily,
+  variantChar,
+} from './generals';
 
 export interface Cell { c: number; r: number; }
 
@@ -315,6 +320,54 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
     }
   }
 
+  if (familyUpgradePending(view)) return true;
+
+  return false;
+}
+
+/** tray 满 5 侧字可替换已激活满 3 同门派武将的可换字（如 哪 换 金 → 哪吒） */
+function familyUpgradePending(view: AutoPlaceView): boolean {
+  const tray = view.tray();
+  for (const t of tray) {
+    if (t.kind !== 'word') continue;
+    if (findFamilyUpgradeTarget(view, t.char)) return true;
+  }
+  return false;
+}
+
+function findFamilyUpgradeTarget(view: AutoPlaceView, trayChar: string): PlacedWordLite | null {
+  const mainDef = mainGeneralForVariantChar(trayChar);
+  if (!mainDef || trayChar !== variantChar(mainDef)) return null;
+  const transitDef = transitGeneralInFamily(mainDef.family);
+  if (!transitDef) return null;
+
+  for (const w of view.placedWords()) {
+    const right = view.placedWords().find(
+      (r) => r.cell.c === w.cell.c + 1 && r.cell.r === w.cell.r,
+    );
+    if (!right) continue;
+    const active = matchGeneral(w.char, right.char);
+    if (!active || active.id !== transitDef.id) continue;
+    const replaceVariant = variantChar(transitDef);
+    if (w.char === replaceVariant) return w;
+    if (right.char === replaceVariant) return right;
+  }
+  return null;
+}
+
+/** 同门派满5已激活时，其满3过渡侧字（如 金）不必再单放上板 */
+function isObsoleteTransitionVariant(view: AutoPlaceView, char: string): boolean {
+  for (const w of view.placedWords()) {
+    const right = view.placedWords().find(
+      (r) => r.cell.c === w.cell.c + 1 && r.cell.r === w.cell.r,
+    );
+    if (!right) continue;
+    const active = matchGeneral(w.char, right.char);
+    if (!active || active.maxTier !== 5) continue;
+    const transit = transitGeneralInFamily(active.family);
+    if (!transit) continue;
+    if (char === variantChar(transit)) return true;
+  }
   return false;
 }
 
@@ -374,6 +427,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
+    // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
+    if (!subopt() && tryFamilyUpgrade()) return true;
     // 2a0) 同字高阶上板：tray 更高阶与棋盘低阶孤儿互换
     if (!subopt() && tryPromoteHigherTierWords()) return true;
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
@@ -393,6 +448,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (view.placedWords().some((w) => w.char === t.char)) continue;
+      if (isObsoleteTransitionVariant(view, t.char)) continue;
       if (placeSingleWord(i)) return true;
     }
     // 3) tray 同型同阶落到棋盘合升阶
@@ -698,6 +754,18 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (!best || wordTier(w) > wordTier(best)) best = w;
     }
     return best;
+  }
+
+  /** tray 满5侧字 ↔ 已激活满3同门派可换字（保留共享字，如 金吒→哪吒） */
+  function tryFamilyUpgrade(): boolean {
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      const target = findFamilyUpgradeTarget(view, t.char);
+      if (target && view.place(i, target.cell)) return true;
+    }
+    return false;
   }
 
   /** tray 更高阶同字 ↔ 棋盘更低阶孤儿（不碰已激活武将格） */

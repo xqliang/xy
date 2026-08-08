@@ -5,6 +5,8 @@ import {
   partnerChars,
   generalsWithChar,
   hintGeneralForChar,
+  mainGeneralForVariantChar,
+  variantChar,
 } from '../src/generals';
 import { Battle } from '../src/battle';
 import { WEAPONS } from '../src/weapons';
@@ -53,6 +55,13 @@ describe('门派配置', () => {
     for (const g of GENERALS) {
       expect(WEAPONS.some((w) => w.general === g.id)).toBe(true);
     }
+  });
+
+  it('门派共享字与满5侧字识别', () => {
+    expect(variantChar(GENERALS.find((g) => g.id === 'jinzha')!)).toBe('金');
+    expect(variantChar(GENERALS.find((g) => g.id === 'nezha')!)).toBe('哪');
+    expect(mainGeneralForVariantChar('哪')?.id).toBe('nezha');
+    expect(mainGeneralForVariantChar('金')).toBeUndefined();
   });
 });
 
