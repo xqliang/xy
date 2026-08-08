@@ -844,10 +844,15 @@ it('贴路行满槽：牛郎+金吒占中，tray白与骨凑对应左移腾位',
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 },
-    { c: 0, r: 3 }, { c: 1, r: 3 },
   ];
   const v = new FakeView(
-    [{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }],
+    [
+      { kind: 'unit', type: 'dao', tier: 1 },
+      { kind: 'word', char: '白', general: 'baigujing', tier: 1 },
+      { kind: 'unit', type: 'cavalry', tier: 1 },
+      { kind: 'unit', type: 'cavalry', tier: 1 },
+      { kind: 'unit', type: 'archer', tier: 1 },
+    ],
     cells,
   );
   v.wordChars = (g: string) => {
@@ -862,7 +867,8 @@ it('贴路行满槽：牛郎+金吒占中，tray白与骨凑对应左移腾位',
   v.wordsMap.set('3,0', { char: '金', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
   v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
   v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
-  expect(v.isActiveHeroCell({ c: 3, r: 0 })).toBe(true);
+  v.unitsMap.set('6,0', { type: 'archer', tier: 3, cell: { c: 6, r: 0 } });
+  expect(v.freeCells()).toHaveLength(0);
   expect(v.isActiveHeroCell({ c: 4, r: 0 })).toBe(true);
   planAutoPlace(v, { rng });
   const bai = v.placedWords().find((w) => w.char === '白');
@@ -871,6 +877,9 @@ it('贴路行满槽：牛郎+金吒占中，tray白与骨凑对应左移腾位',
   expect(gu).toBeDefined();
   expect(bai!.cell.c + 1).toBe(gu!.cell.c);
   expect(bai!.cell.r).toBe(gu!.cell.r);
+  expect(bai!.cell.r).toBe(0);
+  expect(bai!.cell.c).toBe(4);
+  expect(gu!.cell.c).toBe(5);
   expect(matchGeneral(bai!.char, gu!.char)?.id).toBe('baigujing');
   // 金吒应比满级牛郎更靠前（更靠近出口 c=0）
   const jin = v.placedWords().find((w) => w.char === '金');
