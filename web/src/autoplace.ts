@@ -459,6 +459,7 @@ function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
   const out: Cell[] = [];
   for (const t of view.tray()) {
     if (t.kind !== 'word') continue;
+    if (shouldSkipTrayWordActivation(view, t)) continue;
     const mate = pickBestBoardMateView(view, t.char, t.general);
     if (!mate) continue;
     const pair = resolveHeroPair(
