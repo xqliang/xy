@@ -1385,6 +1385,10 @@ export class Battle {
       dangerNear: () => this.aiDangerNear(),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
+      unitEngageScore: (cell, type, tier) =>
+        this.aiMonsters.length > 0
+          ? this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear())
+          : 0,
       mergeTray: (from, to) => this.aiMergeTrayTokens(from, to),
       mergeBoard: (from, to) => this.aiMergeBoardUnits(from, to),
     };
@@ -3553,6 +3557,10 @@ export class Battle {
         return generalStat(def, tier).atk * (1 + (wb?.atk ?? 0));
       },
       dangerEngageAt: (ax, ay, rge, atk) => this.dangerEngageAtPlayer(ax, ay, rge, atk),
+      unitEngageScore: (cell, type, tier) =>
+        this.monsters.length > 0
+          ? this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear())
+          : 0,
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.autoPlaceApply(i, cell),
       moveUnit: (from, to) => {

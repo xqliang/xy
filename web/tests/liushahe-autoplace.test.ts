@@ -27,4 +27,18 @@ describe('流沙河一键布阵', () => {
     b.autoPlaceTray();
     expect(b.message).toContain('征兵');
   });
+
+  it('短兵在流沙河底行时布阵会换到更贴出怪口的格子', () => {
+    const b = new Battle(1, 1, mapById('liushahe'));
+    b.units.set('3,7', { type: 'archer', tier: 2, cell: { c: 3, r: 7 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.units.set('4,7', { type: 'archer', tier: 1, cell: { c: 4, r: 7 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.units.set('3,8', { type: 'spear', tier: 2, cell: { c: 3, r: 8 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.units.set('4,8', { type: 'spear', tier: 1, cell: { c: 4, r: 8 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.units.set('3,9', { type: 'cavalry', tier: 2, cell: { c: 3, r: 9 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.units.set('4,9', { type: 'dao', tier: 1, cell: { c: 4, r: 9 }, cooldown: 0, fireDir: { c: 0, r: 0 } });
+    b.autoPlaceTray();
+    const dao = [...b.units.values()].find((u) => u.type === 'dao');
+    expect(dao).toBeDefined();
+    expect(dao!.cell.r).toBeLessThan(9);
+  });
 });

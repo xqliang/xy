@@ -3,6 +3,7 @@
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；有空格必落 tray 兵（射程内优先，否则兜底填最近空位）；
 // 挖出空位后：先让棋盘武器迁/换到更合适座位，再处理 tray。
 // tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
+// tray 高阶兵：满盘或异型低阶占优位时，优先与场上更低阶异型互换上板（如 tray 弓2 换 枪1）。
 // tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
@@ -78,6 +79,11 @@ export interface AutoPlaceView {
   dangerNear(): boolean;
   /** 格对「怪物即将路过」路段的贴近分（越高越好；无怪时为 0） */
   imminentPathScore(cell: Cell): number;
+  /**
+   * 对当前场上怪群的交战威胁分；仅在有怪时由宿主提供。
+   * 落子/换阵时优先能打到怪的格，避免「离路近但打不到当前怪群」。
+   */
+  unitEngageScore?(cell: Cell, type: UnitType, tier: number): number;
   /** 候选区内两枚同型同阶兵合成（升阶留在 to 下标；from 被移除） */
   mergeTray(from: number, to: number): boolean;
   /** 棋盘两兵合成：from 并入 to（保留 to 格，升阶） */
@@ -954,19 +960,136 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return s;
   }
 
+  /** 攻击圆能覆盖路径（比欧氏离路距更准，避免流沙河等地图误判） */
+  function canUnitCoverPath(cell: Cell, type: UnitType, tier: number): boolean {
+    return view.pathCover(cell, type, tier) > 0.05;
+  }
+
+  /** 可落/可换上的格：须覆盖路径；场上有怪时优先当前能接战的格 */
+  function placementReachCells(cells: Cell[], type: UnitType, tier: number): Cell[] {
+    let reach = cells.filter((c) => canUnitCoverPath(c, type, tier));
+    if (reach.length === 0) return [];
+    const liveEngage = view.unitEngageScore;
+    if (liveEngage) {
+      const engaging = reach.filter((c) => liveEngage(c, type, tier) > 0);
+      if (engaging.length > 0) reach = engaging;
+    }
+    return reach;
+  }
+
+  /** 落位评分：短兵加重出怪口段覆盖；有怪时叠加实时交战分 */
+  function placementCellScore(cell: Cell, type: UnitType, tier: number): number {
+    const rge = getUnitStat(type, tier).rge;
+    let s = scoreCell(cell, type, tier);
+    if (rge <= 1.5) {
+      s += view.pathCoverEarlyAt(cell.c, cell.r, rge) * 1.5;
+      s -= view.pathFirstEngageAt(cell.c, cell.r, rge) * 0.25;
+    }
+    const engage = view.unitEngageScore?.(cell, type, tier) ?? 0;
+    if (engage > 0) s += engage * 8;
+    return s;
+  }
+
   /** 可达格中选座位分最高者（短兵先占位，避免远程抢近路甜区） */
   function pickReachCell(reach: Cell[], type: UnitType, tier: number): Cell {
     let best = reach[0]!;
-    let bestScore = scoreCell(best, type, tier);
+    let bestScore = placementCellScore(best, type, tier);
     for (let i = 1; i < reach.length; i++) {
       const c = reach[i]!;
-      const s = scoreCell(c, type, tier);
+      const s = placementCellScore(c, type, tier);
       if (s > bestScore) {
         best = c;
         bestScore = s;
       }
     }
     return best;
+  }
+
+  /**
+   * 场上有怪时：把打不到的兵器迁到能接战空位，或与能打到的异型互换。
+   */
+  function tryRelocateNonEngagingUnits(): boolean {
+    if (!view.unitEngageScore) return false;
+    const engage = view.unitEngageScore;
+    const free = view.freeCells();
+    const units = view.placedUnits();
+    let bestMove: { from: Cell; to: Cell; gain: number } | null = null;
+    for (const u of units) {
+      if (view.isActiveHeroCell(u.cell)) continue;
+      if (engage(u.cell, u.type, u.tier) > 0) continue;
+      const curSeat = placementCellScore(u.cell, u.type, u.tier);
+      for (const c of free) {
+        if (engage(c, u.type, u.tier) <= 0) continue;
+        const gain = placementCellScore(c, u.type, u.tier) - curSeat;
+        if (gain <= 0.05) continue;
+        if (!bestMove || gain > bestMove.gain) bestMove = { from: u.cell, to: c, gain };
+      }
+    }
+    if (bestMove) return view.moveUnit(bestMove.from, bestMove.to);
+
+    let bestSwap: { a: PlacedUnitLite; b: PlacedUnitLite; gain: number } | null = null;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i]!;
+      if (view.isActiveHeroCell(a.cell)) continue;
+      if (engage(a.cell, a.type, a.tier) > 0) continue;
+      for (let j = 0; j < units.length; j++) {
+        if (i === j) continue;
+        const b = units[j]!;
+        if (view.isActiveHeroCell(b.cell)) continue;
+        if (!canUnitCoverPath(b.cell, a.type, a.tier)) continue;
+        if (engage(b.cell, a.type, a.tier) <= 0) continue;
+        if (!canUnitCoverPath(a.cell, b.type, b.tier)) continue;
+        const gain =
+          engage(b.cell, a.type, a.tier) * 8
+          + placementCellScore(b.cell, a.type, a.tier)
+          - placementCellScore(a.cell, a.type, a.tier);
+        if (gain <= 0.05) continue;
+        if (!bestSwap || gain > bestSwap.gain) bestSwap = { a, b, gain };
+      }
+    }
+    if (!bestSwap) return false;
+    return view.swapUnits(bestSwap.a.cell, bestSwap.b.cell);
+  }
+
+  /**
+   * 短兵（刀/骑）：从 pathCover 偏差的高行挪到更贴出怪口段的位置（无怪时也生效，如流沙河底行刀）。
+   */
+  function tryRelocateShortRangeToBetterCover(): boolean {
+    if (subopt()) return false;
+    const free = view.freeCells();
+    const units = view.placedUnits();
+    const isShort = (type: UnitType, tier: number) => getUnitStat(type, tier).rge <= 1.5;
+
+    let bestMove: { from: Cell; to: Cell; gain: number } | null = null;
+    for (const u of units) {
+      if (view.isActiveHeroCell(u.cell) || !isShort(u.type, u.tier)) continue;
+      const cur = placementCellScore(u.cell, u.type, u.tier);
+      for (const c of placementReachCells(free, u.type, u.tier)) {
+        const gain = placementCellScore(c, u.type, u.tier) - cur;
+        if (gain <= 0.35) continue;
+        if (!bestMove || gain > bestMove.gain) bestMove = { from: u.cell, to: c, gain };
+      }
+    }
+    if (bestMove) return view.moveUnit(bestMove.from, bestMove.to);
+
+    let bestSwap: { a: PlacedUnitLite; b: PlacedUnitLite; gain: number } | null = null;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i]!;
+      if (view.isActiveHeroCell(a.cell) || !isShort(a.type, a.tier)) continue;
+      const scoreA = placementCellScore(a.cell, a.type, a.tier);
+      for (let j = 0; j < units.length; j++) {
+        if (i === j) continue;
+        const b = units[j]!;
+        if (view.isActiveHeroCell(b.cell)) continue;
+        if (!canUnitCoverPath(b.cell, a.type, a.tier)) continue;
+        if (!canUnitCoverPath(a.cell, b.type, b.tier)) continue;
+        const gain = placementCellScore(b.cell, a.type, a.tier) - scoreA;
+        if (gain <= 0.35) continue;
+        if (!bestSwap || gain > bestSwap.gain) bestSwap = { a, b, gain };
+      }
+    }
+    if (!bestSwap) return false;
+    return view.swapUnits(bestSwap.a.cell, bestSwap.b.cell);
   }
 
   /** tray 仅有 1 阶兵种（截图征兵盘）且有空格 → 先落子，高阶互换/凑字稍后 */
@@ -1084,12 +1207,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2a0) 同字/同型高阶上板：tray 更高阶与棋盘低阶互换
     if (!subopt() && tryPromoteHigherTierWords()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && tryPromoteHigherTierUnits()) return true;
+    if (!subopt() && tryPromoteTrayUnitOverLowerOther()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) { markHeroLayoutChanged(); return true; }
     // 2c+) 第 5 波起：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 3–5b) 有空格时落 tray 兵（tray 字未清完则暂缓）
     if (!pendingTrayWordDeploy() && tryDeployTrayUnits()) return true;
+    // 3b) 场上有怪：把打不到的兵器换到能接战位；短兵再按出怪口覆盖微调
+    if (!subopt() && tryRelocateNonEngagingUnits()) return true;
+    if (!subopt() && tryRelocateShortRangeToBetterCover()) return true;
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
     if (!pendingTrayDeploy() && !subopt() && tryRelocateToBetterFreeSeats()) return true;
     if (!pendingTrayDeploy() && !subopt() && trySwapHigherTierToBetterSeats()) return true;
@@ -1109,16 +1236,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const unitIdx = trayUnitEntries();
       for (const { t, i } of unitIdx) {
         const rge = getUnitStat(t.type, t.tier).rge;
-        if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue;
+        if (free.some((c) => canUnitCoverPath(c, t.type, t.tier))) continue;
         for (const occ of view.placedUnits()) {
-          if (view.nearestPathDist(occ.cell) > rge + tol) continue;
+          if (!canUnitCoverPath(occ.cell, t.type, t.tier)) continue;
           const occRge = getUnitStat(occ.type, occ.tier).rge;
           if (occRge < rge) continue;
           let dest: Cell | undefined;
           let destScore = -Infinity;
           for (const c of free) {
-            if (view.nearestPathDist(c) > occRge + tol) continue;
-            if (view.nearestPathDist(c) <= rge + tol) continue;
+            if (!canUnitCoverPath(c, occ.type, occ.tier)) continue;
+            if (canUnitCoverPath(c, t.type, t.tier)) continue;
             const sc = scoreCell(c, occ.type, occ.tier);
             if (!dest || sc > destScore) { dest = c; destScore = sc; }
           }
@@ -1161,8 +1288,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (free.length === 0) return false;
     const unitIdx = trayUnitEntries();
     for (const { t, i } of unitIdx) {
-      const rge = getUnitStat(t.type, t.tier).rge;
-      const reach = free.filter((c) => view.nearestPathDist(c) <= rge + tol);
+      const reach = placementReachCells(free, t.type, t.tier);
       if (reach.length === 0) continue;
       const cell = subopt()
         ? reach[Math.floor(opts.rng() * reach.length)]!
@@ -1198,14 +1324,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const t = tray[i]!;
       if (t.kind !== 'unit') continue;
       if (typeOnBoard(t.type)) continue;
-      const rge = getUnitStat(t.type, t.tier).rge;
 
       for (const u of view.placedUnits()) {
         if (u.type === t.type) continue;
         if ((typeCounts.get(u.type) ?? 0) < 2) continue;
         if (u.tier > t.tier) continue;
         if (view.isActiveHeroCell(u.cell)) continue;
-        if (view.nearestPathDist(u.cell) > rge + tol) continue;
+        if (!canUnitCoverPath(u.cell, t.type, t.tier)) continue;
 
         const traySeat = scoreCell(u.cell, t.type, t.tier);
         const seatLoss = scoreCell(u.cell, u.type, u.tier);
@@ -1224,9 +1349,56 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.place(best.trayIdx, best.target.cell);
   }
 
-  /** 合后或常规：落子 + 缺种互换 + 合后换占低阶（不含 tray 内合成链） */
+  /**
+   * tray 高阶兵 ↔ 棋盘更低阶异型：满盘腾位；有空位时仅当该格对 tray 兵明显优于最佳空格才换。
+   * 不拆激活将；不换场上唯一兵种。
+   */
+  function tryPromoteTrayUnitOverLowerOther(): boolean {
+    if (subopt()) return false;
+    const typeCounts = boardUnitTypeCounts();
+    const tray = view.tray();
+    const free = view.freeCells();
+    const full = free.length === 0;
+    let best: { trayIdx: number; target: PlacedUnitLite; gain: number } | null = null;
+
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'unit') continue;
+      let bestFree = -Infinity;
+      if (!full) {
+        for (const c of placementReachCells(free, t.type, t.tier)) {
+          bestFree = Math.max(bestFree, placementCellScore(c, t.type, t.tier));
+        }
+      }
+
+      for (const u of view.placedUnits()) {
+        if (u.type === t.type) continue;
+        if (u.tier >= t.tier) continue;
+        if ((typeCounts.get(u.type) ?? 0) < 2) continue;
+        if (view.isActiveHeroCell(u.cell)) continue;
+        if (!canUnitCoverPath(u.cell, t.type, t.tier)) continue;
+        const seat = placementCellScore(u.cell, t.type, t.tier);
+        const gain = full ? seat : seat - bestFree;
+        if (!full && bestFree > -Infinity && gain <= 0.05) continue;
+        if (
+          !best ||
+          u.tier < best.target.tier ||
+          (u.tier === best.target.tier && gain > best.gain) ||
+          (u.tier === best.target.tier && gain === best.gain && seat > scoreCell(best.target.cell, t.type, t.tier))
+        ) {
+          best = { trayIdx: i, target: u, gain };
+        }
+      }
+    }
+
+    if (!best) return false;
+    return view.place(best.trayIdx, best.target.cell);
+  }
+
+  /** 合后或常规：落子 + 缺种互换 + 异型高阶换低阶 + 合后换占低阶（不含 tray 内合成链） */
   function tryDeployTrayUnitsFromTray(): boolean {
     if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
+    if (!subopt() && tryPromoteTrayUnitOverLowerOther()) return true;
     if (tryPlaceTrayUnitsOnly()) return true;
     if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
     return tryPlaceTrayUnitsOnly();
@@ -1249,14 +1421,18 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 有空格必落一兵：无视射程，优先填离路最近的格 */
+  /** 有空格时尽量落能打到怪的兵；无可用接战格则保留 tray */
   function tryFillAnyFreeSeat(): boolean {
     const free = view.freeCells();
     const unitIdx = trayUnitEntries();
     if (free.length === 0 || unitIdx.length === 0) return false;
-    const cell = nearestFreeCell(free);
-    const { i } = unitIdx[0]!;
-    return view.place(i, cell);
+    for (const { t, i } of unitIdx) {
+      const reach = placementReachCells(free, t.type, t.tier);
+      if (reach.length === 0) continue;
+      const cell = pickReachCell(reach, t.type, t.tier);
+      return view.place(i, cell);
+    }
+    return false;
   }
 
   /**
@@ -1273,9 +1449,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const lo = units[j]!;
         if (hi.type !== lo.type || hi.tier <= lo.tier) continue;
         const rge = getUnitStat(hi.type, hi.tier).rge;
-        // 互换后双方仍须够得着路（同型射程通常相同，仍做校验）
-        if (view.nearestPathDist(lo.cell) > rge + tol) continue;
-        if (view.nearestPathDist(hi.cell) > getUnitStat(lo.type, lo.tier).rge + tol) continue;
+        // 互换后双方仍须够得着路
+        if (!canUnitCoverPath(lo.cell, hi.type, hi.tier)) continue;
+        if (!canUnitCoverPath(hi.cell, lo.type, lo.tier)) continue;
         const scoreNow = scoreCell(hi.cell, hi.type, hi.tier);
         const scoreBetter = scoreCell(lo.cell, hi.type, hi.tier);
         const gain = scoreBetter - scoreNow;
@@ -1298,8 +1474,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     for (const u of view.placedUnits()) {
       const rge = getUnitStat(u.type, u.tier).rge;
       const scoreNow = scoreCell(u.cell, u.type, u.tier);
-      for (const c of free) {
-        if (view.nearestPathDist(c) > rge + tol) continue;
+      for (const c of placementReachCells(free, u.type, u.tier)) {
         const score = scoreCell(c, u.type, u.tier);
         const gain = score - scoreNow;
         if (gain <= 0.05) continue;
@@ -1326,7 +1501,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       for (const u of view.placedUnits()) {
         if (view.isActiveHeroCell(u.cell)) continue;
         const rge = getUnitStat(u.type, u.tier).rge;
-        if (view.nearestPathDist(orphan.cell) > rge + tol) continue;
+        if (!canUnitCoverPath(orphan.cell, u.type, u.tier)) continue;
         const gain = scoreCell(orphan.cell, u.type, u.tier) - scoreCell(u.cell, u.type, u.tier);
         if (gain <= 0.15) continue;
         if (!best || gain > best.gain) best = { unit: u, orphan, gain };
@@ -1554,7 +1729,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       for (const u of view.placedUnits()) {
         if (u.tier >= t.tier) continue;
         if (view.isActiveHeroCell(u.cell)) continue;
-        if (view.nearestPathDist(u.cell) > rge + tol) continue;
+        if (!canUnitCoverPath(u.cell, t.type, t.tier)) continue;
         const sc = scoreCell(u.cell, t.type, t.tier);
         if (
           !best ||
@@ -1580,6 +1755,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       for (const u of view.placedUnits()) {
         if (u.type !== t.type || u.tier >= t.tier) continue;
         if (view.isActiveHeroCell(u.cell)) continue;
+        if (!canUnitCoverPath(u.cell, t.type, t.tier)) continue;
         const seat = scoreCell(u.cell, t.type, t.tier);
         if (
           !target ||
@@ -2063,15 +2239,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const upTier = a.tier + 1;
         const rge = getUnitStat(upType, upTier).rge;
         let bestFree = -Infinity;
-        for (const c of view.freeCells()) {
-          if (view.nearestPathDist(c) > rge + tol) continue;
+        for (const c of placementReachCells(view.freeCells(), upType, upTier)) {
           bestFree = Math.max(bestFree, scoreCell(c, upType, upTier));
         }
         for (const u of view.placedUnits()) {
           if (u.type === upType) continue; // 其他武器
           if (u.tier >= upTier) continue;  // 仅换更低阶
           if (view.isActiveHeroCell(u.cell)) continue;
-          if (view.nearestPathDist(u.cell) > rge + tol) continue;
+          if (!canUnitCoverPath(u.cell, upType, upTier)) continue;
           const sc = scoreCell(u.cell, upType, upTier);
           const gain = sc - bestFree;
           if (gain <= 0.05) continue;
