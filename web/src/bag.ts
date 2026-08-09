@@ -186,7 +186,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
   ctx.fillStyle = '#d8c8a0';
   ctx.font = '13px "PingFang SC", sans-serif';
   ctx.fillText(
-    `清波35%掉碎片·妖王波必掉·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
+    `武将攻击10%掉碎片·每局最多1次·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
     VIEW_W / 2,
     90,
   );
@@ -316,7 +316,7 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
          : frags > 0
            ? `收集中：碎片 ${frags}/${req}，集齐后激活。${STAT_LABEL[w.stat]} ${bonusExplain}。\n`
            : `尚未获得。${weaponGradeName(id)}需 ${req} 片激活：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
-    `清波35%概率掉碎片，妖王波必掉；左下角点击领取。已集齐的神兵仍参与随机但不显示。最多同时装备 ${MAX_EQUIPPED} 件。`;
+    `武将攻击10%概率掉碎片（每局最多1次）；左下角点击领取。已集齐的神兵仍参与随机但不显示。最多同时装备 ${MAX_EQUIPPED} 件。`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.9)';

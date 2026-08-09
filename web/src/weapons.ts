@@ -261,11 +261,16 @@ export function weaponBonuses(s: BagState): WeaponBonuses {
   return out;
 }
 
-// 掉落：从 12 件中随机一件（用传入的随机数，便于确定性自测）
+// 掉落：从全部神兵中随机一件（用传入的随机数，便于确定性自测）
 export function rollWeaponDrop(rand: number): string {
   const i = Math.floor(rand * WEAPONS.length) % WEAPONS.length;
   return WEAPONS[i]!.id;
 }
+
+/** 开局判定本局是否「可能」掉碎片（通过后再在武将攻击时 10% 触发，整局最多 1 次） */
+export const BATTLE_FRAGMENT_ELIGIBLE_CHANCE = 0.35;
+/** 武将攻击命中时，在已预排的本局碎片掉落上掷骰 */
+export const HERO_ATTACK_FRAGMENT_CHANCE = 0.10;
 
 export function generalNameOfWeapon(id: string): string {
   const def = weaponById(id);

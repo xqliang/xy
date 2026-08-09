@@ -441,6 +441,7 @@ function handleMerchantPointer(x: number, y: number): boolean {
 
 function bindBattleWeaponPickup(): void {
   battle.weaponPickupVisible = (id) => !isWeaponFragmentsComplete(bag, id);
+  battle.planBattleFragmentDrop();
 }
 
 function visibleWeaponPickups(): string[] {

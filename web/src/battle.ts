@@ -680,6 +680,9 @@ export class Battle {
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
   pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵碎片
+  /** 开局预排的本局可能掉落的神兵 id；null 表示本局无掉落资格 */
+  battleFragmentDropId: string | null = null;
+  battleFragmentDropped = false;
   /** 由 main 注入：碎片已集齐时不展示领取卡片（仍参与随机） */
   weaponPickupVisible: (id: string) => boolean = () => true;
   pickedItems: string[] = [];
@@ -2344,15 +2347,24 @@ export class Battle {
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
 
-  // 清波掉落神兵：基础 35%，BOSS 波必掉（对应竞品"对局随机掉落"）
-  private rollWeaponDropOnClear(): void {
-    const isBossWave = this.isBossWave(this.wave);
-    if (!isBossWave && this.rng.next() > 0.35) return;
-    const id = rollWeaponDrop(this.rng.next());
+  // 开局预排本局神兵碎片：是否可能掉落 + 掉哪一件（main 注入可见性后调用）
+  planBattleFragmentDrop(): void {
+    this.battleFragmentDropId = null;
+    this.battleFragmentDropped = false;
+    if (this.rng.next() >= BATTLE_FRAGMENT_ELIGIBLE_CHANCE) return;
+    this.battleFragmentDropId = rollWeaponDrop(this.rng.next());
+  }
+
+  /** 武将攻击命中时 10% 触发预排碎片（整局最多 1 次；已集齐则不展示） */
+  private tryRollFragmentOnHeroAttack(): void {
+    const id = this.battleFragmentDropId;
+    if (!id || this.battleFragmentDropped) return;
     if (!this.weaponPickupVisible(id)) return;
+    if (this.rng.next() >= HERO_ATTACK_FRAGMENT_CHANCE) return;
+    this.battleFragmentDropped = true;
     this.pendingWeaponPickups.push(id);
     const wname = weaponById(id)?.name ?? id;
-    this.message = `第 ${this.wave} 波已清！掉落「${wname}」碎片（点击左下角领取）`;
+    this.message = `掉落「${wname}」碎片（点击左下角领取）`;
   }
 
   // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈阶梯。
@@ -3059,6 +3071,7 @@ export class Battle {
         s.firePulse = 1;
         s.fireDir = Math.atan2(inRange[0]!.p.r - ay, inRange[0]!.p.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit));
+        this.tryRollFragmentOnHeroAttack();
       }
       s.cooldown = 1 / this.generalFrq(g);
     }
@@ -3147,6 +3160,7 @@ export class Battle {
       ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
     });
     this.addGeneralCombatExp(g, Battle.heroSkillExp);
+    this.tryRollFragmentOnHeroAttack();
   }
 
   // 怪物施法：精英/BOSS 对半径内随机 1~2 件最近兵器施加地图减益；小 Boss 施展跨地图光环
@@ -3710,7 +3724,6 @@ export class Battle {
     // 对战/无尽均不波次封顶通关：对战靠击败对手唐僧，无尽靠失守结束
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
-      this.rollWeaponDropOnClear();
       this.clearWaveCombatFx();
       this.status = 'ready';
       this.nextWaveTimer = 5; // 5秒后自动开下一波
@@ -3946,6 +3959,8 @@ export class Battle {
       generals: this.activeGenerals().length,
       words: this.words.size,
       drops: this.pendingWeaponPickups.length,
+      fragmentPlanned: this.battleFragmentDropId,
+      fragmentDropped: this.battleFragmentDropped,
       bond: this.bondActive(),
       aiPow: Math.round(aiPowTotal),
       monsterPow: Math.round(monsterPowTotal),
