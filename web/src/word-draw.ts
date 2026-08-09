@@ -80,6 +80,7 @@ function buildWeightedEntries(
   trayCharsAlready: string[],
   ownedChars: string[],
   charCounts?: ReadonlyMap<string, number>,
+  tier5BiasMul = 1,
 ): { char: string; general: string; w: number }[] {
   const needed = new Set(pendingPartnerChars(orphanChars, trayCharsAlready));
   const owned = new Set([...ownedChars, ...orphanChars, ...trayCharsAlready]);
@@ -93,7 +94,7 @@ function buildWeightedEntries(
       const base = g.weight * pw;
       const isPartner = needed.has(c);
       // 配对最优先；无配对时偏向满5 高级字
-      let mult = isPartner ? PARTNER_BOOST : g.maxTier === 5 ? HIGH_TIER_BIAS : LOW_TIER_BIAS;
+      let mult = isPartner ? PARTNER_BOOST : g.maxTier === 5 ? HIGH_TIER_BIAS * tier5BiasMul : LOW_TIER_BIAS;
       const count = charCountOf(charCounts, c);
       if (!isPartner && count > 0) {
         // 出现次数越多，后续再抽到的概率越低
@@ -129,6 +130,10 @@ function pickFromWeighted(rng: Rng, entries: { char: string; general: string; w:
   return { char: last.char, general: last.general };
 }
 
+export interface WordPickOpts {
+  tier5BiasMul?: number;
+}
+
 /**
  * 抽一张字牌。
  * - forcePartner：只从仍缺的配对字中抽
@@ -143,7 +148,9 @@ export function pickWordChar(
   forcePartner: boolean,
   ownedChars: string[] = [],
   charCounts?: ReadonlyMap<string, number>,
+  opts?: WordPickOpts,
 ): WordPick {
+  const tier5BiasMul = opts?.tier5BiasMul ?? 1;
   if (forcePartner) {
     const need = pendingPartnerChars(orphanChars, trayCharsAlready);
     if (need.length > 0) {
@@ -153,7 +160,7 @@ export function pickWordChar(
   }
   return pickFromWeighted(
     rng,
-    buildWeightedEntries(wave, orphanChars, trayCharsAlready, ownedChars, charCounts),
+    buildWeightedEntries(wave, orphanChars, trayCharsAlready, ownedChars, charCounts, tier5BiasMul),
   );
 }
 

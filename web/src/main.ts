@@ -71,7 +71,7 @@ import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, 
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadUserId, copyUserId } from './user-id';
-import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
+import { loadAiSkill, recordVersusOutcome } from './ai-skill';
 import {
   getSettings,
   resetSettings,
@@ -1076,8 +1076,8 @@ function frame(now: number): void {
         screen = 'settle';
       } else {
         const won = battle.status === 'won';
-        // 跨局自适应：按本局胜负把 AI 强度朝 70% 目标微调并持久化（仅非无尽局）
-        saveAiSkill(nextAiSkill(loadAiSkill(), won));
+        // 对战连胜：下一局按档位隐藏加压（70% / 80% / 全力）
+        recordVersusOutcome(won);
         const change = won ? recordWin(rank) : recordLose(rank);
         rank = change.state;
         const gain = meritReward(won, battle.wave);

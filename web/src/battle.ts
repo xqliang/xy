@@ -61,7 +61,10 @@ import {
 } from './board-power';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
-import { DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses } from './ai-skill';
+import {
+  DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses,
+  loadPlayerWinStreak, loadPlayerLossStreak, versusRubberBand, effectiveAiSkill,
+} from './ai-skill';
 import {
   COLS,
   ROWS,
@@ -427,7 +430,7 @@ export interface PeachTree {
 // 各等级产 1 桃的间隔（秒）：1级20s / 2级10s / 3级5s / 4级3s / 5级2s
 export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
 export const PEACH_TREE_MAX_LEVEL = 5;
-export const PEACH_TREE_PLANT_INTERVAL = 50; // 蟠桃园每 50s 自动种 1 棵
+export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
 
 // 武将的持续状态（按武将 id 记录，拆分再重组可延续升阶进度）
 // level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
@@ -679,6 +682,8 @@ export class Battle {
   private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
+  /** 对战隐藏调节：抽字/道具概率，不在 UI 展示 */
+  private versusBand = versusRubberBand(0, 0);
 
   // 道具与修正器
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
@@ -728,11 +733,16 @@ export class Battle {
   private wavePressure: PressurePlan | null = null;
 
   constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL) {
+    this.versusBand = versusRubberBand(
+      endless ? 0 : loadPlayerWinStreak(),
+      endless ? 0 : loadPlayerLossStreak(),
+    );
+    const effectiveSkill = effectiveAiSkill(aiSkill, this.versusBand);
     this.weaponBonuses = weapons;
-    this.aiWeaponBonuses = scaleWeaponBonuses(weapons, aiWeaponScale(aiSkill));
+    this.aiWeaponBonuses = scaleWeaponBonuses(weapons, aiWeaponScale(effectiveSkill));
     this.rng = new RNG(seed);
     this.aiRng = new RNG((seed * 2654435761 + 1013904223) >>> 0); // 派生独立流：生成策略同、结果不同
-    this.aiSkill = aiSkill;
+    this.aiSkill = effectiveSkill;
     this.difficultyMul = difficultyMul;
     this.endless = endless;
     this.bossScheduleRng = new RNG((seed ^ 0x5bf03635) >>> 0);
@@ -785,8 +795,13 @@ export class Battle {
       const aiRoll = rollAiLoadout(
         actives.slice(0, MAX_EQUIPPED_ACTIVES),
         passives.slice(0, MAX_EQUIPPED_PASSIVES),
-        aiSkill,
+        effectiveSkill,
         (n) => this.aiRng.int(n),
+        {
+          itemBonus: this.versusBand.aiItemBonus,
+          activeRatioBoost: this.versusBand.aiActiveRatioBoost,
+          debuffPassiveBias: this.versusBand.aiDebuffPassiveBias,
+        },
       );
       for (const id of aiRoll.actives) {
         const def = activeById(id);
@@ -799,7 +814,7 @@ export class Battle {
         this.applyAiItem(id);
         this.aiPickedItems.push(id);
       }
-      const knobs = skillToKnobs(aiSkill);
+      const knobs = skillToKnobs(effectiveSkill);
       this.aiSummonTimer = knobs.summonInterval * 0.5;
       this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next());
     }
@@ -942,6 +957,7 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.wordDrawCounts(),
+        { tier5BiasMul: this.versusBand.playerWordTier5Bias },
       );
       trayWordsSoFar.push(w.char);
       this.bumpWordCharCount(w.char);
@@ -949,7 +965,7 @@ export class Battle {
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus) {
+      if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus + this.versusBand.playerWordDrawBonus) {
         const useForce = forcePartner && !partnerForced;
         return drawOneWord(useForce);
       }
@@ -1419,6 +1435,7 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.aiWordDrawCounts(),
+        { tier5BiasMul: this.versusBand.aiWordTier5Bias },
       );
       trayWordsSoFar.push(w.char);
       this.bumpAiWordCharCount(w.char);
@@ -1426,7 +1443,7 @@ export class Battle {
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance + this.aiMods.wordRateBonus) {
+      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance + this.aiMods.wordRateBonus + this.versusBand.aiWordDrawBonus) {
         return drawOneWord(forcePartner && !partnerForced);
       }
       return tok;
@@ -2350,7 +2367,7 @@ export class Battle {
     }
   }
 
-  // 蟠桃园：每 50s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
+  // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
   // 仅在 status 为 playing/ready（对局进行中）推进，由 updateFx 调用。
   private updatePeachTrees(dt: number): void {
     if (this.gardenOn) {

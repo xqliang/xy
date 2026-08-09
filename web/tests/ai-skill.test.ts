@@ -86,10 +86,11 @@ describe('rollAiLoadout', () => {
     expect(aiItemTargetCount(3, DEFAULT_AI_SKILL)).toBe(3);
   });
 
-  it('弱 AI 面对满装玩家仍至少带 1 件道具', () => {
-    expect(aiItemTargetCount(8, AI_SKILL_MIN)).toBeGreaterThanOrEqual(1);
+  it('弱 AI 面对满装玩家仍至少带 60% 道具', () => {
+    expect(aiItemTargetCount(8, AI_SKILL_MIN)).toBeGreaterThanOrEqual(5);
+    expect(aiItemTargetCount(8, 0.8)).toBeGreaterThanOrEqual(5);
     const lo = rollAiLoadout(['act_palm'], ['xiandan', 'jubaopen', 'fenghuolun'], AI_SKILL_MIN, () => 0);
-    expect(lo.actives.length + lo.passives.length).toBeGreaterThanOrEqual(1);
+    expect(lo.actives.length + lo.passives.length).toBeGreaterThanOrEqual(2);
   });
 
   it('排除 AI 不适用的被动（蟠桃园 / 洛阳铲）', () => {

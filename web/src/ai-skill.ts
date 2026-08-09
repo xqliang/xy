@@ -6,12 +6,46 @@ import { enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import { storeGet, storeSet } from './storage';
 
 const KEY = 'dasheng.aiskill';
+const WIN_STREAK_KEY = 'dasheng.aiwinstreak';
+const LOSS_STREAK_KEY = 'dasheng.ailossstreak';
+
+/** 对战隐藏调节（不展示）：仅通过抽字/道具概率微调，不在 UI 展示 */
+export interface VersusRubberBand {
+  /** AI 抽字：满5 武将权重倍率（叠 HIGH_TIER_BIAS） */
+  aiWordTier5Bias: number;
+  /** 玩家抽字：满5 武将权重倍率 */
+  playerWordTier5Bias: number;
+  /** AI 征兵字牌转化额外概率（叠 wordDrawChance） */
+  aiWordDrawBonus: number;
+  /** 玩家征兵字牌转化额外概率 */
+  playerWordDrawBonus: number;
+  skillFloor: number;
+  skillCeiling: number;
+  /** AI 额外道具数（主动+被动） */
+  aiItemBonus: number;
+  /** AI 主动技能占比偏移（正=多带主动） */
+  aiActiveRatioBoost: number;
+  /** AI 被动 debuff 类（蛛网/淤泥）选取权重倍率 */
+  aiDebuffPassiveBias: number;
+}
 
 export const DEFAULT_AI_SKILL = 1.0;
 export const AI_SKILL_MIN = 0.72; // 下限刻意收紧：AI 再弱也维持基本防线（打压不过头/不明显）
 export const AI_SKILL_MAX = 1.8;
 export const AI_TARGET_WINRATE = 0.7;
 const STEP_K = 0.06; // 步长；胜 +0.3k、负 -0.7k
+
+const NEUTRAL_BAND: VersusRubberBand = {
+  aiWordTier5Bias: 1,
+  playerWordTier5Bias: 1,
+  aiWordDrawBonus: 0,
+  playerWordDrawBonus: 0,
+  skillFloor: AI_SKILL_MIN,
+  skillCeiling: AI_SKILL_MAX,
+  aiItemBonus: 0,
+  aiActiveRatioBoost: 0,
+  aiDebuffPassiveBias: 1,
+};
 
 /** AI 不随机携带的被动（蟠桃园 / 洛阳铲 — 后者 AI 无 shovel 消费链） */
 export const AI_EXCLUDED_PASSIVES = new Set(['pas_pantao', 'luoyangchan']);
@@ -56,6 +90,128 @@ export function saveAiSkill(v: number): void {
   try { storeSet(KEY, String(v)); } catch { /* ignore */ }
 }
 
+function loadStreak(key: string): number {
+  try {
+    const raw = storeGet(key);
+    if (raw != null) {
+      const v = Math.floor(Number(raw));
+      if (Number.isFinite(v) && v >= 0) return v;
+    }
+  } catch { /* ignore */ }
+  return 0;
+}
+
+/** 玩家对战连胜数（上一局结算后持久化；本局开局读取） */
+export function loadPlayerWinStreak(): number {
+  return loadStreak(WIN_STREAK_KEY);
+}
+
+/** 玩家对战连败数（与连胜互斥，胜则清零） */
+export function loadPlayerLossStreak(): number {
+  return loadStreak(LOSS_STREAK_KEY);
+}
+
+/** 对战结算：胜则 win+1/loss 清零，负则 loss+1/win 清零 */
+export function recordVersusOutcome(playerWon: boolean): { win: number; loss: number } {
+  if (playerWon) {
+    const win = loadPlayerWinStreak() + 1;
+    try {
+      storeSet(WIN_STREAK_KEY, String(win));
+      storeSet(LOSS_STREAK_KEY, '0');
+    } catch { /* ignore */ }
+    return { win, loss: 0 };
+  }
+  const loss = loadPlayerLossStreak() + 1;
+  try {
+    storeSet(LOSS_STREAK_KEY, String(loss));
+    storeSet(WIN_STREAK_KEY, '0');
+  } catch { /* ignore */ }
+  return { win: 0, loss };
+}
+
+/** 本局 effective skill：连胜抬 floor、连败压 ceiling */
+export function effectiveAiSkill(base: number, band: VersusRubberBand): number {
+  let s = base;
+  s = Math.max(s, band.skillFloor);
+  s = Math.min(s, band.skillCeiling);
+  return Math.max(AI_SKILL_MIN, Math.min(AI_SKILL_MAX, s));
+}
+
+function mergeBand(base: VersusRubberBand, patch: Partial<VersusRubberBand>): VersusRubberBand {
+  return { ...base, ...patch };
+}
+
+/**
+ * 按连胜/连败档位隐藏调节下一局难度（参数刻意 subtle）：
+ * 连胜 1→AI≈70%胜，2→≈80%，≥3 全力；连败 1→玩家≈60%胜，≥2 玩家大概率胜。
+ */
+export function versusRubberBand(winStreak: number, lossStreak: number): VersusRubberBand {
+  const w = Math.max(0, Math.floor(winStreak));
+  const l = Math.max(0, Math.floor(lossStreak));
+  if (w > 0 && l > 0) return { ...NEUTRAL_BAND }; // 不应同时出现，防御性回退
+
+  if (w > 0) {
+    switch (w) {
+      case 1:
+        return mergeBand(NEUTRAL_BAND, {
+          aiWordTier5Bias: 1.24,
+          aiWordDrawBonus: 0.03,
+          skillFloor: 1.18,
+          aiActiveRatioBoost: 0.05,
+          aiDebuffPassiveBias: 1.2,
+        });
+      case 2:
+        return mergeBand(NEUTRAL_BAND, {
+          aiWordTier5Bias: 1.42,
+          aiWordDrawBonus: 0.05,
+          skillFloor: 1.32,
+          aiItemBonus: 1,
+          aiActiveRatioBoost: 0.08,
+          aiDebuffPassiveBias: 1.35,
+        });
+      default:
+        return mergeBand(NEUTRAL_BAND, {
+          aiWordTier5Bias: 1.62,
+          aiWordDrawBonus: 0.07,
+          skillFloor: AI_SKILL_MAX,
+          aiItemBonus: 2,
+          aiActiveRatioBoost: 0.12,
+          aiDebuffPassiveBias: 1.55,
+        });
+    }
+  }
+
+  if (l > 0) {
+    switch (l) {
+      case 1:
+        return mergeBand(NEUTRAL_BAND, {
+          playerWordTier5Bias: 1.2,
+          playerWordDrawBonus: 0.03,
+          aiWordTier5Bias: 0.88,
+          skillCeiling: 0.94,
+          aiItemBonus: -1,
+        });
+      default:
+        return mergeBand(NEUTRAL_BAND, {
+          playerWordTier5Bias: 1.36,
+          playerWordDrawBonus: 0.05,
+          aiWordTier5Bias: 0.76,
+          skillCeiling: AI_SKILL_MIN + 0.04,
+          aiItemBonus: -2,
+          aiActiveRatioBoost: -0.06,
+          aiDebuffPassiveBias: 0.72,
+        });
+    }
+  }
+
+  return { ...NEUTRAL_BAND };
+}
+
+/** @deprecated 用 versusRubberBand(win, 0) */
+export function streakPressure(streak: number): VersusRubberBand {
+  return versusRubberBand(streak, 0);
+}
+
 /** 神兵加成随 aiSkill 缩放：弱 AI 65% → 强 AI 100% */
 export function aiWeaponScale(skill: number): number {
   const t = Math.max(0, Math.min(1, (skill - AI_SKILL_MIN) / (AI_SKILL_MAX - AI_SKILL_MIN)));
@@ -81,16 +237,20 @@ export interface AiLoadoutRoll {
 
 /** 玩家未装备时 AI 随机携带道具数的上限（含 0，即 pick(EMPTY_PLAYER_ITEM_CAP + 1) → 0..CAP）。 */
 export const EMPTY_PLAYER_ITEM_CAP = 2;
+/** 玩家有装备时，AI 至少携带玩家道具数的比例（向上取整，至少 1 件） */
+export const AI_MIN_ITEM_RATIO = 0.6;
 
 /** 按 aiSkill 与玩家装备数，决定 AI 本局应携带的道具数量（随机挑选，非复制玩家清单）。 */
 export function aiItemTargetCount(
   playerCount: number,
   aiSkill: number,
   pick?: (n: number) => number,
+  itemBonus = 0,
 ): number {
   if (playerCount <= 0) {
     return pick ? pick(EMPTY_PLAYER_ITEM_CAP + 1) : 0;
   }
+  const minItems = Math.max(1, Math.ceil(playerCount * AI_MIN_ITEM_RATIO));
   const ratio = aiSkill / DEFAULT_AI_SKILL;
   let target = Math.round(playerCount * ratio);
   if (aiSkill >= DEFAULT_AI_SKILL) {
@@ -98,19 +258,18 @@ export function aiItemTargetCount(
   } else {
     const t = (aiSkill - AI_SKILL_MIN) / (DEFAULT_AI_SKILL - AI_SKILL_MIN);
     target = Math.min(target, Math.round(playerCount * ratio * Math.max(0.35, t)));
-    // 弱 AI 仍带至少 1 件，避免过于贫瘠（上限约为玩家一半）
-    target = Math.max(1, target);
-    target = Math.min(target, Math.max(1, Math.round(playerCount * 0.5)));
   }
   if (aiSkill >= DEFAULT_AI_SKILL * 1.2) target = Math.min(playerCount + 2, target + 1);
-  return Math.max(0, Math.min(playerCount + 2, target));
+  target += itemBonus;
+  return Math.max(minItems, Math.min(playerCount + 2, target));
 }
 
-function passiveWeight(id: string, aiSkill: number): number {
+function passiveWeight(id: string, aiSkill: number, debuffBias = 1): number {
   if (DEBUFF_PASSIVES.has(id)) {
-    return aiSkill >= DEFAULT_AI_SKILL
+    const base = aiSkill >= DEFAULT_AI_SKILL
       ? 1.4 + (aiSkill - DEFAULT_AI_SKILL) * 0.6
       : 0.55;
+    return base * debuffBias;
   }
   if (ECON_PASSIVES.has(id)) {
     return aiSkill < DEFAULT_AI_SKILL ? 1.7 : 0.85;
@@ -160,15 +319,22 @@ function ensureDebuffPassive(
   return next;
 }
 
+export interface AiLoadoutRollOpts {
+  itemBonus?: number;
+  activeRatioBoost?: number;
+  debuffPassiveBias?: number;
+}
+
 /** 开局为 AI 加权随机挑选主动/被动：强 AI 偏 debuff，弱 AI 偏经济。 */
 export function rollAiLoadout(
   playerActives: readonly string[],
   playerPassives: readonly string[],
   aiSkill: number,
   pick: (n: number) => number,
+  opts: AiLoadoutRollOpts = {},
 ): AiLoadoutRoll {
   const playerCount = playerActives.length + playerPassives.length;
-  const target = aiItemTargetCount(playerCount, aiSkill, pick);
+  const target = aiItemTargetCount(playerCount, aiSkill, pick, opts.itemBonus ?? 0);
   if (target <= 0) return { actives: [], passives: [] };
 
   const activePool = enabledActives().map((a) => a.id);
@@ -176,7 +342,9 @@ export function rollAiLoadout(
     .map((p) => p.id)
     .filter((id) => !AI_EXCLUDED_PASSIVES.has(id));
 
-  const activeRatio = playerCount > 0 ? playerActives.length / playerCount : 0.5;
+  const debuffBias = opts.debuffPassiveBias ?? 1;
+  let activeRatio = playerCount > 0 ? playerActives.length / playerCount : 0.5;
+  activeRatio = Math.max(0.15, Math.min(0.85, activeRatio + (opts.activeRatioBoost ?? 0)));
   let targetActives = Math.min(
     MAX_EQUIPPED_ACTIVES,
     activePool.length,
@@ -198,7 +366,7 @@ export function rollAiLoadout(
   let passives = weightedPickIds(
     passivePool,
     targetPassives,
-    (id) => passiveWeight(id, aiSkill),
+    (id) => passiveWeight(id, aiSkill, debuffBias),
     pick,
   );
   passives = ensureDebuffPassive(passives, passivePool, targetPassives, aiSkill, pick);
