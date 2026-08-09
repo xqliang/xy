@@ -725,6 +725,11 @@ export class Battle {
       this.applyItem(id);
       this.pickedItems.push(id);
     }
+    if (!endless) {
+      const knobs = skillToKnobs(aiSkill);
+      this.aiSummonTimer = knobs.summonInterval * 0.5;
+      this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next());
+    }
   }
 
   // AI 唐僧当前渲染位置（同玩家入场节奏沿镜像路走向归位）
@@ -1274,6 +1279,7 @@ export class Battle {
 
   private buildAiAutoView(): AutoPlaceView {
     return {
+      wave: () => this.wave,
       tray: () => this.aiTray,
       freeCells: () => this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r)),
       diggableCells: () => this.aiLockedCells(),
@@ -2442,10 +2448,12 @@ export class Battle {
     if (this.endless) return; // 无尽模式无 AI 对手
     const knobs = skillToKnobs(this.aiSkill);
     // 1) 征兵节奏：到点且够桃则征一次，随后共享布阵
+    let aiPlacedThisFrame = false;
     this.aiSummonTimer -= dt;
     if (this.aiSummonTimer <= 0) {
       this.aiSummonTimer = knobs.summonInterval;
       if (this.aiSummon()) {
+        aiPlacedThisFrame = true;
         planAutoPlaceSteps(this.buildAiAutoView(), {
           rng: () => this.aiRng.next(),
           pSubOptimal: knobs.pSubOptimal,
@@ -2455,10 +2463,17 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵
+    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
-      this.tickAiBattleAdjust(knobs.pSubOptimal);
+      if (aiPlacedThisFrame) {
+        this.aiRepositionTimer = rollAiAdjustInterval(
+          aiHeroPartnerAdjustPending(this.buildAiAutoView()),
+          () => this.aiRng.next(),
+        );
+      } else {
+        this.tickAiBattleAdjust(knobs.pSubOptimal);
+      }
     }
     // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
     this.updateAiUnits(dt);
@@ -3330,6 +3345,7 @@ export class Battle {
 
   private buildPlayerAutoView(): AutoPlaceView {
     return {
+      wave: () => this.wave,
       tray: () => this.tray,
       freeCells: () => this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)),
       diggableCells: () => this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))),

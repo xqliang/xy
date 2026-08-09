@@ -115,6 +115,8 @@ describe('updateAi 真玩家循环', () => {
       { type: 'dao', tier: 1, cell: { c: 4, r: 0 }, cooldown: 0, combo: 0, firePulse: 0, fireDir: 0 },
     ];
     const spy = vi.spyOn(b, 'tickAiBattleAdjust');
+    b.aiRepositionTimer = 0;
+    b.aiSummonTimer = 999;
     b.updateAi(0.05);
     b.updateAi(0.05);
     b.updateAi(0.05);
