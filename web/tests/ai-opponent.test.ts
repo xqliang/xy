@@ -91,6 +91,15 @@ describe('AI 经济与征兵', () => {
 });
 
 describe('updateAi 真玩家循环', () => {
+  it('入场阶段（唐僧归位中）AI 即开始征兵布阵', () => {
+    const b = new Battle(7);
+    expect(b.introDone).toBe(false);
+    (b as any).aiPeach = 999;
+    for (let t = 0; t < 30; t++) b.step(0.1); // 3s，仍在 6s 入场窗口内
+    expect(b.introDone).toBe(false);
+    expect(b.aiUnits.length).toBeGreaterThan(0);
+  });
+
   it('推进若干秒后，AI 会征兵→布阵→出现 aiUnits（无凭空铺兵、无清场字段）', () => {
     const b = new Battle(7);
     (b as any).aiPeach = 999;

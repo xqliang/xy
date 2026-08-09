@@ -7,7 +7,7 @@
 // tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
-// 第 5 波起：tray 字优先于场上普通武器调位/落兵；尽量清空 tray 字（地图上已有同字者可留 tray）。
+// 第 4 波起：tray 字优先于场上普通武器调位/落兵；尽量清空 tray 字（地图上已有同字者可留 tray）。
 // 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
 // 仅当无法左移时才与占位交换（place）。
 // 未激活孤儿字不占前线：与兵器换高覆盖座，或迁到远离路径/靠唐僧的空位。
@@ -34,8 +34,11 @@ export type PlaceToken =
 export interface PlacedUnitLite { type: UnitType; tier: number; cell: Cell; }
 export interface PlacedWordLite { char: string; general: string; cell: Cell; tier?: number }
 
+/** 从该波次起 tray 字优先于普通武器布阵 */
+export const TRAY_WORD_PRIORITY_FROM_WAVE = 4;
+
 export interface AutoPlaceView {
-  /** 当前波次；>4 时 tray 字优先于普通武器布阵 */
+  /** 当前波次；≥ TRAY_WORD_PRIORITY_FROM_WAVE 时 tray 字优先于普通武器布阵 */
   wave?(): number;
   tray(): PlaceToken[];                     // 当前候选（随 place 变化，每步重读）
   freeCells(): Cell[];                      // 已解锁且空闲，按贴路近→远
@@ -909,7 +912,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function lateWordPriority(): boolean {
-    return (view.wave?.() ?? 0) > 4;
+    return (view.wave?.() ?? 0) >= TRAY_WORD_PRIORITY_FROM_WAVE;
   }
 
   /** 该 tray 字可留候选区：地图上已有同字 */
@@ -917,7 +920,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.placedWords().some((w) => w.char === t.char);
   }
 
-  /** 第 5 波起：tray 仍有应上板的字（非重复同字；有棋盘伴侣的走激活，不阻塞兵器） */
+  /** 第 4 波起：tray 仍有应上板的字（非重复同字；有棋盘伴侣的走激活，不阻塞兵器） */
   function pendingTrayWordDeploy(): boolean {
     if (!lateWordPriority()) return false;
     for (const t of view.tray()) {
@@ -930,14 +933,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 有空格且 tray 仍有兵 → 优先落子；第 5 波起 tray 字未清完则暂缓落兵 */
+  /** 有空格且 tray 仍有兵 → 优先落子；第 4 波起 tray 字未清完则暂缓落兵 */
   function pendingTrayUnitDeploy(): boolean {
     if (displacedTrayUnitEntries().length > 0) return true;
     if (pendingTrayWordDeploy()) return false;
     return view.freeCells().length > 0 && trayUnitEntries().length > 0;
   }
 
-  /** 第5波起：tray 仍有兵时，仅当伴侣邻格已空才抢先激活（如 金+空右邻+tray吒） */
+  /** 第4波起：tray 仍有兵时，仅当伴侣邻格已空才抢先激活（如 金+空右邻+tray吒） */
   function canActivateTrayBoardMateNow(
     t: Extract<PlaceToken, { kind: 'word' }>,
     mate: PlacedWordLite,
@@ -1215,7 +1218,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (tryPrioritizeTrayBoardMateActivation()) return true;
     // 1b++) tray 字待伴侣、仍有 tray 兵 → 先落兵（白+龙 待激活时先上弓）
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
-    // 1c) 第5波+：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
+    // 1c) 第4波+：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
@@ -1251,7 +1254,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryPromoteTrayUnitOverLowerOther()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) { markHeroLayoutChanged(); return true; }
-    // 2c+) 第 5 波起：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
+    // 2c+) 第 4 波起：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 3–5b) 有空格时落 tray 兵（tray 字未清完则暂缓）
     if (!pendingTrayWordDeploy() && tryDeployTrayUnits()) return true;
@@ -1261,7 +1264,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
     if (!pendingTrayDeploy() && !subopt() && tryRelocateToBetterFreeSeats()) return true;
     if (!pendingTrayDeploy() && !subopt() && trySwapHigherTierToBetterSeats()) return true;
-    // 2e) 单字落位：第 5 波前在此处理；之后已在 2c+ 优先
+    // 2e) 单字落位：第 4 波前在此处理；之后已在 2c+ 优先
     if (!lateWordPriority()) {
       for (let i = 0; i < tray.length; i++) {
         const t = tray[i]!; if (t.kind !== 'word') continue;
@@ -1317,7 +1320,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.freeCells().length === 0 && trayUnitEntries().length >= 2;
   }
 
-  /** tray 仍有兵器，且任一枚都无法同阶合或落入射程内空格（第 5 波后可兜底占任意空格） */
+  /** tray 仍有兵器，且任一枚都无法同阶合或落入射程内空格（第 4 波后可兜底占任意空格） */
   function trayUnitsCannotDirectPlace(): boolean {
     const unitIdx = trayUnitEntries();
     if (unitIdx.length === 0) return false;
@@ -1491,7 +1494,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const cell = pickReachCell(reach, t.type, t.tier);
       return view.place(i, cell);
     }
-    // 第5波起：伴侣已就位时，后排 unlocked 空格仍填 tray 兵（pathCover 可能为 0）
+    // 第4波起：伴侣已就位时，后排 unlocked 空格仍填 tray 兵（pathCover 可能为 0）
     if (lateWordPriority() && !pendingTrayWordDeploy()) {
       for (const { t, i } of unitIdx) {
         return view.place(i, nearestFreeCell(free));
@@ -2129,7 +2132,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return moveHeroPairToCells(best.pair.left, best.pair.right, best.left, best.right);
   }
 
-  /** 第 5 波起：tray 孤儿单字上板；满盘时可顶回普通武器 */
+  /** 第 4 波起：tray 孤儿单字上板；满盘时可顶回普通武器 */
   function tryLateTrayWordDeploy(): boolean {
     if (!lateWordPriority()) return false;
     if (tryPlaceTraySingleWords()) return true;

@@ -2145,6 +2145,7 @@ export class Battle {
     this.heroBossTimer =
       heroCount >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(heroCount) : -1;
     this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
+    this.aiMeteorPending = this.aiMods.meteor;
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
     if (bossWave) this.message = '⚠ 妖王携护卫来袭！';
     else if (this.waveMiniBoss) this.message = `⚠ ${MINI_BOSS_META[this.waveMiniBoss].name}来袭！`;
@@ -2200,7 +2201,7 @@ export class Battle {
       case 'fabaofu': this.aiMods.generalTierDelta += 1; break;
       case 'zhaoxian': this.aiMods.wordRateBonus += 0.1; break;
       case 'mojin': this.aiMods.shovelPeach += 6; break;
-      case 'luoyangchan': break; // AI 不自动产铲
+      case 'luoyangchan': this.aiMods.autoShovel = true; break;
       case 'yunshi': this.aiMods.meteor = true; break;
       case 'yuni': this.aiDebuffPlayerMud = true; break;
       case 'xianyuan': this.aiMods.summonCostDelta -= 1; break;
@@ -2221,6 +2222,10 @@ export class Battle {
     if (this.mods.autoShovel) {
       this.shovelTimer += dt;
       if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; }
+    }
+    if (this.aiMods.autoShovel) {
+      this.aiShovelTimer += dt;
+      if (this.aiShovelTimer >= 45) { this.aiShovelTimer = 0; this.aiShovels += 1; }
     }
   }
 
@@ -2301,6 +2306,11 @@ export class Battle {
     this.doMeteor(TUNING.meteorPassiveDmgMul);
   }
 
+  private castAiMeteor(): void {
+    if (!this.aiMods.meteor || this.aiMonsters.length === 0) return;
+    this.doAiMeteor(TUNING.meteorPassiveDmgMul);
+  }
+
   // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
   private doMeteor(mul: number = TUNING.meteorDmgMul): void {
     if (this.monsters.length === 0) return;
@@ -2311,6 +2321,23 @@ export class Battle {
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
       if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) this.hurtMonster(m, dmg, q, 0.2);
+    }
+    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+  }
+
+  private doAiMeteor(mul: number = TUNING.meteorDmgMul): void {
+    if (this.aiMonsters.length === 0) return;
+    let front = this.aiMonsters[0]!;
+    for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * mul;
+    const p = posAlong(this.aiPath, front.dist);
+    for (const m of this.aiMonsters) {
+      const q = posAlong(this.aiPath, m.dist);
+      if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) {
+        m.hp -= dmg;
+        m.hitFlash = 0.2;
+        this.spawnDamageFloat(q.c, q.r, dmg);
+      }
     }
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
@@ -2770,6 +2797,10 @@ export class Battle {
       }
     }
     // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
+    if (this.aiMeteorPending && this.aiMonsters.length >= 3) {
+      this.aiMeteorPending = false;
+      this.castAiMeteor();
+    }
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
@@ -3523,6 +3554,7 @@ export class Battle {
       if (this.introT >= Battle.INTRO_DUR) {
         this.startNextWave();
       }
+      this.updateAi(dt); // 入场阶段：AI 与玩家同步征兵布阵
       this.updateFx(dt);
       return;
     }

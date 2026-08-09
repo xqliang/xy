@@ -59,7 +59,7 @@ import {
   codexWheel,
 } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
-import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt } from './bag';
+import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
@@ -205,6 +205,9 @@ let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗�
 let shopScrollY = 0;
 let shopPointerActive = false;
 let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
+let bagScrollY = 0;
+let bagPointerActive = false;
+let bagDownX = 0, bagDownY = 0, bagDownScroll = 0, bagDragged = false;
 let mapSelection: MapSelection = safePersisted(loadMapSelection, { mode: 'daily' });
 let currentMap = params.get('map') ? mapById(params.get('map')!) : resolveMap(mapSelection);
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
@@ -294,6 +297,7 @@ function handleMenu(id: string) {
   } else if (id === 'bag') {
     bagToast = '';
     bagPopup = null;
+    bagScrollY = 0;
     screen = 'bag';
   } else {
     menuToast = '该功能开发中…';
@@ -606,7 +610,6 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'bag') {
-    // 弹窗打开时：点击处理装备切换/关闭
     if (bagPopup) {
       const r = bagPopupHitAt(x, y);
       if (r === 'close' || r === 'outside') bagPopup = null;
@@ -617,9 +620,12 @@ function onPointerDown(e: PointerEvent) {
       }
       return;
     }
-    const hit = bagHitAt(x, y);
-    if (hit?.kind === 'back') screen = 'menu';
-    else if (hit?.kind === 'toggle') bagPopup = hit.id; // 点击神兵行：打开详情 tips 弹窗
+    bagPointerActive = true;
+    bagDragged = false;
+    bagDownX = x;
+    bagDownY = y;
+    bagDownScroll = bagScrollY;
+    canvas.setPointerCapture(e.pointerId);
     return;
   }
   if (screen === 'settle') {
@@ -744,6 +750,14 @@ function onPointerMove(e: PointerEvent) {
     scheduleFrame(); // 按需重绘：拖动滚动商城时重画
     return;
   }
+  if (screen === 'bag' && bagPointerActive && !bagPopup) {
+    const { y } = toLogical(e.clientX, e.clientY);
+    const dy = y - bagDownY;
+    if (Math.abs(dy) > 6) bagDragged = true;
+    bagScrollY = Math.max(0, Math.min(bagMaxScroll(), bagDownScroll - dy));
+    scheduleFrame();
+    return;
+  }
   if (screen === 'codex') {
     const { x, y } = toLogical(e.clientX, e.clientY);
     codexPointerMove(x, y);
@@ -783,6 +797,15 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     // 轻点(未拖动)才触发购买；拖动只滚动
     if (shopPointerActive && !shopDragged) handleShop(shopDownX, shopDownY);
     shopPointerActive = false;
+    return;
+  }
+  if (screen === 'bag') {
+    if (bagPointerActive && !bagDragged && !bagPopup) {
+      const hit = bagHitAt(bagDownX, bagDownY, bag, bagScrollY);
+      if (hit?.kind === 'back') screen = 'menu';
+      else if (hit?.kind === 'toggle') bagPopup = hit.id;
+    }
+    bagPointerActive = false;
     return;
   }
   if (screen === 'codex') {
@@ -833,6 +856,12 @@ canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
     scheduleFrame(); // 按需重绘：滚轮滚动后重画商城
+    return;
+  }
+  if (screen === 'bag' && !bagPopup) {
+    e.preventDefault();
+    bagScrollY = Math.max(0, Math.min(bagMaxScroll(), bagScrollY + e.deltaY));
+    scheduleFrame();
     return;
   }
   if (screen === 'codex') {
@@ -902,7 +931,7 @@ function frame(now: number): void {
   } else if (screen === 'rank') {
     drawLeaderboard(ctx, rank.level);
   } else if (screen === 'bag') {
-    drawBag(ctx, bag, bagToast);
+    drawBag(ctx, bag, bagToast, bagScrollY);
     if (bagPopup) drawBagPopup(ctx, bag, bagPopup);
   } else if (screen === 'settle') {
     if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
@@ -1047,7 +1076,7 @@ const hook: GameHook = {
   openShop: () => { shopScrollY = 0; shopPopup = null; screen = 'shop'; scheduleFrame(); },
   openCodex: () => { resetCodex(); screen = 'codex'; scheduleFrame(); },
   openRank: () => { screen = 'rank'; scheduleFrame(); },
-  openBag: () => { bagPopup = null; screen = 'bag'; scheduleFrame(); },
+  openBag: () => { bagPopup = null; bagScrollY = 0; screen = 'bag'; scheduleFrame(); },
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
