@@ -117,7 +117,7 @@ describe('禁止单字合并', () => {
     expect(b.tray).toHaveLength(2);
   });
 
-  it('棋盘同字拖拽不可合并', () => {
+  it('棋盘同字同阶拖拽不可合并', () => {
     const b = new Battle(1);
     const cells = b.unlockedCells();
     const a = cells[0]!;
@@ -127,5 +127,17 @@ describe('禁止单字合并', () => {
     expect(b.dragWord(a, c2)).toBe(false);
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(1);
     expect(b.words.get(`${c2.c},${c2.r}`)?.tier).toBe(1);
+  });
+
+  it('棋盘同字异阶拖拽可交换', () => {
+    const b = new Battle(1);
+    const cells = b.unlockedCells();
+    const a = cells[0]!;
+    const c2 = cells.find((c) => c.c !== a.c || c.r !== a.r)!;
+    b.words.set(`${a.c},${a.r}`, { char: '八', general: 'bajie', tier: 5, cell: a });
+    b.words.set(`${c2.c},${c2.r}`, { char: '八', general: 'bajie', tier: 1, cell: c2 });
+    expect(b.dragWord(a, c2)).toBe(true);
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(1);
+    expect(b.words.get(`${c2.c},${c2.r}`)?.tier).toBe(5);
   });
 });

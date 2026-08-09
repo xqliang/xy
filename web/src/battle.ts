@@ -1120,7 +1120,7 @@ export class Battle {
     this.aiWordCharCounts.set(char, (this.aiWordCharCounts.get(char) ?? 0) + 1);
   }
 
-  // 候选区内合并：仅兵种同型同级升阶；字牌禁止互相合并。
+  // 候选区内：兵种同型同级升阶；字牌禁止互相合并；字/兵/铲异类可交换槽位。
   mergeTrayTokens(from: number, to: number): boolean {
     if (from === to) return false;
     const a = this.tray[from];
@@ -1130,15 +1130,21 @@ export class Battle {
       this.message = '单字不可合并，需凑对激活后升阶';
       return false;
     }
-    if (a.kind !== 'unit' || b.kind !== 'unit') return false;
-    if (a.type !== b.type || a.tier !== b.tier || b.tier >= MAX_TIER) {
-      this.message = '候选区只有同型同级可合并';
-      return false;
+    if (a.kind === 'unit' && b.kind === 'unit') {
+      if (a.type !== b.type || a.tier !== b.tier || b.tier >= MAX_TIER) {
+        this.message = '候选区只有同型同级可合并';
+        return false;
+      }
+      this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+      this.tray.splice(from, 1);
+      this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
+      this.emit('merge');
+      return true;
     }
-    this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
-    this.tray.splice(from, 1);
-    this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
-    this.emit('merge');
+    // 字牌 ↔ 兵种/铲子：交换候选槽（与棋盘字↔兵交换一致）
+    this.tray[from] = b;
+    this.tray[to] = a;
+    this.message = '候选区交换位置';
     return true;
   }
 
@@ -1988,7 +1994,7 @@ export class Battle {
     return this.dragUnit(from, to);
   }
 
-  // 拖拽字牌：移动到空格 / 同字同阶升阶 / 与目标(字牌或兵)交换。
+  // 拖拽字牌：移动到空格 / 同字同阶喂字升阶 / 同字异阶或异字与目标(字牌或兵)交换。
   // 拖走已激活武将的一个字即自动拆分（激活由相邻关系实时推导）。
   dragWord(from: Cell, to: Cell): boolean {
     const kFrom = cellKey(from.c, from.r);
@@ -2020,14 +2026,18 @@ export class Battle {
     }
     const tw = this.words.get(kTo);
     const tu = this.units.get(kTo);
+    let tierSwapMsg: string | undefined;
     if (tw) {
-      if (tw.char === w.char) {
+      if (tw.char === w.char && tw.tier === w.tier) {
         this.message = '单字不可合并，需凑对激活后升阶';
         return false;
       }
-      // 两张字牌互换位置
+      // 同字异阶或异字 → 互换位置（与 placeFromTray 一致）
       this.words.set(kFrom, { ...tw, cell: { c: from.c, r: from.r } });
       this.words.set(kTo, { ...w, cell: { c: to.c, r: to.r } });
+      if (tw.char === w.char) {
+        tierSwapMsg = `「${w.char}」${w.tier} 阶与棋盘 ${tw.tier} 阶交换`;
+      }
     } else if (tu) {
       // 字牌与兵互换位置
       this.units.delete(kTo);
@@ -2049,6 +2059,8 @@ export class Battle {
       let msg = `${def?.name ?? ''} 已拆分，失去输出`;
       if (def?.id === BOND_GENERAL) msg += ` · ${BOND_NAME}已失效`;
       this.message = msg;
+    } else if (tierSwapMsg) {
+      this.message = tierSwapMsg;
     }
     return true;
   }

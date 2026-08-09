@@ -23,6 +23,9 @@ import {
   heroSeatScore,
   lowHpEngageMul,
   engageThreatAt,
+  boardMatePreferScore,
+  entrancePathSeatBonus,
+  frontMonsterEngageWeight,
   type AutoPlaceView,
   type BattleRepositionView,
   type BattleRepositionHeroPair,
@@ -31,8 +34,10 @@ import {
   type Cell,
 } from '../src/autoplace';
 import { getUnitStat } from '@core';
-import { posAlong } from '../src/board';
+import { posAlong, mapById, lenOf, entranceDistance } from '../src/board';
+import { pathCoverageLenEntranceWeighted, pathFirstEngageDist } from '../src/board-power';
 import { inAttackRange } from '../src/battle';
+import { Battle } from '../src/battle';
 import { matchGeneral } from '../src/generals';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
@@ -1630,6 +1635,41 @@ it('engageThreatAt：危险时覆盖残血怪的座位分更高', () => {
   expect(far).toBeGreaterThan(nearSafe);
 });
 
+it('frontMonsterEngageWeight：最前怪权重高于队尾', () => {
+  expect(frontMonsterEngageWeight(7, 7, 0)).toBeCloseTo(1, 5);
+  expect(frontMonsterEngageWeight(6, 7, 0)).toBeLessThan(frontMonsterEngageWeight(7, 7, 0));
+  expect(frontMonsterEngageWeight(0, 7, 0)).toBeCloseTo(0.15, 5);
+});
+
+it('entrancePathSeatBonus：同覆盖时更早接到出怪口分更高', () => {
+  const map = mapById('huoyanshan');
+  const ent = entranceDistance(map.path);
+  const pathLen = lenOf(map.path);
+  const rge = getUnitStat('archer', 1).rge;
+  const nearEntrance = entrancePathSeatBonus(
+    pathCoverageLenEntranceWeighted(map, ent, pathLen, 3, 7, rge),
+    pathFirstEngageDist(map, ent, pathLen, 3, 7, rge),
+    rge,
+  );
+  const farEntrance = entrancePathSeatBonus(
+    pathCoverageLenEntranceWeighted(map, ent, pathLen, 4, 7, rge),
+    pathFirstEngageDist(map, ent, pathLen, 4, 7, rge),
+    rge,
+  );
+  expect(nearEntrance).toBeGreaterThan(farEntrance);
+});
+
+it('火焰山：无怪时弓优先落更早接到出怪口的格', () => {
+  const b = new Battle(20260809, 1, mapById('huoyanshan'));
+  const rge = getUnitStat('archer', 1).rge;
+  b.grantPeach(999);
+  b.tray.push({ kind: 'unit', type: 'archer', tier: 1 });
+  b.autoPlaceTray();
+  const archer = [...b.units.values()].find((u) => u.type === 'archer');
+  expect(archer?.cell.c).toBeLessThanOrEqual(3);
+  expect(pathFirstEngageDist(b.map, b.entranceDist, b.pathLen, archer!.cell.c, archer!.cell.r, rge)).toBeLessThan(3);
+});
+
 it('危险时：弓兵会前移以覆盖残血怪', () => {
   const v = new FakeRepositionView();
   v.dangerNearFlag = true;
@@ -1681,6 +1721,30 @@ it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.5–1s', () => {
   expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
   expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(true, () => 1)).toBe(AI_PARTNER_ADJUST_INTERVAL_MAX);
+});
+
+it('boardMatePreferScore：铁优先配扇(满5)而非更高阶背(满3)', () => {
+  expect(boardMatePreferScore('铁', { char: '扇', tier: 1 })).toBeGreaterThan(
+    boardMatePreferScore('铁', { char: '背', tier: 5 }),
+  );
+});
+
+it('tray铁：棋盘背阶高但仍优先与扇凑铁扇', () => {
+  const v = new FakeView(
+    [{ kind: 'word', char: '铁', general: 'tieshan', tier: 1 }],
+    [{ c: 2, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 6, r: 5 }],
+  );
+  v.wordsMap.set('3,5', { char: '背', general: 'tiebei', cell: { c: 3, r: 5 }, tier: 3 });
+  v.wordsMap.set('5,5', { char: '扇', general: 'tieshan', cell: { c: 5, r: 5 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  const tie = v.placedWords().find((w) => w.char === '铁');
+  const shan = v.placedWords().find((w) => w.char === '扇');
+  expect(tie).toBeDefined();
+  expect(shan).toBeDefined();
+  expect(tie!.cell.c + 1).toBe(shan!.cell.c);
+  expect(tie!.cell.r).toBe(shan!.cell.r);
+  expect(tie!.general).toBe('tieshan');
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('aiHeroPartnerAdjustPending：tray 有棋盘孤儿的配对字', () => {

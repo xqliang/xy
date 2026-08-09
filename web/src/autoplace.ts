@@ -612,6 +612,15 @@ function wordTierOf(w: { tier?: number }): number {
   return w.tier ?? 1;
 }
 
+/** 棋盘伴侣优先级：可组成武将 maxTier 高者优先（如 铁+扇→5 优于 铁+背→3），同档再比字牌阶 */
+export function boardMatePreferScore(char: string, mate: { char: string; tier?: number }): number {
+  return pairMaxTier(char, mate.char) * 100 + wordTierOf(mate);
+}
+
+function pickBetterBoardMate(char: string, a: PlacedWordLite, b: PlacedWordLite): PlacedWordLite {
+  return boardMatePreferScore(char, a) >= boardMatePreferScore(char, b) ? a : b;
+}
+
 function wordAtView(view: AutoPlaceView, cell: Cell): PlacedWordLite | undefined {
   return view.placedWords().find((w) => w.cell.c === cell.c && w.cell.r === cell.r);
 }
@@ -628,7 +637,7 @@ function pickBestBoardMateView(view: AutoPlaceView, char: string, generalHint?: 
   let best: PlacedWordLite | null = null;
   for (const w of orphanWordsView(view)) {
     if (!isCharPartner(char, w.char, view, generalHint)) continue;
-    if (!best || wordTierOf(w) > wordTierOf(best)) best = w;
+    if (!best || pickBetterBoardMate(char, w, best) === w) best = w;
   }
   return best;
 }
@@ -1842,12 +1851,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.placedWords().filter((w) => !view.isActiveHeroCell(w.cell));
   }
 
-  /** 未激活孤儿中可与 char 配对者，优先最高阶 */
+  /** 未激活孤儿中可与 char 配对者，优先可升满阶更高的组合（如 铁+扇），再比字牌阶 */
   function pickBestBoardMate(char: string, generalHint?: string): PlacedWordLite | null {
     let best: PlacedWordLite | null = null;
     for (const w of orphanWords()) {
       if (!isCharPartner(char, w.char, view, generalHint && w.general === generalHint ? generalHint : undefined)) continue;
-      if (!best || wordTier(w) > wordTier(best)) best = w;
+      if (!best || pickBetterBoardMate(char, w, best) === w) best = w;
     }
     return best;
   }
@@ -2366,6 +2375,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         if (!mateIsLeftChar && t.char !== chars[0]) continue;
         const needMate = mateIsLeftChar ? left : right;
         const needTray = mateIsLeftChar ? right : left;
+
+        // 目标伴侣格已被其他字占据（如 背@3,0 但选定伴侣是 扇）→ 跳过，避免 tray 铁 误配铁背
+        const occupantAtMate = wordAt(needMate);
+        if (occupantAtMate && !sameCell(occupantAtMate.cell, boardMate.cell)) continue;
 
         const mateAtNeed = sameCell(boardMate.cell, needMate);
         const mateAtTray = sameCell(boardMate.cell, needTray);

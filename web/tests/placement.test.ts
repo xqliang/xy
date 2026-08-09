@@ -12,6 +12,32 @@ function adjacentPair(b: Battle): [{ c: number; r: number }, { c: number; r: num
   return null;
 }
 
+describe('tray 候选区内字↔兵可交换', () => {
+  it('字牌拖到兵种槽 → 两槽交换', () => {
+    const b = new Battle(1);
+    const g = GENERALS[0]!;
+    b.tray = [
+      { kind: 'word', char: g.chars[0]!, general: g.id, tier: 1 },
+      { kind: 'unit', type: 'archer', tier: 2 },
+    ];
+    expect(b.mergeTrayTokens(0, 1)).toBe(true);
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'archer', tier: 2 });
+    expect(b.tray[1]).toEqual({ kind: 'word', char: g.chars[0]!, general: g.id, tier: 1 });
+  });
+
+  it('兵种拖到字牌槽 → 两槽交换', () => {
+    const b = new Battle(1);
+    const g = GENERALS[0]!;
+    b.tray = [
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'word', char: g.chars[1]!, general: g.id, tier: 1 },
+    ];
+    expect(b.mergeTrayTokens(0, 1)).toBe(true);
+    expect(b.tray[0]).toEqual({ kind: 'word', char: g.chars[1]!, general: g.id, tier: 1 });
+    expect(b.tray[1]).toEqual({ kind: 'unit', type: 'spear', tier: 1 });
+  });
+});
+
 describe('tray 放置：字↔兵可交换', () => {
   it('字牌落到有兵的格 → 交换：字上板、兵回候选槽', () => {
     const b = new Battle(1);

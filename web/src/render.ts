@@ -5305,21 +5305,18 @@ function drawAimReticle(
 
 /** 候选令牌拖到该棋盘格是否合法（与 placeFromTray 语义对齐） */
 function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolean {
-  const key = `${cell.c},${cell.r}`;
   if (token.kind === 'shovel') {
     return b.lockedCells().some((c) => c.c === cell.c && c.r === cell.r);
   }
   if (!b.unlockedCells().some((c) => c.c === cell.c && c.r === cell.r)) return false;
   if (token.kind === 'word') {
-    if (b.units.has(key)) return false;
-    return true; // 空格放置 / 字牌合并或交换
+    return true; // 空格放置 / 字牌交换 / 与兵交换
   }
-  // 兵种：不可压字牌；空格放置 / 合并 / 与兵交换
-  if (b.words.has(key)) return false;
+  // 兵种：空格放置 / 合并 / 与兵或字牌交换
   return true;
 }
 
-/** 候选区内另一槽是否可作为合并目标 */
+/** 候选区内另一槽是否可作为合并或交换目标 */
 function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean {
   if (!b) return false;
   if (a.kind === 'word' && b.kind === 'word') {
@@ -5328,7 +5325,7 @@ function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean 
   if (a.kind === 'unit' && b.kind === 'unit') {
     return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
   }
-  return false;
+  return true; // 字/兵/铲异类 → 交换
 }
 
 // 托盘拖拽时：标出全部可落点（棋盘 + 可合并的候选槽）+ 源槽黑圈，对标竞品瞄准心
