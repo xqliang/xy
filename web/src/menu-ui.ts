@@ -20,6 +20,9 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
 /** 弹窗标题栏高度（关闭钮在此区域内垂直居中） */
 export const INK_POPUP_HEAD_H = 46;
 
+/** × 在按钮框内视觉上略偏下，仅上移字形不改按钮位置 */
+const INK_POPUP_CLOSE_GLYPH_Y = -1;
+
 export function inkPopupCloseRect(
   popX: number,
   popY: number,
@@ -84,7 +87,7 @@ export function drawInkPopupFrame(
   ctx.font = 'bold 22px "PingFang SC", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('×', closeR.x + closeR.w / 2, closeR.y + closeR.h / 2);
+  ctx.fillText('×', closeR.x + closeR.w / 2, closeR.y + closeR.h / 2 + INK_POPUP_CLOSE_GLYPH_Y);
 
   return y + headH + 12;
 }
@@ -153,10 +156,20 @@ export function drawInkActionButton(
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.fillStyle = tone === 'secondary' ? '#fff4e0' : '#fff8ee';
-  ctx.font = `bold ${rect.h >= 70 ? 18 : 15}px "PingFang SC", "STKaiti", serif`;
+  const lines = label.split('\n');
+  const fontSize = lines.length > 1 ? 15 : (rect.h >= 70 ? 18 : 15);
+  ctx.font = `bold ${fontSize}px "PingFang SC", "STKaiti", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(label, cx, cy);
+  if (lines.length === 1) {
+    ctx.fillText(label, cx, cy);
+  } else {
+    const lineGap = fontSize * 1.2;
+    const y0 = cy - ((lines.length - 1) * lineGap) / 2;
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i]!, cx, y0 + i * lineGap);
+    }
+  }
   ctx.restore();
 }
 

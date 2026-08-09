@@ -2618,6 +2618,7 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.1;
+        this.spawnDamageFloat(t.p.c, t.p.r, dmg);
         const fxTtl = this.attackFxTtl(u.type, u.tier);
         this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: t.p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
         hit++;
@@ -2658,6 +2659,7 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.12;
+        this.spawnDamageFloat(t.p.c, t.p.r, dmg);
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }

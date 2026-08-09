@@ -91,7 +91,7 @@ export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: nu
   // 水墨星星排（与主菜单同款立绘，fills 驱动空↔满叠化）
   const sy = VIEW_H * 0.52;
   const drawFills = c.won && c.promoted && animDone ? new Array<number>(STARS_PER_TIER).fill(0) : fills;
-  drawRankStarsAnimated(ctx, cx, sy, drawFills, { gap: 32, size: 44 });
+  drawRankStarsAnimated(ctx, cx, sy, drawFills, { gap: 56, size: 44 });
 
   // 晋级 / 降档提示（动画收尾时飘出）
   if (animDone && (c.promoted || c.demoted)) {

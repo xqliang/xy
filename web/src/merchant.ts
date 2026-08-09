@@ -57,6 +57,34 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number): str
   return s + '…';
 }
 
+/** 在限定宽度内折行，末行过长则省略号截断 */
+function fitTextLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+  maxLines: number,
+): string[] {
+  if (maxLines <= 1) return [fitText(ctx, text, maxW)];
+  const lines: string[] = [];
+  let rest = text;
+  for (let n = 0; n < maxLines && rest.length > 0; n++) {
+    if (n === maxLines - 1) {
+      lines.push(fitText(ctx, rest, maxW));
+      break;
+    }
+    let line = '';
+    for (const ch of rest) {
+      const next = line + ch;
+      if (line.length > 0 && ctx.measureText(next).width > maxW) break;
+      line = next;
+    }
+    if (line.length === 0) line = rest[0]!;
+    lines.push(line);
+    rest = rest.slice(line.length).trimStart();
+  }
+  return lines;
+}
+
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -296,12 +324,18 @@ const TAB_LOTTERY = { x: PX + 258, y: BODY + 6, w: 228, h: 34 };
 const MERIT_BAR = { x: PX + 18, y: BODY + 48, w: PW - 110, h: 26 };
 const PEDDLER_BOX = { x: PX + PW - 88, y: BODY + 34, w: 72, h: 72 };
 const CONTENT_TOP = BODY + 92;
-const CONTENT_H = 388;
-const EQUIP_TOP = PY + PH - 196;
-const CONTINUE_R = { x: PX + 32, y: PY + PH - 56, w: PW - 64, h: 42 };
+const CONTINUE_H = 40;
+const CONTINUE_PAD = 14;
+const CONTINUE_R = { x: PX + 32, y: PY + PH - CONTINUE_H - CONTINUE_PAD, w: PW - 64, h: CONTINUE_H };
+const EQUIP_PANEL_H = 178;
+const EQUIP_TOP = CONTINUE_R.y - 24 - EQUIP_PANEL_H;
+const CONTENT_H = EQUIP_TOP - CONTENT_TOP - 12;
 
-const OFFER_H = 118;
-const OFFER_GAP = 8;
+const OFFER_H = 124;
+const OFFER_GAP = 6;
+const OFFER_BTN_W = 88;
+const OFFER_BTN_H = 34;
+const OFFER_TEXT_X = 68;
 function offerRect(i: number): { x: number; y: number; w: number; h: number } {
   return { x: PX + 16, y: CONTENT_TOP + i * (OFFER_H + OFFER_GAP), w: PW - 32, h: OFFER_H };
 }
@@ -330,35 +364,74 @@ function lotPreviewIndex(row: number, col: number): number | null {
 
 const ACT_SLOT = 52;
 const PAS_SLOT = 44;
-const ACT_ROW_Y = EQUIP_TOP + 28;
-const PAS_ROW_Y = EQUIP_TOP + 82;
+const ACT_ROW_Y = EQUIP_TOP + 58;
+const PAS_ROW_Y = EQUIP_TOP + 128;
 
-function equippedActiveRects(loadout: LoadoutState): Array<{ x: number; y: number; w: number; h: number; id: string }> {
+type EquipSlotRect = { x: number; y: number; w: number; h: number; id: string | null };
+
+function activeSlotRects(loadout: LoadoutState): EquipSlotRect[] {
   const pitch = ACT_SLOT + 10;
   const startX = PX + (PW - MAX_EQUIPPED_ACTIVES * pitch + 10) / 2;
-  return loadout.equipped.map((id, i) => ({
+  return Array.from({ length: MAX_EQUIPPED_ACTIVES }, (_, i) => ({
     x: startX + i * pitch,
     y: ACT_ROW_Y,
     w: ACT_SLOT,
     h: ACT_SLOT,
-    id,
+    id: loadout.equipped[i] ?? null,
   }));
 }
 
-function equippedPassiveRects(loadout: LoadoutState): Array<{ x: number; y: number; w: number; h: number; id: string }> {
+function passiveSlotRects(loadout: LoadoutState): EquipSlotRect[] {
   const pitch = PAS_SLOT + 6;
   const startX = PX + (PW - MAX_EQUIPPED_PASSIVES * pitch + 6) / 2;
-  return loadout.passives.map((id, i) => ({
+  return Array.from({ length: MAX_EQUIPPED_PASSIVES }, (_, i) => ({
     x: startX + i * pitch,
     y: PAS_ROW_Y,
     w: PAS_SLOT,
     h: PAS_SLOT,
-    id,
+    id: loadout.passives[i] ?? null,
   }));
 }
 
 function unequipBtnRect(slot: { x: number; y: number; w: number; h: number }) {
   return { x: slot.x + slot.w - 14, y: slot.y - 6, w: 18, h: 18 };
+}
+
+function drawEmptyEquipSlot(
+  ctx: CanvasRenderingContext2D,
+  r: { x: number; y: number; w: number; h: number },
+  radius: number,
+  stroke: string,
+): void {
+  roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+  ctx.fillStyle = 'rgba(48,28,12,0.22)';
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawFilledEquipSlot(
+  ctx: CanvasRenderingContext2D,
+  r: { x: number; y: number; w: number; h: number },
+  icon: string,
+  radius: number,
+  stroke: string,
+): void {
+  roundRect(ctx, r.x, r.y, r.w, r.h, radius);
+  ctx.fillStyle = 'rgba(48,28,12,0.55)';
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#fff4e0';
+  ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(icon, r.x + r.w / 2, r.y + r.h / 2);
+  drawUnequipX(ctx, unequipBtnRect(r));
 }
 
 export type MerchantHit =
@@ -378,11 +451,11 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   if (inRect(x, y, TAB_LOTTERY)) return { kind: 'tab', tab: 'lottery' };
   if (inRect(x, y, CONTINUE_R)) return { kind: 'continue' };
 
-  for (const r of equippedActiveRects(loadout)) {
-    if (inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipActive', id: r.id };
+  for (const r of activeSlotRects(loadout)) {
+    if (r.id && inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipActive', id: r.id };
   }
-  for (const r of equippedPassiveRects(loadout)) {
-    if (inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipPassive', id: r.id };
+  for (const r of passiveSlotRects(loadout)) {
+    if (r.id && inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipPassive', id: r.id };
   }
 
   if (m.tab === 'shop') {
@@ -472,7 +545,7 @@ function drawOfferCard(
 
   const iconR = 22;
   const iconCx = r.x + 36;
-  const iconCy = r.y + r.h / 2 + 6;
+  const iconCy = r.y + r.h / 2;
   ctx.beginPath();
   ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(48,28,12,0.12)';
@@ -480,33 +553,41 @@ function drawOfferCard(
   ctx.strokeStyle = 'rgba(90,60,30,0.45)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  ctx.fillStyle = '#3a2208';
   ctx.font = '26px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(def.icon, iconCx, iconCy);
 
+  const bx = r.x + r.w - OFFER_BTN_W - 10;
+  const by = r.y + (r.h - OFFER_BTN_H) / 2;
+  const textMaxW = bx - (r.x + OFFER_TEXT_X) - 10;
+  const desc = offer.kind === 'active'
+    ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
+    : def.desc;
+  const descLines = fitTextLines(ctx, desc, textMaxW, 2);
+  const nameH = 18;
+  const descBlockH = descLines.length * 16;
+  const textBlockH = nameH + 4 + descBlockH;
+  const textY = r.y + Math.max(26, (r.h - textBlockH) / 2);
+
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(def.name, r.x + 68, r.y + 26);
+  ctx.fillText(def.name, r.x + OFFER_TEXT_X, textY);
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '12px "PingFang SC", serif';
-  const desc = offer.kind === 'active'
-    ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
-    : def.desc;
-  ctx.fillText(fitText(ctx, desc, r.w - 138), r.x + 68, r.y + 48);
+  for (let li = 0; li < descLines.length; li++) {
+    ctx.fillText(descLines[li]!, r.x + OFFER_TEXT_X, textY + nameH + 4 + li * 16);
+  }
 
-  const bw = 86;
-  const bh = 34;
-  const bx = r.x + r.w - bw - 10;
-  const by = r.y + (r.h - bh) / 2;
   if (offer.owned) {
-    drawInkActionButton(ctx, { x: bx, y: by, w: bw, h: bh }, '装备', false, 'accent');
+    drawInkActionButton(ctx, { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H }, '装备', false, 'accent');
   } else {
     drawInkActionButton(
       ctx,
-      { x: bx, y: by, w: bw, h: bh },
+      { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H },
       `${cost} 功德`,
       false,
       canAfford ? 'primary' : 'secondary',
@@ -520,7 +601,7 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
       const cell = lotCellRect(row, col);
       const isCenter = row === 1 && col === 1;
       if (isCenter) {
-        drawInkActionButton(ctx, cell, `抽奖 · ${LOTTERY_MERIT_COST}`, false, 'primary');
+        drawInkActionButton(ctx, cell, `抽奖\n${LOTTERY_MERIT_COST} 功德`, false, 'primary');
         continue;
       }
       const idx = lotPreviewIndex(row, col);
@@ -569,9 +650,16 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
   }
 }
 
+function slotRowCenterX(slots: EquipSlotRect[]): number {
+  if (slots.length === 0) return PX + PW / 2;
+  const first = slots[0]!;
+  const last = slots[slots.length - 1]!;
+  return (first.x + last.x + last.w) / 2;
+}
+
 function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
-  roundRect(ctx, PX + 14, EQUIP_TOP, PW - 28, 132, 10);
-  const panel = ctx.createLinearGradient(PX, EQUIP_TOP, PX, EQUIP_TOP + 132);
+  roundRect(ctx, PX + 14, EQUIP_TOP, PW - 28, EQUIP_PANEL_H, 10);
+  const panel = ctx.createLinearGradient(PX, EQUIP_TOP, PX, EQUIP_TOP + EQUIP_PANEL_H);
   panel.addColorStop(0, 'rgba(55,32,14,0.38)');
   panel.addColorStop(1, 'rgba(45,28,12,0.48)');
   ctx.fillStyle = panel;
@@ -580,50 +668,47 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  ctx.textAlign = 'left';
+  const actSlots = activeSlotRects(loadout);
+  const pasSlots = passiveSlotRects(loadout);
+  const cx = PX + PW / 2;
+
   ctx.textBaseline = 'top';
+  ctx.textAlign = 'center';
   ctx.fillStyle = '#fff4e0';
   ctx.font = 'bold 15px "PingFang SC", "STKaiti", serif';
-  ctx.fillText('我的道具', PX + 26, EQUIP_TOP + 10);
-  ctx.font = '12px "PingFang SC", serif';
-  ctx.fillStyle = 'rgba(255,240,210,0.75)';
-  ctx.fillText(`主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`, PX + 26, ACT_ROW_Y - 16);
-  ctx.fillText(`被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`, PX + 26, PAS_ROW_Y - 16);
-
-  for (const r of equippedActiveRects(loadout)) {
-    const def = activeById(r.id);
-    roundRect(ctx, r.x, r.y, r.w, r.h, 8);
-    ctx.fillStyle = 'rgba(48,28,12,0.55)';
-    ctx.fill();
-    ctx.strokeStyle = '#5a7088';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(def?.icon ?? '?', r.x + r.w / 2, r.y + r.h / 2);
-    drawUnequipX(ctx, unequipBtnRect(r));
-  }
-
-  for (const r of equippedPassiveRects(loadout)) {
-    const def = passiveById(r.id);
-    roundRect(ctx, r.x, r.y, r.w, r.h, 7);
-    ctx.fillStyle = 'rgba(48,28,12,0.55)';
-    ctx.fill();
-    ctx.strokeStyle = '#6a8050';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(def?.icon ?? '?', r.x + r.w / 2, r.y + r.h / 2);
-    drawUnequipX(ctx, unequipBtnRect(r));
-  }
-
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,240,210,0.55)';
+  ctx.fillText('我的道具', cx, EQUIP_TOP + 10);
   ctx.font = '11px "PingFang SC", serif';
-  ctx.fillText('道具仅当天有效', VIEW_W / 2, EQUIP_TOP + 118);
+  ctx.fillStyle = 'rgba(255,240,210,0.6)';
+  ctx.fillText('道具仅当天有效 · 点击 × 卸下', cx, EQUIP_TOP + 30);
+
+  ctx.font = '12px "PingFang SC", serif';
+  ctx.fillStyle = 'rgba(255,240,210,0.8)';
+  ctx.fillText(
+    `主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`,
+    slotRowCenterX(actSlots),
+    ACT_ROW_Y - 16,
+  );
+  ctx.fillText(
+    `被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`,
+    slotRowCenterX(pasSlots),
+    PAS_ROW_Y - 16,
+  );
+
+  for (const r of actSlots) {
+    if (r.id) {
+      drawFilledEquipSlot(ctx, r, activeById(r.id)?.icon ?? '?', 8, '#5a7088');
+    } else {
+      drawEmptyEquipSlot(ctx, r, 8, 'rgba(90,112,136,0.55)');
+    }
+  }
+
+  for (const r of pasSlots) {
+    if (r.id) {
+      drawFilledEquipSlot(ctx, r, passiveById(r.id)?.icon ?? '?', 7, '#6a8050');
+    } else {
+      drawEmptyEquipSlot(ctx, r, 7, 'rgba(106,128,80,0.55)');
+    }
+  }
 }
 
 function drawUnequipX(ctx: CanvasRenderingContext2D, r: { x: number; y: number; w: number; h: number }): void {
