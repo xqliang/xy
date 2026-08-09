@@ -1,6 +1,6 @@
 // 主动/被动技能「每日购买 + 装备」持久化：跨局 localStorage，按自然日重置。
 // 当日购买一次即拥有；可随时卸下/再装备，无需重复扣功德。跨天清空需重新购买。
-import { storeGet, storeSet } from './storage';
+import { storeGet, storeSet, parseStoredJson, safeNumber, safeStringArray } from './storage';
 import { MAX_EQUIPPED_ACTIVES, activeById, isActiveEnabled } from './actives';
 import { MAX_EQUIPPED_PASSIVES, passiveById, isPassiveEnabled } from './passives';
 import { spendMerit, type MeritState } from './merit';
@@ -68,29 +68,29 @@ function normalize(s: LoadoutState): LoadoutState {
   return { day: s.day, ownedActives, ownedPassives, equipped, passives };
 }
 
+function normalizeLoadoutRaw(raw: unknown): LoadoutState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const day = safeNumber(s.day, today(), 0);
+  if (!Array.isArray(s.equipped)) return null;
+  return normalize({
+    day,
+    ownedActives: safeStringArray(s.ownedActives).length > 0
+      ? safeStringArray(s.ownedActives)
+      : safeStringArray(s.equipped),
+    ownedPassives: safeStringArray(s.ownedPassives).length > 0
+      ? safeStringArray(s.ownedPassives)
+      : safeStringArray(s.passives),
+    equipped: safeStringArray(s.equipped),
+    passives: safeStringArray(s.passives),
+  });
+}
+
 // 读取装备；跨天则清空（需重新购买）
 export function loadLoadout(): LoadoutState {
-  try {
-    const raw = storeGet(KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (typeof s.day === 'number' && Array.isArray(s.equipped)) {
-        if (s.day !== today()) return save(emptyLoadout());
-        return save(normalize({
-          day: s.day,
-          ownedActives: Array.isArray(s.ownedActives) ? s.ownedActives : [...s.equipped],
-          ownedPassives: Array.isArray(s.ownedPassives)
-            ? s.ownedPassives
-            : (Array.isArray(s.passives) ? [...s.passives] : []),
-          equipped: s.equipped,
-          passives: Array.isArray(s.passives) ? s.passives : [],
-        }));
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return save(emptyLoadout());
+  const loaded = parseStoredJson(storeGet(KEY), normalizeLoadoutRaw, emptyLoadout());
+  if (loaded.day !== today()) return save(emptyLoadout());
+  return save(loaded);
 }
 
 export function isOwnedActive(s: LoadoutState, id: string): boolean {

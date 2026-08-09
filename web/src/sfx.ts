@@ -50,16 +50,16 @@ type Wave = 'sine' | 'square' | 'triangle' | 'sawtooth';
 
 // 单个音符：振荡器 + 增益包络（可选频率滑动）
 function tone(freq: number, dur: number, opts: { type?: Wave; gain?: number; to?: number; delay?: number } = {}): void {
-  if (!ctx || !master) return;
+  if (!ctx || !master || sfxVolume <= 0) return;
   const t0 = ctx.currentTime + (opts.delay ?? 0);
   const osc = ctx.createOscillator();
   const g = ctx.createGain();
   osc.type = opts.type ?? 'sine';
   osc.frequency.setValueAtTime(freq, t0);
   if (opts.to != null) osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.to), t0 + dur);
-  const peak = opts.gain ?? 0.25;
+  const peak = Math.max(0.0001, (opts.gain ?? 0.25) * sfxVolume);
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(peak * sfxVolume, t0 + Math.min(0.02, dur * 0.3));
+  g.gain.exponentialRampToValueAtTime(peak, t0 + Math.min(0.02, dur * 0.3));
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   osc.connect(g); g.connect(master);
   osc.start(t0); osc.stop(t0 + dur + 0.02);
@@ -67,7 +67,7 @@ function tone(freq: number, dur: number, opts: { type?: Wave; gain?: number; to?
 
 // 噪声爆发（命中/爆炸/挖掘）
 function noise(dur: number, opts: { gain?: number; hp?: number; lp?: number; delay?: number } = {}): void {
-  if (!ctx || !master) return;
+  if (!ctx || !master || sfxVolume <= 0) return;
   const t0 = ctx.currentTime + (opts.delay ?? 0);
   const len = Math.floor(ctx.sampleRate * dur);
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -88,7 +88,8 @@ let lastAttack = 0; // 攻击音节流，避免密集刷屏
 
 // 事件 → 声音映射
 export function playSfx(name: string): void {
-  if (muted || !sfxEnabled || !ctx) return;
+  if (muted || !sfxEnabled || sfxVolume <= 0 || !ctx) return;
+  try {
   switch (name) {
     case 'click': tone(660, 0.06, { type: 'square', gain: 0.14 }); break;
     case 'summon': tone(320, 0.18, { type: 'sine', to: 760, gain: 0.22 }); tone(480, 0.14, { type: 'triangle', gain: 0.12, delay: 0.04 }); break;
@@ -114,6 +115,7 @@ export function playSfx(name: string): void {
     case 'lose': [392, 311, 233].forEach((f, i) => tone(f, 0.26, { type: 'sawtooth', gain: 0.2, delay: i * 0.14 })); break;
     case 'danger': tone(880, 0.1, { type: 'square', gain: 0.14 }); tone(880, 0.1, { type: 'square', gain: 0.14, delay: 0.16 }); break;
   }
+  } catch { /* 音频图异常不应阻断 UI */ }
 }
 
 // —— 背景音乐（每张地图各一首真实音频循环）——

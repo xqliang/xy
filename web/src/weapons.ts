@@ -2,7 +2,7 @@
 // 对局中随机掉落；重复掉落自动升品质；背包内最多装备 3 件（形成取舍）。
 // 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.35 格（格数加成）。
 import { GENERALS, generalById } from './generals';
-import { storeGet, storeSet } from './storage';
+import { storeGet, storeSet, parseStoredJson, safeStringArray } from './storage';
 
 const KEY = 'dasheng.bag';
 
@@ -91,24 +91,30 @@ export interface BagState {
   equipped: string[]; // 已装备的 weaponId（最多 MAX_EQUIPPED）
 }
 
-export function loadBag(): BagState {
-  try {
-    const raw = storeGet(KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s && typeof s.owned === 'object' && Array.isArray(s.equipped)) {
-        return { owned: s.owned, equipped: s.equipped };
-      }
-    }
-  } catch {
-    /* ignore */
+const DEFAULT_BAG: BagState = { owned: {}, equipped: [] };
+
+function normalizeBag(raw: unknown): BagState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  if (!s.owned || typeof s.owned !== 'object' || !Array.isArray(s.equipped)) return null;
+  const owned: Record<string, number> = {};
+  for (const [id, tier] of Object.entries(s.owned as Record<string, unknown>)) {
+    if (!weaponById(id) || typeof tier !== 'number' || !Number.isFinite(tier)) continue;
+    owned[id] = Math.max(1, Math.min(MAX_WEAPON_TIER, Math.floor(tier)));
   }
-  return { owned: {}, equipped: [] };
+  const equipped = safeStringArray(s.equipped)
+    .filter((id) => id in owned)
+    .slice(0, MAX_EQUIPPED);
+  return { owned, equipped };
+}
+
+export function loadBag(): BagState {
+  return parseStoredJson(storeGet(KEY), normalizeBag, DEFAULT_BAG);
 }
 
 export function saveBag(s: BagState): void {
   try {
-    storeSet(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(normalizeBag(s) ?? DEFAULT_BAG));
   } catch {
     /* ignore */
   }

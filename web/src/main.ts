@@ -31,7 +31,7 @@ import {
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
-import { loadStamina, addStamina, spendStamina, syncStamina, type Stamina } from './stamina';
+import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import {
@@ -49,16 +49,26 @@ import {
   type LoadoutState,
 } from './loadout';
 import { drawShop, shopHitAt, SHOP_MAX_SCROLL, drawShopPopup, shopPopupHitAt, type ShopPopupState } from './shop';
-import { drawCodex, codexHitBack } from './codex';
+import {
+  drawCodex,
+  codexHitBack,
+  resetCodex,
+  codexPointerDown,
+  codexPointerMove,
+  codexPointerUp,
+  codexWheel,
+} from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
+import { loadUserId, copyUserId } from './user-id';
 import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
 import {
   getSettings,
+  resetSettings,
   setShowDamageNumbers,
   setMusicEnabled,
   setSfxEnabled,
@@ -162,12 +172,26 @@ function audioScreenKind(s: Screen): 'menu' | 'battle' | 'other' {
   if (s === 'battle') return 'battle';
   return 'other';
 }
+function safePersisted<T>(load: () => T, fallback: T): T {
+  try {
+    return load();
+  } catch {
+    return fallback;
+  }
+}
+
 let screen: Screen = 'menu';
-let rank: RankState = loadRank();
-let stamina: Stamina = loadStamina();
-let merit: MeritState = loadMerit();
-let loadout: LoadoutState = loadLoadout(); // 主动技能每日装备（跨天重置，需重新购买）
-let bag: BagState = loadBag();
+let rank: RankState = safePersisted(loadRank, { level: 0, stars: 0, difficulty: 1 });
+let stamina: Stamina = safePersisted(loadStamina, { value: STAMINA_MAX, lastTick: Date.now() });
+let merit: MeritState = safePersisted(loadMerit, { merit: 0, levels: {} });
+let loadout: LoadoutState = safePersisted(loadLoadout, {
+  day: Math.floor(Date.now() / 86400000),
+  ownedActives: [],
+  ownedPassives: [],
+  equipped: [],
+  passives: [],
+});
+let bag: BagState = safePersisted(loadBag, { owned: {}, equipped: [] });
 let bagToast = '';
 let bagPopup: string | null = null; // 打开详情 tips 的神兵 id（null=未开）
 let menuToast = '';
@@ -181,17 +205,17 @@ let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗�
 let shopScrollY = 0;
 let shopPointerActive = false;
 let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
-let mapSelection: MapSelection = loadMapSelection();
+let mapSelection: MapSelection = safePersisted(loadMapSelection, { mode: 'daily' });
 let currentMap = params.get('map') ? mapById(params.get('map')!) : resolveMap(mapSelection);
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
-let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
+let endlessOn = safePersisted(loadEndlessEnabled, false); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
 let merchant: MerchantUiState = merchantClosed();
-let gameSettings: GameSettings = getSettings();
+let gameSettings: GameSettings = safePersisted(getSettings, resetSettings());
 
 function syncAudioFromSettings(): void {
   applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume, {
@@ -200,7 +224,12 @@ function syncAudioFromSettings(): void {
   });
 }
 
-syncAudioFromSettings();
+try {
+  syncAudioFromSettings();
+} catch {
+  gameSettings = resetSettings();
+  syncAudioFromSettings();
+}
 type MenuPopup = 'none' | 'settings' | 'stamina' | 'map';
 let menuPopup: MenuPopup = 'none';
 let staminaPopupToast = '';
@@ -258,6 +287,7 @@ function handleMenu(id: string) {
     newGame();
     screen = 'battle';
   } else if (id === 'codex') {
+    resetCodex();
     screen = 'codex';
   } else if (id === 'rank') {
     screen = 'rank';
@@ -273,7 +303,7 @@ function handleMenu(id: string) {
 function handleMenuPopupPointer(x: number, y: number): boolean {
   if (menuPopup === 'none') return false;
   if (menuPopup === 'settings') {
-    const hit = settingsHitAt(x, y, gameSettings);
+    const hit = settingsHitAt(x, y, gameSettings, loadUserId());
     if (hit === null) return true;
     playSfx('click');
     if (hit.kind === 'close') {
@@ -296,15 +326,25 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       syncAudioFromSettings();
       return true;
     }
+    if (hit.kind === 'copyUid') {
+      const uid = loadUserId();
+      if (uid) {
+        void copyUserId(uid).then((ok) => {
+          menuToast = ok ? 'UID 已复制' : '复制失败';
+          scheduleFrame();
+        });
+      }
+      return true;
+    }
     if (hit.kind === 'musicKnob') {
       menuSliderDrag = 'music';
-      gameSettings = setMusicVolume(gameSettings, settingsMusicVolumeFromX(x));
+      gameSettings = setMusicVolume(gameSettings, settingsMusicVolumeFromX(x, loadUserId()));
       syncAudioFromSettings();
       return true;
     }
     if (hit.kind === 'sfxKnob') {
       menuSliderDrag = 'sfx';
-      gameSettings = setSfxVolume(gameSettings, settingsSfxVolumeFromX(x));
+      gameSettings = setSfxVolume(gameSettings, settingsSfxVolumeFromX(x, loadUserId()));
       syncAudioFromSettings();
       return true;
     }
@@ -365,7 +405,8 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
 
 function handleMenuPopupDrag(x: number): void {
   if (menuPopup !== 'settings' || !menuSliderDrag) return;
-  const v = menuSliderDrag === 'music' ? settingsMusicVolumeFromX(x) : settingsSfxVolumeFromX(x);
+  const uid = loadUserId();
+  const v = menuSliderDrag === 'music' ? settingsMusicVolumeFromX(x, uid) : settingsSfxVolumeFromX(x, uid);
   if (menuSliderDrag === 'music') {
     gameSettings = setMusicVolume(gameSettings, v);
   } else {
@@ -550,7 +591,14 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'codex') {
-    if (codexHitBack(x, y)) screen = 'menu';
+    if (codexHitBack(x, y)) {
+      screen = 'menu';
+      return;
+    }
+    if (codexPointerDown(x, y)) {
+      canvas.setPointerCapture(e.pointerId);
+      scheduleFrame();
+    }
     return;
   }
   if (screen === 'rank') {
@@ -696,6 +744,12 @@ function onPointerMove(e: PointerEvent) {
     scheduleFrame(); // 按需重绘：拖动滚动商城时重画
     return;
   }
+  if (screen === 'codex') {
+    const { x, y } = toLogical(e.clientX, e.clientY);
+    codexPointerMove(x, y);
+    scheduleFrame();
+    return;
+  }
   if (!ui.dragFrom && ui.dragTrayIndex === null) return;
   ui.dragPos = toLogical(e.clientX, e.clientY);
   scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
@@ -729,6 +783,10 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     // 轻点(未拖动)才触发购买；拖动只滚动
     if (shopPointerActive && !shopDragged) handleShop(shopDownX, shopDownY);
     shopPointerActive = false;
+    return;
+  }
+  if (screen === 'codex') {
+    codexPointerUp();
     return;
   }
   if (ui.dragPos) {
@@ -771,10 +829,17 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
 
 // 桌面端滚轮滚动商城
 canvas.addEventListener('wheel', (e) => {
-  if (screen !== 'shop') return;
-  e.preventDefault();
-  shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
-  scheduleFrame(); // 按需重绘：滚轮滚动后重画商城
+  if (screen === 'shop') {
+    e.preventDefault();
+    shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
+    scheduleFrame(); // 按需重绘：滚轮滚动后重画商城
+    return;
+  }
+  if (screen === 'codex') {
+    e.preventDefault();
+    codexWheel(e.deltaY);
+    scheduleFrame();
+  }
 }, { passive: false });
 
 // —— 游戏循环（按需重绘） —— //
@@ -824,7 +889,7 @@ function frame(now: number): void {
       pressedId: menuPressedId,
       hoverId: menuHoverId,
     });
-    if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings);
+    if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings, loadUserId());
     else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
     if (merchant.open) drawMerchant(ctx, merchant, loadout, merit);
@@ -980,7 +1045,7 @@ const hook: GameHook = {
   },
   enterBattle: () => { screen = 'battle'; scheduleFrame(); },
   openShop: () => { shopScrollY = 0; shopPopup = null; screen = 'shop'; scheduleFrame(); },
-  openCodex: () => { screen = 'codex'; scheduleFrame(); },
+  openCodex: () => { resetCodex(); screen = 'codex'; scheduleFrame(); },
   openRank: () => { screen = 'rank'; scheduleFrame(); },
   openBag: () => { bagPopup = null; screen = 'bag'; scheduleFrame(); },
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },

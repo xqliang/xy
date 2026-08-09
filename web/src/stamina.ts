@@ -1,5 +1,5 @@
 // 体力系统：跨平台存储持久化。开局消耗 STAMINA_COST；未满时每 STAMINA_REGEN_MS 自动 +1（上限 STAMINA_MAX）。
-import { storeGet, storeSet } from './storage';
+import { storeGet, storeSet, parseStoredJson, safeNumber } from './storage';
 
 const KEY = 'dasheng.stamina';
 export const STAMINA_MAX = 30;
@@ -34,21 +34,20 @@ export function syncStamina(s: Stamina): Stamina {
   return save({ value, lastTick });
 }
 
+const DEFAULT_STAMINA: Stamina = { value: STAMINA_MAX, lastTick: Date.now() };
+
+function normalizeStamina(raw: unknown): Stamina | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.value !== 'number') return null;
+  const value = Math.floor(safeNumber(s.value, STAMINA_MAX, 0, STAMINA_MAX));
+  const lastTick = safeNumber(s.lastTick, Date.now(), 0);
+  return syncStamina({ value, lastTick });
+}
+
 export function loadStamina(): Stamina {
-  try {
-    const raw = storeGet(KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as { value?: unknown; lastTick?: unknown; day?: unknown };
-      if (typeof s.value === 'number') {
-        // 兼容旧存档 { value, day }：无 lastTick 时从现在起算
-        const lastTick = typeof s.lastTick === 'number' ? s.lastTick : Date.now();
-        return syncStamina({ value: Math.max(0, Math.min(STAMINA_MAX, s.value)), lastTick });
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return save({ value: STAMINA_MAX, lastTick: Date.now() });
+  const loaded = parseStoredJson(storeGet(KEY), normalizeStamina, DEFAULT_STAMINA);
+  return save(loaded);
 }
 
 export function addStamina(s: Stamina, n: number): Stamina {

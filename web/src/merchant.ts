@@ -40,6 +40,8 @@ export interface MerchantUiState {
   offers: MerchantOffer[];
   lotteryPreview: Array<{ kind: SkillKind; id: string }>;
   toast: string;
+  /** 商店 Tab 购买二次确认：待确认的商品下标 */
+  confirmOffer: number | null;
 }
 
 export const LOTTERY_MERIT_COST = 45;
@@ -124,7 +126,7 @@ export function rollLotteryPreview(): Array<{ kind: SkillKind; id: string }> {
 }
 
 export function merchantClosed(): MerchantUiState {
-  return { open: false, tab: 'shop', offers: [], lotteryPreview: [], toast: '' };
+  return { open: false, tab: 'shop', offers: [], lotteryPreview: [], toast: '', confirmOffer: null };
 }
 
 /** 战斗结算回首页时调用：弹出并重 roll 商品 */
@@ -135,11 +137,16 @@ export function openMerchant(loadout: LoadoutState): MerchantUiState {
     offers: rollMerchantOffers(loadout),
     lotteryPreview: rollLotteryPreview(),
     toast: '',
+    confirmOffer: null,
   };
 }
 
 export function closeMerchant(m: MerchantUiState): MerchantUiState {
-  return { ...m, open: false, toast: '' };
+  return { ...m, open: false, toast: '', confirmOffer: null };
+}
+
+function updateOfferOwned(offers: MerchantOffer[], index: number, owned: boolean): MerchantOffer[] {
+  return offers.map((o, i) => (i === index ? { ...o, owned } : o));
 }
 
 function skillCost(kind: SkillKind, id: string): number {
@@ -174,33 +181,24 @@ export function applyMerchantHit(
     case 'continue':
       return { merchant: closeMerchant(m), loadout: lo, merit: me };
     case 'tab':
-      return { merchant: { ...m, tab: hit.tab, toast: '' }, loadout: lo, merit: me };
-    case 'unequipActive':
-      lo = unequipActive(lo, hit.id);
-      m = { ...m, offers: rollMerchantOffers(lo), toast: '已卸下' };
-      return { merchant: m, loadout: lo, merit: me };
-    case 'unequipPassive':
-      lo = unequipPassive(lo, hit.id);
-      m = { ...m, offers: rollMerchantOffers(lo), toast: '已卸下' };
-      return { merchant: m, loadout: lo, merit: me };
-    case 'offer': {
-      const offer = m.offers[hit.index];
-      if (!offer) return { merchant: m, loadout: lo, merit: me };
-      if (offer.owned) {
-        const res = offer.kind === 'active' ? equipActive(lo, offer.id) : equipPassive(lo, offer.id);
-        lo = res.loadout;
-        m = {
-          ...m,
-          offers: rollMerchantOffers(lo),
-          toast: res.ok ? '已装备' : res.reason ?? '无法装备',
-        };
-      } else if (offer.kind === 'active') {
+      return { merchant: { ...m, tab: hit.tab, toast: '', confirmOffer: null }, loadout: lo, merit: me };
+    case 'cancelOfferBuy':
+      return { merchant: { ...m, confirmOffer: null, toast: '' }, loadout: lo, merit: me };
+    case 'confirmOfferBuy': {
+      const idx = m.confirmOffer;
+      if (idx === null) return { merchant: m, loadout: lo, merit: me };
+      const offer = m.offers[idx];
+      if (!offer || offer.owned) {
+        return { merchant: { ...m, confirmOffer: null }, loadout: lo, merit: me };
+      }
+      if (offer.kind === 'active') {
         const res = buyActive(lo, me, offer.id);
         lo = res.loadout;
         me = res.merit;
         m = {
           ...m,
-          offers: rollMerchantOffers(lo),
+          confirmOffer: null,
+          offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
           toast: res.ok
             ? (lo.equipped.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
             : res.reason ?? '无法购买',
@@ -211,11 +209,37 @@ export function applyMerchantHit(
         me = res.merit;
         m = {
           ...m,
-          offers: rollMerchantOffers(lo),
+          confirmOffer: null,
+          offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
           toast: res.ok
             ? (lo.passives.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
             : res.reason ?? '无法购买',
         };
+      }
+      return { merchant: m, loadout: lo, merit: me };
+    }
+    case 'unequipActive':
+      lo = unequipActive(lo, hit.id);
+      m = { ...m, toast: '已卸下' };
+      return { merchant: m, loadout: lo, merit: me };
+    case 'unequipPassive':
+      lo = unequipPassive(lo, hit.id);
+      m = { ...m, toast: '已卸下' };
+      return { merchant: m, loadout: lo, merit: me };
+    case 'offer': {
+      const offer = m.offers[hit.index];
+      if (!offer) return { merchant: m, loadout: lo, merit: me };
+      if (offer.owned) {
+        const res = offer.kind === 'active' ? equipActive(lo, offer.id) : equipPassive(lo, offer.id);
+        lo = res.loadout;
+        m = { ...m, toast: res.ok ? '已装备' : res.reason ?? '无法装备' };
+      } else {
+        const cost = skillCost(offer.kind, offer.id);
+        if (me.merit < cost) {
+          m = { ...m, toast: '功德不足' };
+        } else {
+          m = { ...m, confirmOffer: hit.index, toast: '' };
+        }
       }
       return { merchant: m, loadout: lo, merit: me };
     }
@@ -256,8 +280,6 @@ function merchantLottery(
     return {
       merchant: {
         ...merchant,
-        offers: rollMerchantOffers(lo),
-        lotteryPreview: rollLotteryPreview(),
         toast: equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
       },
       loadout: lo,
@@ -272,8 +294,6 @@ function merchantLottery(
     return {
       merchant: {
         ...merchant,
-        offers: rollMerchantOffers(lo),
-        lotteryPreview: rollLotteryPreview(),
         toast: equipped ? `抽中「${name}」并已装备` : res.reason ?? '槽位已满',
       },
       loadout: lo,
@@ -285,8 +305,6 @@ function merchantLottery(
   return {
     merchant: {
       ...merchant,
-      offers: rollMerchantOffers(lo),
-      lotteryPreview: rollLotteryPreview(),
       toast: equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
     },
     loadout: lo,
@@ -362,6 +380,13 @@ function lotCellRect(row: number, col: number): { x: number; y: number; w: numbe
   };
 }
 const LOTTERY_BTN = lotCellRect(1, 1);
+
+const CONF_PW = 360;
+const CONF_PH = 220;
+const CONF_PX = (VIEW_W - CONF_PW) / 2;
+const CONF_PY = (VIEW_H - CONF_PH) / 2;
+const CONF_CANCEL = { x: CONF_PX + 18, y: CONF_PY + CONF_PH - 56, w: (CONF_PW - 36 - 12) / 2, h: 40 };
+const CONF_OK = { x: CONF_PX + CONF_PW / 2 + 6, y: CONF_PY + CONF_PH - 56, w: (CONF_PW - 36 - 12) / 2, h: 40 };
 
 function lotPreviewIndex(row: number, col: number): number | null {
   if (row === 1 && col === 1) return null;
@@ -451,10 +476,20 @@ export type MerchantHit =
   | { kind: 'unequipActive'; id: string }
   | { kind: 'unequipPassive'; id: string }
   | { kind: 'continue' }
+  | { kind: 'confirmOfferBuy' }
+  | { kind: 'cancelOfferBuy' }
   | null;
+
+function merchantConfirmHitAt(x: number, y: number): MerchantHit {
+  if (inRect(x, y, CONF_CANCEL)) return { kind: 'cancelOfferBuy' };
+  if (inRect(x, y, CONF_OK)) return { kind: 'confirmOfferBuy' };
+  if (x >= CONF_PX && x <= CONF_PX + CONF_PW && y >= CONF_PY && y <= CONF_PY + CONF_PH) return null;
+  return { kind: 'cancelOfferBuy' };
+}
 
 export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout: LoadoutState): MerchantHit {
   if (!m.open) return null;
+  if (m.confirmOffer !== null) return merchantConfirmHitAt(x, y);
   if (inRect(x, y, CLOSE_R)) return { kind: 'close' };
   if (inRect(x, y, TAB_SHOP)) return { kind: 'tab', tab: 'shop' };
   if (inRect(x, y, TAB_LOTTERY)) return { kind: 'tab', tab: 'lottery' };
@@ -714,6 +749,47 @@ function drawUnequipX(ctx: CanvasRenderingContext2D, r: { x: number; y: number; 
   ctx.fillText('×', r.x + r.w / 2, r.y + r.h / 2);
 }
 
+function drawOfferConfirmPopup(
+  ctx: CanvasRenderingContext2D,
+  m: MerchantUiState,
+  merit: MeritState,
+): void {
+  const idx = m.confirmOffer;
+  if (idx === null) return;
+  const offer = m.offers[idx];
+  if (!offer) return;
+  const def = offer.kind === 'active' ? activeById(offer.id) : passiveById(offer.id);
+  if (!def) return;
+  const cost = skillCost(offer.kind, offer.id);
+  const rarity = skillRarityColor(def.cost);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  roundRect(ctx, CONF_PX, CONF_PY, CONF_PW, CONF_PH, 12);
+  ctx.fillStyle = '#f8ecd2';
+  ctx.fill();
+  ctx.strokeStyle = rarity.color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#4a2808';
+  ctx.font = 'bold 18px "PingFang SC", "STKaiti", serif';
+  ctx.fillText('确认购买', CONF_PX + 18, CONF_PY + 16);
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = '14px "PingFang SC", serif';
+  ctx.fillText(`购买「${def.name}」`, CONF_PX + 18, CONF_PY + 48);
+  ctx.fillStyle = 'rgba(70,45,15,0.82)';
+  ctx.font = '13px "PingFang SC", serif';
+  ctx.fillText(`将扣除 ${cost} 功德（当前 ${merit.merit}）`, CONF_PX + 18, CONF_PY + 76);
+  ctx.fillText('道具仅当天有效，下局结束后刷新商品。', CONF_PX + 18, CONF_PY + 100);
+
+  drawInkActionButton(ctx, CONF_CANCEL, '取消', false, 'secondary');
+  drawInkActionButton(ctx, CONF_OK, '确认购买', false, merit.merit >= cost ? 'primary' : 'secondary');
+}
+
 /** 水墨卷轴弹窗（叠在首页之上） */
 export function drawMerchant(
   ctx: CanvasRenderingContext2D,
@@ -746,4 +822,6 @@ export function drawMerchant(
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(m.toast, VIEW_W / 2, PY + PH + 14);
   }
+
+  if (m.confirmOffer !== null) drawOfferConfirmPopup(ctx, m, merit);
 }

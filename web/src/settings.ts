@@ -1,5 +1,5 @@
 // 游戏设置持久化：伤害飘字、音乐/音效开关与音量。
-import { storeGet, storeSet } from './storage';
+import { storeGet, storeSet, parseStoredJson } from './storage';
 
 const KEY = 'dasheng.settings';
 const LEGACY_MUSIC_KEY = 'dasheng.music';
@@ -21,38 +21,49 @@ const DEFAULTS: GameSettings = {
 };
 
 function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
 }
 
-export function loadSettings(): GameSettings {
-  try {
-    const raw = storeGet(KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as Partial<GameSettings>;
-      return {
-        showDamageNumbers: s.showDamageNumbers !== false,
-        musicEnabled:
-          typeof s.musicEnabled === 'boolean'
-            ? s.musicEnabled
-            : storeGet(LEGACY_MUSIC_KEY) !== '0',
-        sfxEnabled: s.sfxEnabled !== false,
-        musicVolume: clamp01(typeof s.musicVolume === 'number' ? s.musicVolume : DEFAULTS.musicVolume),
-        sfxVolume: clamp01(typeof s.sfxVolume === 'number' ? s.sfxVolume : DEFAULTS.sfxVolume),
-      };
-    }
-  } catch {
-    /* ignore */
+function readBool(raw: unknown, fallback: boolean): boolean {
+  return typeof raw === 'boolean' ? raw : fallback;
+}
+
+/** 合并默认值并校验字段，避免 localStorage 脏数据拖垮运行时 */
+export function normalizeSettings(raw: Partial<GameSettings> = {}): GameSettings {
+  return {
+    showDamageNumbers: readBool(raw.showDamageNumbers, DEFAULTS.showDamageNumbers),
+    musicEnabled: readBool(raw.musicEnabled, DEFAULTS.musicEnabled),
+    sfxEnabled: readBool(raw.sfxEnabled, DEFAULTS.sfxEnabled),
+    musicVolume: clamp01(
+      typeof raw.musicVolume === 'number' ? raw.musicVolume : DEFAULTS.musicVolume,
+    ),
+    sfxVolume: clamp01(typeof raw.sfxVolume === 'number' ? raw.sfxVolume : DEFAULTS.sfxVolume),
+  };
+}
+
+function normalizeStoredSettings(raw: unknown): GameSettings | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const partial = raw as Partial<GameSettings>;
+  const normalized = normalizeSettings(partial);
+  if (typeof partial.musicEnabled !== 'boolean' && storeGet(LEGACY_MUSIC_KEY) === '0') {
+    return { ...normalized, musicEnabled: false };
   }
-  return { ...DEFAULTS };
+  return normalized;
+}
+
+export function loadSettings(): GameSettings {
+  return parseStoredJson(storeGet(KEY), normalizeStoredSettings, { ...DEFAULTS });
 }
 
 function save(s: GameSettings): GameSettings {
+  const normalized = normalizeSettings(s);
   try {
-    storeSet(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(normalized));
   } catch {
     /* ignore */
   }
-  return s;
+  return normalized;
 }
 
 export function setShowDamageNumbers(current: GameSettings, on: boolean): GameSettings {
@@ -89,4 +100,10 @@ export function updateSettings(next: GameSettings): GameSettings {
 
 export function patchSettings(patch: Partial<GameSettings>): GameSettings {
   return updateSettings({ ...getSettings(), ...patch });
+}
+
+/** 恢复默认设置（localStorage 异常时可由控制台或调试入口调用） */
+export function resetSettings(): GameSettings {
+  cached = save({ ...DEFAULTS });
+  return cached;
 }

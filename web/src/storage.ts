@@ -27,3 +27,32 @@ export function storeSet(key: string, val: string): void {
     /* ignore */
   }
 }
+
+/** 有限数值：非 number / NaN / Infinity 时回退 fallback，并可 clamp */
+export function safeNumber(value: unknown, fallback: number, min?: number, max?: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  let n = value;
+  if (min != null) n = Math.max(min, n);
+  if (max != null) n = Math.min(max, n);
+  return n;
+}
+
+/** 字符串数组：过滤非字符串与空串 */
+export function safeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is string => typeof x === 'string' && x.length > 0);
+}
+
+/** 解析 localStorage JSON；normalize 返回 null 表示无效，回退 fallback */
+export function parseStoredJson<T>(
+  raw: string | null,
+  normalize: (value: unknown) => T | null,
+  fallback: T,
+): T {
+  if (raw == null || raw === '') return fallback;
+  try {
+    return normalize(JSON.parse(raw)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}

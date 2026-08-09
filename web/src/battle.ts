@@ -337,7 +337,7 @@ export const MONSTER_STATUS_META: Record<MonsterStatusId, { name: string; color:
 };
 
 // 每张地图的专属技能主题：该图 Boss 必带、精英小怪也带同一技能（不再随机三选一）
-const MAP_SKILL: Record<string, MonsterSkill> = {
+export const MAP_SKILL: Record<string, MonsterSkill> = {
   huoyanshan: 'weaken', // 火焰山：烈焰灼身，攻击↓
   liushahe: 'slow', // 流沙河：流沙裹足，出手变慢
   baiguling: 'stun', // 白骨岭：白骨魅惑，无法出手

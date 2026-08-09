@@ -1,7 +1,7 @@
 // 局外「功德商店」（神秘商人）：跨局 localStorage 持久化的永久成长。
 // 功德在对局结束时结算获得；可买断若干温和加成（有等级上限），开局注入本局。
 import type { MetaBonuses } from './battle';
-import { storeGet, storeSet } from './storage';
+import { storeGet, storeSet, parseStoredJson, safeNumber } from './storage';
 
 const KEY = 'dasheng.merit';
 
@@ -31,24 +31,27 @@ export interface MeritState {
   levels: Record<string, number>; // 各项已购等级
 }
 
-export function loadMerit(): MeritState {
-  try {
-    const raw = storeGet(KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (typeof s.merit === 'number' && s.levels && typeof s.levels === 'object') {
-        return { merit: s.merit, levels: s.levels };
-      }
-    }
-  } catch {
-    /* ignore */
+const DEFAULT_MERIT: MeritState = { merit: 0, levels: {} };
+
+function normalizeMerit(raw: unknown): MeritState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.merit !== 'number' || !s.levels || typeof s.levels !== 'object') return null;
+  const levels: Record<string, number> = {};
+  for (const [id, lv] of Object.entries(s.levels as Record<string, unknown>)) {
+    if (typeof id !== 'string' || typeof lv !== 'number' || !Number.isFinite(lv)) continue;
+    levels[id] = Math.max(0, Math.floor(lv));
   }
-  return { merit: 0, levels: {} };
+  return { merit: Math.max(0, Math.floor(safeNumber(s.merit, 0, 0))), levels };
+}
+
+export function loadMerit(): MeritState {
+  return parseStoredJson(storeGet(KEY), normalizeMerit, DEFAULT_MERIT);
 }
 
 export function saveMerit(s: MeritState): void {
   try {
-    storeSet(KEY, JSON.stringify(s));
+    storeSet(KEY, JSON.stringify(normalizeMerit(s) ?? DEFAULT_MERIT));
   } catch {
     /* ignore */
   }
