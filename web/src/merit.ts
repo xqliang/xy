@@ -61,9 +61,14 @@ export function levelOf(s: MeritState, id: string): number {
   return s.levels[id] ?? 0;
 }
 
-// 对局结算获得功德：通关基础 + 波次奖励（失败也给少量参与奖励）
-export function meritReward(won: boolean, wave: number): number {
-  return (won ? 20 : 5) + wave * 2;
+export type MeritRewardOpts = { endless?: boolean };
+
+// 对局结算获得功德：通关基础 + 波次奖励（失败也给少量参与奖励）。
+// 无尽模式按实际抵达波数计（含第 10 波以后，不做封顶）。
+export function meritReward(won: boolean, wave: number, opts?: MeritRewardOpts): number {
+  const w = Math.max(1, Math.floor(wave));
+  const base = opts?.endless ? 5 : won ? 20 : 5;
+  return base + w * 2;
 }
 
 export function addMerit(s: MeritState, amount: number): MeritState {

@@ -1024,7 +1024,7 @@ function frame(now: number): void {
 
       if (battle.endless) {
         // 无尽：不涨降境界，只记录最高波数；仍发放功德（软奖励，与星级解耦）
-        const gain = meritReward(false, battle.wave);
+        const gain = meritReward(false, battle.wave, { endless: true });
         merit = addMerit(merit, gain);
         const isRecord = recordBestWave(battle.wave);
         endlessResult = { wave: battle.wave, best: getBestWave(), isNewRecord: isRecord, merit: gain };
