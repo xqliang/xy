@@ -659,9 +659,25 @@ function drawOfferCard(
   const rarityW = ctx.measureText(rarity.label).width;
   drawSkillKindTag(ctx, r.x + 12 + rarityW + 8, r.y + 8, offer.kind);
 
+  const bx = r.x + r.w - OFFER_BTN_W - 10;
+  const nameMaxW = bx - (r.x + OFFER_TEXT_X) - 8;
+  const textMaxW = r.w - OFFER_TEXT_X - 14;
+  const desc = offer.kind === 'active'
+    ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
+    : def.desc;
+  ctx.font = '12px "PingFang SC", serif';
+  const descLines = fitTextLines(ctx, desc, textMaxW, 3);
+  const nameH = 18;
+  const descLineH = 16;
+  const textBlockH = nameH + 4 + descLines.length * descLineH;
+  const blockH = Math.max(44, textBlockH);
+  const innerTop = r.y + 26;
+  const innerH = r.h - 30;
+  const blockTop = innerTop + Math.max(0, (innerH - blockH) / 2);
+
   const iconR = 22;
   const iconCx = r.x + 36;
-  const iconCy = r.y + 44;
+  const iconCy = blockTop + blockH / 2;
   ctx.beginPath();
   ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(48,28,12,0.12)';
@@ -675,16 +691,8 @@ function drawOfferCard(
   ctx.textBaseline = 'middle';
   ctx.fillText(def.icon, iconCx, iconCy);
 
-  const bx = r.x + r.w - OFFER_BTN_W - 10;
-  const by = r.y + 26;
-  const nameMaxW = bx - (r.x + OFFER_TEXT_X) - 8;
-  const textMaxW = r.w - OFFER_TEXT_X - 14;
-  const desc = offer.kind === 'active'
-    ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
-    : def.desc;
-  const descLines = fitTextLines(ctx, desc, textMaxW, 3);
-  const nameH = 18;
-  const textY = r.y + 28;
+  const textY = blockTop;
+  const by = blockTop + (blockH - OFFER_BTN_H) / 2;
 
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
@@ -694,7 +702,7 @@ function drawOfferCard(
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '12px "PingFang SC", serif';
   for (let li = 0; li < descLines.length; li++) {
-    ctx.fillText(descLines[li]!, r.x + OFFER_TEXT_X, textY + nameH + 4 + li * 16);
+    ctx.fillText(descLines[li]!, r.x + OFFER_TEXT_X, textY + nameH + 4 + li * descLineH);
   }
 
   const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford);
