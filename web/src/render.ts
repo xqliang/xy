@@ -2201,7 +2201,7 @@ function drawStaffBoomerang(
   outFrac = 0.42,
 ) {
   const turns = 2 + tier;
-  const lenBase = CELL * (0.24 + tier * 0.10);
+  const lenBase = CELL * (0.24 + tier * 0.10) * 1.3; // 金箍棒普攻规模 ×1.3
   let cx: number, cy: number, scale: number, alpha: number, spin: number, blur: number;
 
   if (prog < outFrac) {
@@ -3117,7 +3117,7 @@ function drawWordSelection(
     ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
   const pw = 194;
-  const ph = (active ? 150 : 146) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
+  const ph = (active ? 178 : 174) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -3130,32 +3130,35 @@ function drawWordSelection(
   ctx.lineWidth = 2;
   ctx.strokeStyle = active ? '#f0b93c' : qualityColor(w.tier);
   ctx.stroke();
-  // 标题：武将名 + 攻击方式 + 满级；右侧当前品质阶
+  // 标题两行：名一行，副标题一行（避免左长右短叠字）
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe6b0';
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.name} · ${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 18);
+  ctx.fillText(def.name, px + 12, py + 16);
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillStyle = 'rgba(255,230,176,0.82)';
+  ctx.fillText(`${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 32);
   ctx.textAlign = 'right';
   ctx.fillStyle = qualityColor(w.tier);
-  ctx.font = 'bold 13px "PingFang SC", sans-serif';
-  ctx.fillText(`${qualityName(w.tier)}阶·${def.rank}·${def.role}`, px + pw - 12, py + 18);
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.fillText(`${qualityName(w.tier)}阶 · ${def.rank} · ${def.role}`, px + pw - 12, py + 32);
   // 技能（未激活时置灰）
   ctx.textAlign = 'left';
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 40);
+  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 50);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
-  ctx.fillText(def.skillDesc, px + 12, py + 56);
+  ctx.fillText(def.skillDesc, px + 12, py + 66);
   if (showBondDetail) {
     ctx.fillStyle = '#f0c860';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 72);
+    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 82);
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
-    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 86);
+    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 96);
   }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
-  const statTop = showBondDetail ? 102 : 78;
+  const statTop = showBondDetail ? 112 : 88;
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -3902,19 +3905,21 @@ function drawHeroAttackFx(
     case 'honghaier': {
       const x = ax + (tx - ax) * prog;
       const y = ay + (ty - ay) * prog;
-      const rad = CELL * (0.18 + sc * 0.14);
-      ctx.globalAlpha = fade * sc * 0.45;
+      const grow = 0.22 + 0.78 * easeOut(prog); // 飞出时小火球，途中逐渐变大
+      const rad = CELL * (0.18 + sc * 0.14) * grow;
+      ctx.globalAlpha = fade * sc * 0.45 * (0.5 + grow * 0.5);
       ctx.strokeStyle = '#ff6020';
-      ctx.lineWidth = 2.5 + tier * 0.55;
+      ctx.lineWidth = (1.5 + tier * 0.4) * grow;
       ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
-      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * (1.4 + tier * 0.2));
+      const outer = rad * (1.4 + tier * 0.2);
+      const g = ctx.createRadialGradient(x, y, 1, x, y, outer);
       g.addColorStop(0, '#fff6c8');
       g.addColorStop(0.4, '#ff6020');
       g.addColorStop(1, 'rgba(255,20,10,0)');
-      ctx.globalAlpha = fade;
+      ctx.globalAlpha = fade * (0.55 + grow * 0.45);
       ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(x, y, rad * (1.4 + tier * 0.2), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, outer, 0, Math.PI * 2); ctx.fill();
       break;
     }
     case 'hongpao': {
@@ -3934,28 +3939,62 @@ function drawHeroAttackFx(
       break;
     }
     case 'bajie': {
-      const snap = Math.min(1, prog / 0.24);
-      const ease = 1 - Math.pow(1 - snap, 3);
-      const side = ax > tx ? 1 : -1;
-      const r = CELL * (0.48 + sc * 0.2);
-      const a0 = -Math.PI / 2 + side * 0.6;
-      const a1 = a0 - side * Math.PI * 0.55 * ease;
-      ctx.translate(tx, ty);
-      ctx.globalAlpha = fade * (0.5 + sc * 0.5);
-      ctx.strokeStyle = f.color;
-      ctx.lineWidth = 2.5 + tier * 0.6;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(0, 0, r, a0, a1, side > 0); ctx.stroke();
-      for (let t = 0; t < 3 + tier; t++) {
-        const ta = a0 + (a1 - a0) * (t + 0.5) / (3 + tier);
-        ctx.globalAlpha = fade * sc * 0.5;
-        ctx.strokeStyle = '#fff8e0';
-        ctx.lineWidth = 1.2;
+      const dash = easeOut(Math.min(1, prog / 0.52));
+      const cx = ax + (tx - ax) * dash;
+      const cy = ay + (ty - ay) * dash;
+      const rakeLen = CELL * (0.4 + sc * 0.24);
+      const launchScale = 0.28 + 0.72 * dash;
+      const spin = dash * Math.PI * 0.65;
+      if (dash > 0.06) {
+        ctx.save();
+        ctx.globalAlpha = fade * 0.32 * dash;
+        ctx.strokeStyle = f.color;
+        ctx.lineWidth = 1.4 + tier * 0.25;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([5, 7]);
         ctx.beginPath();
-        ctx.moveTo(Math.cos(ta) * r * 0.7, Math.sin(ta) * r * 0.7);
-        ctx.lineTo(Math.cos(ta) * r * 1.05, Math.sin(ta) * r * 1.05);
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(ang + spin);
+      ctx.globalAlpha = fade * (0.5 + sc * 0.5);
+      ctx.strokeStyle = '#8a6a3a';
+      ctx.lineWidth = 2 + tier * 0.45;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-rakeLen * launchScale * 0.55, 0);
+      ctx.lineTo(rakeLen * launchScale * 0.12, 0);
+      ctx.stroke();
+      const headR = rakeLen * launchScale * 0.42;
+      const teeth = 5 + Math.min(4, tier);
+      const a0 = -Math.PI * 0.72;
+      const a1 = Math.PI * 0.72;
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 2.2 + tier * 0.5;
+      ctx.beginPath();
+      ctx.arc(rakeLen * launchScale * 0.12, 0, headR, a0, a1);
+      ctx.stroke();
+      for (let t = 0; t < teeth; t++) {
+        const ta = a0 + (a1 - a0) * (t + 0.5) / teeth;
+        ctx.globalAlpha = fade * sc * 0.55;
+        ctx.strokeStyle = '#fff8e0';
+        ctx.lineWidth = 1.2 + tier * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(
+          rakeLen * launchScale * 0.12 + Math.cos(ta) * headR * 0.78,
+          Math.sin(ta) * headR * 0.78,
+        );
+        ctx.lineTo(
+          rakeLen * launchScale * 0.12 + Math.cos(ta) * headR * 1.14,
+          Math.sin(ta) * headR * 1.14,
+        );
         ctx.stroke();
       }
+      ctx.restore();
       break;
     }
     case 'baxian': {
@@ -3972,31 +4011,38 @@ function drawHeroAttackFx(
       const dash = easeOut(Math.min(1, prog / 0.4));
       const x = ax + (tx - ax) * dash;
       const y = ay + (ty - ay) * dash;
-      ctx.globalAlpha = fade;
-      ctx.strokeStyle = f.color;
-      ctx.lineWidth = 3.5 + tier * 0.85;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
-      ctx.translate(x, y);
-      ctx.rotate(ang);
-      ctx.fillStyle = '#e8dcc8';
-      ctx.strokeStyle = '#6a5030';
-      ctx.lineWidth = 1.2;
-      const horn = CELL * (0.14 + sc * 0.1);
-      ctx.beginPath();
-      ctx.moveTo(horn * 1.2, -horn * 0.9);
-      ctx.lineTo(horn * 2.4, 0);
-      ctx.lineTo(horn * 1.2, horn * 0.9);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
-      for (let i = 0; i < 3 + tier; i++) {
-        const t = i / (3 + tier);
-        ctx.globalAlpha = fade * (1 - t) * 0.4;
-        ctx.fillStyle = 'rgba(180,150,110,0.6)';
+      const totalDist = Math.hypot(tx - ax, ty - ay) || 1;
+      const dirX = (tx - ax) / totalDist;
+      const dirY = (ty - ay) / totalDist;
+      const perpX = -dirY;
+      const perpY = dirX;
+      const seed = ((f.from.c * 17 + f.from.r * 31 + tier * 7) | 0);
+      const streakN = 7 + tier * 2;
+      for (let i = 0; i < streakN; i++) {
+        const fi = ((seed + i * 13) % 97) / 97;
+        const fj = ((seed + i * 29) % 89) / 89;
+        const streakLen = CELL * (0.18 + fi * 0.62 + sc * 0.18) * dash;
+        const lateral = (fj - 0.5) * CELL * (0.28 + fi * 0.22);
+        const tailAlong = Math.max(0, dash - streakLen / totalDist);
+        const sx = ax + (tx - ax) * tailAlong + perpX * lateral;
+        const sy = ay + (ty - ay) * tailAlong + perpY * lateral;
+        const wave = Math.sin(i * 1.9 + prog * 9) * CELL * 0.035;
+        const ex = sx + dirX * streakLen * (0.82 + fi * 0.35);
+        const ey = sy + dirY * streakLen * (0.82 + fi * 0.35);
+        ctx.globalAlpha = fade * (0.28 + fi * 0.5) * (1 - i / streakN * 0.25);
+        ctx.strokeStyle = i % 2 === 0 ? 'rgba(220,200,168,0.85)' : f.color;
+        ctx.lineWidth = 0.6 + fi * 0.85;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(-horn * t * 3, (Math.random() - 0.5) * horn, 2 + tier * 0.3, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(sx + perpX * wave, sy + perpY * wave);
+        ctx.lineTo(ex + perpX * wave * 0.4, ey + perpY * wave * 0.4);
+        ctx.stroke();
       }
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang + Math.PI / 2);
+      drawBullHeadGlyph(ctx, 0, 0, CELL * (0.18 + sc * 0.14), fade);
+      ctx.restore();
       break;
     }
     case 'qingniu': {
@@ -4184,9 +4230,9 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         // +1 人在右 → 柄在右、尖往左砍；-1 人在左 → 柄在左、尖往右砍
         const side = Math.abs(dx) > 0.5 ? (dx > 0 ? 1 : -1) : (seed % 2 === 0 ? 1 : -1);
         const daoS = CELL * (0.55 + tier * 0.05) * 0.9; // 相对初版缩小后再放大 1/8
-        // 前 22% 内完成挥砍，加速曲线更陡 → 看起来更利落
-        const snap = Math.min(1, prog / 0.22);
-        const ease = 1 - Math.pow(1 - snap, 3.4);
+        // 前 14% 内完成挥砍，加速曲线更陡 → 砍击更利落
+        const snap = Math.min(1, prog / 0.14);
+        const ease = 1 - Math.pow(1 - snap, 4.8);
         // 尖从「偏攻击者一侧举起」扫向另一侧（穿过怪）；柄始终更靠攻击者一侧
         const lean = 0.7;
         const sweep = Math.PI * 0.65;
@@ -4194,7 +4240,7 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         const sweepSign = -side; // 人在右则逆时针往左砍，人在左则顺时针往右砍
         const chopAng = startAng + sweepSign * sweep * ease;
         const fade =
-          prog < 0.35 ? Math.min(1, 0.45 + snap * 0.65) : Math.max(0, 1 - (prog - 0.35) / 0.45);
+          prog < 0.25 ? Math.min(1, 0.5 + snap * 0.7) : Math.max(0, 1 - (prog - 0.25) / 0.35);
         // 握点偏向攻击者，柄在人那一侧
         const gripX = t.x + side * CELL * 0.16 + lane * CELL * 0.08;
         const gripY = t.y + CELL * 0.18;

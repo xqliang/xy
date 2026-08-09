@@ -13,6 +13,7 @@
 import { canMerge, getUnitStat, type UnitType } from '@core';
 import { posAlong } from './board';
 import {
+  GENERALS,
   matchGeneral,
   mainGeneralForVariantChar,
   transitGeneralInFamily,
@@ -47,6 +48,10 @@ export interface AutoPlaceView {
   pathCover(cell: Cell, type: UnitType, tier: number): number;
   /** 任意攻击圆心 + 射程的路径覆盖（武将用双格中点） */
   pathCoverAt(ax: number, ay: number, rge: number): number;
+  /** 路径覆盖（出怪口段加权，武将布阵用） */
+  pathCoverEarlyAt(ax: number, ay: number, rge: number): number;
+  /** 首次覆盖路径的沿路距离（越小越早打到怪） */
+  pathFirstEngageAt(ax: number, ay: number, rge: number): number;
   /** 武将有效射程（含神兵等） */
   generalRge(general: string, tier: number): number;
   wordChars(general: string): readonly [string, string] | undefined; // 连读顺序 [左,右]
@@ -198,11 +203,10 @@ export function singleWordScore(pathDist: number, tangDist: number): number {
 }
 
 /**
- * 激活武将双格座位分：以路径覆盖为主（射程内能打到路即可），
- * 不奖励贴出怪口——贴口留给普通兵，避免武将堵在闸门旁。
+ * 激活武将双格座位分：路径总覆盖 − 离路惩罚 − 首次接战距离惩罚（越早越好）。
  */
-export function heroSeatScore(pathCover: number, pathDist = 0): number {
-  return pathCover - 0.05 * Math.max(0, pathDist);
+export function heroSeatScore(pathCover: number, pathDist = 0, firstEngage = 0): number {
+  return pathCover - 0.05 * Math.max(0, pathDist) - 0.45 * Math.max(0, firstEngage);
 }
 
 /** 危险时座位加分：沿路径更靠唐僧(exitDist↑) + 欧氏更贴唐僧(tangsengDist↓) */
@@ -266,6 +270,31 @@ function sameCell(a: Cell, b: Cell): boolean { return a.c === b.c && a.r === b.r
 /** 两字能否按序组成武将（与 activeGenerals 的 matchGeneral 口径一致） */
 function pairDefForChars(a: string, b: string) {
   return matchGeneral(a, b) ?? matchGeneral(b, a);
+}
+
+function pairMaxTier(charA: string, charB: string): number {
+  return pairDefForChars(charA, charB)?.maxTier ?? 0;
+}
+
+/** tray 内与 t 可组将的另一字（取 maxTier 最高者） */
+function bestTrayPartnerForWord(
+  view: AutoPlaceView,
+  t: Extract<PlaceToken, { kind: 'word' }>,
+  skipIndex?: number,
+): { j: number; char: string; general: string; maxTier: number } | null {
+  let best: { j: number; char: string; general: string; maxTier: number } | null = null;
+  const tray = view.tray();
+  for (let j = 0; j < tray.length; j++) {
+    if (j === skipIndex) continue;
+    const x = tray[j]!;
+    if (x.kind !== 'word') continue;
+    const mt = pairMaxTier(t.char, x.char);
+    if (mt <= 0) continue;
+    if (!best || mt > best.maxTier) {
+      best = { j, char: x.char, general: x.general, maxTier: mt };
+    }
+  }
+  return best;
 }
 
 /** 解析可激活字对：优先 matchGeneral，否则回退 token 上的 general（测试/同将 hint） */
@@ -410,6 +439,11 @@ function shouldPrioritizeTrayBoardMateActivation(
 function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
   if (isObsoleteTransitionVariant(view, t.char)) return true;
   const mate = pickBestBoardMateView(view, t.char, t.general);
+  if (mate) {
+    const boardTier = pairMaxTier(t.char, mate.char);
+    const trayBest = bestTrayPartnerForWord(view, t);
+    if (trayBest && trayBest.maxTier > boardTier) return true;
+  }
   if (!mate) return false;
   const pair = resolveHeroPair(t.char, mate.char, view, t.general === mate.general ? t.general : undefined);
   if (!pair) return false;
@@ -832,6 +866,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) return true;
+    // 2a-0c) 过渡将占位时用 tray 主将字替换（如 牛郎+tray魔 → 牛魔）
+    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) return true;
+    // 2a-0d) tray 内两字优先组满级主将（如牛+魔），再考虑棋盘过渡字（如牛+郎）
+    if (!subopt() && tryActivateTrayMainPair()) return true;
     // 2a-1) tray 字 + 棋盘伴侣（可立即成对）→ 先于孤儿字挪位（如 白+龙）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
@@ -864,6 +902,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryPromoteHigherTierUnits()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
+    // 2b-2) 已激活武将：迁到更高覆盖/更早接战的左右邻格对（tray 升阶/落子前）
+    if (!subopt() && tryImproveActiveHeroCoverage()) return true;
     // 3–5b) 有空格时优先落 tray 兵（合成 / 射程内 / 兜底填满），再去做调位
     if (tryDeployTrayUnits()) return true;
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
@@ -877,6 +917,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (pickBestBoardMate(t.char, t.general)) continue;
       if (placeSingleWord(i)) return true;
     }
+    // 2b-2) 已激活武将：迁到 pathCover 更高的左右邻格对（如白骨左移贴路）
+    if (!pendingTrayDeploy() && !subopt() && tryImproveActiveHeroCoverage()) return true;
     // 6) 救援式重排：tray 待落时跳过
     if (!pendingTrayDeploy()) {
       const free = view.freeCells();
@@ -910,20 +952,25 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 9) 地图槽位已满：先 tray 内合 / 棋盘合腾位再落子
     if (view.freeCells().length === 0) {
       if (tryTrayMergeOntoBoard()) return true;
+      if (tryTrayInternalMergeAndDeploy()) return true;
       if (tryBoardMergeThenPlace()) return true;
     }
     return false; // 无可推进动作
   }
 
-  /** tray 兵落子：同阶合成 → 异型换低阶 → 射程内最优格 → 任意空格兜底 */
-  function tryDeployTrayUnits(): boolean {
+  /** tray 合成链：地图无空位，或落子阶段已无可落时再合（不在开局抢先合成） */
+  function canTrayChainMergeNow(): boolean {
+    return view.freeCells().length === 0 && trayUnitEntries().length >= 2;
+  }
+
+  /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
+  function tryPlaceTrayUnitsOnly(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && !subopt() && view.place(i, mate.cell)) return true;
     }
-    if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
     const free = view.freeCells();
     if (free.length === 0) return false;
     const unitIdx = trayUnitEntries();
@@ -937,6 +984,30 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (view.place(i, cell)) return true;
     }
     return tryFillAnyFreeSeat();
+  }
+
+  /** 合后或常规：落子 + 合后换占低阶（不含 tray 内合成链） */
+  function tryDeployTrayUnitsFromTray(): boolean {
+    if (tryPlaceTrayUnitsOnly()) return true;
+    if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
+    return tryPlaceTrayUnitsOnly();
+  }
+
+  /** tray 内合成后：合出新兵器则立即再试落子/上棋盘合 */
+  function tryTrayInternalMergeAndDeploy(): boolean {
+    if (!tryTrayInternalMerge()) return false;
+    if (tryDeployTrayUnitsFromTray()) return true;
+    return true;
+  }
+
+  /** tray 兵落子：同阶合成 → 异型换低阶 → 射程内最优格 → 任意空格兜底 → 满盘再 tray 合成链 */
+  function tryDeployTrayUnits(): boolean {
+    if (tryDeployTrayUnitsFromTray()) return true;
+    if (!subopt() && canTrayChainMergeNow()) {
+      if (tryTrayMergeOntoBoard()) return true;
+      if (tryTrayInternalMergeAndDeploy()) return true;
+    }
+    return false;
   }
 
   /** 有空格必落一兵：无视射程，优先填离路最近的格 */
@@ -1080,7 +1151,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const rge = view.generalRge(general, tier);
     const cover = view.pathCoverAt(ax, ay, rge);
     const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
-    return heroSeatScore(cover, pathD);
+    const firstEngage = view.pathFirstEngageAt(ax, ay, rge);
+    return heroSeatScore(cover, pathD, firstEngage);
   }
 
   /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
@@ -1347,29 +1419,116 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryActivateTrayWord(i: number, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
     if (subopt()) return false;
 
-    const tray = view.tray();
+    const trayPartner = bestTrayPartnerForWord(view, t, i);
+    const boardMate = pickBestBoardMate(t.char, t.general);
+
     let partnerJ = -1;
     let partnerChar: string | undefined;
     let partnerGeneral: string | undefined;
-    for (let j = 0; j < tray.length; j++) {
-      if (j === i) continue;
-      const x = tray[j]!;
-      if (x.kind === 'word' && isCharPartner(t.char, x.char, view, t.general === x.general ? t.general : undefined)) {
-        partnerJ = j;
-        partnerChar = x.char;
-        partnerGeneral = x.general;
-        break;
+    if (trayPartner) {
+      partnerJ = trayPartner.j;
+      partnerChar = trayPartner.char;
+      partnerGeneral = trayPartner.general;
+    }
+
+    let useBoardMate = boardMate;
+    let usePartnerJ = partnerJ;
+    let pair: { chars: readonly [string, string]; general: string } | undefined;
+
+    if (boardMate && trayPartner) {
+      const boardTier = pairMaxTier(t.char, boardMate.char);
+      if (trayPartner.maxTier > boardTier) {
+        useBoardMate = null;
+        pair = resolveHeroPair(
+          t.char, trayPartner.char, view,
+          t.general === trayPartner.general ? t.general : undefined,
+        );
+      } else {
+        usePartnerJ = -1;
+        pair = resolveHeroPair(
+          t.char, boardMate.char, view,
+          t.general === boardMate.general ? t.general : undefined,
+        );
+      }
+    } else if (boardMate) {
+      pair = resolveHeroPair(
+        t.char, boardMate.char, view,
+        t.general === boardMate.general ? t.general : undefined,
+      );
+    } else if (partnerJ >= 0 && partnerChar) {
+      pair = resolveHeroPair(
+        t.char, partnerChar, view,
+        t.general === partnerGeneral ? partnerGeneral : undefined,
+      );
+    }
+
+    if (pair && (useBoardMate || usePartnerJ >= 0)) {
+      return tryActivateHero(i, t, pair.chars, pair.general, useBoardMate, usePartnerJ);
+    }
+    return false;
+  }
+
+  /** tray 内两字直接组将（优先 maxTier 更高的一对，如 牛+魔 而非拆去配 郎） */
+  function tryActivateTrayMainPair(): boolean {
+    const tray = view.tray();
+    let best: {
+      i: number;
+      j: number;
+      chars: readonly [string, string];
+      general: string;
+      maxTier: number;
+    } | null = null;
+    for (let i = 0; i < tray.length; i++) {
+      const a = tray[i]!;
+      if (a.kind !== 'word') continue;
+      for (let j = i + 1; j < tray.length; j++) {
+        const b = tray[j]!;
+        if (b.kind !== 'word') continue;
+        const pair = resolveHeroPair(
+          a.char, b.char, view,
+          a.general === b.general ? a.general : undefined,
+        );
+        if (!pair) continue;
+        const def = matchGeneral(pair.chars[0], pair.chars[1]);
+        if (!def) continue;
+        if (
+          !best ||
+          def.maxTier > best.maxTier ||
+          (def.maxTier === best.maxTier && def.maxTier >= 5 && def.rank < (matchGeneral(best.chars[0], best.chars[1])?.rank === 'T0' ? 0 : 1))
+        ) {
+          best = { i, j, chars: pair.chars, general: pair.general, maxTier: def.maxTier };
+        }
       }
     }
-    const boardMate = pickBestBoardMate(t.char, t.general);
+    if (!best) return false;
+    const tLeft = tray[best.i] as Extract<PlaceToken, { kind: 'word' }>;
+    return tryActivateHero(best.i, tLeft, best.chars, best.general, null, best.j);
+  }
 
-    const pair = boardMate
-      ? resolveHeroPair(t.char, boardMate.char, view, t.general === boardMate.general ? t.general : undefined)
-      : partnerChar
-        ? resolveHeroPair(t.char, partnerChar, view, t.general === partnerGeneral ? t.general : undefined)
-        : undefined;
-    if (pair && (boardMate || partnerJ >= 0)) {
-      return tryActivateHero(i, t, pair.chars, pair.general, boardMate, partnerJ);
+  /**
+   * 过渡将已激活、tray 有主将侧字：替换过渡侧字（如 牛郎+tray「魔」→ 牛魔）。
+   * 依赖 place 与异字交换：魔落郎格、郎回 tray，牛魔相邻激活。
+   */
+  function tryReplaceTransitionWithMainTrayWord(): boolean {
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      for (const mainDef of GENERALS) {
+        if (mainDef.maxTier !== 5) continue;
+        if (!mainDef.chars.includes(t.char)) continue;
+        const other = mainDef.chars[0] === t.char ? mainDef.chars[1]! : mainDef.chars[0]!;
+        if (pairDefForChars(other, t.char)?.id !== mainDef.id) continue;
+        for (const p of scanActivePairs(view)) {
+          if (p.def.maxTier >= mainDef.maxTier) continue;
+          if (p.def.id === mainDef.id) continue;
+          let wrong: PlacedWordLite | null = null;
+          if (p.left.char === other) wrong = p.right;
+          else if (p.right.char === other) wrong = p.left;
+          else continue;
+          if (view.place(i, wrong.cell)) return true;
+        }
+      }
     }
     return false;
   }
@@ -1441,6 +1600,47 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
+  /** 已激活武将整体迁到指定左右邻格（腾位逻辑同激活） */
+  function moveHeroPairToCells(
+    leftW: PlacedWordLite,
+    rightW: PlacedWordLite,
+    targetLeft: Cell,
+    targetRight: Cell,
+  ): boolean {
+    const reserved = new Set([cellKey(targetLeft), cellKey(targetRight)]);
+    const lw0 = resolveTrackedWord(leftW);
+    const rw0 = resolveTrackedWord(rightW);
+    if (!lw0 || !rw0) return false;
+    for (const cell of [targetLeft, targetRight]) {
+      if (sameCell(cell, lw0.cell) || sameCell(cell, rw0.cell)) continue;
+      if (!clearForHero(cell, reserved, null)) return false;
+    }
+    const lw = resolveTrackedWord(leftW);
+    if (!lw) return false;
+    if (!sameCell(lw.cell, targetLeft) && !view.moveWord(lw.cell, targetLeft)) return false;
+    const rw2 = resolveTrackedWord(rightW);
+    if (!rw2) return true;
+    if (!sameCell(rw2.cell, targetRight) && !view.moveWord(rw2.cell, targetRight)) return false;
+    return true;
+  }
+
+  /** 已激活武将若存在明显更高 pathCover 的座位 → 整体搬迁 */
+  function tryImproveActiveHeroCoverage(): boolean {
+    const MIN_GAIN = 0.15;
+    let best: { pair: ActivePair; left: Cell; right: Cell; gain: number } | null = null;
+    for (const pair of scanActivePairs(view)) {
+      const cur = heroPairScore(pair.left.cell, pair.right.cell, pair.def.id, pair.tier);
+      for (const cand of rankedHeroPairs(pair.def.id, pair.tier)) {
+        if (sameCell(cand.left, pair.left.cell) && sameCell(cand.right, pair.right.cell)) continue;
+        const gain = cand.score - cur;
+        if (gain < MIN_GAIN) continue;
+        if (!best || gain > best.gain) best = { pair, left: cand.left, right: cand.right, gain };
+      }
+    }
+    if (!best) return false;
+    return moveHeroPairToCells(best.pair.left, best.pair.right, best.left, best.right);
+  }
+
   /** 单字：远离路径 + 靠近唐僧 */
   function placeSingleWord(i: number): boolean {
     const free = view.freeCells();
@@ -1471,10 +1671,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (boardMate) {
       const mateIsLeftChar = boardMate.char === chars[0];
       pairs.sort((a, b) => {
+        const scoreDiff = b.score - a.score;
+        if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
         const fit = (p: { left: Cell; right: Cell }) =>
           sameCell(boardMate.cell, mateIsLeftChar ? p.left : p.right) ? 1 : 0;
-        const d = fit(b) - fit(a);
-        return d !== 0 ? d : b.score - a.score;
+        return fit(b) - fit(a);
       });
     }
 
@@ -1587,7 +1788,50 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!view.mergeTray(best.i, best.j)) return false;
     const upIdx = best.i < best.j ? best.j - 1 : best.j;
     if (view.place(upIdx, best.cell)) return true;
+    if (tryPlaceTrayUnitsOnly()) return true;
     return true; // tray 已合，避免死循环重合
+  }
+
+  function trayUnitCount(type: UnitType, tier: number): number {
+    return view.tray().filter(
+      (t): t is Extract<PlaceToken, { kind: 'unit' }> =>
+        t.kind === 'unit' && t.type === type && t.tier === tier,
+    ).length;
+  }
+
+  /** tray 内合成链：仅当需多步合成才能对接棋盘同型（如 4×T1 + 棋盘 T3），避免抢走「合后换占低阶」 */
+  function shouldTrayChainMerge(type: UnitType, tier: number): boolean {
+    const upTier = tier + 1;
+    if (view.placedUnits().some((u) => u.type === type && u.tier === upTier)) return false;
+    const count = trayUnitCount(type, tier);
+    if (count < 2) return false;
+    if (count >= 4) return true;
+    if (view.placedUnits().some((u) => u.type === type && u.tier > upTier)) return true;
+    return false;
+  }
+
+  /**
+   * tray 内同型同阶合成链（兵1+兵1→兵2→…），不要求棋盘已有合后同阶。
+   * 合后再上棋盘再合由 tryTrayMergeOntoBoard 处理。
+   */
+  function tryTrayInternalMerge(): boolean {
+    if (subopt()) return false;
+    const tray = view.tray();
+    let best: { i: number; j: number; tier: number } | null = null;
+    for (let i = 0; i < tray.length; i++) {
+      const a = tray[i]!;
+      if (a.kind !== 'unit') continue;
+      if (!shouldTrayChainMerge(a.type, a.tier)) continue;
+      for (let j = i + 1; j < tray.length; j++) {
+        const b = tray[j]!;
+        if (b.kind !== 'unit') continue;
+        if (a.type !== b.type || a.tier !== b.tier) continue;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
+        if (!best || a.tier > best.tier) best = { i, j, tier: a.tier };
+      }
+    }
+    if (!best) return false;
+    return view.mergeTray(best.i, best.j);
   }
 
   /**
@@ -1613,6 +1857,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         if (!view.mergeTray(i, j)) continue;
         const upIdx = i < j ? j - 1 : j;
         if (view.place(upIdx, mate.cell)) return true;
+        if (tryPlaceTrayUnitsOnly()) return true;
         return true; // tray 已合，即使 place 失败也算推进（避免死循环重合）
       }
     }

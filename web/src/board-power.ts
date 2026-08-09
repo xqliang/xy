@@ -121,6 +121,47 @@ export function pathCoverageLen(
   return covered;
 }
 
+/** 攻击圆覆盖的路径长度，出怪口段权重更高（武将优先更早打到怪） */
+export function pathCoverageLenEntranceWeighted(
+  map: GameMap,
+  entranceDist: number,
+  pathLen: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  tol = DEFAULT_RANGE_TOL,
+): number {
+  if (pathLen <= entranceDist) return 0;
+  const span = Math.max(PATH_SAMPLE_STEP, pathLen - entranceDist);
+  let covered = 0;
+  for (let d = entranceDist; d < pathLen; d += PATH_SAMPLE_STEP) {
+    const p = posAtDistance(map, d);
+    if (inRange(ax, ay, rge, p, tol)) {
+      const w = 1 + (pathLen - d) / span;
+      covered += PATH_SAMPLE_STEP * w;
+    }
+  }
+  return covered;
+}
+
+/** 攻击圆首次覆盖路径的沿路距离（越小越早打到怪；打不到则 pathLen） */
+export function pathFirstEngageDist(
+  map: GameMap,
+  entranceDist: number,
+  pathLen: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  tol = DEFAULT_RANGE_TOL,
+): number {
+  if (pathLen <= entranceDist) return pathLen;
+  for (let d = entranceDist; d < pathLen; d += PATH_SAMPLE_STEP) {
+    const p = posAtDistance(map, d);
+    if (inRange(ax, ay, rge, p, tol)) return d;
+  }
+  return pathLen;
+}
+
 /**
  * 短射程优先 → 可达格中取 pathCover+近出口加权最高（与一键布阵 placeCellScore 同口径），
  * 武将保持原位；返回最优布阵下的 DPS / 路径伤害。

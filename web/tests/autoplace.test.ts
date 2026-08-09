@@ -75,6 +75,12 @@ class FakeView implements AutoPlaceView {
     // 中点越靠近路(ay 小)且越靠近出口(ax 小)覆盖越高
     return Math.max(0, rge - ay + 1) + Math.max(0, 3 - ax) * 0.1;
   }
+  pathCoverEarlyAt(ax: number, ay: number, rge: number) {
+    return this.pathCoverAt(ax, ay, rge);
+  }
+  pathFirstEngageAt(_ax: number, _ay: number, _rge: number) {
+    return 0;
+  }
   generalRge(_general: string, _tier: number) { return this.generalRgeVal; }
   wordChars(general: string) { return general === 'g' ? (['大', '圣'] as const) : undefined; }
   place(index: number, to: Cell): boolean {
@@ -530,6 +536,92 @@ it('满槽：tray 两枚同阶可合且合后能上棋盘再合 → 先 tray 合
   expect(v.tray().length).toBe(0);
   expect(v.placedUnits().length).toBe(1);
   expect(v.placedUnits()[0]!.tier).toBe(3);
+});
+
+it('tray 牛+魔 优先组牛魔，不与棋盘 orphan 郎 组牛郎', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 }];
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '牛', general: 'niumowang', tier: 1 },
+      { kind: 'word', char: '魔', general: 'niumowang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordsMap.set('3,0', { char: '郎', general: 'niulang', cell: { c: 3, r: 0 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu).toBeDefined();
+  expect(mo).toBeDefined();
+  expect(Math.abs(niu!.cell.c - mo!.cell.c)).toBe(1);
+  expect(niu!.cell.r).toBe(mo!.cell.r);
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+});
+
+it('已激活牛郎时 tray 魔 替换郎 升牛魔', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }];
+  const v = new FakeView(
+    [{ kind: 'word', char: '魔', general: 'niumowang', tier: 1 }],
+    cells,
+  );
+  v.wordsMap.set('0,0', { char: '牛', general: 'niulang', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '郎', general: 'niulang', cell: { c: 1, r: 0 }, tier: 3 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  planAutoPlaceSteps(v, { rng, maxSteps: 5 });
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu?.cell).toEqual({ c: 0, r: 0 });
+  expect(mo?.cell).toEqual({ c: 1, r: 0 });
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+  const lang = v.placedWords().find((w) => w.char === '郎');
+  expect(lang).toBeDefined();
+  expect(v.isActiveHeroCell(lang!.cell)).toBe(false);
+});
+
+it('满盘时 tray 兵种合成链后与棋盘同阶再合', () => {
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+    ],
+    [{ c: 0, r: 0 }],
+  );
+  v.unitsMap.set('0,0', { type: 'spear', tier: 3, cell: { c: 0, r: 0 } });
+  planAutoPlace(v, { rng });
+  expect(v.placedUnits().length).toBe(1);
+  expect(v.placedUnits()[0]!.tier).toBe(4);
+  expect(v.tray().length).toBe(0);
+});
+
+it('tray 合后同一步再试上棋盘合', () => {
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'spear', tier: 2 },
+      { kind: 'unit', type: 'spear', tier: 2 },
+    ],
+    [{ c: 0, r: 0 }],
+  );
+  v.unitsMap.set('0,0', { type: 'spear', tier: 3, cell: { c: 0, r: 0 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.placedUnits().length).toBe(1);
+  expect(v.placedUnits()[0]!.tier).toBe(4);
+});
+
+it('有空格时 tray 不抢先做合成链', () => {
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+    ],
+    [{ c: 0, r: 0 }, { c: 0, r: 1 }],
+  );
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.tray().filter((t) => t.kind === 'unit' && t.tier === 2).length).toBe(0);
+  expect(v.placedUnits().some((u) => u.type === 'spear' && u.tier === 1)).toBe(true);
 });
 
 it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位落 tray', () => {

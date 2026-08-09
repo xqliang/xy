@@ -41,6 +41,8 @@ import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleRepos
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
+  pathCoverageLenEntranceWeighted,
+  pathFirstEngageDist,
   planWavePressure,
   PRESSURE_RATIO,
   spawnBatchCap,
@@ -1284,6 +1286,10 @@ export class Battle {
         return this.aiPathCoverAt(cell.c, cell.r, rge);
       },
       pathCoverAt: (ax, ay, rge) => this.aiPathCoverAt(ax, ay, rge),
+      pathCoverEarlyAt: (ax, ay, rge) =>
+        pathCoverageLenEntranceWeighted(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
+      pathFirstEngageAt: (ax, ay, rge) =>
+        pathFirstEngageDist(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
       generalRge: (general, tier) => {
         const def = generalById(general);
         return def ? generalStat(def, tier).rge : 2;
@@ -2509,7 +2515,7 @@ export class Battle {
   /** 兵种攻击特效时长：骑基础再慢一倍(1.2s)，随阶加快；其它约 0.3s 起 */
   private attackFxTtl(type: UnitType, tier: number): number {
     if (type === 'cavalry') return 1.2 / (1 + (tier - 1) * 0.22);
-    if (type === 'dao') return 0.2 + (tier - 1) * 0.02; // 刀砍更快一截
+    if (type === 'dao') return (0.2 + (tier - 1) * 0.02) * 1.2; // 刀砍：略长于初版，但比 ×1.5 更快
     return 0.3 + (tier - 1) * 0.04;
   }
 
@@ -3333,6 +3339,10 @@ export class Battle {
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
       pathCoverAt: (ax, ay, rge) =>
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
+      pathCoverEarlyAt: (ax, ay, rge) =>
+        pathCoverageLenEntranceWeighted(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
+      pathFirstEngageAt: (ax, ay, rge) =>
+        pathFirstEngageDist(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
       generalRge: (general, tier) => {
         const def = generalById(general);
         if (!def) return 2;
