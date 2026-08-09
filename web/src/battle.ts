@@ -124,7 +124,7 @@ export const TUNING = {
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
-  shovelPityAfter: 3, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
+  shovelPityAfter: 2, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
