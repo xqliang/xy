@@ -144,6 +144,39 @@ export function hintGeneralForChar(char: string): string {
   return pref?.id ?? '';
 }
 
+/** 信息面板展示用：含该字的满5优先，否则取 maxTier 最高者 */
+export function primaryGeneralForChar(char: string): GeneralDef | undefined {
+  const id = hintGeneralForChar(char);
+  return id ? generalById(id) : undefined;
+}
+
+/** 两字按序匹配（任一侧为 char 即可） */
+export function generalForPair(a: string, b: string): GeneralDef | undefined {
+  return matchGeneral(a, b) ?? matchGeneral(b, a);
+}
+
+/** 配对字列表：可组成的武将 maxTier 高者在前 */
+export function sortedPartnerChars(char: string): string[] {
+  return partnerChars(char).sort((a, b) => {
+    const ta = generalForPair(char, a)?.maxTier ?? 0;
+    const tb = generalForPair(char, b)?.maxTier ?? 0;
+    if (tb !== ta) return tb - ta;
+    return a.localeCompare(b, 'zh');
+  });
+}
+
+/** 未激活字牌底部提示（fromTray=true 时前缀为「候选区」） */
+export function inactivePartnerHint(char: string, fromTray = false): string {
+  const partners = sortedPartnerChars(char);
+  const prefix = fromTray ? '候选区：' : '未激活：';
+  if (partners.length === 0) return `${prefix}需配对字左右紧邻`;
+  if (partners.length === 1) {
+    return `${prefix}需「${partners[0]}」左右紧邻${fromTray ? '激活' : ''}`;
+  }
+  const listed = partners.map((p) => `「${p}」`).join('或');
+  return `${prefix}需与${listed}字左右相邻`;
+}
+
 /** 门派内满 5 武将：char 为其非共享字（如 哪→哪吒） */
 export function mainGeneralForVariantChar(char: string): GeneralDef | undefined {
   return GENERALS.find((g) => g.maxTier === 5 && g.chars.includes(char) && char !== g.family);

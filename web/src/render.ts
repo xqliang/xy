@@ -17,7 +17,7 @@ import {
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
+import { generalById, generalStat, generalsWithChar, partnerChars, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -3175,13 +3175,13 @@ function drawWordSelection(
   fromAi = false,
   fromTray = false,
 ) {
-  const def = generalById(w.general);
-  if (!def) return;
   const active = fromTray
     ? undefined
     : (fromAi ? b.aiActiveGenerals() : b.activeGenerals()).find((g) =>
       g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r),
     );
+  const def = active?.def ?? primaryGeneralForChar(w.char) ?? generalById(w.general);
+  if (!def) return;
   ctx.save();
   if (!fromTray) {
     // 选中格金边：已激活则左右两字同时描边
@@ -3219,7 +3219,8 @@ function drawWordSelection(
     ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
   const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
-  const pw = 194;
+  const inactivePartners = !active ? sortedPartnerChars(w.char) : [];
+  const pw = !active && inactivePartners.length > 1 ? 222 : 194;
   const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
@@ -3318,14 +3319,9 @@ function drawWordSelection(
   // 底部状态提示
   ctx.textAlign = 'left';
   if (!active) {
-    const other = def.chars.find((c) => c !== w.char) ?? '';
     ctx.fillStyle = '#ff9a6a';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(
-      fromTray ? `候选区：需「${other}」左右紧邻激活` : `未激活：需「${other}」左右紧邻`,
-      px + 12,
-      py + ph - 12,
-    );
+    ctx.fillText(inactivePartnerHint(w.char, fromTray), px + 12, py + ph - 12);
   }
   ctx.restore();
 }

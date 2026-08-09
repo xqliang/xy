@@ -258,7 +258,18 @@ it('射程感知：短兵占近格，弓箭手占远格', () => {
   expect(byCell.get('0,3')).toBe('archer');
 });
 
-it('有空格时 tray 兵占任意空格，不留候选区', () => {
+it('有空格时 tray 孤儿字必上板（任意波次）', () => {
+  const v = new FakeView(
+    [{ kind: 'word', char: '青', general: 'qingniu', tier: 1 }],
+    [{ c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }],
+  );
+  v.waveNum = 2;
+  planAutoPlace(v, { rng });
+  expect(v.placedWords().some((w) => w.char === '青')).toBe(true);
+  expect(v.tray()).toHaveLength(0);
+});
+
+it('有空格时 tray 兵种必上板（任意波次）', () => {
   const v = new FakeView(
     [{ kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 0, r: 5 }],
@@ -849,6 +860,30 @@ it('tray梵+棋盘音（左邻被占）一键布阵应激活梵音', () => {
   expect(yin).toBeDefined();
   expect(yin!.cell.c).toBe(fan!.cell.c + 1);
   expect(yin!.cell.r).toBe(fan!.cell.r);
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '梵')).toBe(false);
+});
+
+it('观音已激活时 tray梵仍应（无更优选择时）与棋盘音激活梵音', () => {
+  const v = new FakeView(
+    [{ kind: 'word', char: '梵', general: 'fanyin', tier: 1 }],
+    [{ c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }],
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'fanyin') return ['梵', '音'] as const;
+    if (g === 'guanyin') return ['观', '音'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,5', { char: '观', general: 'guanyin', cell: { c: 0, r: 5 }, tier: 5 });
+  v.wordsMap.set('1,5', { char: '音', general: 'guanyin', cell: { c: 1, r: 5 }, tier: 5 });
+  v.wordsMap.set('3,5', { char: '音', general: 'fanyin', cell: { c: 3, r: 5 }, tier: 1 });
+  for (const k of ['0,5', '1,5', '2,5', '3,5', '4,5']) v.unlocked.add(k);
+  planAutoPlace(v, { rng });
+  const fan = v.placedWords().find((w) => w.char === '梵');
+  const yin = v.placedWords().find((w) => w.char === '音' && w.general === 'fanyin');
+  expect(fan).toBeDefined();
+  expect(yin).toBeDefined();
+  expect(fan!.cell.c + 1).toBe(yin!.cell.c);
+  expect(fan!.cell.r).toBe(yin!.cell.r);
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '梵')).toBe(false);
 });
 

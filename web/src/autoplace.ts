@@ -794,34 +794,30 @@ function tryShiftPathRowLeft(view: AutoPlaceView): boolean {
  * 保留已有英雄不拆散（如 tray「白」+「骨」时左移牛郎/金吒，三将并存）。
  */
 function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
-  for (let trayIdx = 0; trayIdx < view.tray().length; trayIdx++) {
-    const t = view.tray()[trayIdx]!;
-    if (t.kind !== 'word') continue;
-    if (shouldSkipTrayWordActivation(view, t)) continue;
-
+  return forEachTrayWordForActivation(view, (trayIdx, t) => {
     const mate = pickBestBoardMateView(view, t.char, t.general);
-    if (!mate) continue;
+    if (!mate) return false;
     const pair = resolveHeroPair(
       t.char,
       mate.char,
       view,
       t.general === mate.general ? t.general : undefined,
     );
-    if (!pair) continue;
+    if (!pair) return false;
     const def = matchGeneral(pair.chars[0], pair.chars[1]);
-    if (!def) continue;
+    if (!def) return false;
 
     const mateIsLeft = mate.char === def.chars[0];
-    if (mateIsLeft && t.char !== def.chars[1]) continue;
-    if (!mateIsLeft && t.char !== def.chars[0]) continue;
+    if (mateIsLeft && t.char !== def.chars[1]) return false;
+    if (!mateIsLeft && t.char !== def.chars[0]) return false;
 
     const needMate = mate.cell;
     const needTray = mateIsLeft
       ? { c: mate.cell.c + 1, r: mate.cell.r }
       : { c: mate.cell.c - 1, r: mate.cell.r };
-    if (!sameCell(mate.cell, needMate)) continue;
-    if (needTray.c < 0) continue;
-    if (isCellEmptyView(view, needTray)) continue;
+    if (!sameCell(mate.cell, needMate)) return false;
+    if (needTray.c < 0) return false;
+    if (isCellEmptyView(view, needTray)) return false;
 
     const row = needTray.r;
     const shiftIds = new Set<string>();
@@ -829,7 +825,7 @@ function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
       if (p.left.cell.r !== row) continue;
       if (p.right.cell.c <= needTray.c) shiftIds.add(p.def.id);
     }
-    if (shiftIds.size === 0) continue;
+    if (shiftIds.size === 0) return false;
 
     const leftmostC = Math.min(
       ...scanActivePairs(view)
@@ -837,9 +833,9 @@ function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
         .map((p) => p.left.cell.c),
     );
     const destL = { c: leftmostC - 1, r: row };
-    if (destL.c < 0) continue;
-    if (!isCellEmptyView(view, destL) && !evacuateCellToTray(view, destL)) continue;
-    if (!isCellEmptyView(view, destL)) continue;
+    if (destL.c < 0) return false;
+    if (!isCellEmptyView(view, destL) && !evacuateCellToTray(view, destL)) return false;
+    if (!isCellEmptyView(view, destL)) return false;
 
     for (let s = 0; s < shiftIds.size; s++) {
       const pairs = scanActivePairs(view)
@@ -854,9 +850,8 @@ function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
       (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
     );
     if (idx < 0) return false;
-    if (view.place(idx, needTray)) return true;
-  }
-  return false;
+    return view.place(idx, needTray);
+  });
 }
 
 /** 满级武将占前、未升满在后时，相邻两对互换（让未升满更靠出口拿经验） */
@@ -1213,7 +1208,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     for (const t of view.tray()) {
       if (t.kind !== 'word') continue;
       if (mayLeaveWordInTray(t)) continue;
-      if (isObsoleteTransitionVariant(view, t.char)) continue;
       hasPendingWord = true;
       if (!pickBestBoardMateView(view, t.char, t.general)) return false;
     }
@@ -1238,18 +1232,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (tryTrayHeroInsertByRowShift(view)) return true;
       if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     }
-    const trayNow = view.tray();
-    for (let i = 0; i < trayNow.length; i++) {
-      const t = trayNow[i]!;
-      if (t.kind !== 'word') continue;
-      if (shouldSkipTrayWordActivation(view, t)) continue;
+    return forEachTrayWordForActivation(view, (i, t) => {
       const mate = pickBestBoardMate(t.char, t.general);
-      if (mate && canActivateTrayBoardMateNow(t, mate) && shouldPrioritizeTrayBoardMateActivation(view, t, mate) && tryActivateTrayWord(i, t)) {
-        markHeroLayoutChanged();
-        return true;
-      }
-    }
-    return false;
+      if (!mate || !canActivateTrayBoardMateNow(t, mate)) return false;
+      if (!shouldPrioritizeTrayBoardMateActivation(view, t, mate)) return false;
+      if (!tryActivateTrayWord(i, t)) return false;
+      markHeroLayoutChanged();
+      return true;
+    });
   }
 
   function step(): boolean {
@@ -1299,11 +1289,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2b-0) 贴路行左移后插入 tray 字（保留已有激活将，一次执行完）
     if (!subopt() && tryTrayHeroInsertByRowShift(view)) return true;
     // 2b) 字牌激活：tray 与棋盘伴侣/孤儿凑对
-    for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!; if (t.kind !== 'word') continue;
-      if (shouldSkipTrayWordActivation(view, t)) continue;
-      if (tryActivateTrayWord(i, t)) { markHeroLayoutChanged(); return true; }
-    }
+    if (forEachTrayWordForActivation(view, (i, t) => {
+      if (!tryActivateTrayWord(i, t)) return false;
+      markHeroLayoutChanged();
+      return true;
+    })) return true;
     // 2b-1) 贴路行左移 / 未升满前置（凑对失败后再整行腾位）
     if (!subopt() && tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) { markHeroLayoutChanged(); return true; }

@@ -5,6 +5,9 @@ import {
   partnerChars,
   generalsWithChar,
   hintGeneralForChar,
+  primaryGeneralForChar,
+  sortedPartnerChars,
+  inactivePartnerHint,
   mainGeneralForVariantChar,
   variantChar,
 } from '../src/generals';
@@ -47,7 +50,12 @@ describe('门派配置', () => {
     expect(matchGeneral('大', '蟒')?.id).toBe('damang');
     expect(matchGeneral('圣', '大')).toBeUndefined();
     expect(partnerChars('白').sort()).toEqual(['骨', '龙'].sort());
+    expect(sortedPartnerChars('白')).toEqual(['龙', '骨']);
+    expect(primaryGeneralForChar('白')?.id).toBe('bailong');
+    expect(inactivePartnerHint('白')).toBe('未激活：需与「龙」或「骨」字左右相邻');
+    expect(inactivePartnerHint('白', true)).toBe('候选区：需与「龙」或「骨」字左右相邻');
     expect(generalsWithChar('牛').map((g) => g.id).sort()).toEqual(['niumowang', 'niulang', 'qingniu'].sort());
+    expect(sortedPartnerChars('牛')[0]).toBe('魔');
   });
 
   it('神兵与武将一一对应', () => {
