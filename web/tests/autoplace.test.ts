@@ -21,8 +21,12 @@ import {
   placeExitWeight,
   singleWordScore,
   heroSeatScore,
+  lowHpEngageMul,
+  engageThreatAt,
   type AutoPlaceView,
   type BattleRepositionView,
+  type BattleRepositionHeroPair,
+  type MonsterEngageLite,
   type PlaceToken,
   type Cell,
 } from '../src/autoplace';
@@ -1144,7 +1148,11 @@ class FakeRepositionView implements BattleRepositionView {
   wordsMap = new Map<string, { char: string; general: string; cell: Cell; tier: number }>();
   free: Cell[] = [];
   heroCells = new Set<string>();
+  heroPairs: BattleRepositionHeroPair[] = [];
+  heroRge = 3;
+  heroAtk = 12;
   monsterCells: Cell[] = [];
+  monsterEngage: MonsterEngageLite[] = [];
   dangerNearFlag = false;
   monsterDists: number[] = [];
   readonly fakePath = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
@@ -1176,6 +1184,19 @@ class FakeRepositionView implements BattleRepositionView {
   }
   engageScore(cell: Cell, type: 'dao' | 'spear' | 'archer' | 'cavalry', tier: number) {
     const stat = getUnitStat(type, tier);
+    if (this.monsterEngage.length > 0) {
+      return engageThreatAt(
+        this.monsterEngage,
+        this.fakePath,
+        this.entranceDist,
+        cell.c,
+        cell.r,
+        stat.rge,
+        stat.atk,
+        this.dangerNearFlag,
+        type,
+      );
+    }
     const targets =
       this.monsterCells.length > 0
         ? this.monsterCells
@@ -1185,6 +1206,57 @@ class FakeRepositionView implements BattleRepositionView {
       if (inAttackRange(cell.c, cell.r, stat.rge, m)) score += stat.atk;
     }
     return score;
+  }
+  activeHeroPairs() { return this.heroPairs; }
+  heroEngageScore(left: Cell, right: Cell, _general: string, _tier: number) {
+    const ax = (left.c + right.c) / 2;
+    const ay = (left.r + right.r) / 2;
+    return engageThreatAt(
+      this.monsterEngage,
+      this.fakePath,
+      this.entranceDist,
+      ax,
+      ay,
+      this.heroRge,
+      this.heroAtk,
+      this.dangerNearFlag,
+    );
+  }
+  moveHeroPair(fromLeft: Cell, fromRight: Cell, toLeft: Cell, toRight: Cell) {
+    const wl = this.wordsMap.get(`${fromLeft.c},${fromLeft.r}`);
+    const wr = this.wordsMap.get(`${fromRight.c},${fromRight.r}`);
+    if (!wl || !wr) return false;
+    const canOccupy = (to: Cell, fromA: Cell, fromB: Cell) => {
+      if (to.c === fromA.c && to.r === fromA.r) return true;
+      if (to.c === fromB.c && to.r === fromB.r) return true;
+      return !this.unitsMap.has(`${to.c},${to.r}`) && !this.wordsMap.has(`${to.c},${to.r}`);
+    };
+    if (!canOccupy(toLeft, fromLeft, fromRight) || !canOccupy(toRight, fromLeft, fromRight)) return false;
+    const moveWord = (from: Cell, to: Cell) => {
+      const w = this.wordsMap.get(`${from.c},${from.r}`);
+      if (!w) return false;
+      if (from.c === to.c && from.r === to.r) return true;
+      if (this.unitsMap.has(`${to.c},${to.r}`) || this.wordsMap.has(`${to.c},${to.r}`)) return false;
+      this.wordsMap.delete(`${from.c},${from.r}`);
+      w.cell = { c: to.c, r: to.r };
+      this.wordsMap.set(`${to.c},${to.r}`, w);
+      this.heroCells.delete(`${from.c},${from.r}`);
+      this.heroCells.add(`${to.c},${to.r}`);
+      return true;
+    };
+    const order =
+      (toLeft.c === fromRight.c && toLeft.r === fromRight.r) || (toRight.c === fromLeft.c && toRight.r === fromLeft.r)
+        ? [[fromRight, toRight], [fromLeft, toLeft]] as const
+        : [[fromLeft, toLeft], [fromRight, toRight]] as const;
+    for (const [from, to] of order) {
+      if (!moveWord(from, to)) return false;
+    }
+    this.heroPairs = this.heroPairs.map((p) =>
+      p.left.c === fromLeft.c && p.left.r === fromLeft.r
+        ? { ...p, left: toLeft, right: toRight }
+        : p,
+    );
+    return true;
   }
   moveUnit(from: Cell, to: Cell) {
     const kFrom = `${from.c},${from.r}`;
@@ -1403,7 +1475,82 @@ it('dangerSeatBonus：沿路径更靠唐僧且欧氏更近则分更高', () => {
   expect(dangerSeatBonus(6, 2)).toBeGreaterThan(dangerSeatBonus(1, 8));
 });
 
-it('rollAiAdjustInterval：兵器 1.5–4s、配对字 0.5–1s', () => {
+it('lowHpEngageMul：非危险或满血时不加权', () => {
+  expect(lowHpEngageMul(100, 100, false)).toBe(1);
+  expect(lowHpEngageMul(100, 100, true)).toBe(1);
+  expect(lowHpEngageMul(50, 100, false, 'archer')).toBe(1);
+});
+
+it('lowHpEngageMul：危险时残血加权更高，弓兵额外加成', () => {
+  const low = lowHpEngageMul(10, 100, true);
+  const mid = lowHpEngageMul(50, 100, true);
+  const archerLow = lowHpEngageMul(10, 100, true, 'archer');
+  const spearLow = lowHpEngageMul(10, 100, true, 'spear');
+  expect(low).toBeGreaterThan(mid);
+  expect(archerLow).toBeGreaterThan(spearLow);
+});
+
+it('engageThreatAt：危险时覆盖残血怪的座位分更高', () => {
+  const path = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const monsters: MonsterEngageLite[] = [
+    { dist: 6, hp: 90, maxHp: 100 },
+    { dist: 7, hp: 8, maxHp: 100 },
+  ];
+  const stat = getUnitStat('archer', 1);
+  const near = engageThreatAt(monsters, path, 0, 3, 0, stat.rge, stat.atk, true, 'archer');
+  const far = engageThreatAt(monsters, path, 0, 5, 0, stat.rge, stat.atk, true, 'archer');
+  const nearSafe = engageThreatAt(monsters, path, 0, 3, 0, stat.rge, stat.atk, false, 'archer');
+  expect(far).toBeGreaterThan(near);
+  expect(far).toBeGreaterThan(nearSafe);
+});
+
+it('危险时：弓兵会前移以覆盖残血怪', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [6, 7];
+  v.monsterEngage = [
+    { dist: 6, hp: 90, maxHp: 100 },
+    { dist: 7, hp: 8, maxHp: 100 },
+  ];
+  v.unitsMap.set('3,0', { type: 'archer', tier: 1, cell: { c: 3, r: 0 } });
+  v.free = [{ c: 5, r: 0 }];
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.get('5,0')?.type).toBe('archer');
+});
+
+it('非危险时：弓兵已在交战位则不因残血加权前移', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = false;
+  v.monsterDists = [6, 7];
+  v.monsterEngage = [
+    { dist: 6, hp: 90, maxHp: 100 },
+    { dist: 7, hp: 8, maxHp: 100 },
+  ];
+  v.unitsMap.set('3,0', { type: 'archer', tier: 1, cell: { c: 3, r: 0 } });
+  v.free = [{ c: 5, r: 0 }];
+  expect(planBattleReposition(v).ok).toBe(false);
+  expect(v.unitsMap.get('3,0')?.type).toBe('archer');
+});
+
+it('危险时：已激活武将整体挪位以打到残血怪', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [5];
+  v.monsterEngage = [{ dist: 5, hp: 6, maxHp: 100 }];
+  v.heroRge = 2;
+  v.heroAtk = 12;
+  v.wordsMap.set('0,0', { char: '白', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '骨', general: 'baigujing', cell: { c: 1, r: 0 }, tier: 1 });
+  v.heroCells.add('0,0');
+  v.heroCells.add('1,0');
+  v.heroPairs = [{ left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'baigujing', tier: 1 }];
+  v.free = [{ c: 4, r: 0 }, { c: 5, r: 0 }];
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.wordsMap.get('4,0')?.char).toBe('白');
+  expect(v.wordsMap.get('5,0')?.char).toBe('骨');
+});
+
+it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.5–1s', () => {
   expect(rollAiAdjustInterval(false, () => 0)).toBe(AI_WEAPON_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
   expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);

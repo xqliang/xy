@@ -104,9 +104,9 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位：普通兵器 1.5–4s；待补英雄配对字 0.5–1s */
-export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1.5;
-export const AI_WEAPON_ADJUST_INTERVAL_MAX = 4;
+/** AI 战中调位：普通兵器 1–2.5s；待补英雄配对字 0.5–1s */
+export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1;
+export const AI_WEAPON_ADJUST_INTERVAL_MAX = 2.5;
 export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.5;
 export const AI_PARTNER_ADJUST_INTERVAL_MAX = 1;
 
@@ -269,6 +269,55 @@ export function dangerPlacementBonus(
 ): number {
   if (imminentScore > 0) return IMMINENT_PLACE_WEIGHT * imminentScore;
   return dangerSeatBonus(exitDist, tangsengDist);
+}
+
+/** 危险时交战威胁：残血怪加权更高；弓兵收尾额外加成 */
+export const LOW_HP_ENGAGE_MAX_BONUS = 2.5;
+export const ARCHER_LOW_HP_FINISH_BONUS = 0.35;
+const ENGAGE_RANGE_TOL = 0.5;
+
+export interface MonsterEngageLite { dist: number; hp: number; maxHp: number; }
+
+export function lowHpEngageMul(hp: number, maxHp: number, danger: boolean, type?: UnitType): number {
+  if (!danger || maxHp <= 0) return 1;
+  const finish = 1 - Math.max(0, Math.min(1, hp / maxHp));
+  let mul = 1 + LOW_HP_ENGAGE_MAX_BONUS * finish * finish;
+  if (type === 'archer') mul *= 1 + ARCHER_LOW_HP_FINISH_BONUS * finish;
+  return mul;
+}
+
+function cellInAttackRange(ax: number, ay: number, rge: number, p: { c: number; r: number }): boolean {
+  const mc = Math.round(p.c);
+  const mr = Math.round(p.r);
+  const nx = Math.min(mc + 0.5, Math.max(mc - 0.5, ax));
+  const ny = Math.min(mr + 0.5, Math.max(mr - 0.5, ay));
+  return Math.hypot(ax - nx, ay - ny) < rge + ENGAGE_RANGE_TOL;
+}
+
+/** 圆心 (ax,ay) 对怪群的交战威胁分（范围内 atk×残血加权之和） */
+export function engageThreatAt(
+  monsters: MonsterEngageLite[],
+  path: { c: number; r: number }[],
+  entranceDist: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  atk: number,
+  danger: boolean,
+  unitType?: UnitType,
+): number {
+  const targets =
+    monsters.length > 0
+      ? monsters
+      : [{ dist: entranceDist, hp: 1, maxHp: 1 }];
+  let score = 0;
+  for (const m of targets) {
+    const p = posAlong(path, m.dist);
+    if (cellInAttackRange(ax, ay, rge, p)) {
+      score += atk * lowHpEngageMul(m.hp, m.maxHp, danger, unitType);
+    }
+  }
+  return score;
 }
 
 function cellKey(c: Cell): string { return `${c.c},${c.r}`; }
@@ -963,7 +1012,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
     // 2a-0d) tray 内两字优先组满级主将（如牛+魔），再考虑棋盘过渡字（如牛+郎）
     if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
-    // 2a-1) tray 字 + 棋盘伴侣（可立即成对）→ 先于孤儿字挪位（如 白+龙）
+    // 2a-0b) tray 伴侣所需格被占（金吒挡骨左格等）→ 先整行左移插入
+    if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
+      if (tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
+      if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
+    }
+    // 2a-1) tray 字 + 棋盘伴侣（落点已空或可腾）→ 先于孤儿字挪位（如 白+龙）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
@@ -972,11 +1026,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         markHeroLayoutChanged();
         return true;
       }
-    }
-    // 2a-0b) tray 伴侣所需格被占（白龙：流沙/武器挡左格）→ 先腾位，再挪其它孤儿字
-    if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
-      if (tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
-      if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     }
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) { markHeroLayoutChanged(); return true; }
@@ -1136,8 +1185,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 合后或常规：落子 + 缺种互换 + 合后换占低阶（不含 tray 内合成链） */
   function tryDeployTrayUnitsFromTray(): boolean {
-    if (tryPlaceTrayUnitsOnly()) return true;
     if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
+    if (tryPlaceTrayUnitsOnly()) return true;
     if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
     return tryPlaceTrayUnitsOnly();
   }
@@ -2124,6 +2173,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 }
 
 /** 战中动态调位视图：依据当前存活怪群评估座位，每次至多执行一次 move/swap */
+export type BattleRepositionHeroPair = { left: Cell; right: Cell; general: string; tier: number };
+
 export interface BattleRepositionView {
   placedUnits(): PlacedUnitLite[];
   /** 未激活孤儿字（已激活武将格不要列入） */
@@ -2142,6 +2193,10 @@ export interface BattleRepositionView {
   exitDist(cell: Cell): number;
   tangsengDist(cell: Cell): number;
   imminentPathScore(cell: Cell): number;
+  /** 已激活武将左右格与 id/tier（危险时整体迁座） */
+  activeHeroPairs?(): BattleRepositionHeroPair[];
+  heroEngageScore?(left: Cell, right: Cell, general: string, tier: number): number;
+  moveHeroPair?(fromLeft: Cell, fromRight: Cell, toLeft: Cell, toRight: Cell): boolean;
 }
 
 export interface BattleRepositionOpts {
@@ -2160,18 +2215,73 @@ function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolea
   return repositionPairKey(a, b) === repositionPairKey(blocked.a, blocked.b);
 }
 
+function enumerateHeroPairSeats(view: BattleRepositionView): { left: Cell; right: Cell }[] {
+  const cells = new Map<string, Cell>();
+  for (const c of view.freeCells()) cells.set(cellKey(c), c);
+  for (const u of view.placedUnits()) cells.set(cellKey(u.cell), u.cell);
+  for (const w of view.orphanWords()) cells.set(cellKey(w.cell), w.cell);
+  for (const p of view.activeHeroPairs?.() ?? []) {
+    cells.set(cellKey(p.left), p.left);
+    cells.set(cellKey(p.right), p.right);
+  }
+  const out: { left: Cell; right: Cell }[] = [];
+  for (const left of cells.values()) {
+    const right = cells.get(`${left.c + 1},${left.r}`);
+    if (right) out.push({ left, right });
+  }
+  return out;
+}
+
+/** 危险时：把远程/武将挪到能打到残血怪的位置 */
+function tryDangerHeroReposition(view: BattleRepositionView): boolean {
+  if (!view.dangerNear() || !view.activeHeroPairs || !view.heroEngageScore || !view.moveHeroPair) {
+    return false;
+  }
+  const MIN_GAIN = 0.12;
+  let best: {
+    fromLeft: Cell;
+    fromRight: Cell;
+    toLeft: Cell;
+    toRight: Cell;
+    gain: number;
+  } | null = null;
+  for (const pair of view.activeHeroPairs()) {
+    const cur = view.heroEngageScore(pair.left, pair.right, pair.general, pair.tier);
+    for (const cand of enumerateHeroPairSeats(view)) {
+      if (sameCell(cand.left, pair.left) && sameCell(cand.right, pair.right)) continue;
+      const next = view.heroEngageScore(cand.left, cand.right, pair.general, pair.tier);
+      const gain = next - cur;
+      if (gain < MIN_GAIN) continue;
+      if (!best || gain > best.gain) {
+        best = {
+          fromLeft: pair.left,
+          fromRight: pair.right,
+          toLeft: cand.left,
+          toRight: cand.right,
+          gain,
+        };
+      }
+    }
+  }
+  if (!best) return false;
+  return view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight);
+}
+
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位；
  * 亦可与未激活孤儿字换位（字牌不输出，让出攻位）。
  * 危险时优先把「打不到」的兵换到能打到怪的座位；禁止仅因贴路启发在两格间来回抖。
- * 每次调用至多成功一次 move/swap；AI 侧兵器调位 1.5–4s 随机节流。
+ * 每次调用至多成功一次 move/swap；AI 侧兵器调位 1–2.5s 随机节流。
  */
 export function planBattleReposition(
   view: BattleRepositionView,
   opts?: BattleRepositionOpts,
 ): { ok: boolean; pair?: { a: Cell; b: Cell } } {
   const units = view.placedUnits();
-  if (units.length === 0) return { ok: false };
+  if (units.length === 0) {
+    if (view.dangerNear() && tryDangerHeroReposition(view)) return { ok: true };
+    return { ok: false };
+  }
 
   const danger = view.dangerNear();
   const placementBonus = (cell: Cell) =>
@@ -2273,7 +2383,10 @@ export function planBattleReposition(
     }
   }
 
-  if (!bestAction) return { ok: false };
+  if (!bestAction) {
+    if (danger && tryDangerHeroReposition(view)) return { ok: true };
+    return { ok: false };
+  }
   if (!bestAction()) return { ok: false };
   return { ok: true, pair: bestPair ?? undefined };
 }

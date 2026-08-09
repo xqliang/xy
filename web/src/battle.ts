@@ -633,7 +633,7 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
@@ -2584,7 +2584,7 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
+    // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       if (aiPlacedThisFrame) {
