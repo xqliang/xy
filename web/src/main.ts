@@ -71,7 +71,7 @@ import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, 
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadUserId, copyUserId } from './user-id';
-import { loadAiSkill, recordVersusOutcome } from './ai-skill';
+import { loadAiSkill, recordVersusOutcome, rollMatchAiSkill } from './ai-skill';
 import {
   getSettings,
   resetSettings,
@@ -221,7 +221,13 @@ let bagPointerActive = false;
 let bagDownX = 0, bagDownY = 0, bagDownScroll = 0, bagDragged = false;
 let mapSelection: MapSelection = safePersisted(loadMapSelection, { mode: 'daily' });
 let currentMap = params.get('map') ? mapById(params.get('map')!) : resolveMap(mapSelection);
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
+
+/** 新开一局：在持久化玩家 skill ±1 内随机本局 AI 基础强度 */
+function newBattleAiSkill(): number {
+  return rollMatchAiSkill(loadAiSkill(), () => Math.random());
+}
+
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, newBattleAiSkill());
 bindBattleWeaponPickup();
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
@@ -254,7 +260,7 @@ const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDr
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, loadAiSkill());
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, newBattleAiSkill());
   bindBattleWeaponPickup();
   endHandled = false;
   endlessResult = null;
@@ -1180,7 +1186,7 @@ const hook: GameHook = {
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, loadAiSkill());
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill());
     bindBattleWeaponPickup();
     endHandled = false;
     endlessResult = null;

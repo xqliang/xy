@@ -90,6 +90,15 @@ export function saveAiSkill(v: number): void {
   try { storeSet(KEY, String(v)); } catch { /* ignore */ }
 }
 
+/** 本局 AI 基础 skill：在玩家 skill ±1 内均匀随机，再 clamp 到 [MIN, MAX] */
+export function rollMatchAiSkill(playerSkill: number, roll: () => number): number {
+  const base = Math.max(AI_SKILL_MIN, Math.min(AI_SKILL_MAX, playerSkill));
+  const lo = Math.max(AI_SKILL_MIN, base - 1);
+  const hi = Math.min(AI_SKILL_MAX, base + 1);
+  if (hi <= lo + 1e-9) return lo;
+  return lo + roll() * (hi - lo);
+}
+
 function loadStreak(key: string): number {
   try {
     const raw = storeGet(key);

@@ -4,7 +4,57 @@ import {
   nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL,
   aiItemTargetCount, rollAiLoadout, EMPTY_PLAYER_ITEM_CAP,
   AI_EXCLUDED_PASSIVES, aiWeaponScale, scaleWeaponBonuses,
+  versusRubberBand, effectiveAiSkill, recordVersusOutcome, rollMatchAiSkill,
 } from '../src/ai-skill';
+
+describe('rollMatchAiSkill', () => {
+  it('在 playerSkill±1 内插值，roll=0/1 对应上下界', () => {
+    expect(rollMatchAiSkill(1.0, () => 0)).toBeCloseTo(0.72, 2);
+    expect(rollMatchAiSkill(1.0, () => 1)).toBeCloseTo(1.8, 2);
+    expect(rollMatchAiSkill(1.2, () => 0)).toBeCloseTo(0.72, 2);
+    expect(rollMatchAiSkill(1.2, () => 1)).toBeCloseTo(1.8, 2);
+  });
+
+  it('中间值均匀随机', () => {
+    expect(rollMatchAiSkill(1.0, () => 0.5)).toBeCloseTo((0.72 + 1.8) / 2, 2);
+  });
+});
+
+describe('versusRubberBand', () => {
+  it('中性局不调概率杠杆', () => {
+    const b = versusRubberBand(0, 0);
+    expect(b.aiWordTier5Bias).toBe(1);
+    expect(b.playerWordTier5Bias).toBe(1);
+    expect(b.aiWordDrawBonus).toBe(0);
+    expect(b.aiItemBonus).toBe(0);
+  });
+
+  it('连胜抬高 AI 抽字/道具，连败抬高玩家抽字并压低 AI', () => {
+    const w1 = versusRubberBand(1, 0);
+    const w3 = versusRubberBand(3, 0);
+    const l1 = versusRubberBand(0, 1);
+    const l2 = versusRubberBand(0, 2);
+    expect(w1.aiWordTier5Bias).toBeGreaterThan(1);
+    expect(w3.aiWordTier5Bias).toBeGreaterThan(w1.aiWordTier5Bias);
+    expect(w3.skillFloor).toBe(AI_SKILL_MAX);
+    expect(l1.playerWordTier5Bias).toBeGreaterThan(1);
+    expect(l2.playerWordTier5Bias).toBeGreaterThan(l1.playerWordTier5Bias);
+    expect(l2.aiWordTier5Bias).toBeLessThan(1);
+    expect(l2.aiItemBonus).toBeLessThan(0);
+  });
+
+  it('effectiveAiSkill 连胜抬 floor、连败压 ceiling', () => {
+    const hi = effectiveAiSkill(1.0, versusRubberBand(3, 0));
+    const lo = effectiveAiSkill(1.0, versusRubberBand(0, 2));
+    expect(hi).toBeGreaterThan(1.5);
+    expect(lo).toBeLessThan(0.8);
+  });
+
+  it('recordVersusOutcome 胜负互斥累计', () => {
+    expect(recordVersusOutcome(true).win).toBeGreaterThanOrEqual(1);
+    expect(recordVersusOutcome(false).loss).toBeGreaterThanOrEqual(1);
+  });
+});
 
 describe('nextAiSkill', () => {
   it('玩家胜 → 调强(升)，玩家负 → 调弱(降)', () => {
