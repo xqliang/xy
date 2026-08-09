@@ -37,7 +37,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -96,10 +96,11 @@ export const TUNING = {
   bossEscortMax: 8, // 妖王出场护卫最多只数
   bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
-  // —— 骑兵波（后期随机某波：半数怪替换为骑兵，骑兵移速翻倍、血量与普通妖相同）——
+  // —— 骑兵波（后期随机某波：半数怪替换为骑兵；移速翻倍、血量略低，威胁≈普通×4/3）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
   cavalryWaveChance: 0.5, // 达到后期后，每波有 50% 概率成为骑兵波
   cavalrySpdMul: 2, // 骑兵移速倍率：比普通妖快一倍
+  cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
   lateWaveExtraPerWave: 5, // 每超出一波额外 +5 只（越到后期越密，波6:+5 … 波12:+35）
@@ -132,7 +133,9 @@ export const TUNING = {
   eliteFromWave: 3, // 第 3 波起可能刷出精英妖
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
-  skillRadius: 1, // 控制技能最多作用到最近 1 格内的兵器
+  skillRadius: 1, // 控制技能作用半径（格）
+  skillTargetMin: 1, // 单次施法最少命中兵器数
+  skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 1.4, // 眩晕：武将暂停攻击（秒）
@@ -421,7 +424,7 @@ export interface Monster {
   isBoss: boolean;
   isMiniBoss: boolean; // 小 Boss：跨地图头目，带独立光环技能
   miniBossKind: MiniBossKind | null; // 小 Boss 种类（非小 Boss 为 null）
-  isCavalry: boolean; // 骑兵：移速翻倍、血量与普通妖相同（骑兵波中占半数，BOSS 不会是骑兵）
+  isCavalry: boolean; // 骑兵：移速翻倍、血量 ×cavalryHpMul（骑兵波中占半数，BOSS 不会是骑兵）
   hitFlash: number; // 受击闪白(秒)
   skill: MonsterSkill | null; // 精英/BOSS 携带的减益技能（普通妖/小 Boss 为 null）
   skillCd: number; // 距下次施法的秒数
@@ -2227,9 +2230,12 @@ export class Battle {
       if (bossEscortHpEach <= 0) bossEscortCount = 0;
     } else if (isMiniBoss) {
       hp *= TUNING.miniBossHpMul;
-    } else if (isElite) {
-      // 精英击杀给普通妖 4 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
-      hp *= TUNING.eliteHpMul;
+    } else {
+      if (isElite) {
+        // 精英击杀给普通妖 4 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
+        hp *= TUNING.eliteHpMul;
+      }
+      if (isCavalry) hp *= TUNING.cavalryHpMul;
     }
 
     // 移速倍率：BOSS/小 Boss 略慢、骑兵翻倍（互斥）
@@ -2772,7 +2778,7 @@ export class Battle {
     this.addGeneralCombatExp(g, Battle.heroSkillExp);
   }
 
-  // 怪物施法：精英/BOSS 对最近 1 格内最近一件兵器施加地图减益；小 Boss 施展跨地图光环
+  // 怪物施法：精英/BOSS 对半径内随机 1~2 件最近兵器施加地图减益；小 Boss 施展跨地图光环
   private updateMonsterSkills(dt: number): void {
     for (const m of this.monsters) {
       if (m.hp <= 0) continue;
@@ -2785,15 +2791,17 @@ export class Battle {
         this.castMiniBossSkill(m);
         continue;
       }
-      // 精英 / 妖王：地图专属减益（只打半径内最近一把兵器）
+      // 精英 / 妖王：地图专属减益（半径内随机 1~2 把最近兵器）
       if (!m.skill) continue;
       m.skillCd -= dt;
       if (m.skillCd > 0) continue;
       m.skillCd = TUNING.skillInterval;
       const mp = posAtDistance(this.map, m.dist);
-      const target = this.nearestUnitInRadius(mp.c, mp.r, TUNING.skillRadius);
+      const targets = this.pickSkillTargets(mp.c, mp.r);
       let affected = 0;
-      if (target && this.applyDebuff(target, m.skill)) affected++;
+      for (const target of targets) {
+        if (this.applyDebuff(target, m.skill)) affected++;
+      }
       if (affected > 0) {
         m.castFlash = 1;
         this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.4, maxTtl: 0.4, big: true, color: SKILL_META[m.skill].color });
@@ -2802,19 +2810,31 @@ export class Battle {
     }
   }
 
-  /** 半径内最近的兵器；无人则 null */
-  private nearestUnitInRadius(c: number, r: number, radius: number): PlacedUnit | null {
-    let best: PlacedUnit | null = null;
-    let bestD = Infinity;
+  private rollSkillTargetCount(): number {
+    const lo = TUNING.skillTargetMin;
+    const hi = TUNING.skillTargetMax;
+    if (hi <= lo) return lo;
+    return lo + this.rng.int(hi - lo + 1);
+  }
+
+  /** 半径内按距离取最近的若干兵器（至多 count 把） */
+  private nearestUnitsInRadius(c: number, r: number, radius: number, count: number): PlacedUnit[] {
+    const max = Math.max(0, Math.floor(count));
+    if (max <= 0) return [];
+    const hit: { u: PlacedUnit; d: number }[] = [];
     for (const u of this.units.values()) {
       const d = Math.hypot(c - u.cell.c, r - u.cell.r);
       if (d > radius) continue;
-      if (d < bestD) {
-        bestD = d;
-        best = u;
-      }
+      hit.push({ u, d });
     }
-    return best;
+    hit.sort((a, b) => a.d - b.d);
+    return hit.slice(0, max).map((x) => x.u);
+  }
+
+  /** 单次怪物控制技：随机 1~2 把，在 skillRadius 内取最近 */
+  private pickSkillTargets(c: number, r: number): PlacedUnit[] {
+    const want = this.rollSkillTargetCount();
+    return this.nearestUnitsInRadius(c, r, TUNING.skillRadius, want);
   }
 
   private castMiniBossSkill(m: Monster): void {
@@ -2827,10 +2847,9 @@ export class Battle {
       case 'frost':
       case 'blight':
       case 'quake': {
-        // 对兵器的控制：与精英同口径——最近 1 格内最近一把 + 同种免疫
-        const target = this.nearestUnitInRadius(mp.c, mp.r, TUNING.skillRadius);
-        if (target) {
-          const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
+        // 对兵器的控制：与精英同口径——半径内随机 1~2 把最近 + 同种免疫
+        const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
+        for (const target of this.pickSkillTargets(mp.c, mp.r)) {
           if (this.applyUnitStatus(target, status)) affected++;
         }
         break;
@@ -3362,8 +3381,13 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
-    const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), { rng: () => this.rng.next(), pSubOptimal: 0 });
-    const moved = this.tickBattleReposition('player', 50);
+    const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
+      rng: () => this.rng.next(),
+      pSubOptimal: 0,
+      maxSteps: PLAYER_PLACE_MAX_STEPS,
+      maxGuard: PLAYER_PLACE_MAX_GUARD,
+    });
+    const moved = this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS);
     const total = placed + moved;
     if (total > 0) {
       if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;

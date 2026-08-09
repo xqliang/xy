@@ -1,6 +1,6 @@
 // web/src/autoplace.ts
 // 射程感知的自动布阵策略：玩家「一键布阵」与 AI 对手共用。
-// 原则：绝不丢弃令牌（无处可放者留在 tray）；铲挖最优位；合成升级；按射程铺满；够不着则升级。
+// 原则：绝不丢弃令牌（无处可放者留在 tray）；有空格必落 tray 兵（射程内优先，否则兜底填最近空位）；
 // 挖出空位后：先让棋盘武器迁/换到更合适座位，再处理 tray。
 // tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
@@ -83,7 +83,14 @@ export interface AutoPlaceOpts {
   randomDigExitWeight?: boolean;
   /** 至多执行几步；默认不限（一键布阵） */
   maxSteps?: number;
+  /** 循环上限（防一步内无限调位）；默认 PLAYER_PLACE_MAX_GUARD */
+  maxGuard?: number;
 }
+
+/** 玩家一键布阵：落子步数 / 循环上限 / 战后调位步数 */
+export const PLAYER_PLACE_MAX_STEPS = 150;
+export const PLAYER_PLACE_MAX_GUARD = 300;
+export const PLAYER_REPOSITION_MAX_STEPS = 100;
 
 /** AI 战中调位：普通兵器 1.5–4s；待补英雄配对字 0.5–1s */
 export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1.5;
@@ -371,6 +378,32 @@ function isObsoleteTransitionVariant(view: AutoPlaceView, char: string): boolean
     if (char === variantChar(transit)) return true;
   }
   return false;
+}
+
+/**
+ * 2a-1 抢先激活：tray 落点已空，或棋盘左字在右格且左邻可腾（含挪武器/孤儿字）。
+ * 满行需先整行左移（如 tray 白 + 骨、金吒占左格）时不抢先，留给 2b/2b-0。
+ */
+function shouldPrioritizeTrayBoardMateActivation(
+  view: AutoPlaceView,
+  t: Extract<PlaceToken, { kind: 'word' }>,
+  mate: PlacedWordLite,
+): boolean {
+  const pair = resolveHeroPair(t.char, mate.char, view, t.general === mate.general ? t.general : undefined);
+  if (!pair) return false;
+  const def = matchGeneral(pair.chars[0], pair.chars[1]);
+  if (!def) return false;
+  const mateIsLeft = mate.char === def.chars[0];
+  if (!mateIsLeft) {
+    const needTray = { c: mate.cell.c - 1, r: mate.cell.r };
+    return needTray.c >= 0 && isCellEmptyView(view, needTray);
+  }
+  // 棋盘「白」在 intended 右格：左邻非激活将即可试（clearForHero 挪沙/武器）
+  const pairLeft = { c: mate.cell.c - 1, r: mate.cell.r };
+  if (pairLeft.c >= 0 && !view.isActiveHeroCell(pairLeft)) return true;
+  // 白已在左格：tray「龙」落右邻空位
+  const needTray = { c: mate.cell.c + 1, r: mate.cell.r };
+  return isCellEmptyView(view, needTray);
 }
 
 /** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 白骨 在场时 skip 吒/金 组 金吒） */
@@ -696,11 +729,33 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   const pSub = opts.pSubOptimal ?? 0;
   const subopt = () => pSub > 0 && opts.rng() < pSub;
   const maxSteps = opts.maxSteps ?? Infinity;
+  const maxGuard = opts.maxGuard ?? PLAYER_PLACE_MAX_GUARD;
   let guard = 0;
   let steps = 0;
-  while (guard++ < 500 && steps < maxSteps) {
+  while (guard++ < maxGuard && steps < maxSteps) {
     if (!step()) break;
     steps++;
+  }
+
+  /** tray 内兵种索引，短射程优先（近格留给短兵） */
+  function trayUnitEntries(): { t: Extract<PlaceToken, { kind: 'unit' }>; i: number }[] {
+    return view.tray()
+      .map((t, i) => ({ t, i }))
+      .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
+      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
+  }
+
+  /** 有空格且 tray 仍有兵 → 优先落子，暂缓纯调位 */
+  function pendingTrayDeploy(): boolean {
+    return view.freeCells().length > 0 && trayUnitEntries().length > 0;
+  }
+
+  /** 离路径最近的空格（freeCells 未保证排序时用） */
+  function nearestFreeCell(cells: Cell[]): Cell {
+    return cells.reduce(
+      (best, c) => (view.nearestPathDist(c) < view.nearestPathDist(best) ? c : best),
+      cells[0]!,
+    );
   }
 
   /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；危险时追加靠唐僧加权 */
@@ -727,6 +782,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return reach.reduce((best, c) => (scoreCell(c, type, tier) > scoreCell(best, type, tier) ? c : best), reach[0]!);
   }
 
+  /** tray 仅有 1 阶兵种（截图征兵盘）且有空格 → 先落子，高阶互换/凑字稍后 */
+  function trayUnitsOnlyPending(): boolean {
+    if (!pendingTrayDeploy()) return false;
+    if (view.tray().some((t) => t.kind === 'word' || t.kind === 'shovel')) return false;
+    return trayUnitEntries().every(({ t }) => t.tier === 1);
+  }
+
   function step(): boolean {
     const tray = view.tray();
     // 1) 铲子：平时挖贴路+近出口；危险时优先挖靠近唐僧的格
@@ -742,13 +804,24 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
+    // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
+    if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) return true;
+    // 2a-1) tray 字 + 棋盘伴侣（可立即成对）→ 先于孤儿字挪位（如 白+龙）
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!; if (t.kind !== 'word') continue;
+      if (shouldSkipTrayWordActivation(view, t)) continue;
+      const mate = pickBestBoardMate(t.char, t.general);
+      if (mate && shouldPrioritizeTrayBoardMateActivation(view, t, mate) && tryActivateTrayWord(i, t)) {
+        return true;
+      }
+    }
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) return true;
     // 2b-0) 贴路行左移后插入 tray 字（保留已有激活将，一次执行完）
     if (!subopt() && tryTrayHeroInsertByRowShift(view)) return true;
-    // 2b) 字牌激活：tray 与棋盘孤儿凑对
+    // 2b) 字牌激活：tray 与棋盘伴侣/孤儿凑对
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
@@ -762,10 +835,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryPromoteHigherTierUnits()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
-    // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座
-    //     （必须在单字落位之前，否则字会占住贴路优位；延迟落子时事后让位也看不到 pending 字）
-    if (!subopt() && tryRelocateToBetterFreeSeats()) return true;
-    if (!subopt() && trySwapHigherTierToBetterSeats()) return true;
+    // 3–5b) 有空格时优先落 tray 兵（合成 / 射程内 / 兜底填满），再去做调位
+    if (tryDeployTrayUnits()) return true;
+    // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
+    if (!pendingTrayDeploy() && !subopt() && tryRelocateToBetterFreeSeats()) return true;
+    if (!pendingTrayDeploy() && !subopt() && trySwapHigherTierToBetterSeats()) return true;
     // 2e) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
@@ -773,20 +847,56 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (isObsoleteTransitionVariant(view, t.char)) continue;
       if (placeSingleWord(i)) return true;
     }
-    // 3) tray 同型同阶落到棋盘合升阶
+    // 6) 救援式重排：tray 待落时跳过
+    if (!pendingTrayDeploy()) {
+      const free = view.freeCells();
+      const unitIdx = trayUnitEntries();
+      for (const { t, i } of unitIdx) {
+        const rge = getUnitStat(t.type, t.tier).rge;
+        if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue;
+        for (const occ of view.placedUnits()) {
+          if (view.nearestPathDist(occ.cell) > rge + tol) continue;
+          const occRge = getUnitStat(occ.type, occ.tier).rge;
+          if (occRge < rge) continue;
+          let dest: Cell | undefined;
+          let destScore = -Infinity;
+          for (const c of free) {
+            if (view.nearestPathDist(c) > occRge + tol) continue;
+            if (view.nearestPathDist(c) <= rge + tol) continue;
+            const sc = scoreCell(c, occ.type, occ.tier);
+            if (!dest || sc > destScore) { dest = c; destScore = sc; }
+          }
+          if (dest && view.moveUnit(occ.cell, dest)) {
+            view.place(i, occ.cell);
+            return true;
+          }
+        }
+      }
+    }
+    // 7) 未激活孤儿字让出高覆盖攻位给兵器（tray 待落时跳过）
+    if (!pendingTrayDeploy() && !subopt() && tryYieldOrphanSeatsToUnits()) return true;
+    // 8) 孤儿字迁到更远离路径/靠唐僧的空位
+    if (!pendingTrayDeploy() && !subopt() && tryRelocateOrphansToRear()) return true;
+    // 9) 地图槽位已满：先 tray 内合 / 棋盘合腾位再落子
+    if (view.freeCells().length === 0) {
+      if (tryTrayMergeOntoBoard()) return true;
+      if (tryBoardMergeThenPlace()) return true;
+    }
+    return false; // 无可推进动作
+  }
+
+  /** tray 兵落子：同阶合成 → 异型换低阶 → 射程内最优格 → 任意空格兜底 */
+  function tryDeployTrayUnits(): boolean {
+    const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
-      if (mate && !subopt()) { if (view.place(i, mate.cell)) return true; }
+      if (mate && !subopt() && view.place(i, mate.cell)) return true;
     }
-    // 4) tray 合出更高阶 → 与地图上更低阶的异型武器交换上板（空位不如该座时）
     if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
-    // 5) 射程感知铺格：短射程先占位；各自在可达格中选座位分最高的格
     const free = view.freeCells();
-    const unitIdx = tray
-      .map((t, i) => ({ t, i }))
-      .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
-      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
+    if (free.length === 0) return false;
+    const unitIdx = trayUnitEntries();
     for (const { t, i } of unitIdx) {
       const rge = getUnitStat(t.type, t.tier).rge;
       const reach = free.filter((c) => view.nearestPathDist(c) <= rge + tol);
@@ -796,39 +906,17 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         : pickReachCell(reach, t.type, t.tier);
       if (view.place(i, cell)) return true;
     }
-    // 6) 救援式重排（保守）：某短兵无可达空格，而有射程≥它的已上场兵占着它可达的近格，
-    //    且该占位兵能挪到更远的可达空格 → 挪走占位兵、腾出近格给短兵。尽量少扰动现有布局。
-    for (const { t, i } of unitIdx) {
-      const rge = getUnitStat(t.type, t.tier).rge;
-      if (free.some((c) => view.nearestPathDist(c) <= rge + tol)) continue; // 该短兵本有位（理论上步5已放），跳过
-      for (const occ of view.placedUnits()) {
-        if (view.nearestPathDist(occ.cell) > rge + tol) continue; // 占位兵不在短兵可达格，挪它无益
-        const occRge = getUnitStat(occ.type, occ.tier).rge;
-        if (occRge < rge) continue; // 只把射程≥的兵往外挪（更适合远格）
-        let dest: Cell | undefined;
-        let destScore = -Infinity;
-        for (const c of free) {
-          if (view.nearestPathDist(c) > occRge + tol) continue; // 占位兵够不着
-          if (view.nearestPathDist(c) <= rge + tol) continue;   // 别又占短兵能用的近格
-          const sc = scoreCell(c, occ.type, occ.tier);
-          if (!dest || sc > destScore) { dest = c; destScore = sc; }
-        }
-        if (dest && view.moveUnit(occ.cell, dest)) {
-          view.place(i, occ.cell); // 腾出的近格放短兵
-          return true;
-        }
-      }
-    }
-    // 7) 未激活孤儿字让出高覆盖攻位给兵器（红/沙/骨不占前线）
-    if (!subopt() && tryYieldOrphanSeatsToUnits()) return true;
-    // 8) 孤儿字迁到更远离路径/靠唐僧的空位
-    if (!subopt() && tryRelocateOrphansToRear()) return true;
-    // 9) 地图槽位已满：先 tray 内合 / 棋盘合腾位再落子
-    if (view.freeCells().length === 0) {
-      if (tryTrayMergeOntoBoard()) return true;
-      if (tryBoardMergeThenPlace()) return true;
-    }
-    return false; // 无可推进动作
+    return tryFillAnyFreeSeat();
+  }
+
+  /** 有空格必落一兵：无视射程，优先填离路最近的格 */
+  function tryFillAnyFreeSeat(): boolean {
+    const free = view.freeCells();
+    const unitIdx = trayUnitEntries();
+    if (free.length === 0 || unitIdx.length === 0) return false;
+    const cell = nearestFreeCell(free);
+    const { i } = unitIdx[0]!;
+    return view.place(i, cell);
   }
 
   /**
@@ -1363,18 +1451,20 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const needMate = mateIsLeftChar ? left : right;
         const needTray = mateIsLeftChar ? right : left;
 
-        // 只处理伴侣已在目标位的对（避免误换到 c3 等非目标左格）
-        if (!sameCell(boardMate.cell, needMate)) continue;
+        const mateAtNeed = sameCell(boardMate.cell, needMate);
+        const mateAtTray = sameCell(boardMate.cell, needTray);
+        // 只处理伴侣已在目标位，或白龙式「左字在右格待左移」
+        if (!mateAtNeed && !(mateIsLeftChar && mateAtTray)) continue;
 
         // 目标格被其它激活将占用 → 由 tryTrayHeroInsertByRowShift 整行左移；此处不拆散
         if (view.isActiveHeroCell(needTray)) continue;
-        if (view.isActiveHeroCell(needMate) && !sameCell(boardMate.cell, needMate)) continue;
+        if (view.isActiveHeroCell(needMate) && !mateAtNeed) continue;
 
         const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
         const mateOld = { ...boardMate.cell };
-        const mateAlreadySeated = sameCell(boardMate.cell, needMate);
+        const mateAlreadySeated = mateAtNeed;
 
-        // 1) 腾伴侣目标格并迁座（已在位则跳过）
+        // 1) 腾伴侣目标格并迁座（左字须在 needMate；右字须在 needTray）
         if (!mateAlreadySeated) {
           if (!clearForHero(needMate, reserved, null)) continue;
           const mateNow = resolveTrackedWord(boardMate);
@@ -1507,7 +1597,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const candidates = tray
       .map((t, i) => ({ t, i }))
       .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
-      .filter(({ t }) => view.nearestPathDist(freed) <= getUnitStat(t.type, t.tier).rge + tol)
       .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
     if (candidates.length > 0) {
       view.place(candidates[0]!.i, freed);

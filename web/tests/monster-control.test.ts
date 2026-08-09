@@ -45,7 +45,7 @@ describe('monster control debuff limits', () => {
     expect(TUNING.skillRadius).toBeLessThanOrEqual(1);
   });
 
-  it('control skill only hits the nearest weapon within 1 cell', () => {
+  it('control skill only hits weapons within 1 cell', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const b = new Battle(1, 1, map);
     // 路径格 (4,6)：正交邻格命中，对角/远处不命中
@@ -70,11 +70,11 @@ describe('monster control debuff limits', () => {
     expect(missFar.stunT).toBe(0);
   });
 
-  it('when two weapons are within 1 cell, only the nearest is debuffed', () => {
+  it('when two weapons are within 1 cell, debuffs 1–2 nearest by roll', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const b = new Battle(2, 1, map);
     const pathCell = { c: 4, r: 6 };
-    // 两把都在半径内；怪物偏左，应只打更近的 a
+    // 两把都在半径内；怪物偏左，最近的一定是 a
     const a = { c: 3, r: 6 };
     const bb = { c: 5, r: 6 };
     b.units.set(`${a.c},${a.r}`, makePlacedUnit('dao', 1, a));
@@ -89,9 +89,28 @@ describe('monster control debuff limits', () => {
     const ua = b.units.get(`${a.c},${a.r}`)!;
     const ub = b.units.get(`${bb.c},${bb.r}`)!;
     const hitCount = (ua.stunT > 0 ? 1 : 0) + (ub.stunT > 0 ? 1 : 0);
-    expect(hitCount).toBe(1);
-    expect(ua.stunT).toBeGreaterThan(0); // 偏左 → 打近的 a
-    expect(ub.stunT).toBe(0);
+    expect(hitCount).toBeGreaterThanOrEqual(1);
+    expect(hitCount).toBeLessThanOrEqual(TUNING.skillTargetMax);
+    expect(ua.stunT).toBeGreaterThan(0); // 偏左 → 最近 a 必中
+  });
+
+  it('can debuff two weapons when roll is 2', () => {
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
+    const b = new Battle(2, 1, map);
+    const pathCell = { c: 4, r: 6 };
+    const a = { c: 3, r: 6 };
+    const bb = { c: 5, r: 6 };
+    b.units.set(`${a.c},${a.r}`, makePlacedUnit('dao', 1, a));
+    b.units.set(`${bb.c},${bb.r}`, makePlacedUnit('spear', 1, bb));
+    b.monsters.push(eliteMonster({ id: 3, dist: pathDistAt(map, pathCell), skillCd: 0 }));
+    (b as unknown as { rollSkillTargetCount(): number }).rollSkillTargetCount = () => 2;
+    (b as unknown as { status: string }).status = 'playing';
+    b.step(0.05);
+
+    const ua = b.units.get(`${a.c},${a.r}`)!;
+    const ub = b.units.get(`${bb.c},${bb.r}`)!;
+    expect(ua.stunT).toBeGreaterThan(0);
+    expect(ub.stunT).toBeGreaterThan(0);
   });
 
   it('weapon is immune to the same debuff for a while after being hit', () => {

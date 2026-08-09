@@ -229,6 +229,28 @@ it('射程感知：短兵占近格，弓箭手占远格', () => {
   expect(byCell.get('0,3')).toBe('archer');
 });
 
+it('有空格必落：射程够不着时也填满离路最近的格', () => {
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'dao', tier: 1 }],
+    [{ c: 0, r: 5 }],
+  );
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.placedUnits()).toHaveLength(1);
+  expect(v.placedUnits()[0]!.cell).toEqual({ c: 0, r: 5 });
+  expect(v.tray()).toHaveLength(0);
+});
+
+it('有空格时落子优先于调位：单步先上 tray 兵', () => {
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'cavalry', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 0, r: 1 }],
+  );
+  v.unitsMap.set('0,0', { type: 'archer', tier: 3, cell: { c: 0, r: 0 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.placedUnits().some((u) => u.type === 'cavalry')).toBe(true);
+  expect(v.tray()).toHaveLength(0);
+});
+
 it('近战贴路：可达格中优先 pathCover 高（近路）的格', () => {
   // dao rge=1：r=0 覆盖代理更高 → 落 (0,0)
   const v = new FakeView(
@@ -330,11 +352,11 @@ it('铲子优先挖离路约1格的格（优于更远格）', () => {
   expect(v.freeCells().some((c) => c.r === 1)).toBe(true);
 });
 
-it('够不着(仅远格 + 无同阶合成)则保留在 tray，不浪费格', () => {
+it('有空格必落：仅远格时也填满（不留在 tray）', () => {
   const v = new FakeView([{ kind: 'unit', type: 'dao', tier: 1 }], [{ c: 0, r: 3 }]);
   planAutoPlace(v, { rng });
-  expect(v.tray().length).toBe(1);
-  expect(v.placedUnits().length).toBe(0);
+  expect(v.tray().length).toBe(0);
+  expect(v.placedUnits()[0]!.cell).toEqual({ c: 0, r: 3 });
 });
 
 it('字牌按连读顺序放到能激活的相邻格', () => {
@@ -473,27 +495,25 @@ it('pSubOptimal=1 时会选非最优格（覆盖次优分支，但仍不丢弃/�
   expect(v.placedUnits().length).toBe(1);
 });
 
-it('救援式重排：远程兵占着近格挡住短兵 → 挪远程兵到远格、腾近格给短兵', () => {
-  // 已解锁近格(0,0 r=0) 被 archer 占；远格(0,3 r=3) 空。tray 有 dao(rge1) 够不着远格。
-  // 期望：archer 挪到 0,3，dao 落到 0,0。
+it('近格被占时：tray 短兵先落远格（填满空位），不强制救援换座', () => {
+  // 近格(0,0) 被 archer 占；远格(0,3) 空。tray 有 dao → 直接落到 0,3。
   const v = new FakeView([{ kind: 'unit', type: 'dao', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
   v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
-  expect(byCell.get('0,0')).toBe('dao'); // 近格腾给短兵
-  expect(byCell.get('0,3')).toBe('archer'); // 远程兵挪到远格
-  expect(v.tray().length).toBe(0);          // 不丢弃
+  expect(byCell.get('0,0')).toBe('archer');
+  expect(byCell.get('0,3')).toBe('dao');
+  expect(v.tray().length).toBe(0);
 });
 
-it('救援不误伤：不把射程更短的占位兵从近格赶走（占位兵射程<待放兵才不挪）', () => {
-  // 近格(0,0)被 dao(rge1)占；远格(0,3)空。tray 是 cavalry(rge1.5)，够不着远格。
-  // cavalry 射程 > 占位 dao，若挪走 dao 反而把更该待在近格的短兵赶走 → 规则拒绝，cavalry 保留。
+it('近格被占时：tray 骑兵落远格，不赶走占位短兵', () => {
   const v = new FakeView([{ kind: 'unit', type: 'cavalry', tier: 1 }], [{ c: 0, r: 0 }, { c: 0, r: 3 }]);
   v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
   planAutoPlace(v, { rng });
   const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u.type]));
-  expect(byCell.get('0,0')).toBe('dao'); // 短兵稳守近格，不被赶走
-  expect(v.tray().length).toBe(1);          // cavalry 够不着，保留（不丢弃、不硬塞）
+  expect(byCell.get('0,0')).toBe('dao');
+  expect(byCell.get('0,3')).toBe('cavalry');
+  expect(v.tray().length).toBe(0);
 });
 
 it('满槽：tray 两枚同阶可合且合后能上棋盘再合 → 先 tray 合再落到棋盘', () => {
@@ -558,8 +578,7 @@ it('刀在右侧、左侧近出口空着时应迁到左侧（结合射程与出�
   expect(knife?.cell).toEqual({ c: 0, r: 0 });
 });
 
-it('挖出空位后先迁棋盘武器，再落 tray', () => {
-  // 棋盘刀在远端 (4,0)；铲子挖近出口 (0,0)；tray 另有枪。应先把刀迁到 (0,0)，枪再落到腾出的 (4,0)
+it('挖出空位后 tray 枪优先占近出口，刀留原格', () => {
   const v = new FakeView(
     [
       { kind: 'shovel' },
@@ -571,8 +590,8 @@ it('挖出空位后先迁棋盘武器，再落 tray', () => {
   v.unitsMap.set('4,0', { type: 'dao', tier: 2, cell: { c: 4, r: 0 } });
   planAutoPlace(v, { rng });
   const byType = new Map(v.placedUnits().map((u) => [u.type, u]));
-  expect(byType.get('dao')?.cell).toEqual({ c: 0, r: 0 });
-  expect(byType.get('spear')?.cell).toEqual({ c: 4, r: 0 });
+  expect(byType.get('spear')?.cell).toEqual({ c: 0, r: 0 });
+  expect(byType.get('dao')?.cell).toEqual({ c: 4, r: 0 });
   expect(v.tray().some((t) => t.kind === 'unit')).toBe(false);
 });
 

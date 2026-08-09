@@ -3377,7 +3377,7 @@ function drawMonsterSelection(
   } else {
     rows.push(['技能', '无']);
   }
-  if (m.isCavalry) rows.push(['特性', '骑兵·移速翻倍']);
+  if (m.isCavalry) rows.push(['特性', '骑兵·移速翻倍·薄血']);
   if (statusEntries.length > 0) {
     rows.push(['状态', formatStatusLine(statusEntries)]);
   }
