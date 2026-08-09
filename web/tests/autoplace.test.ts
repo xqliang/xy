@@ -1090,7 +1090,7 @@ it('仅 tray 白时左移金吒一格后激活白骨', () => {
     { c: 4, r: 0 }, { c: 5, r: 0 },
   ];
   const v = new FakeView([{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }], cells);
-  v.waveNum = 5;
+  v.waveNum = 4;
   v.wordsMap.set('2,0', { char: '金', general: 'jinzha', cell: { c: 2, r: 0 }, tier: 1 });
   v.wordsMap.set('3,0', { char: '吒', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
   v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
@@ -1639,7 +1639,7 @@ it('待处理：地图挤回 tray 的高阶兵换棋盘更低阶武器上板', (
   expect(archer).toBeDefined();
 });
 
-it('第5波：铁背金吒已激活时 tray 红+牛应落入空格', () => {
+it('第4波：铁背金吒已激活时 tray 红+牛应落入空格', () => {
   const cells: Cell[] = [];
   for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
   const v = new FakeView(
@@ -1649,7 +1649,7 @@ it('第5波：铁背金吒已激活时 tray 红+牛应落入空格', () => {
     ],
     cells,
   );
-  v.waveNum = 5;
+  v.waveNum = 4;
   v.wordChars = (g: string) => {
     if (g === 'tiebei') return ['铁', '背'] as const;
     if (g === 'jinzha') return ['金', '吒'] as const;
@@ -1673,7 +1673,7 @@ it('第5波：铁背金吒已激活时 tray 红+牛应落入空格', () => {
   expect(v.tray().some((t) => t.kind === 'word')).toBe(false);
 });
 
-it('第5波：棋盘 orphan 郎 + tray 牛待激活时不应阻塞 红 落位', () => {
+it('第4波：棋盘 orphan 郎 + tray 牛待激活时不应阻塞 红 落位', () => {
   const cells: Cell[] = [];
   for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
   const v = new FakeView(
@@ -1683,7 +1683,7 @@ it('第5波：棋盘 orphan 郎 + tray 牛待激活时不应阻塞 红 落位', 
     ],
     cells,
   );
-  v.waveNum = 5;
+  v.waveNum = 4;
   v.wordChars = (g: string) => {
     if (g === 'honghaier') return ['红', '孩'] as const;
     if (g === 'niulang') return ['牛', '郎'] as const;
@@ -1700,7 +1700,7 @@ it('第5波：棋盘 orphan 郎 + tray 牛待激活时不应阻塞 红 落位', 
   expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
 });
 
-it('第5波：伴侣格被占时不应阻塞 orphan 单字落位', () => {
+it('第4波：伴侣格被占时不应阻塞 orphan 单字落位', () => {
   const cells: Cell[] = [];
   for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
   const v = new FakeView(
@@ -1711,7 +1711,7 @@ it('第5波：伴侣格被占时不应阻塞 orphan 单字落位', () => {
     ],
     cells,
   );
-  v.waveNum = 5;
+  v.waveNum = 4;
   v.wordChars = (g: string) => {
     if (g === 'jinzha') return ['金', '吒'] as const;
     if (g === 'honghaier') return ['红', '孩'] as const;
@@ -1725,7 +1725,7 @@ it('第5波：伴侣格被占时不应阻塞 orphan 单字落位', () => {
   expect(v.placedWords().some((w) => w.char === '牛')).toBe(true);
 });
 
-it('第5波起：tray 字优先于 tray 兵种落子', () => {
+it('第4波起：tray 字优先于 tray 兵种落子', () => {
   const v = new FakeView(
     [
       { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
@@ -1733,25 +1733,25 @@ it('第5波起：tray 字优先于 tray 兵种落子', () => {
     ],
     [{ c: 3, r: 5 }, { c: 4, r: 5 }],
   );
-  v.waveNum = 5;
+  v.waveNum = 4;
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(false);
   expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
   expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'dao')).toBe(true);
 });
 
-it('第5波起：地图上已有同字时 tray 重复字可留候选区', () => {
+it('第4波起：地图上已有同字时 tray 重复字可留候选区', () => {
   const v = new FakeView(
     [{ kind: 'word', char: '红', general: 'honghaier', tier: 1 }],
     [{ c: 3, r: 5 }],
   );
-  v.waveNum = 5;
+  v.waveNum = 4;
   v.wordsMap.set('4,5', { char: '红', general: 'honghaier', cell: { c: 4, r: 5 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 5 });
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(true);
 });
 
-it('第5波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
+it('第4波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
   const cells = [
     { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 },
     { c: 0, r: 7 }, { c: 1, r: 7 },
@@ -1776,7 +1776,7 @@ it('第5波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '白')).toBe(true);
 });
 
-it('第5波起：棋盘金+tray吒应激活金吒（右邻空）', () => {
+it('第4波起：棋盘金+tray吒应激活金吒（右邻空）', () => {
   const cells = [
     { c: 0, r: 2 }, { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 },
     { c: 4, r: 2 }, { c: 5, r: 2 }, { c: 6, r: 2 },
@@ -1822,7 +1822,7 @@ it('第5波起：棋盘金+tray吒应激活金吒（右邻空）', () => {
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '吒')).toBe(false);
 });
 
-it('第5波起：棋盘金+tray吒右邻被占时应换兵激活金吒', () => {
+it('第4波起：棋盘金+tray吒右邻被占时应换兵激活金吒', () => {
   const cells = [
     { c: 3, r: 2 }, { c: 4, r: 2 }, { c: 5, r: 2 }, { c: 6, r: 2 },
     { c: 3, r: 3 }, { c: 4, r: 3 }, { c: 5, r: 3 }, { c: 6, r: 3 },

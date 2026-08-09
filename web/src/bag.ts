@@ -26,12 +26,15 @@ const LEFT = 24;
 const ROW_W = VIEW_W - 48;
 const HEADER_H = 108;
 
-/** 已装备优先（最近装备在前），其余按 WEAPONS 自然顺序 */
+/** 已装备（最近在前）→ 已获得未装备 → 未获得，各段内按 WEAPONS 自然顺序 */
 export function bagDisplayOrder(bag: BagState): string[] {
   const equippedSet = new Set(bag.equipped);
   const equippedFirst = [...bag.equipped].reverse();
-  const unequipped = WEAPONS.map((w) => w.id).filter((id) => !equippedSet.has(id));
-  return [...equippedFirst, ...unequipped];
+  const ownedUnequipped = WEAPONS.map((w) => w.id).filter(
+    (id) => !equippedSet.has(id) && (bag.owned[id] ?? 0) > 0,
+  );
+  const unowned = WEAPONS.map((w) => w.id).filter((id) => (bag.owned[id] ?? 0) === 0);
+  return [...equippedFirst, ...ownedUnequipped, ...unowned];
 }
 
 function rowContentY(index: number): number {
@@ -144,7 +147,11 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
   ctx.fillText('武器背包', VIEW_W / 2, 56);
   ctx.fillStyle = '#d8c8a0';
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(`神兵对局随机掉落 · 重复升品质 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}（点击切换）`, VIEW_W / 2, 90);
+  ctx.fillText(
+    `清波35%掉落·妖王波必掉·对局左下角点击领取 · 重复升品质 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
+    VIEW_W / 2,
+    90,
+  );
 
   if (toast) {
     ctx.textAlign = 'center';
@@ -255,7 +262,7 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
     `专属「${gname}」神兵，装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
     (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} ${curBonus}。${bonusExplain}。\n`
          : `尚未获得。获得后可装备：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
-    `对局中随机掉落，重复掉落自动升品质；背包最多同时装备 ${MAX_EQUIPPED} 件。`;
+    `清波有35%概率随机掉落，妖王波必掉；对局左下角点击领取后入背包。重复掉落自动升品质，最多同时装备 ${MAX_EQUIPPED} 件。`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.9)';

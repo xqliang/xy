@@ -60,6 +60,7 @@ import {
 } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
+import { drawWeaponPickups, weaponPickupHitAt } from './weaponPickup';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
@@ -432,6 +433,17 @@ function handleMerchantPointer(x: number, y: number): boolean {
   return true;
 }
 
+function claimWeaponPickup(id: string): void {
+  const idx = battle.pendingWeaponPickups.indexOf(id);
+  if (idx < 0) return;
+  battle.pendingWeaponPickups.splice(idx, 1);
+  playSfx('click');
+  const r = addWeapon(bag, id);
+  bag = r.state;
+  const name = weaponById(id)?.name ?? id;
+  battle.message = `获得神兵：${name}${r.upgraded ? ' 升阶' : ''}`;
+}
+
 function leaveSettleToMenu(): void {
   settleChange = null;
   endlessResult = null;
@@ -629,6 +641,11 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'settle') {
+    const pickupId = weaponPickupHitAt(x, y, battle.pendingWeaponPickups);
+    if (pickupId) {
+      claimWeaponPickup(pickupId);
+      return;
+    }
     if ((battle.endless && endlessResult) || isSettleAnimDone(performance.now() - settleStart)) {
       leaveSettleToMenu();
     } else {
@@ -666,6 +683,11 @@ function onPointerDown(e: PointerEvent) {
   }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
+  const pickupId = weaponPickupHitAt(x, y, battle.pendingWeaponPickups);
+  if (pickupId) {
+    claimWeaponPickup(pickupId);
+    return;
+  }
   if (handleButton(x, y)) { clearBoardSelect(); return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -885,7 +907,7 @@ function scheduleFrame(): void {
 function needsContinuousLoop(): boolean {
   if (screen === 'menu') return true;
   if (screen === 'battle') return !ui.paused;
-  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart);
+  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart) || battle.pendingWeaponPickups.length > 0;
   return false;
 }
 
@@ -936,6 +958,7 @@ function frame(now: number): void {
   } else if (screen === 'settle') {
     if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
+    drawWeaponPickups(ctx, battle.pendingWeaponPickups);
   } else {
     // —— 战斗 —— //
     if (!ui.paused) {
@@ -956,15 +979,6 @@ function frame(now: number): void {
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
       endHandled = true;
       pendingMerchant = true;
-      // 神兵掉落入背包（两种模式通用）
-      const names: string[] = [];
-      for (const wid of battle.droppedWeapons) {
-        const r = addWeapon(bag, wid);
-        bag = r.state;
-        names.push(`${weaponById(wid)?.name ?? wid}${r.upgraded ? '↑' : ''}`);
-      }
-      battle.droppedWeapons = [];
-      const dropMsg = names.length ? `，神兵：${names.join('、')}` : '';
 
       if (battle.endless) {
         // 无尽：不涨降境界，只记录最高波数；仍发放功德（软奖励，与星级解耦）
@@ -973,7 +987,7 @@ function frame(now: number): void {
         const isRecord = recordBestWave(battle.wave);
         endlessResult = { wave: battle.wave, best: getBestWave(), isNewRecord: isRecord, merit: gain };
         settleChange = null;
-        battle.message = `抵达第 ${battle.wave} 波（功德 +${gain}${dropMsg}）`;
+        battle.message = `抵达第 ${battle.wave} 波（功德 +${gain}）`;
         settleStart = performance.now();
         screen = 'settle';
       } else {
@@ -984,7 +998,7 @@ function frame(now: number): void {
         rank = change.state;
         const gain = meritReward(won, battle.wave);
         merit = addMerit(merit, gain);
-        battle.message = `${battle.message}（功德 +${gain}${dropMsg}）`;
+        battle.message = `${battle.message}（功德 +${gain}）`;
         endlessResult = null;
         settleChange = change;
         settleStart = performance.now();
@@ -993,6 +1007,7 @@ function frame(now: number): void {
     }
     setHudRank(rankName(rank.level));
     draw(ctx, battle, ui);
+    drawWeaponPickups(ctx, battle.pendingWeaponPickups);
     if (ui.paused) drawPausePopup(ctx, pausePhase);
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。

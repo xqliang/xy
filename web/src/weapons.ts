@@ -1,5 +1,5 @@
 // 武器（神兵）系统：每位武将一件专属神兵，五级品质 白/绿/蓝/紫/金。
-// 对局中随机掉落；重复掉落自动升品质；背包内最多装备 3 件（形成取舍）。
+// 对局清波随机掉落；左下角点击领取后入背包；重复掉落自动升品质；最多装备 3 件。
 // 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.35 格（格数加成）。
 import { GENERALS, generalById } from './generals';
 import { storeGet, storeSet, parseStoredJson, safeStringArray } from './storage';

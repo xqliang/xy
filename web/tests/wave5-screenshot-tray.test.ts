@@ -1,5 +1,5 @@
 /**
- * 复现用户截图：第5波、铁背+金吒已激活、tray 红+牛、右侧有空格，点布阵应落字。
+ * 复现用户截图：第4波、铁背+金吒已激活、tray 红+牛、右侧有空格，点布阵应落字。
  */
 import { describe, it, expect } from 'vitest';
 import { planAutoPlaceSteps } from '../src/autoplace';
@@ -45,11 +45,11 @@ function setupScreenshotLikeBoard(b: Battle) {
     { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
     { kind: 'word', char: '牛', general: 'niulang', tier: 1 },
   ];
-  (b as unknown as { wave: number }).wave = 5;
+  (b as unknown as { wave: number }).wave = 4;
   (b as unknown as { status: string }).status = 'playing';
 }
 
-describe('wave5 screenshot tray words', () => {
+describe('wave4 screenshot tray words', () => {
   it('autoPlaceTray 应将 tray 红+牛落到空格', () => {
     const b = new Battle(mapById('pansidong'));
     setupScreenshotLikeBoard(b);

@@ -36,7 +36,7 @@ import {
   type GeneralDef,
 } from './generals';
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
-import { rollWeaponDrop, type WeaponBonuses } from './weapons';
+import { rollWeaponDrop, weaponById, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
@@ -679,7 +679,7 @@ export class Battle {
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
-  droppedWeapons: string[] = []; // 本局掉落的神兵（结算时入背包）
+  pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵
   pickedItems: string[] = [];
 
   private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的武将 id
@@ -2347,8 +2347,9 @@ export class Battle {
     const isBossWave = this.isBossWave(this.wave);
     if (!isBossWave && this.rng.next() > 0.35) return;
     const id = rollWeaponDrop(this.rng.next());
-    this.droppedWeapons.push(id);
-    this.message = `第 ${this.wave} 波已清！掉落神兵`;
+    this.pendingWeaponPickups.push(id);
+    const wname = weaponById(id)?.name ?? id;
+    this.message = `第 ${this.wave} 波已清！掉落「${wname}」（点击左下角领取）`;
   }
 
   // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈阶梯。
@@ -2637,7 +2638,7 @@ export class Battle {
       skillCd,
     };
     const off = Math.min(0, distOffset);
-    const playerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd * spdMul;
+    const playerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * this.aiDebuffPlayerSpdMul * diffSpd * spdMul;
     const aiSpd = TUNING.monsterSpd * diffSpd * spdMul;
     this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
     if (!this.endless) {
@@ -2653,7 +2654,7 @@ export class Battle {
         skill: null,
         skillCd: TUNING.skillFirstDelay,
       };
-      const escortPlayerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd;
+      const escortPlayerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * this.aiDebuffPlayerSpdMul * diffSpd;
       const escortAiSpd = TUNING.monsterSpd * diffSpd;
       for (let i = 0; i < bossEscortCount; i++) {
         const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * SPAWN_DIST_JITTER;
@@ -2702,7 +2703,7 @@ export class Battle {
       const inRange = maxTargets === 1 && !dangerNear
         ? inRangeRaw.sort((a, b) => b.m.dist - a.m.dist)
         : this.sortCombatTargets(inRangeRaw, dangerNear);
-      const dmg = damage(stat.atk);
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1));
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
@@ -2720,12 +2721,11 @@ export class Battle {
         const tp = inRange[0]!.p;
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
-      u.cooldown = 1 / (stat.frq * this.aiFrqMul);
+      u.cooldown = 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
     }
   }
 
-  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分，但用基础数值
-  //（无武器加成 / 无 this.mods / 无羁绊）；主动技能（眩晕/治疗等）本阶段有意不镜像——仅基础普攻。
+  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分（含 AI 道具加成，无神兵/羁绊）。
   private updateAiGenerals(dt: number): void {
     for (const g of this.aiActiveGenerals()) {
       const stat = generalStat(g.def, g.tier);
@@ -2744,7 +2744,7 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(stat.atk); // 基础，无 bond/weapon/mods
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1));
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -2760,7 +2760,7 @@ export class Battle {
         s.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
-      s.cooldown = 1 / stat.frq;
+      s.cooldown = 1 / (stat.frq * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
     }
   }
 
@@ -3859,7 +3859,7 @@ export class Battle {
       spawnInterval: this.wavePressure != null ? Math.round(this.wavePressure.spawnInterval * 100) / 100 : null,
       generals: this.activeGenerals().length,
       words: this.words.size,
-      drops: this.droppedWeapons.length,
+      drops: this.pendingWeaponPickups.length,
       bond: this.bondActive(),
       aiPow: Math.round(aiPowTotal),
       monsterPow: Math.round(monsterPowTotal),

@@ -14,6 +14,18 @@ describe('bag display order', () => {
     expect(tail).toEqual(natural);
   });
 
+  it('已获得未装备排在已装备之后、未获得之前', () => {
+    const order = bagDisplayOrder({
+      owned: { jingubang: 2, huojianqiang: 1, jiuchidingba: 1 },
+      equipped: ['jingubang'],
+    });
+    expect(order[0]).toBe('jingubang');
+    expect(order.slice(1, 3)).toEqual(['huojianqiang', 'jiuchidingba']);
+    expect(order.slice(3).every((id) => (order.includes(id)))).toBe(true);
+    for (const id of order.slice(3)) {
+      expect(['huojianqiang', 'jiuchidingba', 'jingubang']).not.toContain(id);
+    }
+  });
   it('列表高度超出视口时可滚动', () => {
     expect(bagMaxScroll()).toBeGreaterThan(0);
   });
