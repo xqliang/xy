@@ -763,7 +763,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
-  drawHud(ctx, b);
+  drawHud(ctx, b, ui);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
   drawActiveIcons(ctx, b);
@@ -4905,7 +4905,7 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
-function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
+function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
   ctx.fillStyle = 'rgba(90,70,40,0.3)';

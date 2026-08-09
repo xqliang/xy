@@ -61,7 +61,7 @@ import {
 } from './board-power';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
-import { DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs } from './ai-skill';
+import { DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses } from './ai-skill';
 import {
   COLS,
   ROWS,
@@ -683,6 +683,7 @@ export class Battle {
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
+  aiWeaponBonuses: WeaponBonuses = {}; // AI 神兵：按 aiSkill 缩放玩家神兵
   pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵碎片
   /** 开局预排的本局可能掉落的神兵 id；null 表示本局无掉落资格 */
   battleFragmentDropId: string | null = null;
@@ -726,6 +727,7 @@ export class Battle {
 
   constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL) {
     this.weaponBonuses = weapons;
+    this.aiWeaponBonuses = scaleWeaponBonuses(weapons, aiWeaponScale(aiSkill));
     this.rng = new RNG(seed);
     this.aiRng = new RNG((seed * 2654435761 + 1013904223) >>> 0); // 派生独立流：生成策略同、结果不同
     this.aiSkill = aiSkill;
@@ -750,6 +752,8 @@ export class Battle {
     this.aiTangsengHP += meta.bonusHp; // 对手同享，维持对称
     this.mods.atkMul += meta.atkPct;
     this.mods.frqMul += meta.frqPct;
+    this.aiMods.atkMul += meta.atkPct;
+    this.aiMods.frqMul += meta.frqPct;
     // 装备的主动技能（最多 MAX_EQUIPPED_ACTIVES 个）建运行时槽；初始满 CD，避免开局即放
     for (const id of actives.slice(0, MAX_EQUIPPED_ACTIVES)) {
       const def = activeById(id);
@@ -1620,7 +1624,7 @@ export class Battle {
     const ax = (left.c + right.c) / 2;
     const ay = (left.r + right.r) / 2;
     const stat = generalStat(def, tier);
-    const wb = ai ? undefined : this.weaponBonuses[general];
+    const wb = ai ? this.aiWeaponBonuses[general] : this.weaponBonuses[general];
     const atk = stat.atk * (1 + (wb?.atk ?? 0));
     const rge = stat.rge + (wb?.rge ?? 0);
     const lite = monsters.map((m) => ({ dist: m.dist, hp: m.hp, maxHp: m.maxHp }));
@@ -2839,7 +2843,7 @@ export class Battle {
       const inRange = maxTargets === 1 && !dangerNear
         ? inRangeRaw.sort((a, b) => b.m.dist - a.m.dist)
         : this.sortCombatTargets(inRangeRaw, dangerNear);
-      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1));
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
@@ -2861,10 +2865,14 @@ export class Battle {
     }
   }
 
-  // AI 武将攻击 tick：镜像玩家 updateGenerals 的“攻击”部分（含 AI 道具加成，无神兵/羁绊）。
+  // AI 武将攻击 tick：镜像玩家 updateGenerals（含 AI 道具 / 神兵 / 羁绊）。
   private updateAiGenerals(dt: number): void {
     for (const g of this.aiActiveGenerals()) {
       const stat = generalStat(g.def, g.tier);
+      const wb = this.aiWeaponBonuses[g.def.id];
+      const atk = stat.atk * (1 + (wb?.atk ?? 0));
+      const rge = stat.rge + (wb?.rge ?? 0);
+      const frq = stat.frq * (1 + (wb?.frq ?? 0));
       const s = g.state;
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
@@ -2872,7 +2880,7 @@ export class Battle {
       const inRange = this.sortCombatTargets(
         this.aiMonsters
           .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-          .filter((x) => inAttackRange(ax, ay, stat.rge, x.p)),
+          .filter((x) => inAttackRange(ax, ay, rge, x.p)),
         this.aiDangerNear(),
       );
       s.cooldown -= dt;
@@ -2880,7 +2888,7 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1));
+      const dmg = damage(atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -2896,7 +2904,7 @@ export class Battle {
         s.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
-      s.cooldown = 1 / (stat.frq * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
+      s.cooldown = 1 / (frq * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
     }
   }
 
@@ -2918,6 +2926,7 @@ export class Battle {
           maxSteps: AI_PLACE_MAX_STEPS,
           maxGuard: AI_PLACE_MAX_GUARD,
         });
+        this.tickAiShovelReserve();
       }
     }
     // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
@@ -3066,6 +3075,87 @@ export class Battle {
   }
   private bondAtkMul(): number {
     return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
+  }
+
+  aiBondActive(): boolean {
+    return this.aiActiveGenerals().some((g) => g.def.id === BOND_GENERAL);
+  }
+
+  private aiBondAtkMul(): number {
+    return this.aiBondActive() ? 1 + BOND_ATK_BONUS : 1;
+  }
+
+  private aiDpsPieceCount(): number {
+    return this.aiUnits.length + this.aiActiveGenerals().length;
+  }
+
+  /** AI 主动技能释放时机：危险技 / 爆发技 / 增益技分层 */
+  private aiShouldTriggerActive(effect: ActiveEffect): boolean {
+    if (this.aiMonsters.length === 0) return false;
+    switch (effect) {
+      case 'palm':
+      case 'freeze':
+        return this.aiDangerNear();
+      case 'meteor':
+        return this.aiMonsters.length >= 3
+          || this.aiMonsters.some((m) => m.isBoss)
+          || (this.isBossWave(this.wave) && this.aiMonsters.length >= 1);
+      case 'jinggu':
+        return this.aiMonsters.length >= 2
+          || this.aiMonsters.some((m) => m.isBoss || m.isMiniBoss);
+      case 'atkBuff':
+      case 'frqBuff':
+        return this.aiDpsPieceCount() >= 2;
+      default: {
+        const _exhaustive: never = effect;
+        void _exhaustive;
+        return true;
+      }
+    }
+  }
+
+  private aiActiveSlotPriority(i: number): number {
+    const slot = this.aiActiveSlots[i];
+    if (!slot?.ready) return 999;
+    const def = activeById(slot.id);
+    if (!def || !this.aiShouldTriggerActive(def.effect)) return 998;
+    switch (def.effect) {
+      case 'palm':
+      case 'freeze':
+        return 0;
+      case 'jinggu':
+      case 'meteor':
+        return 1;
+      case 'atkBuff':
+      case 'frqBuff':
+        return 2;
+      default: {
+        const _exhaustive: never = def.effect;
+        void _exhaustive;
+        return 3;
+      }
+    }
+  }
+
+  /** 库存铲子：tray 无铲且仍有锁定格时自动开挖（洛阳铲产出等） */
+  private aiUseShovelOn(to: Cell): boolean {
+    if (this.aiShovels <= 0) return false;
+    const k = cellKey(to.c, to.r);
+    if (this.aiUnlocked.has(k)) return false;
+    if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false;
+    this.aiShovels -= 1;
+    this.aiUnlocked.add(k);
+    this.aiDigFx.push({ c: to.c, r: to.r, t: 0 });
+    if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach;
+    return true;
+  }
+
+  private tickAiShovelReserve(): void {
+    if (this.aiShovels <= 0 || this.aiLockedCells().length === 0) return;
+    if (this.aiTray.some((t) => t?.kind === 'shovel')) return;
+    const digs = this.aiLockedCells();
+    if (digs.length === 0) return;
+    this.aiUseShovelOn(digs[0]!);
   }
 
   private generalActivateMessage(name: string, generalId: string): string {
