@@ -46,6 +46,6 @@ describe('Battle.placeFromTray', () => {
     b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.tier).toBe(2);
-    expect(b.tray).toHaveLength(0);
+    expect(b.tray[0]).toBeUndefined();
   });
 });

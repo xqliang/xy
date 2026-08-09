@@ -578,15 +578,27 @@ export function drawMenuSpriteButton(
   const cy = rect.y + rect.h / 2;
   const t = performance.now() / 1000;
   const clipR = Math.min(rect.h / 2, fit === 'cover' && rect.w > rect.h * 1.2 ? 14 : 16);
+  const sweepCycle = 2.5;
+  const sweepDur = 0.38;
+  const sweepPhase = t % sweepCycle;
+  const inCtaSweep = anim === 'cta' && interact === 'none' && sweepPhase <= sweepDur;
 
   ctx.save();
   if (interact !== 'none') {
     applyMenuInteract(ctx, rect, interact);
-  } else if (anim === 'soft') {
-    const pulse = 1 + Math.sin(t * 2.2 + 0.6) * 0.012;
-    ctx.translate(cx, cy);
-    ctx.scale(pulse, pulse);
-    ctx.translate(-cx, -cy);
+  } else {
+    let pulse = 1;
+    if (inCtaSweep) {
+      const u = sweepPhase / sweepDur;
+      pulse = 1 + Math.sin(u * Math.PI) * 0.045;
+    } else if (anim === 'soft') {
+      pulse = 1 + Math.sin(t * 2.2 + 0.6) * 0.012;
+    }
+    if (pulse !== 1) {
+      ctx.translate(cx, cy);
+      ctx.scale(pulse, pulse);
+      ctx.translate(-cx, -cy);
+    }
   }
 
   if (!iconOnly) {

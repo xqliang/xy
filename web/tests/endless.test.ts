@@ -40,14 +40,15 @@ describe('endless persistence', () => {
 });
 
 describe('endless difficulty curve', () => {
-  it('无尽波>10：基础血量/移速后再 ×(1+(wave-10)/100)', () => {
-    const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
-    expect(b.endlessWavePostMul(10)).toBe(1);
-    expect(b.endlessWavePostMul(11)).toBeCloseTo(1.01, 5);
-    expect(b.endlessWavePostMul(20)).toBeCloseTo(1.1, 5);
-    expect(b.endlessWavePostMul(50)).toBeCloseTo(1.4, 5);
-    const vs = new Battle(1, 1, undefined, undefined, {}, [], [], false);
-    expect(vs.endlessWavePostMul(30)).toBe(1);
+  it('波>10：基础血量/移速后再 ×(1+(wave-10)/100)（对战/无尽共用）', () => {
+    const endless = new Battle(1, 1, undefined, undefined, {}, [], [], true);
+    const versus = new Battle(1, 1, undefined, undefined, {}, [], [], false);
+    for (const b of [endless, versus]) {
+      expect(b.wavePostMul(10)).toBe(1);
+      expect(b.wavePostMul(11)).toBeCloseTo(1.01, 5);
+      expect(b.wavePostMul(20)).toBeCloseTo(1.1, 5);
+      expect(b.wavePostMul(50)).toBeCloseTo(1.4, 5);
+    }
   });
 
   it('effectiveDifficulty 分圈阶梯：每 10 波一圈 ×STEP', () => {

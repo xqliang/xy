@@ -2482,9 +2482,9 @@ export class Battle {
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
   }
 
-  /** 无尽波 >10：基础血量/移速算完后 × (1 + (wave-10)/100)；对战与其它模式为 1 */
-  endlessWavePostMul(wave: number = this.wave): number {
-    if (!this.endless || wave <= 10) return 1;
+  /** 波 >10：基础血量/移速算完后 × (1 + (wave-10)/100) */
+  wavePostMul(wave: number = this.wave): number {
+    if (wave <= 10) return 1;
     return 1 + (wave - 10) / 100;
   }
 
@@ -2552,13 +2552,13 @@ export class Battle {
   /** 普通怪基础血量（含境界/无尽圈系数与无尽后期加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
     const base = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
-    return base * this.endlessWavePostMul(wave);
+    return base * this.wavePostMul(wave);
   }
 
   /** 某波普通怪基础移速（含难度加速与无尽后期加成，不含被动减速、Boss/骑兵倍乘） */
   private endlessMonsterBaseSpeed(wave: number = this.wave): number {
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
-    return TUNING.monsterSpd * diffSpd * this.endlessWavePostMul(wave);
+    return TUNING.monsterSpd * diffSpd * this.wavePostMul(wave);
   }
 
   /** 某波普通怪移速（含被动减速、难度加速与无尽后期加成，不含 Boss/骑兵倍乘） */

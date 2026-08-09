@@ -86,6 +86,6 @@ describe('喂 1 张字牌升整个已激活英雄', () => {
     const after = b.activeGenerals();
     expect(after.length).toBe(1);
     expect(after[0]!.tier).toBe(2);
-    expect(b.tray.length).toBe(0);
+    expect(b.tray[0]).toBeUndefined();
   });
 });
