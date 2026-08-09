@@ -96,6 +96,9 @@ export interface AutoPlaceOpts {
 export const PLAYER_PLACE_MAX_STEPS = 150;
 export const PLAYER_PLACE_MAX_GUARD = 300;
 export const PLAYER_REPOSITION_MAX_STEPS = 100;
+/** AI 征兵后布阵：步数/循环上限（在 battle.step 内同步执行，须轻量） */
+export const AI_PLACE_MAX_STEPS = 24;
+export const AI_PLACE_MAX_GUARD = 48;
 
 /** AI 战中调位：普通兵器 1.5–4s；待补英雄配对字 0.5–1s */
 export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1.5;
@@ -768,6 +771,26 @@ export function planAutoPlace(view: AutoPlaceView, opts: AutoPlaceOpts): void {
   planAutoPlaceSteps(view, opts);
 }
 
+/** 布阵局面指纹：用于检测 A↔B 来回挪等循环 */
+export function autoPlaceBoardKey(view: AutoPlaceView): string {
+  const units = view.placedUnits()
+    .map((u) => `${u.type}:${u.tier}@${u.cell.c},${u.cell.r}`)
+    .sort()
+    .join(';');
+  const words = view.placedWords()
+    .map((w) => `${w.char}:${w.tier ?? 1}@${w.cell.c},${w.cell.r}`)
+    .sort()
+    .join(';');
+  const tray = view.tray()
+    .map((t) =>
+      t.kind === 'unit' ? `u:${t.type}:${t.tier}`
+      : t.kind === 'word' ? `w:${t.char}:${t.tier}`
+      : 's',
+    )
+    .join(',');
+  return `${units}|${words}|${tray}`;
+}
+
 /** 执行至多 maxSteps 步布阵；返回实际步数 */
 export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): number {
   const tol = opts.rangeTolerance ?? 0.5;
@@ -777,8 +800,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   const maxGuard = opts.maxGuard ?? PLAYER_PLACE_MAX_GUARD;
   let guard = 0;
   let steps = 0;
+  let heroLayoutPending = false;
+  const seen = new Set<string>();
   while (guard++ < maxGuard && steps < maxSteps) {
     if (!step()) break;
+    const key = autoPlaceBoardKey(view);
+    if (seen.has(key)) break;
+    seen.add(key);
     steps++;
   }
 
@@ -845,7 +873,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return trayUnitEntries().every(({ t }) => t.tier === 1);
   }
 
+  /** 武将生成/挪位后标记；下一步再算 coverage 微调（不在同一步、也不每轮无条件扫描） */
+  function markHeroLayoutChanged(): void {
+    heroLayoutPending = true;
+  }
+
   function step(): boolean {
+    if (heroLayoutPending && !pendingTrayDeploy() && !subopt()) {
+      heroLayoutPending = false;
+      if (tryImproveActiveHeroCoverage()) return true;
+    }
     const tray = view.tray();
     // 1) 铲子：平时挖贴路+近出口；危险时优先挖靠近唐僧的格
     for (let i = 0; i < tray.length; i++) {
@@ -865,45 +902,44 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
-    if (!subopt() && tryFamilyUpgrade()) return true;
+    if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     // 2a-0c) 过渡将占位时用 tray 主将字替换（如 牛郎+tray魔 → 牛魔）
-    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) return true;
+    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
     // 2a-0d) tray 内两字优先组满级主将（如牛+魔），再考虑棋盘过渡字（如牛+郎）
-    if (!subopt() && tryActivateTrayMainPair()) return true;
+    if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 2a-1) tray 字 + 棋盘伴侣（可立即成对）→ 先于孤儿字挪位（如 白+龙）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
       const mate = pickBestBoardMate(t.char, t.general);
       if (mate && shouldPrioritizeTrayBoardMateActivation(view, t, mate) && tryActivateTrayWord(i, t)) {
+        markHeroLayoutChanged();
         return true;
       }
     }
     // 2a-0b) tray 伴侣所需格被占（白龙：流沙/武器挡左格）→ 先腾位，再挪其它孤儿字
     if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
-      if (tryTrayHeroInsertByRowShift(view)) return true;
-      if (tryShiftPathRowLeft(view)) return true;
+      if (tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
+      if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     }
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
-    if (!subopt() && tryPairBoardOrphans()) return true;
+    if (!subopt() && tryPairBoardOrphans()) { markHeroLayoutChanged(); return true; }
     // 2b-0) 贴路行左移后插入 tray 字（保留已有激活将，一次执行完）
-    if (!subopt() && tryTrayHeroInsertByRowShift(view)) return true;
+    if (!subopt() && tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
     // 2b) 字牌激活：tray 与棋盘伴侣/孤儿凑对
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
-      if (tryActivateTrayWord(i, t)) return true;
+      if (tryActivateTrayWord(i, t)) { markHeroLayoutChanged(); return true; }
     }
     // 2b-1) 贴路行左移 / 未升满前置（凑对失败后再整行腾位）
-    if (!subopt() && tryShiftPathRowLeft(view)) return true;
-    if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) return true;
+    if (!subopt() && tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && trySwapGrowingHeroBeforeMaxed(view)) { markHeroLayoutChanged(); return true; }
     // 2a0) 同字/同型高阶上板：tray 更高阶与棋盘低阶互换
-    if (!subopt() && tryPromoteHigherTierWords()) return true;
+    if (!subopt() && tryPromoteHigherTierWords()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && tryPromoteHigherTierUnits()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
-    if (!subopt() && tryEjectLowerDuplicateOrphans()) return true;
-    // 2b-2) 已激活武将：迁到更高覆盖/更早接战的左右邻格对（tray 升阶/落子前）
-    if (!subopt() && tryImproveActiveHeroCoverage()) return true;
+    if (!subopt() && tryEjectLowerDuplicateOrphans()) { markHeroLayoutChanged(); return true; }
     // 3–5b) 有空格时优先落 tray 兵（合成 / 射程内 / 兜底填满），再去做调位
     if (tryDeployTrayUnits()) return true;
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
@@ -917,8 +953,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (pickBestBoardMate(t.char, t.general)) continue;
       if (placeSingleWord(i)) return true;
     }
-    // 2b-2) 已激活武将：迁到 pathCover 更高的左右邻格对（如白骨左移贴路）
-    if (!pendingTrayDeploy() && !subopt() && tryImproveActiveHeroCoverage()) return true;
     // 6) 救援式重排：tray 待落时跳过
     if (!pendingTrayDeploy()) {
       const free = view.freeCells();
@@ -1908,6 +1942,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       view.place(candidates[0]!.i, freed);
     }
     return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
+  }
+
+  if (heroLayoutPending && !pendingTrayDeploy()) {
+    heroLayoutPending = false;
+    tryImproveActiveHeroCoverage();
   }
 
   return steps;

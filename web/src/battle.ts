@@ -37,12 +37,14 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlace, planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
   pathCoverageLenEntranceWeighted,
   pathFirstEngageDist,
+  pathCoverageLenEntranceWeightedAlong,
+  pathFirstEngageDistAlong,
   planWavePressure,
   PRESSURE_RATIO,
   spawnBatchCap,
@@ -1287,9 +1289,9 @@ export class Battle {
       },
       pathCoverAt: (ax, ay, rge) => this.aiPathCoverAt(ax, ay, rge),
       pathCoverEarlyAt: (ax, ay, rge) =>
-        pathCoverageLenEntranceWeighted(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
+        pathCoverageLenEntranceWeightedAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
       pathFirstEngageAt: (ax, ay, rge) =>
-        pathFirstEngageDist(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
+        pathFirstEngageDistAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
       generalRge: (general, tier) => {
         const def = generalById(general);
         return def ? generalStat(def, tier).rge : 2;
@@ -2444,10 +2446,12 @@ export class Battle {
     if (this.aiSummonTimer <= 0) {
       this.aiSummonTimer = knobs.summonInterval;
       if (this.aiSummon()) {
-        planAutoPlace(this.buildAiAutoView(), {
+        planAutoPlaceSteps(this.buildAiAutoView(), {
           rng: () => this.aiRng.next(),
           pSubOptimal: knobs.pSubOptimal,
           randomDigExitWeight: true,
+          maxSteps: AI_PLACE_MAX_STEPS,
+          maxGuard: AI_PLACE_MAX_GUARD,
         });
       }
     }

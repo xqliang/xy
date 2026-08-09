@@ -2,7 +2,7 @@
 // 综合攻速/范围/伤害/目标数（含被动乘区）得到最优 DPS，
 // 并据此按约 70% 压力推算 Boss 血量与第 4 波起的出怪数 / 叠怪批次。
 import { getUnitStat, type UnitType } from '@core';
-import { exitDistToPath, posAtDistance, type Cell, type GameMap } from './board';
+import { exitDistToPath, posAlong, posAtDistance, type Cell, type GameMap } from './board';
 import { placeCellScore } from './autoplace';
 
 /** 目标压力：怪物总血量 ≈ 武器最优输出的该比例 */
@@ -119,6 +119,66 @@ export function pathCoverageLen(
     if (inRange(ax, ay, rge, p, tol)) covered += PATH_SAMPLE_STEP;
   }
   return covered;
+}
+
+/** 沿 Cell[] 路径（AI 半场镜像路）采样覆盖长度 */
+export function pathCoverageLenAlong(
+  path: Cell[],
+  entranceDist: number,
+  pathLen: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  tol = DEFAULT_RANGE_TOL,
+): number {
+  if (pathLen <= entranceDist) return 0;
+  let covered = 0;
+  for (let d = entranceDist; d < pathLen; d += PATH_SAMPLE_STEP) {
+    const p = posAlong(path, d);
+    if (inRange(ax, ay, rge, p, tol)) covered += PATH_SAMPLE_STEP;
+  }
+  return covered;
+}
+
+/** 沿 Cell[] 路径：出怪口段加权覆盖 */
+export function pathCoverageLenEntranceWeightedAlong(
+  path: Cell[],
+  entranceDist: number,
+  pathLen: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  tol = DEFAULT_RANGE_TOL,
+): number {
+  if (pathLen <= entranceDist) return 0;
+  const span = Math.max(PATH_SAMPLE_STEP, pathLen - entranceDist);
+  let covered = 0;
+  for (let d = entranceDist; d < pathLen; d += PATH_SAMPLE_STEP) {
+    const p = posAlong(path, d);
+    if (inRange(ax, ay, rge, p, tol)) {
+      const w = 1 + (pathLen - d) / span;
+      covered += PATH_SAMPLE_STEP * w;
+    }
+  }
+  return covered;
+}
+
+/** 沿 Cell[] 路径：首次接战沿路距离 */
+export function pathFirstEngageDistAlong(
+  path: Cell[],
+  entranceDist: number,
+  pathLen: number,
+  ax: number,
+  ay: number,
+  rge: number,
+  tol = DEFAULT_RANGE_TOL,
+): number {
+  if (pathLen <= entranceDist) return pathLen;
+  for (let d = entranceDist; d < pathLen; d += PATH_SAMPLE_STEP) {
+    const p = posAlong(path, d);
+    if (inRange(ax, ay, rge, p, tol)) return d;
+  }
+  return pathLen;
 }
 
 /** 攻击圆覆盖的路径长度，出怪口段权重更高（武将优先更早打到怪） */

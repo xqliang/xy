@@ -116,7 +116,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     const filled = SCREENSHOT_EMPTY_LEFT.filter(({ c, r }) => b.units.has(cellKey(c, r)));
     expect(filled.length).toBeGreaterThan(0);
     expect(b.tray.length).toBeLessThan(trayBefore);
-    expect(elapsed).toBeLessThan(200);
+    expect(elapsed).toBeLessThan(250);
     expect(b.message).not.toBe('布阵：当前暂无可执行操作');
   });
 

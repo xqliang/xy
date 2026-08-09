@@ -224,6 +224,23 @@ it('不丢弃：无位可放的令牌保留在 tray', () => {
   const u = v.placedUnits(); expect(u.length).toBe(1); expect(u[0]!.tier).toBe(2);
 });
 
+it('布阵局面重复时立即停止（防武将来回挪占满 guard）', () => {
+  let toggle = false;
+  class OscView extends FakeView {
+    moveWord(from: Cell, to: Cell): boolean {
+      toggle = !toggle;
+      return super.moveWord(from, to);
+    }
+  }
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }];
+  const v = new OscView([], cells);
+  v.wordsMap.set('0,0', { char: '白', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '骨', general: 'baigujing', cell: { c: 1, r: 0 }, tier: 1 });
+  v.generalRgeVal = 2;
+  const steps = planAutoPlaceSteps(v, { rng, maxSteps: 100, maxGuard: 100 });
+  expect(steps).toBeLessThan(10);
+});
+
 it('射程感知：短兵占近格，弓箭手占远格', () => {
   const v = new FakeView(
     [{ kind: 'unit', type: 'archer', tier: 1 }, { kind: 'unit', type: 'dao', tier: 1 }],

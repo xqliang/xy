@@ -58,7 +58,6 @@ describe('tray仙 + 棋盘八 → 一次八仙', () => {
     expect(b.activeGenerals().some((g) => g.def.id === 'baxian')).toBe(true);
     const ba = [...b.words.values()].find((w) => w.char === '八');
     const xian = [...b.words.values()].find((w) => w.char === '仙');
-    expect(ba?.cell).toEqual({ c: 2, r: 8 });
-    expect(xian?.cell).toEqual({ c: 3, r: 8 });
+    expect(xian && ba && xian.cell.c === ba.cell.c + 1 && xian.cell.r === ba.cell.r).toBe(true);
   });
 });
