@@ -427,7 +427,6 @@ export interface GeneralState {
   cooldown: number;
   skillCd: number;
   firePulse: number;
-  fireDir?: number; // 上次开火朝向(弧度)，字牌攻击时驱动兵器形变
   skillFlash: number;
 }
 
@@ -1042,7 +1041,7 @@ export class Battle {
   private stateOf(id: string): GeneralState {
     let s = this.generalStates.get(id);
     if (!s) {
-      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 };
+      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
       this.generalStates.set(id, s);
     }
     return s;
@@ -1288,7 +1287,7 @@ export class Battle {
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.aiPath, cell),
-      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      exitDist: (cell) => this.aiExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
@@ -1517,13 +1516,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           this.aiPathCoverAt(cell.c, cell.r, rge),
-          this.distToPathEntrance(this.aiPath, cell),
+          this.aiExitDist(cell),
           rge,
           this.aiNearestPathDist(cell),
         );
       },
       dangerNear: () => this.aiDangerNear(),
-      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      exitDist: (cell) => this.aiExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
@@ -1584,13 +1583,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, rge),
-          this.distToPathEntrance(this.map.path, cell),
+          this.playerExitDist(cell),
           rge,
           this.nearestPathDist(cell),
         );
       },
       dangerNear: () => this.dangerNear(),
-      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      exitDist: (cell) => this.playerExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
@@ -3486,7 +3485,7 @@ export class Battle {
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.map.path, cell),
-      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      exitDist: (cell) => this.playerExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
