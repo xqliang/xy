@@ -113,6 +113,7 @@ export interface UiState {
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
+  aiItemPopup: number | null; // 点击 HUD 右上角 AI 道具图标（aiPickedItems 下标）
   paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
 }
 
@@ -770,6 +771,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPauseBtn(ctx, b);
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
+  drawAiItemPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
 }
@@ -4857,25 +4859,50 @@ function drawBondHudChip(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.endless || b.aiPickedItems.length === 0) return;
-  if (b.status !== 'ready' && b.status !== 'playing') return;
-  const chips: { icon: string; color: string }[] = [];
-  for (const id of b.aiPickedItems) {
-    const act = activeById(id);
-    if (act) { chips.push({ icon: act.icon, color: '#6ab0ff' }); continue; }
-    const pas = passiveById(id);
-    if (pas) chips.push({ icon: pas.icon, color: '#6ab07a' });
-  }
-  if (chips.length === 0) return;
+function aiItemChipLayout(b: Battle): { index: number; x: number; y: number; r: number; color: string; icon: string }[] {
+  if (b.endless || b.aiPickedItems.length === 0) return [];
+  if (b.status !== 'ready' && b.status !== 'playing') return [];
   const r = 11;
   const gap = r * 2 + 4;
   const cy = HUD_H / 2;
   const rightX = VIEW_W - 14;
-  chips.forEach((it, i) => {
-    const x = rightX - r - i * gap;
-    drawStatusChip(ctx, x, cy, it.icon, it.color, r);
-  });
+  const out: { index: number; x: number; y: number; r: number; color: string; icon: string }[] = [];
+  for (let i = 0; i < b.aiPickedItems.length; i++) {
+    const id = b.aiPickedItems[i]!;
+    const act = activeById(id);
+    if (act) {
+      out.push({ index: i, x: rightX - r - i * gap, y: cy, r, color: '#6ab0ff', icon: act.icon });
+      continue;
+    }
+    const pas = passiveById(id);
+    if (pas) out.push({ index: i, x: rightX - r - i * gap, y: cy, r, color: '#6ab07a', icon: pas.icon });
+  }
+  return out;
+}
+
+/** HUD 右上角 AI 对手道具图标命中（返回 aiPickedItems 下标） */
+export function hitAiItemChip(x: number, y: number, b: Battle): number | null {
+  for (const chip of aiItemChipLayout(b)) {
+    if (Math.hypot(x - chip.x, y - chip.y) <= chip.r + 3) return chip.index;
+  }
+  return null;
+}
+
+function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  const chips = aiItemChipLayout(b);
+  if (chips.length === 0) return;
+  for (const it of chips) {
+    drawStatusChip(ctx, it.x, it.y, it.icon, it.color, it.r);
+    if (ui.aiItemPopup === it.index) {
+      ctx.save();
+      ctx.strokeStyle = '#ffe27a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, it.r + 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
@@ -4900,7 +4927,7 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = '#8a5a2b';
     ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
   }
-  drawAiItemsHud(ctx, b);
+  drawAiItemsHud(ctx, b, ui);
   drawBondHudChip(ctx, b);
 }
 
@@ -5228,6 +5255,61 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
     ctx.fillStyle = '#fff';
     ctx.font = '11px "PingFang SC", sans-serif';
     ctx.fillText(prog.text, x + pad, by - 13);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('点任意处关闭', x + w - 12, y + 16);
+  ctx.restore();
+}
+
+// AI 对手道具详情（HUD 右上角图标点击）
+function drawAiItemPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.aiItemPopup === null) return;
+  const id = b.aiPickedItems[ui.aiItemPopup];
+  if (!id) return;
+  const act = activeById(id);
+  const pas = passiveById(id);
+  const def = act ?? pas;
+  if (!def) return;
+
+  const w = 300, pad = 16, lineH = 18;
+  ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const descLines = wrapText(ctx, def.desc, w - pad * 2);
+  const slot = act ? b.aiActiveSlots.find((s) => s.id === id) : undefined;
+  const extraLine = slot ? 1 : 0;
+  const h = 72 + descLines.length * lineH + extraLine * lineH + 14;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fillStyle = 'rgba(30,24,18,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = act ? '#6ab0ff' : '#6ab07a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,230,200,0.75)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(`AI对手 · ${act ? '主动技能' : '被动技能'}`, x + pad, y + 12);
+  ctx.fillStyle = '#fff6e6';
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 30);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ty = y + 56;
+  if (slot) {
+    const cdText = slot.ready
+      ? '状态：就绪（AI 自动释放）'
+      : `冷却：${Math.ceil(slot.cd)}s / ${slot.cdMax}s`;
+    ctx.fillStyle = slot.ready ? '#a0e8b0' : 'rgba(255,255,255,0.75)';
+    ctx.fillText(cdText, x + pad, ty);
+    ty += lineH;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  }
+  for (const ln of descLines) {
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
   }
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = '11px "PingFang SC", sans-serif';

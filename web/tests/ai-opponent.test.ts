@@ -9,6 +9,13 @@ describe('AI 道具', () => {
     expect(b.aiPickedItems.length).toBeGreaterThan(0);
   });
 
+  it('玩家未装备时 AI 可随机带 0..2 个道具', () => {
+    const b0 = new Battle(100, 1, undefined, undefined, undefined, [], []);
+    expect(b0.aiPickedItems.length).toBeLessThanOrEqual(2);
+    const b2 = new Battle(101, 1, undefined, undefined, undefined, [], []);
+    expect(b2.aiPickedItems.length).toBeLessThanOrEqual(2);
+  });
+
   it('无尽模式 AI 不带道具', () => {
     const b = new Battle(42, 1, undefined, undefined, undefined, ['act_palm'], ['xiandan'], true);
     expect(b.aiPickedItems.length).toBe(0);

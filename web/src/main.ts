@@ -10,6 +10,7 @@ import {
   VIEW_H,
   hitPauseBtn,
   hitMonsterAt,
+  hitAiItemChip,
   isPlayerTangsengCell,
   isAiTangsengCell,
   type UiState,
@@ -249,7 +250,7 @@ let menuPopup: MenuPopup = 'none';
 let staminaPopupToast = '';
 let menuSliderDrag: 'music' | 'sfx' | null = null;
 let pausePhase: PausePhase = 'main';
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
@@ -259,11 +260,17 @@ function newGame() {
   endlessResult = null;
   ui.paused = false;
   pausePhase = 'main';
+  ui.passivePopup = null;
+  ui.activePopup = null;
+  ui.aiItemPopup = null;
 }
 
 function abortBattleToMenu(): void {
   ui.paused = false;
   pausePhase = 'main';
+  ui.passivePopup = null;
+  ui.activePopup = null;
+  ui.aiItemPopup = null;
   clearBoardSelect();
   try { stopAmbient(); } catch { /* ignore */ }
   screen = 'menu';
@@ -587,7 +594,10 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'act0') { if (battle.activeSlots[0]?.ready) battle.triggerActive(0); else { ui.activePopup = 0; ui.activePopupUntil = performance.now() + 2500; } }
       else if (btn.id === 'act1') { if (battle.activeSlots[1]?.ready) battle.triggerActive(1); else { ui.activePopup = 1; ui.activePopupUntil = performance.now() + 2500; } }
-      else if (btn.id.startsWith('pas')) ui.passivePopup = Number(btn.id.slice(3)); // 点击被动图标看详情
+      else if (btn.id.startsWith('pas')) {
+        ui.aiItemPopup = null;
+        ui.passivePopup = Number(btn.id.slice(3));
+      } // 点击被动图标看详情
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
     }
@@ -695,8 +705,17 @@ function onPointerDown(e: PointerEvent) {
     ui.trayDragStart = null;
     return;
   }
-  // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
+  // 详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
+  if (ui.aiItemPopup !== null) { ui.aiItemPopup = null; return; }
+  const aiChip = hitAiItemChip(x, y, battle);
+  if (aiChip !== null) {
+    ui.passivePopup = null;
+    ui.activePopup = null;
+    ui.aiItemPopup = ui.aiItemPopup === aiChip ? null : aiChip;
+    clearBoardSelect();
+    return;
+  }
   const pickupId = weaponPickupHitAt(x, y, visibleWeaponPickups(), bag);
   if (pickupId) {
     claimWeaponPickup(pickupId);

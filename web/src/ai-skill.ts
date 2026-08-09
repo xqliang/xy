@@ -55,9 +55,18 @@ export interface AiLoadoutRoll {
   passives: string[];
 }
 
+/** 玩家未装备时 AI 随机携带道具数的上限（含 0，即 pick(EMPTY_PLAYER_ITEM_CAP + 1) → 0..CAP）。 */
+export const EMPTY_PLAYER_ITEM_CAP = 2;
+
 /** 按 aiSkill 与玩家装备数，决定 AI 本局应携带的道具数量（随机挑选，非复制玩家清单）。 */
-export function aiItemTargetCount(playerCount: number, aiSkill: number): number {
-  if (playerCount <= 0) return 0;
+export function aiItemTargetCount(
+  playerCount: number,
+  aiSkill: number,
+  pick?: (n: number) => number,
+): number {
+  if (playerCount <= 0) {
+    return pick ? pick(EMPTY_PLAYER_ITEM_CAP + 1) : 0;
+  }
   const ratio = aiSkill / DEFAULT_AI_SKILL;
   let target = Math.round(playerCount * ratio);
   if (aiSkill >= DEFAULT_AI_SKILL) {
@@ -89,7 +98,7 @@ export function rollAiLoadout(
   pick: (n: number) => number,
 ): AiLoadoutRoll {
   const playerCount = playerActives.length + playerPassives.length;
-  const target = aiItemTargetCount(playerCount, aiSkill);
+  const target = aiItemTargetCount(playerCount, aiSkill, pick);
   if (target <= 0) return { actives: [], passives: [] };
 
   const activePool = enabledActives().map((a) => a.id);

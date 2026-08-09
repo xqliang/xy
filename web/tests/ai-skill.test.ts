@@ -1,6 +1,9 @@
 // web/tests/ai-skill.test.ts
 import { describe, it, expect } from 'vitest';
-import { nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL, aiItemTargetCount, rollAiLoadout } from '../src/ai-skill';
+import {
+  nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL,
+  aiItemTargetCount, rollAiLoadout, EMPTY_PLAYER_ITEM_CAP,
+} from '../src/ai-skill';
 
 describe('nextAiSkill', () => {
   it('玩家胜 → 调强(升)，玩家负 → 调弱(降)', () => {
@@ -57,10 +60,18 @@ describe('skillToKnobs', () => {
 });
 
 describe('rollAiLoadout', () => {
-  it('玩家无道具时 AI 也不带', () => {
-    const roll = rollAiLoadout([], [], DEFAULT_AI_SKILL, () => 0);
-    expect(roll.actives).toEqual([]);
-    expect(roll.passives).toEqual([]);
+  it('玩家无道具时 AI 随机带 0..2 个', () => {
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 0)).toBe(0);
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 1)).toBe(1);
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 2)).toBe(2);
+    expect(EMPTY_PLAYER_ITEM_CAP).toBe(2);
+
+    const none = rollAiLoadout([], [], DEFAULT_AI_SKILL, () => 0);
+    expect(none.actives).toEqual([]);
+    expect(none.passives).toEqual([]);
+
+    const two = rollAiLoadout([], [], DEFAULT_AI_SKILL, (n) => n - 1);
+    expect(two.actives.length + two.passives.length).toBe(2);
   });
 
   it('玩家有配置时 AI 数量接近且随 skill 调节', () => {

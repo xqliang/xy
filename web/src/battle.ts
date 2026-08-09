@@ -642,9 +642,6 @@ export class Battle {
   aiTangsengHP = TANGSENG_INITIAL_HP;
   aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
-  /** AI 道具对玩家侧妖怪的减速（淤泥/蛛网） */
-  private aiDebuffPlayerSpdMul = 1;
-  private aiDebuffPlayerMud = false;
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
   private aiAtkBuffT = 0;
   private aiFrqBuffT = 0;
@@ -837,9 +834,14 @@ export class Battle {
     return posAlong(this.aiPath, m.dist);
   }
 
-  /** 淤泥被动：出怪口附近 3 格内妖怪移速降低 */
+  /** 玩家侧淤泥：出怪口附近 3 格内妖怪移速降低 */
   monsterInMudZone(m: Monster): boolean {
-    return (this.mods.mud || this.aiDebuffPlayerMud) && m.dist - this.entranceDist < 3;
+    return this.mods.mud && m.dist - this.entranceDist < 3;
+  }
+
+  /** AI 侧淤泥：镜像 monsterInMudZone，作用于 aiMonsters */
+  aiMonsterInMudZone(m: Monster): boolean {
+    return this.aiMods.mud && m.dist - this.aiEntranceDist < 3;
   }
 
   // 该格是否已解锁
@@ -2306,7 +2308,7 @@ export class Battle {
     }
   }
 
-  /** AI 侧被动道具：镜像 applyItem，作用于 aiMods / 对手唐僧 / 玩家妖怪 debuff */
+  /** AI 侧被动道具：镜像 applyItem，作用于 aiMods / 双方唐僧 */
   private applyAiItem(id: string): void {
     switch (id) {
       case 'xiandan': this.aiMods.atkMul += 0.10; break;
@@ -2316,12 +2318,12 @@ export class Battle {
       case 'mojin': this.aiMods.shovelPeach += 6; break;
       case 'luoyangchan': this.aiMods.autoShovel = true; break;
       case 'yunshi': this.aiMods.meteor = true; break;
-      case 'yuni': this.aiDebuffPlayerMud = true; break;
+      case 'yuni': this.aiMods.mud = true; break;
       case 'xianyuan': this.aiMods.summonCostDelta -= 1; break;
       case 'jubaopen': this.aiMods.killBonus += 1; break;
       case 'hushen': this.aiTangsengHP += 1; break;
-      case 'tongxin': this.aiTangsengHP += 2; break;
-      case 'zhuwang': this.aiDebuffPlayerSpdMul = Math.max(0.4, this.aiDebuffPlayerSpdMul - 0.10); break;
+      case 'tongxin': this.aiTangsengHP += 3; this.tangsengMaxHP += 2; this.tangsengHP += 2; break;
+      case 'zhuwang': this.aiMods.monsterSpdMul = Math.max(0.4, this.aiMods.monsterSpdMul - 0.10); break;
       case 'dinghai': {
         const lc = this.aiCells.find((c) => !this.aiUnlocked.has(cellKey(c.c, c.r)));
         if (lc) this.aiUnlocked.add(cellKey(lc.c, lc.r));
@@ -2549,19 +2551,19 @@ export class Battle {
     return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
   }
 
-  /** 普通怪基础血量（含境界/无尽圈系数与无尽后期加成，不含 Boss/精英倍乘） */
+  /** 普通怪基础血量（含境界/分圈系数与波>10 加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
     const base = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
     return base * this.wavePostMul(wave);
   }
 
-  /** 某波普通怪基础移速（含难度加速与无尽后期加成，不含被动减速、Boss/骑兵倍乘） */
+  /** 某波普通怪基础移速（含难度加速与波>10 加成，不含被动减速、Boss/骑兵倍乘） */
   private endlessMonsterBaseSpeed(wave: number = this.wave): number {
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
     return TUNING.monsterSpd * diffSpd * this.wavePostMul(wave);
   }
 
-  /** 某波普通怪移速（含被动减速、难度加速与无尽后期加成，不含 Boss/骑兵倍乘） */
+  /** 某波普通怪移速（含被动减速、难度加速与波>10 加成，不含 Boss/骑兵倍乘） */
   private normalMonsterSpeed(wave: number = this.wave): number {
     return this.endlessMonsterBaseSpeed(wave) * this.mods.monsterSpdMul;
   }
@@ -2772,8 +2774,8 @@ export class Battle {
       skillCd,
     };
     const off = Math.min(0, distOffset);
-    const playerSpd = this.normalMonsterSpeed() * this.aiDebuffPlayerSpdMul * spdMul;
-    const aiSpd = this.endlessMonsterBaseSpeed() * spdMul;
+    const playerSpd = this.normalMonsterSpeed() * spdMul;
+    const aiSpd = this.endlessMonsterBaseSpeed() * this.aiMods.monsterSpdMul * spdMul;
     this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
     if (!this.endless) {
       this.aiMonsters.push(makeOne(this.aiEntranceDist + off, aiSpd, bossSpec));
@@ -2788,8 +2790,8 @@ export class Battle {
         skill: null,
         skillCd: TUNING.skillFirstDelay,
       };
-      const escortPlayerSpd = this.normalMonsterSpeed() * this.aiDebuffPlayerSpdMul;
-      const escortAiSpd = this.endlessMonsterBaseSpeed();
+      const escortPlayerSpd = this.normalMonsterSpeed();
+      const escortAiSpd = this.endlessMonsterBaseSpeed() * this.aiMods.monsterSpdMul;
       for (let i = 0; i < bossEscortCount; i++) {
         const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * SPAWN_DIST_JITTER;
         this.monsters.push(makeOne(this.entranceDist + escortOff, escortPlayerSpd, escortSpec));
@@ -2948,7 +2950,8 @@ export class Battle {
         this.creditAiKill(m.isBoss, !m.isBoss && !m.isMiniBoss && !!m.skill, m.isMiniBoss);
         continue;
       } // 击杀产桃（精英/小Boss/大Boss 分档，对齐玩家语义）
-      m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1) * dt;
+      m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
+        * (this.aiMonsterInMudZone(m) ? 0.82 : 1) * dt;
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
       if (m.dist >= this.aiPathLen) {
         this.aiTangsengHP -= 1;
