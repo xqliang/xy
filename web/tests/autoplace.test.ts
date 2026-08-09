@@ -45,6 +45,8 @@ class FakeView implements AutoPlaceView {
   pathLen = 7;
   entranceDist = 0;
   monsterDists: number[] = [];
+  waveNum = 0;
+  wave() { return this.waveNum; }
   private key(c: number, r: number) { return `${c},${r}`; }
   constructor(tray: PlaceToken[], unlocked: Cell[], diggable: Cell[] = []) {
     this.trayArr = tray.slice();
@@ -1409,4 +1411,30 @@ it('待处理：地图挤回 tray 的高阶兵换棋盘更低阶武器上板', (
   expect(v.tray().some((t) => t.kind === 'unit' && t.displaced)).toBe(false);
   const archer = v.placedUnits().find((u) => u.type === 'archer' && u.tier === 2);
   expect(archer).toBeDefined();
+});
+
+it('第5波起：tray 字优先于 tray 兵种落子', () => {
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
+      { kind: 'unit', type: 'dao', tier: 1 },
+    ],
+    [{ c: 3, r: 5 }, { c: 4, r: 5 }],
+  );
+  v.waveNum = 5;
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(false);
+  expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
+  expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'dao')).toBe(true);
+});
+
+it('第5波起：地图上已有同字时 tray 重复字可留候选区', () => {
+  const v = new FakeView(
+    [{ kind: 'word', char: '红', general: 'honghaier', tier: 1 }],
+    [{ c: 3, r: 5 }],
+  );
+  v.waveNum = 5;
+  v.wordsMap.set('4,5', { char: '红', general: 'honghaier', cell: { c: 4, r: 5 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 5 });
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(true);
 });

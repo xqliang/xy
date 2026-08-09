@@ -2432,20 +2432,20 @@ function drawUltDasheng(
   const sweepP = hasOrigin ? (p - OUT) / (SWEEP_END - OUT) : p;
   const sweep = easeOut(Math.max(0, Math.min(1, sweepP)));
   const a0 = -Math.PI * 0.9, a1 = a0 + Math.PI * 1.8 * sweep;
-  const rad = R * 0.9;
+  const sweepRad = R * 0.9 * 0.8; // 大范围扫掠周长 ×0.8
   ctx.globalAlpha = fade;
   // 扇形扫掠底
-  const grad = ctx.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+  const grad = ctx.createRadialGradient(x, y, sweepRad * 0.2, x, y, sweepRad);
   grad.addColorStop(0, 'rgba(255,243,196,0.05)');
   grad.addColorStop(1, 'rgba(240,185,60,0.35)');
   ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, rad, a0, a1); ctx.closePath(); ctx.fill();
-  // 金箍棒旋转残影（横扫段）：比普攻更大
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, sweepRad, a0, a1); ctx.closePath(); ctx.fill();
+  // 金箍棒旋转残影（横扫段）：小特效 ×1.2
   const turns = 2.2 + tier * 0.35;
   const eio = sweepP < 0.5 ? 2 * sweepP * sweepP : 1 - Math.pow(-2 * sweepP + 2, 2) / 2;
   const spin = turns * Math.PI * 2 * eio;
   const blur = Math.pow(Math.sin(Math.PI * sweepP), 3);
-  const len = rad * (0.72 + tier * 0.04);
+  const len = R * 0.9 * (0.72 + tier * 0.04) * 1.2;
   ctx.save();
   ctx.translate(x, y);
   drawStaffSpinGlyph(ctx, spin, len, tier, fade, blur);
@@ -2453,7 +2453,7 @@ function drawUltDasheng(
   // 扫掠前缘指示线
   ctx.globalAlpha = fade;
   ctx.strokeStyle = '#e8a11c'; ctx.lineWidth = 4 + tier;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * rad, y + Math.sin(a1) * rad); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * sweepRad, y + Math.sin(a1) * sweepRad); ctx.stroke();
   // 横扫段仍显示一根从大圣连到爆心的淡金线，强化来源感
   if (hasOrigin && fromPx) {
     ctx.save();
@@ -2601,19 +2601,20 @@ function drawUltShaseng(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
   ctx.beginPath(); ctx.arc(x, y, 3 + tier * 0.4, 0, Math.PI * 2); ctx.fill();
 }
 
-// 牛魔冲撞前端：朝冲撞方向的牛头剪影（角 + 脸 + 鼻吻）
+// 牛魔冲撞前端：朝冲撞方向的牛头剪影（角 + 楔形脸 + 尖鼻吻）
 function drawBullHeadGlyph(ctx: CanvasRenderingContext2D, hx: number, hy: number, size: number, fade: number) {
   ctx.save();
   ctx.translate(hx, hy);
   ctx.globalAlpha = fade;
   const s = size;
 
-  // 双角（外撇上弯）
+  // 双角（外撇上弯，根部更宽）
   const drawHorn = (side: 1 | -1) => {
     ctx.beginPath();
-    ctx.moveTo(side * s * 0.28, -s * 0.18);
-    ctx.quadraticCurveTo(side * s * 0.95, -s * 0.55, side * s * 0.72, -s * 1.05);
-    ctx.quadraticCurveTo(side * s * 0.42, -s * 0.55, side * s * 0.12, -s * 0.12);
+    ctx.moveTo(side * s * 0.22, -s * 0.08);
+    ctx.lineTo(side * s * 0.62, -s * 0.72);
+    ctx.lineTo(side * s * 0.88, -s * 1.08);
+    ctx.lineTo(side * s * 0.52, -s * 0.42);
     ctx.closePath();
     ctx.fillStyle = '#f0e6d0';
     ctx.strokeStyle = '#6a5030';
@@ -2624,39 +2625,71 @@ function drawBullHeadGlyph(ctx: CanvasRenderingContext2D, hx: number, hy: number
   drawHorn(-1);
   drawHorn(1);
 
-  // 头颅
+  // 头颅：楔形（上宽下尖，比圆额更像牛头）
   ctx.fillStyle = '#8a6a3a';
   ctx.strokeStyle = '#5a4020';
   ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.ellipse(0, 0, s * 0.52, s * 0.48, 0, 0, Math.PI * 2);
+  ctx.moveTo(0, s * 0.48);              // 鼻吻尖端
+  ctx.lineTo(-s * 0.5, s * 0.08);       // 左颌
+  ctx.lineTo(-s * 0.46, -s * 0.28);     // 左额
+  ctx.lineTo(0, -s * 0.36);             // 额顶
+  ctx.lineTo(s * 0.46, -s * 0.28);      // 右额
+  ctx.lineTo(s * 0.5, s * 0.08);        // 右颌
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
 
-  // 耳
+  // 耳（小三角）
   for (const side of [-1, 1] as const) {
     ctx.fillStyle = '#7a5a32';
     ctx.beginPath();
-    ctx.ellipse(side * s * 0.48, s * 0.02, s * 0.14, s * 0.1, side * 0.4, 0, Math.PI * 2);
+    ctx.moveTo(side * s * 0.44, -s * 0.02);
+    ctx.lineTo(side * s * 0.58, s * 0.08);
+    ctx.lineTo(side * s * 0.38, s * 0.12);
+    ctx.closePath();
     ctx.fill();
   }
 
-  // 鼻吻
+  // 鼻吻（三角尖）
   ctx.fillStyle = '#6a5030';
   ctx.beginPath();
-  ctx.ellipse(0, s * 0.3, s * 0.34, s * 0.24, 0, 0, Math.PI * 2);
+  ctx.moveTo(0, s * 0.52);
+  ctx.lineTo(-s * 0.16, s * 0.28);
+  ctx.lineTo(s * 0.16, s * 0.28);
+  ctx.closePath();
   ctx.fill();
   ctx.fillStyle = '#3a2810';
-  ctx.beginPath(); ctx.ellipse(-s * 0.1, s * 0.32, s * 0.07, s * 0.09, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(s * 0.1, s * 0.32, s * 0.07, s * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.09, s * 0.34);
+  ctx.lineTo(-s * 0.04, s * 0.26);
+  ctx.lineTo(-s * 0.14, s * 0.28);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.09, s * 0.34);
+  ctx.lineTo(s * 0.04, s * 0.26);
+  ctx.lineTo(s * 0.14, s * 0.28);
+  ctx.closePath();
+  ctx.fill();
 
-  // 眼（怒黄）
+  // 眼（怒黄，略上挑）
   ctx.fillStyle = '#ffcc44';
-  ctx.beginPath(); ctx.arc(-s * 0.2, -s * 0.06, s * 0.09, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(s * 0.2, -s * 0.06, s * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.26, -s * 0.1);
+  ctx.lineTo(-s * 0.14, -s * 0.02);
+  ctx.lineTo(-s * 0.24, s * 0.04);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(s * 0.26, -s * 0.1);
+  ctx.lineTo(s * 0.14, -s * 0.02);
+  ctx.lineTo(s * 0.24, s * 0.04);
+  ctx.closePath();
+  ctx.fill();
   ctx.fillStyle = '#2a1810';
-  ctx.beginPath(); ctx.arc(-s * 0.2, -s * 0.06, s * 0.04, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(s * 0.2, -s * 0.06, s * 0.04, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-s * 0.2, -s * 0.04, s * 0.035, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(s * 0.2, -s * 0.04, s * 0.035, 0, Math.PI * 2); ctx.fill();
 
   ctx.restore();
 }
@@ -3117,7 +3150,7 @@ function drawWordSelection(
     ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
   const pw = 194;
-  const ph = (active ? 178 : 174) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
+  const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -3130,35 +3163,33 @@ function drawWordSelection(
   ctx.lineWidth = 2;
   ctx.strokeStyle = active ? '#f0b93c' : qualityColor(w.tier);
   ctx.stroke();
-  // 标题两行：名一行，副标题一行（避免左长右短叠字）
+  // 标题：左名右阶；次行攻击方式
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe6b0';
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText(def.name, px + 12, py + 16);
-  ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillStyle = 'rgba(255,230,176,0.82)';
-  ctx.fillText(`${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 32);
+  ctx.fillText(def.name, px + 12, py + 18);
   ctx.textAlign = 'right';
   ctx.fillStyle = qualityColor(w.tier);
   ctx.font = 'bold 12px "PingFang SC", sans-serif';
-  ctx.fillText(`${qualityName(w.tier)}阶 · ${def.rank} · ${def.role}`, px + pw - 12, py + 32);
-  // 技能（未激活时置灰）
+  ctx.fillText(`${qualityName(w.tier)}阶 · ${def.rank} · ${def.role}`, px + pw - 12, py + 18);
   ctx.textAlign = 'left';
-  ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
+  ctx.fillStyle = 'rgba(255,230,176,0.82)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 50);
+  ctx.fillText(`${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 34);
+  // 技能（未激活时置灰）
+  ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
+  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 52);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
-  ctx.fillText(def.skillDesc, px + 12, py + 66);
+  ctx.fillText(def.skillDesc, px + 12, py + 68);
   if (showBondDetail) {
     ctx.fillStyle = '#f0c860';
-    ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 82);
+    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 84);
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
-    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 96);
+    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98);
   }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
-  const statTop = showBondDetail ? 112 : 88;
+  const statTop = showBondDetail ? 114 : 90;
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -3905,19 +3936,15 @@ function drawHeroAttackFx(
     case 'honghaier': {
       const x = ax + (tx - ax) * prog;
       const y = ay + (ty - ay) * prog;
-      const grow = 0.22 + 0.78 * easeOut(prog); // 飞出时小火球，途中逐渐变大
+      // 飞出时由小变大，近命中时再缩小，避免全程维持大火球
+      const grow = 0.16 + 0.84 * Math.sin(prog * Math.PI);
       const rad = CELL * (0.18 + sc * 0.14) * grow;
-      ctx.globalAlpha = fade * sc * 0.45 * (0.5 + grow * 0.5);
-      ctx.strokeStyle = '#ff6020';
-      ctx.lineWidth = (1.5 + tier * 0.4) * grow;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(x, y); ctx.stroke();
       const outer = rad * (1.4 + tier * 0.2);
       const g = ctx.createRadialGradient(x, y, 1, x, y, outer);
       g.addColorStop(0, '#fff6c8');
       g.addColorStop(0.4, '#ff6020');
       g.addColorStop(1, 'rgba(255,20,10,0)');
-      ctx.globalAlpha = fade * (0.55 + grow * 0.45);
+      ctx.globalAlpha = fade * (0.45 + grow * 0.55);
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(x, y, outer, 0, Math.PI * 2); ctx.fill();
       break;

@@ -504,12 +504,15 @@ function pickBestBoardMateView(view: AutoPlaceView, char: string, generalHint?: 
 }
 
 function scanActivePairs(view: AutoPlaceView): ActivePair[] {
+  const words = view.placedWords();
+  const byKey = new Map<string, PlacedWordLite>();
+  for (const w of words) byKey.set(cellKey(w.cell), w);
   const out: ActivePair[] = [];
   const used = new Set<string>();
-  for (const w of view.placedWords()) {
+  for (const w of words) {
     const k = cellKey(w.cell);
     if (used.has(k)) continue;
-    const right = view.placedWords().find((r) => r.cell.c === w.cell.c + 1 && r.cell.r === w.cell.r);
+    const right = byKey.get(`${w.cell.c + 1},${w.cell.r}`);
     if (!right) continue;
     const def = matchGeneral(w.char, right.char);
     if (!def) continue;
@@ -801,6 +804,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   let guard = 0;
   let steps = 0;
   let heroLayoutPending = false;
+  let rankedPairsCache: Map<string, { left: Cell; right: Cell; score: number }[]> | null = null;
+  let stepUnlockedCells: Cell[] | null = null;
   const seen = new Set<string>();
   while (guard++ < maxGuard && steps < maxSteps) {
     if (!step()) break;
@@ -863,7 +868,17 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 可达格中选座位分最高者（短兵先占位，避免远程抢近路甜区） */
   function pickReachCell(reach: Cell[], type: UnitType, tier: number): Cell {
-    return reach.reduce((best, c) => (scoreCell(c, type, tier) > scoreCell(best, type, tier) ? c : best), reach[0]!);
+    let best = reach[0]!;
+    let bestScore = scoreCell(best, type, tier);
+    for (let i = 1; i < reach.length; i++) {
+      const c = reach[i]!;
+      const s = scoreCell(c, type, tier);
+      if (s > bestScore) {
+        best = c;
+        bestScore = s;
+      }
+    }
+    return best;
   }
 
   /** tray 仅有 1 阶兵种（截图征兵盘）且有空格 → 先落子，高阶互换/凑字稍后 */
@@ -879,6 +894,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function step(): boolean {
+    rankedPairsCache = new Map();
+    stepUnlockedCells = null;
     if (heroLayoutPending && !pendingTrayDeploy() && !subopt()) {
       heroLayoutPending = false;
       if (tryImproveActiveHeroCoverage()) return true;
@@ -1172,11 +1189,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function unlockedCells(): Cell[] {
+    if (stepUnlockedCells) return stepUnlockedCells;
     const m = new Map<string, Cell>();
     for (const c of view.freeCells()) m.set(cellKey(c), c);
     for (const u of view.placedUnits()) m.set(cellKey(u.cell), u.cell);
     for (const w of view.placedWords()) m.set(cellKey(w.cell), w.cell);
-    return [...m.values()];
+    stepUnlockedCells = [...m.values()];
+    return stepUnlockedCells;
   }
 
   function heroPairScore(left: Cell, right: Cell, general: string, tier: number): number {
@@ -1191,6 +1210,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
   function rankedHeroPairs(general: string, tier: number): { left: Cell; right: Cell; score: number }[] {
+    const cacheKey = `${general}:${tier}`;
+    const cached = rankedPairsCache?.get(cacheKey);
+    if (cached) return cached;
     const cells = unlockedCells();
     const byKey = new Map(cells.map((c) => [cellKey(c), c]));
     const out: { left: Cell; right: Cell; score: number }[] = [];
@@ -1200,6 +1222,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       out.push({ left, right, score: heroPairScore(left, right, general, tier) });
     }
     out.sort((a, b) => b.score - a.score);
+    rankedPairsCache?.set(cacheKey, out);
     return out;
   }
 
