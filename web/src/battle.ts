@@ -1711,7 +1711,7 @@ export class Battle {
   /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（随机节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
-      if (this.aiUnits.length === 0) return 0;
+      if (this.aiUnits.length === 0 || this.aiMonsters.length === 0) return 0;
       const r = planBattleReposition(this.buildBattleRepositionView('ai'), {
         blockedPair: this.aiLastRepositionPair ?? undefined,
       });

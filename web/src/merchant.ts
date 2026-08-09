@@ -327,8 +327,8 @@ const CONTENT_TOP = BODY + 92;
 const CONTINUE_H = 40;
 const CONTINUE_PAD = 14;
 const CONTINUE_R = { x: PX + 32, y: PY + PH - CONTINUE_H - CONTINUE_PAD, w: PW - 64, h: CONTINUE_H };
-const EQUIP_PANEL_H = 178;
-const EQUIP_TOP = CONTINUE_R.y - 24 - EQUIP_PANEL_H;
+const EQUIP_PANEL_H = 188;
+const EQUIP_TOP = CONTINUE_R.y - 36 - EQUIP_PANEL_H;
 const CONTENT_H = EQUIP_TOP - CONTENT_TOP - 12;
 
 const OFFER_H = 124;
@@ -364,8 +364,8 @@ function lotPreviewIndex(row: number, col: number): number | null {
 
 const ACT_SLOT = 52;
 const PAS_SLOT = 44;
-const ACT_ROW_Y = EQUIP_TOP + 58;
-const PAS_ROW_Y = EQUIP_TOP + 128;
+const ACT_ROW_Y = EQUIP_TOP + 50;
+const PAS_ROW_Y = EQUIP_TOP + 126;
 
 type EquipSlotRect = { x: number; y: number; w: number; h: number; id: string | null };
 
@@ -394,7 +394,7 @@ function passiveSlotRects(loadout: LoadoutState): EquipSlotRect[] {
 }
 
 function unequipBtnRect(slot: { x: number; y: number; w: number; h: number }) {
-  return { x: slot.x + slot.w - 14, y: slot.y - 6, w: 18, h: 18 };
+  return { x: slot.x + slot.w - 15, y: slot.y + 3, w: 15, h: 15 };
 }
 
 function drawEmptyEquipSlot(
@@ -676,22 +676,22 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff4e0';
   ctx.font = 'bold 15px "PingFang SC", "STKaiti", serif';
-  ctx.fillText('我的道具', cx, EQUIP_TOP + 10);
+  ctx.fillText('我的道具', cx, EQUIP_TOP + 8);
   ctx.font = '11px "PingFang SC", serif';
   ctx.fillStyle = 'rgba(255,240,210,0.6)';
-  ctx.fillText('道具仅当天有效 · 点击 × 卸下', cx, EQUIP_TOP + 30);
+  ctx.fillText('道具仅当天有效 · 点击 × 卸下', cx, EQUIP_TOP + 26);
 
   ctx.font = '12px "PingFang SC", serif';
   ctx.fillStyle = 'rgba(255,240,210,0.8)';
   ctx.fillText(
     `主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`,
     slotRowCenterX(actSlots),
-    ACT_ROW_Y - 16,
+    ACT_ROW_Y - 18,
   );
   ctx.fillText(
     `被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`,
     slotRowCenterX(pasSlots),
-    PAS_ROW_Y - 16,
+    PAS_ROW_Y - 20,
   );
 
   for (const r of actSlots) {
@@ -722,7 +722,7 @@ function drawUnequipX(ctx: CanvasRenderingContext2D, r: { x: number; y: number; 
   ctx.font = 'bold 11px "PingFang SC", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('×', r.x + r.w / 2, r.y + r.h / 2 + 1);
+  ctx.fillText('×', r.x + r.w / 2, r.y + r.h / 2);
 }
 
 /** 水墨卷轴弹窗（叠在首页之上） */
