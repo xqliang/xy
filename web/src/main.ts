@@ -43,7 +43,7 @@ import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
-import { initAudio, playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic } from './sfx';
+import { playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
@@ -99,7 +99,10 @@ onAppHide(() => pauseLoop());
 onAppShow(() => resumeLoop());
 
 // 异步加载 Seedream 立绘（加载完成后重绘一帧用上新立绘；静态界面此时循环可能已停，需主动唤醒）
-void loadAssets().then(() => scheduleFrame());
+void loadAssets().then(() => {
+  void prefetchMenuBgm().then(() => bootstrapMenuMusic());
+  scheduleFrame();
+});
 
 const params = new URLSearchParams(location.search);
 // ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
@@ -155,6 +158,7 @@ function handleMenu(id: string) {
   if (id === 'music') {
     const on = toggleMusic();
     menuToast = on ? '背景音乐：开' : '背景音乐：关';
+    if (on) startMenuMusic();
     return;
   }
   if (id === 'endless') {
@@ -336,7 +340,7 @@ function handleButton(x: number, y: number): boolean {
 
 function onPointerDown(e: PointerEvent) {
   e.preventDefault();
-  initAudio(); // 首个用户手势后启用音频（浏览器自动播放策略）
+  resumeAudioAfterGesture(screen === 'menu' ? 'menu' : screen === 'battle' ? 'battle' : 'other', currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
     menuDownId = menuButtonAt(x, y);
@@ -657,6 +661,7 @@ function pauseLoop(): void {
 }
 function resumeLoop(): void {
   last = performance.now(); // 重置计时，避免回前台瞬间 dt 过大导致跳步
+  if (screen === 'menu') void bootstrapMenuMusic();
   scheduleFrame();
 }
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {

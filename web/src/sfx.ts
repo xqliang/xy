@@ -12,9 +12,9 @@ const MUSIC_KEY = 'dasheng.music';
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false; // 总静音（音效+音乐），默认关（即有声）
-let musicOn = false; // 背景音乐默认关闭；攻击等音效不受此开关影响
+let musicOn = true; // 背景音乐默认开启；用户显式关闭则持久化为 '0'
 muted = storeGet(MUTE_KEY) === '1';
-musicOn = storeGet(MUSIC_KEY) === '1';
+musicOn = storeGet(MUSIC_KEY) !== '0';
 
 // 首个用户手势后调用：创建/恢复 AudioContext（浏览器自动播放策略要求）
 export function initAudio(): void {
@@ -40,7 +40,7 @@ export function toggleMute(): boolean {
   return muted;
 }
 
-// 背景音乐（地图氛围音）开关，独立于音效；默认关闭
+// 背景音乐（地图氛围音）开关，独立于音效；默认开启
 export function isMusicOn(): boolean {
   return musicOn;
 }
@@ -214,4 +214,39 @@ export function startMenuMusic(): void {
   stopAmbient();
   ambientMap = MENU_ID;
   startFileBgm(MENU_ID, ASSET_URLS[MENU_BGM_KEY]!);
+}
+
+/** 预载首页 BGM；需在 initAudio 之后调用 */
+export function prefetchMenuBgm(): Promise<void> {
+  if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return Promise.resolve();
+  initAudio();
+  if (!ctx) return Promise.resolve();
+  return decodeBgm(ASSET_URLS[MENU_BGM_KEY]!).then(() => undefined);
+}
+
+/** 启动时/回前台：恢复 AudioContext 并尝试播首页音乐（可能被浏览器策略拦截，首击仍会 resume） */
+export async function bootstrapMenuMusic(): Promise<void> {
+  if (!musicOn) return;
+  initAudio();
+  if (!ctx || !master) return;
+  if (ctx.state === 'suspended') {
+    try { await ctx.resume(); } catch { /* 无用户手势时保持 suspended，等首次点击 */ }
+  }
+  if (ctx.state === 'running') startMenuMusic();
+}
+
+/** 用户手势后：恢复音频并续播当前界面 BGM */
+export function resumeAudioAfterGesture(screen: 'menu' | 'battle' | 'other', mapId?: string): void {
+  initAudio();
+  if (!ctx || ctx.state === 'suspended') {
+    void ctx?.resume().then(() => {
+      if (!musicOn || !ctx || ctx.state !== 'running') return;
+      if (screen === 'menu') startMenuMusic();
+      else if (screen === 'battle' && mapId) startAmbient(mapId);
+    });
+    return;
+  }
+  if (!musicOn) return;
+  if (screen === 'menu') startMenuMusic();
+  else if (screen === 'battle' && mapId) startAmbient(mapId);
 }
