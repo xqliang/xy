@@ -427,6 +427,7 @@ export interface GeneralState {
   cooldown: number;
   skillCd: number;
   firePulse: number;
+  fireDir?: number; // 上次开火朝向(弧度)，字牌攻击时驱动兵器形变
   skillFlash: number;
 }
 
@@ -1041,7 +1042,7 @@ export class Battle {
   private stateOf(id: string): GeneralState {
     let s = this.generalStates.get(id);
     if (!s) {
-      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
+      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 };
       this.generalStates.set(id, s);
     }
     return s;
@@ -1117,7 +1118,7 @@ export class Battle {
       w.general = def.id;
       right.general = def.id;
       let s = this.aiGeneralStates.get(def.id);
-      if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
+      if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
       out.push({ def, tier: Math.min(w.tier, right.tier, cap), cells: [w.cell, right.cell], state: s });
     }
     return out;
@@ -1287,7 +1288,7 @@ export class Battle {
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.aiPath, cell),
-      exitDist: (cell) => this.aiExitDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
@@ -1516,13 +1517,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           this.aiPathCoverAt(cell.c, cell.r, rge),
-          this.aiExitDist(cell),
+          this.distToPathEntrance(this.aiPath, cell),
           rge,
           this.aiNearestPathDist(cell),
         );
       },
       dangerNear: () => this.aiDangerNear(),
-      exitDist: (cell) => this.aiExitDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
@@ -1583,13 +1584,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, rge),
-          this.playerExitDist(cell),
+          this.distToPathEntrance(this.map.path, cell),
           rge,
           this.nearestPathDist(cell),
         );
       },
       dangerNear: () => this.dangerNear(),
-      exitDist: (cell) => this.playerExitDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
@@ -1636,7 +1637,7 @@ export class Battle {
     } else {
       this.tickBattleReposition('ai', 1);
     }
-    this.aiRepositionTimer = rollAiAdjustInterval(aiHeroPartnerAdjustPending(this.buildAiAutoView()), () => this.aiRng.next());
+    this.aiRepositionTimer = rollAiAdjustInterval(aiHeroPartnerAdjustPending(view), () => this.aiRng.next());
   }
 
   private aiPathCoverAt(ax: number, ay: number, rge: number): number {
@@ -2495,6 +2496,9 @@ export class Battle {
 
   // AI 单位攻击 AI 怪（与玩家同一套战斗数值；出招特效走共用 this.fx）
   private updateAiUnits(dt: number): void {
+    if (this.aiMonsters.length === 0) return;
+    const dangerNear = this.aiDangerNear();
+    const monsterPos = this.aiMonsters.map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }));
     for (const u of this.aiUnits) {
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
@@ -2502,13 +2506,11 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0; // 用 AI 独立随机流，不扰动玩家 rng
       const maxTargets = Math.max(1, base + extra);
-      const inRange = this.sortCombatTargets(
-        this.aiMonsters
-          .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-          .filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p)),
-        this.aiDangerNear(),
-      );
-      if (inRange.length === 0) continue;
+      const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p));
+      if (inRangeRaw.length === 0) continue;
+      const inRange = maxTargets === 1 && !dangerNear
+        ? inRangeRaw.sort((a, b) => b.m.dist - a.m.dist)
+        : this.sortCombatTargets(inRangeRaw, dangerNear);
       const dmg = damage(stat.atk);
       const color = this.unitColor(u.type);
       let hit = 0;
@@ -2516,15 +2518,14 @@ export class Battle {
         if (hit >= maxTargets) break;
         t.m.hp -= dmg;
         t.m.hitFlash = 0.1;
-        const p = posAlong(this.aiPath, t.m.dist);
         const fxTtl = this.attackFxTtl(u.type, u.tier);
-        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: t.p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier }); // AI 侧也播放攻击特效
         hit++;
       }
       if (hit > 0) {
         u.combo = u.firePulse > 0.35 ? Math.min(9, u.combo + 1) : 0;
         u.firePulse = 1;
-        const tp = posAlong(this.aiPath, inRange[0]!.m.dist);
+        const tp = inRange[0]!.p;
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
       u.cooldown = 1 / (stat.frq * this.aiFrqMul);
@@ -2562,6 +2563,8 @@ export class Battle {
       }
       if (hit > 0) {
         s.firePulse = 1;
+        const tp = inRange[0]!.p;
+        s.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
       s.cooldown = 1 / stat.frq;
@@ -2854,6 +2857,7 @@ export class Battle {
       }
       if (hit > 0) {
         s.firePulse = 1;
+        s.fireDir = Math.atan2(inRange[0]!.p.r - ay, inRange[0]!.p.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit));
       }
       s.cooldown = 1 / this.generalFrq(g);
@@ -3482,7 +3486,7 @@ export class Battle {
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.map.path, cell),
-      exitDist: (cell) => this.playerExitDist(cell),
+      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
@@ -3568,13 +3572,18 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
+    const placeBudgetMs = 8;
+    const deadlineMs = typeof performance !== 'undefined' ? performance.now() + placeBudgetMs : undefined;
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
       rng: () => this.rng.next(),
       pSubOptimal: 0,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
+      deadlineMs,
     });
-    const moved = this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS);
+    const moved = deadlineMs !== undefined && typeof performance !== 'undefined' && performance.now() >= deadlineMs
+      ? 0
+      : this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS);
     const total = placed + moved;
     if (total > 0) {
       if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;
