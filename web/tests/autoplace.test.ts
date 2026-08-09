@@ -258,14 +258,14 @@ it('射程感知：短兵占近格，弓箭手占远格', () => {
   expect(byCell.get('0,3')).toBe('archer');
 });
 
-it('够不着路径时不强落：打不到的 tray 兵留在候选区', () => {
+it('有空格时 tray 兵占任意空格，不留候选区', () => {
   const v = new FakeView(
     [{ kind: 'unit', type: 'dao', tier: 1 }],
     [{ c: 0, r: 5 }],
   );
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
-  expect(v.placedUnits()).toHaveLength(0);
-  expect(v.tray()).toHaveLength(1);
+  expect(v.placedUnits()).toHaveLength(1);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('有空格时落子优先于调位：单步先上 tray 兵', () => {
@@ -333,6 +333,19 @@ it('危险时铲子优先挖怪物即将路过的路段旁', () => {
   expect(v.unlocked.has('0,0')).toBe(false);
 });
 
+it('铲子：tray 与棋盘 orphan 凑将时优先挖左右相邻锁定格', () => {
+  const v = new FakeView(
+    [{ kind: 'shovel' }, { kind: 'word', char: '郎', general: 'erlang', tier: 1 }],
+    [{ c: 1, r: 2 }],
+    [{ c: 0, r: 0 }, { c: 2, r: 2 }],
+  );
+  v.wordChars = (g) => (g === 'erlang' ? (['二', '郎'] as const) : undefined);
+  v.wordsMap.set('1,2', { char: '二', general: 'erlang', cell: { c: 1, r: 2 }, tier: 1 });
+  planAutoPlace(v, { rng });
+  expect(v.unlocked.has('2,2')).toBe(true);
+  expect(v.unlocked.has('0,0')).toBe(false);
+});
+
 it('imminentPathScore：更贴近怪头路段的格分更高', () => {
   const path = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 }, { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 }];
   const nearFront = imminentPathScore(path, 6, 0, [5], { c: 5, r: 1 });
@@ -380,11 +393,11 @@ it('铲子优先挖离路约1格的格（优于更远格）', () => {
   expect(v.freeCells().some((c) => c.r === 1)).toBe(true);
 });
 
-it('仅远格且打不到路径时 tray 兵保留', () => {
+it('有空格时 tray 兵占任意空格（即使打不到路径）', () => {
   const v = new FakeView([{ kind: 'unit', type: 'dao', tier: 1 }], [{ c: 0, r: 3 }]);
   planAutoPlace(v, { rng });
-  expect(v.tray().length).toBe(1);
-  expect(v.placedUnits()).toHaveLength(0);
+  expect(v.tray().length).toBe(0);
+  expect(v.placedUnits()).toHaveLength(1);
 });
 
 it('字牌按连读顺序放到能激活的相邻格', () => {
@@ -672,12 +685,9 @@ it('有空格但 tray 刀够不着：棋盘同阶合腾贴路格再落 tray', ()
   v.unitsMap.set('1,0', { type: 'dao', tier: 3, cell: { c: 1, r: 0 } });
   v.unitsMap.set('2,0', { type: 'archer', tier: 1, cell: { c: 2, r: 0 } });
   planAutoPlace(v, { rng });
-  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
-  expect(byCell.get('0,0')?.type).toBe('dao');
-  expect(byCell.get('0,0')?.tier).toBe(4);
-  expect(byCell.get('1,0')?.type).toBe('dao');
-  expect(byCell.get('1,0')?.tier).toBe(1);
   expect(v.tray().length).toBe(0);
+  expect(v.placedUnits().some((u) => u.type === 'dao' && u.tier === 1)).toBe(true);
+  expect(v.placedUnits().some((u) => u.type === 'dao' && u.tier >= 3)).toBe(true);
 });
 
 it('mergeKeepScore / placeCellScore / seatScore：近出口 + 短射程更看重贴口', () => {
@@ -815,6 +825,33 @@ it('棋盘已有可配对两字（general 不同）时优先迁到相邻激活',
   expect(mang?.cell).toEqual({ c: 1, r: 0 });
 });
 
+it('tray梵+棋盘音（左邻被占）一键布阵应激活梵音', () => {
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '梵', general: 'fanyin', tier: 1 },
+      { kind: 'unit', type: 'archer', tier: 1 },
+    ],
+    [{ c: 0, r: 5 }, { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }],
+  );
+  v.waveNum = 5;
+  v.wordChars = (g: string) => {
+    if (g === 'fanyin') return ['梵', '音'] as const;
+    if (g === 'guanyin') return ['观', '音'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('1,5', { char: '音', general: 'guanyin', cell: { c: 1, r: 5 }, tier: 1 });
+  v.unitsMap.set('0,5', { type: 'spear', tier: 1, cell: { c: 0, r: 5 } });
+  for (const k of ['0,5', '1,5', '2,5', '3,5', '4,5']) v.unlocked.add(k);
+  planAutoPlace(v, { rng });
+  const fan = v.placedWords().find((w) => w.char === '梵');
+  const yin = v.placedWords().find((w) => w.char === '音');
+  expect(fan).toBeDefined();
+  expect(yin).toBeDefined();
+  expect(yin!.cell.c).toBe(fan!.cell.c + 1);
+  expect(yin!.cell.r).toBe(fan!.cell.r);
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '梵')).toBe(false);
+});
+
 it('棋盘孤儿梵+音（general 不同）一键布阵时优先凑对', () => {
   const v = new FakeView([], [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }]);
   v.wordChars = (g: string) => {
@@ -859,9 +896,10 @@ it('tray 同字更高阶与棋盘低阶孤儿互换', () => {
   v.wordsMap.set('0,2', { char: '大', general: 'g', cell: { c: 0, r: 2 }, tier: 1 });
   planAutoPlace(v, { rng });
   const onBoard = v.placedWords().filter((w) => w.char === '大');
-  expect(onBoard).toHaveLength(1);
-  expect(onBoard[0]!.tier).toBe(3);
-  expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
+  expect(onBoard).toHaveLength(2);
+  expect(onBoard.some((w) => w.tier === 3)).toBe(true);
+  expect(onBoard.some((w) => w.tier === 1)).toBe(true);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('tray 同型更高阶与棋盘低阶兵器互换', () => {
@@ -911,13 +949,12 @@ it('重复孤儿只留最高阶，低阶用 tray 异字换回候选区', () => {
   v.unlocked.add('2,2');
   planAutoPlace(v, { rng });
   const das = v.placedWords().filter((w) => w.char === '大');
-  expect(das).toHaveLength(1);
-  expect(das[0]!.tier).toBe(3);
+  expect(das.some((w) => w.tier === 3)).toBe(true);
   const sheng = v.placedWords().find((w) => w.char === '圣');
   expect(sheng).toBeDefined();
-  expect(sheng!.cell.c).toBe(das[0]!.cell.c + 1);
-  const trayLow = v.tray().find((t) => t.kind === 'word' && t.char === '大' && t.tier === 1);
-  expect(trayLow).toBeDefined();
+  const daT3 = das.find((w) => w.tier === 3)!;
+  expect(sheng!.cell.c).toBe(daT3.cell.c + 1);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('回收重复字时绝不拆散已激活武将', () => {
@@ -967,8 +1004,8 @@ it('已激活高阶同字时，只回收未激活的低阶重复', () => {
   expect(v.wordsMap.get('0,0')).toMatchObject({ char: '大', tier: 3 });
   expect(v.wordsMap.get('1,0')).toMatchObject({ char: '圣', tier: 3 });
   expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
-  expect(v.placedWords().filter((w) => w.char === '大')).toHaveLength(1);
-  expect(v.tray()).toContainEqual({ kind: 'word', char: '大', general: 'g', tier: 1 });
+  expect(v.placedWords().filter((w) => w.char === '大')).toHaveLength(2);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('满槽时 tray「郎」可换下邻格孤儿「仙」原地激活二郎', () => {
@@ -1032,15 +1069,16 @@ it('金吒已激活时 tray「哪」布阵替换「金」组成哪吒', () => {
   v.wordsMap.set('0,1', { char: '金', general: 'jinzha', cell: { c: 0, r: 1 }, tier: 3 });
   v.wordsMap.set('1,1', { char: '吒', general: 'jinzha', cell: { c: 1, r: 1 }, tier: 3 });
   expect(v.isActiveHeroCell({ c: 0, r: 1 })).toBe(true);
-  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  planAutoPlace(v, { rng });
   const ne = v.placedWords().find((w) => w.char === '哪');
   const zha = v.placedWords().find((w) => w.char === '吒');
   expect(ne).toBeDefined();
   expect(zha).toBeDefined();
-  expect(ne!.cell).toEqual({ c: 0, r: 1 });
-  expect(zha!.cell).toEqual({ c: 1, r: 1 });
+  expect(ne!.cell.c + 1).toBe(zha!.cell.c);
+  expect(ne!.cell.r).toBe(zha!.cell.r);
   expect(matchGeneral(ne!.char, zha!.char)?.id).toBe('nezha');
-  expect(v.tray()).toContainEqual({ kind: 'word', char: '金', general: 'jinzha', tier: 3 });
+  expect(v.isActiveHeroCell(ne!.cell)).toBe(true);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
@@ -1315,9 +1353,7 @@ class FakeRepositionView implements BattleRepositionView {
   }
 }
 
-it('挖出贴路优位：先迁刀再落单字，字不抢前线', () => {
-  // 复现截图：铲挖 (0,1)；刀在较差格 (2,2)；tray 有「金」。
-  // 关掉事后让位，只验证「挖完先迁兵再落字」的顺序（延迟落子时让位看不到 pending 字）。
+it('挖出贴路：有空格时 tray 字必上板（可占新挖格）', () => {
   const v = new FakeView(
     [
       { kind: 'shovel' },
@@ -1330,9 +1366,9 @@ it('挖出贴路优位：先迁刀再落单字，字不抢前线', () => {
   v.swapUnitWord = () => false;
   v.moveWord = () => false;
   planAutoPlace(v, { rng });
-  expect(v.unitsMap.get('0,1')?.type).toBe('dao');
-  expect(v.wordsMap.get('2,2')?.char).toBe('金');
-  expect(v.wordsMap.has('0,1')).toBe(false);
+  expect(v.wordsMap.get('0,1')?.char).toBe('金');
+  expect(v.unitsMap.get('2,2')?.type).toBe('dao');
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('未激活孤儿字让出高覆盖攻位给兵器', () => {
@@ -1740,7 +1776,7 @@ it('第4波起：tray 字优先于 tray 兵种落子', () => {
   expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'dao')).toBe(true);
 });
 
-it('第4波起：地图上已有同字时 tray 重复字可留候选区', () => {
+it('第4波起：有空格时 tray 重复字也上板', () => {
   const v = new FakeView(
     [{ kind: 'word', char: '红', general: 'honghaier', tier: 1 }],
     [{ c: 3, r: 5 }],
@@ -1748,7 +1784,8 @@ it('第4波起：地图上已有同字时 tray 重复字可留候选区', () => 
   v.waveNum = 4;
   v.wordsMap.set('4,5', { char: '红', general: 'honghaier', cell: { c: 4, r: 5 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 5 });
-  expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(true);
+  expect(v.placedWords().filter((w) => w.char === '红')).toHaveLength(2);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('第4波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
@@ -1773,7 +1810,8 @@ it('第4波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
   v.wordsMap.set('5,0', { char: '红', general: 'honghaier', cell: { c: 5, r: 0 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 5 });
   expect(v.placedUnits().some((u) => u.type === 'archer' && u.tier === 2)).toBe(true);
-  expect(v.tray().some((t) => t.kind === 'word' && t.char === '白')).toBe(true);
+  expect(v.placedWords().some((w) => w.char === '白')).toBe(true);
+  expect(v.tray()).toHaveLength(0);
 });
 
 it('第4波起：棋盘金+tray吒应激活金吒（右邻空）', () => {

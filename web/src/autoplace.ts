@@ -470,7 +470,7 @@ function findFamilyUpgradeTarget(view: AutoPlaceView, trayChar: string): PlacedW
   return null;
 }
 
-/** 同门派满5已激活时，其满3过渡侧字（如 金）不必再单放上板 */
+/** 同门派满5已激活时，其满3过渡侧字（如 梵）仍可组对，但优先级低于其它 tray 字 */
 function isObsoleteTransitionVariant(view: AutoPlaceView, char: string): boolean {
   for (const w of view.placedWords()) {
     const right = view.placedWords().find(
@@ -503,7 +503,9 @@ function shouldPrioritizeTrayBoardMateActivation(
   const needCellReady = (cell: Cell) => view.freeCells().some((c) => sameCell(c, cell));
   if (!mateIsLeft) {
     const needTray = { c: mate.cell.c - 1, r: mate.cell.r };
-    return needTray.c >= 0 && needCellReady(needTray);
+    if (needTray.c >= 0 && needCellReady(needTray)) return true;
+    // 左邻被占或在地图左缘：tryActivateHero 会迁伴侣/腾位后再落 tray 字
+    return true;
   }
   // 棋盘「白」在 intended 右格：左邻非激活将即可试（clearForHero 挪沙/武器）
   const pairLeft = { c: mate.cell.c - 1, r: mate.cell.r };
@@ -513,9 +515,29 @@ function shouldPrioritizeTrayBoardMateActivation(
   return needCellReady(needTray);
 }
 
+type TrayWordToken = Extract<PlaceToken, { kind: 'word' }>;
+
+/** 激活 tray 字：先普通字，再同门派满5在场时的过渡侧字（如 梵） */
+function forEachTrayWordForActivation(
+  view: AutoPlaceView,
+  fn: (index: number, token: TrayWordToken) => boolean,
+): boolean {
+  const tray = view.tray();
+  for (let pass = 0; pass < 2; pass++) {
+    const deprioritizedPass = pass === 1;
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      if (shouldSkipTrayWordActivation(view, t)) continue;
+      if (isObsoleteTransitionVariant(view, t.char) !== deprioritizedPass) continue;
+      if (fn(i, t)) return true;
+    }
+  }
+  return false;
+}
+
 /** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 白骨 在场时 skip 吒/金 组 金吒） */
 function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
-  if (isObsoleteTransitionVariant(view, t.char)) return true;
   const mate = pickBestBoardMateView(view, t.char, t.general);
   if (mate) {
     const boardTier = pairMaxTier(t.char, mate.char);
@@ -570,9 +592,7 @@ function orphanWordsView(view: AutoPlaceView): PlacedWordLite[] {
 function pickBestBoardMateView(view: AutoPlaceView, char: string, generalHint?: string): PlacedWordLite | null {
   let best: PlacedWordLite | null = null;
   for (const w of orphanWordsView(view)) {
-    if (!isCharPartner(char, w.char, view, generalHint && w.general === generalHint ? generalHint : undefined)) {
-      continue;
-    }
+    if (!isCharPartner(char, w.char, view, generalHint)) continue;
     if (!best || wordTierOf(w) > wordTierOf(best)) best = w;
   }
   return best;
@@ -641,6 +661,43 @@ function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
   }
   return out;
 }
+
+/** tray 字与棋盘 orphan 凑将时，开挖该格即可形成左右相邻落位 */
+export function trayBoardHeroDigCells(view: AutoPlaceView): Cell[] {
+  const digKeys = new Set(view.diggableCells().map((c) => cellKey(c)));
+  const out: Cell[] = [];
+  const seen = new Set<string>();
+
+  for (const t of view.tray()) {
+    if (t.kind !== 'word') continue;
+    if (shouldSkipTrayWordActivation(view, t)) continue;
+    const mate = pickBestBoardMateView(view, t.char, t.general);
+    if (!mate) continue;
+    const pair = resolveHeroPair(
+      t.char,
+      mate.char,
+      view,
+      t.general === mate.general ? t.general : undefined,
+    );
+    if (!pair) continue;
+    const def = matchGeneral(pair.chars[0], pair.chars[1]);
+    if (!def) continue;
+
+    let needTray: Cell | null = null;
+    if (mate.char === def.chars[0]) needTray = { c: mate.cell.c + 1, r: mate.cell.r };
+    else if (mate.char === def.chars[1]) needTray = { c: mate.cell.c - 1, r: mate.cell.r };
+    if (!needTray || needTray.c < 0) continue;
+
+    const k = cellKey(needTray);
+    if (!digKeys.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    out.push(needTray);
+  }
+  return out;
+}
+
+/** 凑将挖格加权：远低于 0 使优先于贴路/近出口 */
+export const DIG_HERO_PAIR_WEIGHT = 800;
 
 function evacuateCell(view: AutoPlaceView, cell: Cell): boolean {
   const u = view.placedUnits().find((x) => x.cell.c === cell.c && x.cell.r === cell.r);
@@ -1218,6 +1275,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 1a) 地图挤回 tray 的待处理兵：换棋盘更低阶武器上板
     if (!subopt() && tryRedeployDisplacedTrayUnits()) return true;
+    // 1a+) 门派升级 / 过渡字替换 / tray 内成对 — 先于孤儿单字落位
+    if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 1b+) 邻格已空可凑对（金+吒）→ 先激活
@@ -1226,12 +1287,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
     // 1c) 有空格：无 tray/棋盘伴侣的 tray 字先上板（不抢先拆 tray 内成对字）
     if (tryEarlyTrayOrphanWords()) { markHeroLayoutChanged(); return true; }
-    // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
-    if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
-    // 2a-0c) 过渡将占位时用 tray 主将字替换（如 牛郎+tray魔 → 牛魔）
-    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
-    // 2a-0d) tray 内两字优先组满级主将（如牛+魔），再考虑棋盘过渡字（如牛+郎）
-    if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 2a-0b) tray 伴侣所需格被占（金吒挡骨左格等）→ 先整行左移插入
     if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
       if (tryTrayHeroInsertByRowShift(view)) return true;
@@ -1247,8 +1302,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
-      const mate = pickBestBoardMate(t.char, t.general);
-      if (mate && !canActivateTrayBoardMateNow(t, mate)) continue;
       if (tryActivateTrayWord(i, t)) { markHeroLayoutChanged(); return true; }
     }
     // 2b-1) 贴路行左移 / 未升满前置（凑对失败后再整行腾位）
@@ -1603,24 +1656,27 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.moveWord(best.from, best.to);
   }
 
-  /** 可挖格：离路~1格优先，贴边数弱加权；平时叠加近出口，危险时改优先靠近唐僧 */
+  /** 可挖格：凑将相邻格最优先，否则离路~1格 + 贴边 + 近出口 */
   function sortedDigTargets(exitWeight: number = DIG_EXIT_WEIGHT): Cell[] {
     const danger = view.dangerNear();
+    const heroDigKeys = new Set(trayBoardHeroDigCells(view).map((c) => cellKey(c)));
     return view.diggableCells().slice().sort((a, b) => {
+      const heroA = heroDigKeys.has(cellKey(a)) ? -DIG_HERO_PAIR_WEIGHT : 0;
+      const heroB = heroDigKeys.has(cellKey(b)) ? -DIG_HERO_PAIR_WEIGHT : 0;
       const sa = digPriorityScore(
         view.pathTouchSides(a),
         view.nearestPathDist(a),
         view.exitDist(a),
         exitWeight,
         danger ? { danger: true, imminentScore: view.imminentPathScore(a), tangsengDist: view.tangsengDist(a) } : undefined,
-      );
+      ) + heroA;
       const sb = digPriorityScore(
         view.pathTouchSides(b),
         view.nearestPathDist(b),
         view.exitDist(b),
         exitWeight,
         danger ? { danger: true, imminentScore: view.imminentPathScore(b), tangsengDist: view.tangsengDist(b) } : undefined,
-      );
+      ) + heroB;
       return sa - sb || a.r - b.r || a.c - b.c;
     });
   }
