@@ -1,6 +1,6 @@
 // web/tests/ai-skill.test.ts
 import { describe, it, expect } from 'vitest';
-import { nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL } from '../src/ai-skill';
+import { nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL, aiItemTargetCount, rollAiLoadout } from '../src/ai-skill';
 
 describe('nextAiSkill', () => {
   it('玩家胜 → 调强(升)，玩家负 → 调弱(降)', () => {
@@ -53,5 +53,24 @@ describe('skillToKnobs', () => {
   it('征兵间隔被 clamp 在可信人手速内', () => {
     expect(skillToKnobs(AI_SKILL_MAX).summonInterval).toBeGreaterThanOrEqual(1.2 - 1e-9);
     expect(skillToKnobs(AI_SKILL_MIN).summonInterval).toBeLessThanOrEqual(5.0 + 1e-9);
+  });
+});
+
+describe('rollAiLoadout', () => {
+  it('玩家无道具时 AI 也不带', () => {
+    const roll = rollAiLoadout([], [], DEFAULT_AI_SKILL, () => 0);
+    expect(roll.actives).toEqual([]);
+    expect(roll.passives).toEqual([]);
+  });
+
+  it('玩家有配置时 AI 数量接近且随 skill 调节', () => {
+    const playerA = ['act_palm'];
+    const playerP = ['xiandan', 'fenghuolun'];
+    const hi = rollAiLoadout(playerA, playerP, AI_SKILL_MAX, (n) => n - 1);
+    const lo = rollAiLoadout(playerA, playerP, AI_SKILL_MIN, () => 0);
+    expect(hi.actives.length + hi.passives.length).toBeGreaterThanOrEqual(
+      lo.actives.length + lo.passives.length,
+    );
+    expect(aiItemTargetCount(3, DEFAULT_AI_SKILL)).toBe(3);
   });
 });

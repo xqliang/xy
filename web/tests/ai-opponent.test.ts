@@ -3,6 +3,18 @@ import { describe, it, expect, vi } from 'vitest';
 import { Battle, TUNING } from '../src/battle';
 import { PEACH_PER_KILL } from '@core';
 
+describe('AI 道具', () => {
+  it('玩家装备被动时 AI 也会随机携带道具', () => {
+    const b = new Battle(42, 1, undefined, undefined, undefined, [], ['xiandan', 'jubaopen']);
+    expect(b.aiPickedItems.length).toBeGreaterThan(0);
+  });
+
+  it('无尽模式 AI 不带道具', () => {
+    const b = new Battle(42, 1, undefined, undefined, undefined, ['act_palm'], ['xiandan'], true);
+    expect(b.aiPickedItems.length).toBe(0);
+  });
+});
+
 describe('AI 落子与激活', () => {
   it('aiPlaceFromTray：铲子只挖锁定 AI 格并解锁', () => {
     const b = new Battle(1);

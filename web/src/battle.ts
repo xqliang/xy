@@ -679,7 +679,9 @@ export class Battle {
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波陨石是否待触发
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
-  pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵
+  pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵碎片
+  /** 由 main 注入：碎片已集齐时不展示领取卡片（仍参与随机） */
+  weaponPickupVisible: (id: string) => boolean = () => true;
   pickedItems: string[] = [];
 
   private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的武将 id
@@ -2347,9 +2349,10 @@ export class Battle {
     const isBossWave = this.isBossWave(this.wave);
     if (!isBossWave && this.rng.next() > 0.35) return;
     const id = rollWeaponDrop(this.rng.next());
+    if (!this.weaponPickupVisible(id)) return;
     this.pendingWeaponPickups.push(id);
     const wname = weaponById(id)?.name ?? id;
-    this.message = `第 ${this.wave} 波已清！掉落「${wname}」（点击左下角领取）`;
+    this.message = `第 ${this.wave} 波已清！掉落「${wname}」碎片（点击左下角领取）`;
   }
 
   // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈阶梯。

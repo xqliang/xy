@@ -24,6 +24,10 @@ import {
   drawMenuFloatToasts,
 } from './menu-toast';
 import {
+  updateMerchantFloatToasts,
+  drawMerchantFloatToasts,
+} from './merchant-toast';
+import {
   drawPausePopup,
   pausePopupHitAt,
   type PausePhase,
@@ -61,7 +65,7 @@ import {
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
 import { drawWeaponPickups, weaponPickupHitAt } from './weaponPickup';
-import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
+import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
@@ -212,6 +216,7 @@ let bagDownX = 0, bagDownY = 0, bagDownScroll = 0, bagDragged = false;
 let mapSelection: MapSelection = safePersisted(loadMapSelection, { mode: 'daily' });
 let currentMap = params.get('map') ? mapById(params.get('map')!) : resolveMap(mapSelection);
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
+bindBattleWeaponPickup();
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
@@ -244,6 +249,7 @@ const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDr
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
   battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, loadAiSkill());
+  bindBattleWeaponPickup();
   endHandled = false;
   endlessResult = null;
   ui.paused = false;
@@ -433,15 +439,25 @@ function handleMerchantPointer(x: number, y: number): boolean {
   return true;
 }
 
+function bindBattleWeaponPickup(): void {
+  battle.weaponPickupVisible = (id) => !isWeaponFragmentsComplete(bag, id);
+}
+
+function visibleWeaponPickups(): string[] {
+  return battle.pendingWeaponPickups.filter((id) => !isWeaponFragmentsComplete(bag, id));
+}
+
 function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
   battle.pendingWeaponPickups.splice(idx, 1);
   playSfx('click');
-  const r = addWeapon(bag, id);
+  const r = addWeaponFragment(bag, id);
   bag = r.state;
   const name = weaponById(id)?.name ?? id;
-  battle.message = `获得神兵：${name}${r.upgraded ? ' 升阶' : ''}`;
+  if (r.activated) battle.message = `激活神兵：${name}`;
+  else if (r.upgraded) battle.message = `获得神兵：${name} 升阶`;
+  else battle.message = `获得碎片：${name}（${r.fragments}/${r.required}）`;
 }
 
 function leaveSettleToMenu(): void {
@@ -641,7 +657,7 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'settle') {
-    const pickupId = weaponPickupHitAt(x, y, battle.pendingWeaponPickups);
+    const pickupId = weaponPickupHitAt(x, y, visibleWeaponPickups(), bag);
     if (pickupId) {
       claimWeaponPickup(pickupId);
       return;
@@ -683,7 +699,7 @@ function onPointerDown(e: PointerEvent) {
   }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
   if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
-  const pickupId = weaponPickupHitAt(x, y, battle.pendingWeaponPickups);
+  const pickupId = weaponPickupHitAt(x, y, visibleWeaponPickups(), bag);
   if (pickupId) {
     claimWeaponPickup(pickupId);
     return;
@@ -907,7 +923,7 @@ function scheduleFrame(): void {
 function needsContinuousLoop(): boolean {
   if (screen === 'menu') return true;
   if (screen === 'battle') return !ui.paused;
-  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart) || battle.pendingWeaponPickups.length > 0;
+  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart) || visibleWeaponPickups().length > 0;
   return false;
 }
 
@@ -943,7 +959,11 @@ function frame(now: number): void {
     if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings, loadUserId());
     else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
-    if (merchant.open) drawMerchant(ctx, merchant, loadout, merit);
+    if (merchant.open) {
+      updateMerchantFloatToasts(dt);
+      drawMerchant(ctx, merchant, loadout, merit);
+      drawMerchantFloatToasts(ctx);
+    }
     drawMenuFloatToasts(ctx);
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
@@ -958,7 +978,7 @@ function frame(now: number): void {
   } else if (screen === 'settle') {
     if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
-    drawWeaponPickups(ctx, battle.pendingWeaponPickups);
+    drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
   } else {
     // —— 战斗 —— //
     if (!ui.paused) {
@@ -1007,7 +1027,7 @@ function frame(now: number): void {
     }
     setHudRank(rankName(rank.level));
     draw(ctx, battle, ui);
-    drawWeaponPickups(ctx, battle.pendingWeaponPickups);
+    drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
     if (ui.paused) drawPausePopup(ctx, pausePhase);
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
@@ -1097,6 +1117,7 @@ const hook: GameHook = {
   tuning: TUNING,
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, loadAiSkill());
+    bindBattleWeaponPickup();
     endHandled = false;
     endlessResult = null;
     screen = 'battle';

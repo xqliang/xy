@@ -3,7 +3,9 @@ import { VIEW_W, VIEW_H } from './render';
 import {
   WEAPONS, weaponById, weaponQualityName, weaponQualityColor, weaponBonusLabel,
   weaponPctBonus, weaponRangeBonusGrids, STAT_LABEL,
-  MAX_EQUIPPED, MAX_WEAPON_TIER, type BagState,
+  MAX_EQUIPPED, MAX_WEAPON_TIER, weaponGradeName, weaponGradeColor,
+  weaponFragmentCount, weaponFragmentsRequired, isWeaponActivated,
+  type BagState,
 } from './weapons';
 import { generalById } from './generals';
 
@@ -70,6 +72,26 @@ function bagHitAtOrder(x: number, contentY: number, order: string[]): { kind: 't
   return null;
 }
 
+function drawFragmentBar(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  frags: number,
+  req: number,
+  color: string,
+): void {
+  const h = 4;
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  roundRect(ctx, x, y, w, h, 2);
+  ctx.fill();
+  if (frags > 0) {
+    roundRect(ctx, x, y, Math.max(h, w * Math.min(1, frags / req)), h, 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+}
+
 function drawBagRow(
   ctx: CanvasRenderingContext2D,
   bag: BagState,
@@ -77,29 +99,45 @@ function drawBagRow(
   y: number,
 ): void {
   const tier = bag.owned[w.id] ?? 0;
-  const has = tier > 0;
+  const has = isWeaponActivated(bag, w.id);
   const on = bag.equipped.includes(w.id);
+  const frags = weaponFragmentCount(bag, w.id);
+  const req = weaponFragmentsRequired(w.id);
+  const gradeColor = weaponGradeColor(w.id);
   roundRect(ctx, LEFT, y, ROW_W, ROW_H, 10);
-  ctx.fillStyle = has ? (on ? '#3f3a24' : '#2a2519') : '#221e16';
+  ctx.fillStyle = has ? (on ? '#3f3a24' : '#2a2519') : frags > 0 ? '#2a2318' : '#221e16';
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = has ? weaponQualityColor(tier) : 'rgba(255,255,255,0.08)';
+  ctx.strokeStyle = has ? weaponQualityColor(tier) : frags > 0 ? gradeColor : 'rgba(255,255,255,0.08)';
   ctx.stroke();
 
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = has ? '#fff6e6' : 'rgba(255,246,230,0.35)';
+  ctx.fillStyle = has ? '#fff6e6' : frags > 0 ? 'rgba(255,246,230,0.75)' : 'rgba(255,246,230,0.35)';
   ctx.font = 'bold 17px "PingFang SC", sans-serif';
   ctx.fillText(w.name, LEFT + 14, y + ROW_H / 2 - 10);
-  ctx.fillStyle = has ? weaponQualityColor(tier) : 'rgba(200,200,200,0.3)';
+  ctx.fillStyle = has ? weaponQualityColor(tier) : gradeColor;
   ctx.font = '12px "PingFang SC", sans-serif';
   const gname = generalById(w.general)?.name ?? '';
-  ctx.fillText(has ? `${weaponQualityName(tier)}阶 · 专属「${gname}」` : `未获得 · 专属「${gname}」`, LEFT + 14, y + ROW_H / 2 + 12);
+  const sub = has
+    ? `${weaponQualityName(tier)}阶 · 专属「${gname}」`
+    : `${weaponGradeName(w.id)} · 专属「${gname}」`;
+  ctx.fillText(sub, LEFT + 14, y + ROW_H / 2 + 12);
+
+  const barX = LEFT + 14;
+  const barW = ROW_W - 14 - 96;
+  if (!has) {
+    drawFragmentBar(ctx, barX, y + ROW_H - 12, barW, frags, req, gradeColor);
+  }
 
   ctx.textAlign = 'right';
-  ctx.fillStyle = has ? '#9bffb0' : 'rgba(155,255,176,0.25)';
+  ctx.fillStyle = has ? '#9bffb0' : gradeColor;
   ctx.font = 'bold 14px "PingFang SC", sans-serif';
-  ctx.fillText(has ? weaponBonusLabel(w.stat, tier) : `${STAT_LABEL[w.stat]} —`, LEFT + ROW_W - 96, y + ROW_H / 2);
+  ctx.fillText(
+    has ? weaponBonusLabel(w.stat, tier) : `碎片 ${frags}/${req}`,
+    LEFT + ROW_W - 96,
+    y + ROW_H / 2,
+  );
 
   const bw = 74;
   const bh = 30;
@@ -111,7 +149,7 @@ function drawBagRow(
   ctx.textAlign = 'center';
   ctx.fillStyle = !has ? '#6a6250' : '#fff6e6';
   ctx.font = 'bold 13px "PingFang SC", sans-serif';
-  ctx.fillText(!has ? '未获得' : on ? '已装备' : '装备', bx + bw / 2, by + bh / 2);
+  ctx.fillText(!has ? (frags > 0 ? '收集中' : `${frags}/${req}`) : on ? '已装备' : '装备', bx + bw / 2, by + bh / 2);
 }
 
 export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: string, scrollY = 0): void {
@@ -148,7 +186,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
   ctx.fillStyle = '#d8c8a0';
   ctx.font = '13px "PingFang SC", sans-serif';
   ctx.fillText(
-    `清波35%掉落·妖王波必掉·对局左下角点击领取 · 重复升品质 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
+    `清波35%掉碎片·妖王波必掉·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
     VIEW_W / 2,
     90,
   );
@@ -203,10 +241,12 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   const w = weaponById(id);
   if (!w) return;
   const tier = bag.owned[id] ?? 0;
-  const has = tier > 0;
+  const has = isWeaponActivated(bag, id);
   const on = bag.equipped.includes(id);
+  const frags = weaponFragmentCount(bag, id);
+  const req = weaponFragmentsRequired(id);
   const gname = generalById(w.general)?.name ?? '';
-  const color = has ? weaponQualityColor(tier) : '#7a7466';
+  const color = has ? weaponQualityColor(tier) : weaponGradeColor(id);
 
   // 遮罩
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -228,7 +268,19 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.fillText(w.name, PX + PAD, PY + 22);
   ctx.fillStyle = color;
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(has ? `${weaponQualityName(tier)}阶 · 专属「${gname}」` : `未获得 · 专属「${gname}」`, PX + PAD, PY + 52);
+  ctx.fillText(
+    has ? `${weaponQualityName(tier)}阶 · 专属「${gname}」`
+      : `${weaponGradeName(id)} · 专属「${gname}」 · 需 ${req} 片`,
+    PX + PAD, PY + 52,
+  );
+
+  if (!has) {
+    const barW = PW - PAD * 2;
+    drawFragmentBar(ctx, PX + PAD, PY + 82, barW, frags, req, weaponGradeColor(id));
+    ctx.fillStyle = weaponGradeColor(id);
+    ctx.font = 'bold 15px "PingFang SC", sans-serif';
+    ctx.fillText(`碎片进度 ${frags}/${req}`, PX + PAD, PY + 92);
+  }
 
   // 关闭
   roundRect(ctx, CLOSE_R.x, CLOSE_R.y, CLOSE_R.w, CLOSE_R.h, 7);
@@ -244,8 +296,8 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.strokeStyle = 'rgba(255,255,255,0.12)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(PX + PAD, PY + 76);
-  ctx.lineTo(PX + PW - PAD, PY + 76);
+  ctx.moveTo(PX + PAD, PY + (has ? 76 : 118));
+  ctx.lineTo(PX + PW - PAD, PY + (has ? 76 : 118));
   ctx.stroke();
 
   // 说明：定位 + 当前加成 + 满阶加成 + 获取方式
@@ -259,15 +311,17 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
     ? `范围每升一阶 +0.35 格（金阶满 ${maxBonus}）`
     : `随品质提升（金阶满 ${maxBonus}）`;
   const usage =
-    `专属「${gname}」神兵，装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
+    `专属「${gname}」神兵（${weaponGradeName(id)}），装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
     (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} ${curBonus}。${bonusExplain}。\n`
-         : `尚未获得。获得后可装备：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
-    `清波有35%概率随机掉落，妖王波必掉；对局左下角点击领取后入背包。重复掉落自动升品质，最多同时装备 ${MAX_EQUIPPED} 件。`;
+         : frags > 0
+           ? `收集中：碎片 ${frags}/${req}，集齐后激活。${STAT_LABEL[w.stat]} ${bonusExplain}。\n`
+           : `尚未获得。${weaponGradeName(id)}需 ${req} 片激活：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
+    `清波35%概率掉碎片，妖王波必掉；左下角点击领取。已集齐的神兵仍参与随机但不显示。最多同时装备 ${MAX_EQUIPPED} 件。`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.9)';
   ctx.font = '15px "PingFang SC", sans-serif';
-  let ty = PY + 90;
+  let ty = PY + (has ? 90 : 132);
   for (const ln of wrapText(ctx, usage, PW - PAD * 2)) { ctx.fillText(ln, PX + PAD, ty); ty += 24; }
 
   // 动作按钮：装备 / 已装备(卸下) / 未获得
@@ -278,5 +332,5 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.textBaseline = 'middle';
   ctx.fillStyle = !has ? '#6a6250' : '#fff6e6';
   ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText(!has ? '未获得' : on ? '已装备（点击卸下）' : '装备', ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
+  ctx.fillText(!has ? `收集中 ${frags}/${req}` : on ? '已装备（点击卸下）' : '装备', ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
 }

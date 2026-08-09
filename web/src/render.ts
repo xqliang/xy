@@ -4839,6 +4839,27 @@ function drawBondHudChip(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
+function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.endless || b.aiPickedItems.length === 0) return;
+  if (b.status !== 'ready' && b.status !== 'playing') return;
+  const chips: { icon: string; color: string }[] = [];
+  for (const id of b.aiPickedItems) {
+    const act = activeById(id);
+    if (act) { chips.push({ icon: act.icon, color: '#6ab0ff' }); continue; }
+    const pas = passiveById(id);
+    if (pas) chips.push({ icon: pas.icon, color: '#6ab07a' });
+  }
+  if (chips.length === 0) return;
+  const r = 11;
+  const gap = r * 2 + 4;
+  const cy = HUD_H / 2;
+  const rightX = VIEW_W - 14;
+  chips.forEach((it, i) => {
+    const x = rightX - r - i * gap;
+    drawStatusChip(ctx, x, cy, it.icon, it.color, r);
+  });
+}
+
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
@@ -4861,10 +4882,7 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = '#8a5a2b';
     ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
   }
-  ctx.font = 'bold 24px "PingFang SC", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#c23b3b';
-  ctx.fillText(`唐僧 ❤ ${b.tangsengHP}`, VIEW_W - 20, HUD_H / 2);
+  drawAiItemsHud(ctx, b);
   drawBondHudChip(ctx, b);
 }
 

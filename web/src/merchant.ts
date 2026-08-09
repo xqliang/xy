@@ -28,6 +28,7 @@ import {
 } from './loadout';
 import type { MeritState } from './merit';
 import { spendMerit } from './merit';
+import { clearMerchantFloatToasts, pushMerchantFloatToast } from './merchant-toast';
 
 export type SkillKind = 'active' | 'passive';
 
@@ -139,12 +140,18 @@ export function rollLotteryPreview(): Array<{ kind: SkillKind; id: string }> {
   return shuffle(allSkills()).slice(0, 8);
 }
 
+function withToast(m: MerchantUiState, text: string): MerchantUiState {
+  if (text) pushMerchantFloatToast(text);
+  return { ...m, toast: '' };
+}
+
 export function merchantClosed(): MerchantUiState {
   return { open: false, tab: 'shop', offers: [], lotteryPreview: [], toast: '', confirmOffer: null };
 }
 
 /** 战斗结算回首页时调用：弹出并重 roll 商品 */
 export function openMerchant(loadout: LoadoutState): MerchantUiState {
+  clearMerchantFloatToasts();
   return {
     open: true,
     tab: 'shop',
@@ -156,6 +163,7 @@ export function openMerchant(loadout: LoadoutState): MerchantUiState {
 }
 
 export function closeMerchant(m: MerchantUiState): MerchantUiState {
+  clearMerchantFloatToasts();
   return { ...m, open: false, toast: '', confirmOffer: null };
 }
 
@@ -207,7 +215,7 @@ export function applyMerchantHit(
       }
       if (isKindSlotsFull(lo, offer.kind)) {
         return {
-          merchant: { ...m, confirmOffer: null, toast: slotFullHint(offer.kind) },
+          merchant: { ...withToast(m, slotFullHint(offer.kind)), confirmOffer: null },
           loadout: lo,
           merit: me,
         };
@@ -217,35 +225,39 @@ export function applyMerchantHit(
         lo = res.loadout;
         me = res.merit;
         m = {
-          ...m,
+          ...withToast(
+            m,
+            res.ok
+              ? (lo.equipped.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
+              : res.reason ?? '无法购买',
+          ),
           confirmOffer: null,
           offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
-          toast: res.ok
-            ? (lo.equipped.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
-            : res.reason ?? '无法购买',
         };
       } else {
         const res = buyPassive(lo, me, offer.id);
         lo = res.loadout;
         me = res.merit;
         m = {
-          ...m,
+          ...withToast(
+            m,
+            res.ok
+              ? (lo.passives.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
+              : res.reason ?? '无法购买',
+          ),
           confirmOffer: null,
           offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
-          toast: res.ok
-            ? (lo.passives.includes(offer.id) ? '已购买并装备' : '已购买（槽满，卸下后可装备）')
-            : res.reason ?? '无法购买',
         };
       }
       return { merchant: m, loadout: lo, merit: me };
     }
     case 'unequipActive':
       lo = unequipActive(lo, hit.id);
-      m = { ...m, toast: '已卸下' };
+      m = withToast(m, '已卸下');
       return { merchant: m, loadout: lo, merit: me };
     case 'unequipPassive':
       lo = unequipPassive(lo, hit.id);
-      m = { ...m, toast: '已卸下' };
+      m = withToast(m, '已卸下');
       return { merchant: m, loadout: lo, merit: me };
     case 'offer': {
       const offer = m.offers[hit.index];
@@ -254,20 +266,20 @@ export function applyMerchantHit(
         const equipped = isOfferEquipped(lo, offer);
         if (equipped) {
           lo = offer.kind === 'active' ? unequipActive(lo, offer.id) : unequipPassive(lo, offer.id);
-          m = { ...m, toast: '已卸下' };
+          m = withToast(m, '已卸下');
         } else if (isKindSlotsFull(lo, offer.kind)) {
-          m = { ...m, toast: slotFullHint(offer.kind) };
+          m = withToast(m, slotFullHint(offer.kind));
         } else {
           const res = offer.kind === 'active' ? equipActive(lo, offer.id) : equipPassive(lo, offer.id);
           lo = res.loadout;
-          m = { ...m, toast: res.ok ? '已装备' : res.reason ?? '无法装备' };
+          m = withToast(m, res.ok ? '已装备' : res.reason ?? '无法装备');
         }
       } else if (isKindSlotsFull(lo, offer.kind)) {
-        m = { ...m, toast: slotFullHint(offer.kind) };
+        m = withToast(m, slotFullHint(offer.kind));
       } else {
         const cost = skillCost(offer.kind, offer.id);
         if (me.merit < cost) {
-          m = { ...m, toast: '功德不足' };
+          m = withToast(m, '功德不足');
         } else {
           m = { ...m, confirmOffer: hit.index, toast: '' };
         }
@@ -290,11 +302,11 @@ function merchantLottery(
   merit: MeritState,
 ): MerchantActionResult {
   if (merit.merit < LOTTERY_MERIT_COST) {
-    return { merchant: { ...merchant, toast: '功德不足' }, loadout, merit };
+    return { merchant: withToast(merchant, '功德不足'), loadout, merit };
   }
   const pick = pickLotterySkill(loadout);
   if (!pick) {
-    return { merchant: { ...merchant, toast: '无可抽技能' }, loadout, merit };
+    return { merchant: withToast(merchant, '无可抽技能'), loadout, merit };
   }
   const name = (pick.kind === 'active' ? activeById(pick.id) : passiveById(pick.id))?.name ?? pick.id;
   let lo = loadout;
@@ -309,10 +321,10 @@ function merchantLottery(
     }
     const equipped = lo.equipped.includes(pick.id);
     return {
-      merchant: {
-        ...merchant,
-        toast: equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
-      },
+      merchant: withToast(
+        merchant,
+        equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
+      ),
       loadout: lo,
       merit: me,
     };
@@ -323,10 +335,10 @@ function merchantLottery(
     lo = res.loadout;
     const equipped = lo.passives.includes(pick.id);
     return {
-      merchant: {
-        ...merchant,
-        toast: equipped ? `抽中「${name}」并已装备` : res.reason ?? '槽位已满',
-      },
+      merchant: withToast(
+        merchant,
+        equipped ? `抽中「${name}」并已装备` : res.reason ?? '槽位已满',
+      ),
       loadout: lo,
       merit: me,
     };
@@ -334,10 +346,10 @@ function merchantLottery(
   lo = grantPassive(lo, pick.id);
   const equipped = lo.passives.includes(pick.id);
   return {
-    merchant: {
-      ...merchant,
-      toast: equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
-    },
+    merchant: withToast(
+      merchant,
+      equipped ? `抽中「${name}」并已装备` : `抽中「${name}」（请先卸下腾位）`,
+    ),
     loadout: lo,
     merit: me,
   };
@@ -908,14 +920,6 @@ export function drawMerchant(
 
   drawEquippedSection(ctx, loadout);
   drawInkActionButton(ctx, CONTINUE_R, '关闭', false, 'secondary');
-
-  if (m.toast) {
-    ctx.fillStyle = '#8a3010';
-    ctx.font = '14px "PingFang SC", serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(m.toast, VIEW_W / 2, PY + PH + 14);
-  }
 
   if (m.confirmOffer !== null) drawOfferConfirmPopup(ctx, m, merit);
 }

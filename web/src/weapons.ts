@@ -1,5 +1,5 @@
 // 武器（神兵）系统：每位武将一件专属神兵，五级品质 白/绿/蓝/紫/金。
-// 对局清波随机掉落；左下角点击领取后入背包；重复掉落自动升品质；最多装备 3 件。
+// 对局清波随机掉落碎片；左下角点击领取；集齐碎片激活；最多装备 3 件。
 // 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.35 格（格数加成）。
 import { GENERALS, generalById } from './generals';
 import { storeGet, storeSet, parseStoredJson, safeStringArray } from './storage';
@@ -11,11 +11,61 @@ export const WEAPON_QUALITY_COLORS = ['#cfd3d8', '#7ec46a', '#4a9be0', '#a86ad0'
 export const MAX_WEAPON_TIER = 5;
 export const MAX_EQUIPPED = 3; // 同时可装备的神兵数
 
+/** 神兵稀有度：决定集齐激活所需碎片数（低1/普2/中3/高4） */
+export type WeaponGrade = 'low' | 'normal' | 'mid' | 'high';
+export const WEAPON_GRADE_NAMES: Record<WeaponGrade, string> = {
+  low: '低级', normal: '普通', mid: '中级', high: '高级',
+};
+export const WEAPON_GRADE_FRAGMENTS: Record<WeaponGrade, number> = {
+  low: 1, normal: 2, mid: 3, high: 4,
+};
+export const WEAPON_GRADE_COLORS: Record<WeaponGrade, string> = {
+  low: '#9a9588', normal: '#7ec46a', mid: '#4a9be0', high: '#e8c22c',
+};
+
 export function weaponQualityName(tier: number): string {
   return WEAPON_QUALITY_NAMES[Math.max(0, Math.min(MAX_WEAPON_TIER - 1, tier - 1))]!;
 }
 export function weaponQualityColor(tier: number): string {
   return WEAPON_QUALITY_COLORS[Math.max(0, Math.min(MAX_WEAPON_TIER - 1, tier - 1))]!;
+}
+
+export function weaponGrade(def: WeaponDef): WeaponGrade {
+  const g = generalById(def.general);
+  if (!g) return 'normal';
+  if (g.rank === 'T0') return 'high';
+  if (g.role === '过渡') return 'low';
+  if (g.role === '辅助') return 'normal';
+  return 'mid';
+}
+
+export function weaponGradeName(id: string): string {
+  const def = weaponById(id);
+  return def ? WEAPON_GRADE_NAMES[weaponGrade(def)] : '';
+}
+
+export function weaponGradeColor(id: string): string {
+  const def = weaponById(id);
+  return def ? WEAPON_GRADE_COLORS[weaponGrade(def)] : '#9a9588';
+}
+
+export function weaponFragmentsRequired(id: string): number {
+  const def = weaponById(id);
+  return def ? WEAPON_GRADE_FRAGMENTS[weaponGrade(def)] : 1;
+}
+
+export function weaponFragmentCount(s: BagState, id: string): number {
+  return s.fragments[id] ?? 0;
+}
+
+export function isWeaponActivated(s: BagState, id: string): boolean {
+  return (s.owned[id] ?? 0) > 0;
+}
+
+/** 碎片已集齐或神兵已激活 → 对局内不再展示掉落卡片（仍参与随机） */
+export function isWeaponFragmentsComplete(s: BagState, id: string): boolean {
+  if (isWeaponActivated(s, id)) return true;
+  return weaponFragmentCount(s, id) >= weaponFragmentsRequired(id);
 }
 
 // 加成属性：攻击 / 攻速 / 范围（对应竞品"叠攻速""扩大攻击范围"等神兵定位）
@@ -87,11 +137,12 @@ export function weaponBonusLabel(stat: WeaponStat, tier: number): string {
 }
 
 export interface BagState {
-  owned: Record<string, number>; // weaponId → 品质阶
+  owned: Record<string, number>; // weaponId → 品质阶（激活后 ≥1）
+  fragments: Record<string, number>; // weaponId → 已收集碎片数
   equipped: string[]; // 已装备的 weaponId（最多 MAX_EQUIPPED）
 }
 
-const DEFAULT_BAG: BagState = { owned: {}, equipped: [] };
+const DEFAULT_BAG: BagState = { owned: {}, fragments: {}, equipped: [] };
 
 function normalizeBag(raw: unknown): BagState | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -102,10 +153,22 @@ function normalizeBag(raw: unknown): BagState | null {
     if (!weaponById(id) || typeof tier !== 'number' || !Number.isFinite(tier)) continue;
     owned[id] = Math.max(1, Math.min(MAX_WEAPON_TIER, Math.floor(tier)));
   }
+  const fragments: Record<string, number> = {};
+  if (s.fragments && typeof s.fragments === 'object') {
+    for (const [id, n] of Object.entries(s.fragments as Record<string, unknown>)) {
+      if (!weaponById(id) || typeof n !== 'number' || !Number.isFinite(n)) continue;
+      const req = weaponFragmentsRequired(id);
+      fragments[id] = Math.max(0, Math.min(req, Math.floor(n)));
+    }
+  }
+  // 旧存档：已激活的神兵视为碎片集齐
+  for (const id of Object.keys(owned)) {
+    fragments[id] = weaponFragmentsRequired(id);
+  }
   const equipped = safeStringArray(s.equipped)
     .filter((id) => id in owned)
     .slice(0, MAX_EQUIPPED);
-  return { owned, equipped };
+  return { owned, fragments, equipped };
 }
 
 export function loadBag(): BagState {
@@ -120,13 +183,47 @@ export function saveBag(s: BagState): void {
   }
 }
 
-// 获得一件神兵：已有则升品质（上限金阶），未有则以白阶入包
+// 领取对局掉落的一枚神兵碎片：集齐后激活（白阶）
+export function addWeaponFragment(
+  s: BagState,
+  id: string,
+): { state: BagState; activated: boolean; upgraded: boolean; fragments: number; required: number; tier: number } {
+  const req = weaponFragmentsRequired(id);
+  if (isWeaponActivated(s, id)) {
+    const r = addWeapon(s, id);
+    return { ...r, activated: false, fragments: req, required: req };
+  }
+  if (isWeaponFragmentsComplete(s, id)) {
+    return {
+      state: s, activated: false, upgraded: false,
+      fragments: weaponFragmentCount(s, id), required: req, tier: 0,
+    };
+  }
+  const fragments = { ...s.fragments };
+  const owned = { ...s.owned };
+  const cur = fragments[id] ?? 0;
+  fragments[id] = Math.min(req, cur + 1);
+  let activated = false;
+  if (fragments[id] >= req) {
+    owned[id] = 1;
+    activated = true;
+  }
+  const next: BagState = { owned, fragments, equipped: [...s.equipped] };
+  if (activated && next.equipped.length < MAX_EQUIPPED) next.equipped.push(id);
+  saveBag(next);
+  return { state: next, activated, upgraded: false, fragments: fragments[id]!, required: req, tier: owned[id] ?? 0 };
+}
+
+// 直接获得/升阶神兵（测试钩子）：视为碎片集齐
 export function addWeapon(s: BagState, id: string): { state: BagState; upgraded: boolean; tier: number } {
   const owned = { ...s.owned };
+  const fragments = { ...s.fragments };
+  const req = weaponFragmentsRequired(id);
   const cur = owned[id] ?? 0;
   const upgraded = cur > 0;
   owned[id] = Math.min(MAX_WEAPON_TIER, cur + 1);
-  const next: BagState = { owned, equipped: [...s.equipped] };
+  fragments[id] = req;
+  const next: BagState = { owned, fragments, equipped: [...s.equipped] };
   // 首次获得且还有装备位 → 自动装备，减少操作负担
   if (!upgraded && next.equipped.length < MAX_EQUIPPED) next.equipped.push(id);
   saveBag(next);
@@ -144,7 +241,7 @@ export function toggleEquip(s: BagState, id: string): { state: BagState; ok: boo
     if (equipped.length >= MAX_EQUIPPED) return { state: s, ok: false, reason: `最多装备 ${MAX_EQUIPPED} 件` };
     equipped.push(id);
   }
-  const next: BagState = { owned: { ...s.owned }, equipped };
+  const next: BagState = { owned: { ...s.owned }, fragments: { ...s.fragments }, equipped };
   saveBag(next);
   return { state: next, ok: true };
 }

@@ -1224,8 +1224,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (tryPrioritizeTrayBoardMateActivation()) return true;
     // 1b++) tray 字待伴侣、仍有 tray 兵 → 先落兵（白+龙 待激活时先上弓）
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
-    // 1c) 有空格：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
-    if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
+    // 1c) 有空格：无 tray/棋盘伴侣的 tray 字先上板（不抢先拆 tray 内成对字）
+    if (tryEarlyTrayOrphanWords()) { markHeroLayoutChanged(); return true; }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     // 2a-0c) 过渡将占位时用 tray 主将字替换（如 牛郎+tray魔 → 牛魔）
@@ -2144,7 +2144,29 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return tryDisplaceUnitForTrayWord();
   }
 
+  /** 1c 专用：仅落无 tray 伴侣、无棋盘伴侣的字（避免抢先拆 tray 内成对） */
+  function tryEarlyTrayOrphanWords(): boolean {
+    if (!hasFreeCells()) return false;
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      if (bestTrayPartnerForWord(view, t, i)) continue;
+      if (pickBestBoardMate(t.char, t.general)) continue;
+      if (placeSingleWord(i)) return true;
+    }
+    return false;
+  }
+
   function tryPlaceTraySingleWords(): boolean {
+    return tryPlaceTraySingleWordsImpl(false);
+  }
+
+  function tryForcePlaceTraySingleWords(): boolean {
+    return tryPlaceTraySingleWordsImpl(true);
+  }
+
+  function tryPlaceTraySingleWordsImpl(force: boolean): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!;
@@ -2175,10 +2197,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 单字：远离路径 + 靠近唐僧；有空格时即使棋盘已有伴侣也先落子 */
-  function placeSingleWord(i: number): boolean {
+  /** 单字：远离路径 + 靠近唐僧；force 时无视伴侣（仅 mustEmptyTray 兜底） */
+  function placeSingleWord(i: number, force = false): boolean {
     const t = view.tray()[i];
-    if (t?.kind === 'word' && pickBestBoardMate(t.char, t.general) && !hasFreeCells()) return false;
+    if (t?.kind !== 'word') return false;
+    if (!force) {
+      if (bestTrayPartnerForWord(view, t, i)) return false;
+      if (pickBestBoardMate(t.char, t.general)) return false;
+    }
     const free = view.freeCells();
     if (free.length === 0) return false;
     const cell = free.reduce((best, c) => {
@@ -2187,6 +2213,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       return s > bs ? c : best;
     }, free[0]!);
     return view.place(i, cell);
+  }
+
+  function tryPlaceTraySingleWords(force = false): boolean {
+    const tray = view.tray();
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'word') continue;
+      if (placeSingleWord(i, force)) return true;
+    }
+    return false;
   }
 
   /**
