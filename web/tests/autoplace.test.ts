@@ -37,7 +37,7 @@ import { getUnitStat } from '@core';
 import { posAlong, mapById, lenOf, entranceDistance } from '../src/board';
 import { pathCoverageLenEntranceWeighted, pathFirstEngageDist } from '../src/board-power';
 import { inAttackRange } from '../src/battle';
-import { Battle } from '../src/battle';
+import { Battle, makePlacedUnit } from '../src/battle';
 import { matchGeneral } from '../src/generals';
 
 // —— 内存假视图：格按 c 坐标离路(第0行)越近越小；nearestPathDist = r（行号即离路距）——
@@ -672,6 +672,59 @@ it('有空格时 tray 不抢先做合成链', () => {
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
   expect(v.tray().filter((t) => t.kind === 'unit' && t.tier === 2).length).toBe(0);
   expect(v.placedUnits().some((u) => u.type === 'spear' && u.tier === 1)).toBe(true);
+});
+
+it('满盘 tray 字：棋盘同级武器合并腾位后落字', () => {
+  const v = new FakeView(
+    [{ kind: 'word', char: '沙', general: 'shaseng', tier: 1 }],
+    [],
+  );
+  v.unitsMap.set('0,0', { type: 'spear', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,0', { type: 'spear', tier: 2, cell: { c: 1, r: 0 } });
+  v.unlocked.add('0,0');
+  v.unlocked.add('1,0');
+  planAutoPlace(v, { rng });
+  expect(v.tray().length).toBe(0);
+  expect(v.placedWords().some((w) => w.char === '沙')).toBe(true);
+  expect(v.placedUnits().some((u) => u.type === 'spear' && u.tier === 3)).toBe(true);
+});
+
+it('盘丝洞满盘：tray 沙应通过合并或腾位上板', () => {
+  const b = new Battle(1, 1, mapById('pansidong'));
+  const gate = { c: 0, r: 9 };
+  const units: { type: 'dao' | 'spear' | 'archer' | 'cavalry'; tier: number; cell: { c: number; r: number } }[] = [
+    { type: 'cavalry', tier: 2, cell: { c: 0, r: 7 } },
+    { type: 'spear', tier: 2, cell: { c: 1, r: 7 } },
+    { type: 'archer', tier: 2, cell: { c: 2, r: 7 } },
+    { type: 'dao', tier: 1, cell: { c: 3, r: 7 } },
+    { type: 'dao', tier: 2, cell: { c: 4, r: 7 } },
+    { type: 'cavalry', tier: 3, cell: { c: 5, r: 7 } },
+    { type: 'archer', tier: 3, cell: { c: 6, r: 7 } },
+    { type: 'spear', tier: 2, cell: { c: 0, r: 8 } },
+    { type: 'cavalry', tier: 2, cell: { c: 1, r: 8 } },
+    { type: 'archer', tier: 2, cell: { c: 4, r: 8 } },
+    { type: 'dao', tier: 2, cell: { c: 5, r: 8 } },
+    { type: 'cavalry', tier: 2, cell: { c: 6, r: 8 } },
+  ];
+  const unlocked = (b as unknown as { unlocked: Set<string> }).unlocked;
+  const cellKey = (c: number, r: number) => `${c},${r}`;
+  for (const u of units) {
+    b.units.set(cellKey(u.cell.c, u.cell.r), makePlacedUnit(u.type, u.tier, u.cell, gate));
+    unlocked.add(cellKey(u.cell.c, u.cell.r));
+  }
+  b.words.set(cellKey(2, 8), { char: '牛', general: 'niulang', tier: 1, cell: { c: 2, r: 8 } });
+  b.words.set(cellKey(3, 8), { char: '郎', general: 'niulang', tier: 1, cell: { c: 3, r: 8 } });
+  unlocked.add(cellKey(2, 8));
+  unlocked.add(cellKey(3, 8));
+  b.tray = [{ kind: 'word', char: '沙', general: 'shaseng', tier: 1 }];
+  b.wave = 4;
+  b.status = 'playing';
+
+  b.autoPlaceTray();
+
+  expect(b.tray.some((t) => t?.kind === 'word')).toBe(false);
+  expect([...b.words.values()].some((w) => w.char === '沙')).toBe(true);
+  expect(b.message).not.toBe('布阵：当前暂无可执行操作');
 });
 
 it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位落 tray', () => {

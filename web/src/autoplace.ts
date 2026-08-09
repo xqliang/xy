@@ -1477,9 +1477,31 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return true;
   }
 
-  /** tray 仍有放不下项：兵无法直接落子，或满盘仍有待上板字牌 */
+  /** tray 兵是否完全无法上板（含与棋盘兵器换占） */
+  function trayUnitsCannotPlaceAtAll(): boolean {
+    const unitIdx = trayUnitEntries();
+    if (unitIdx.length === 0) return false;
+    const free = view.freeCells();
+    const allowAnyFree = hasFreeCells() && !pendingTrayWordDeploy();
+    for (const { t } of unitIdx) {
+      const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
+      if (mate && canMerge({ type: t.type, tier: t.tier }, { type: mate.type, tier: mate.tier })) {
+        return false;
+      }
+      if (placementReachCells(free, t.type, t.tier).length > 0) return false;
+      if (allowAnyFree && free.length > 0) return false;
+      for (const u of view.placedUnits()) {
+        if (view.isActiveHeroCell(u.cell)) continue;
+        if (u.type === t.type && u.tier === t.tier) continue;
+        if (allowAnyFree || canUnitCoverPath(u.cell, t.type, t.tier)) return false;
+      }
+    }
+    return true;
+  }
+
+  /** tray 仍有放不下项：兵完全无法上板，或满盘仍有待上板字牌 */
   function trayHasUnplaceablePending(): boolean {
-    if (trayUnitsCannotDirectPlace()) return true;
+    if (trayUnitsCannotPlaceAtAll()) return true;
     if (!hasFreeCells() && trayHasWords()) {
       for (const t of filledTrayTokens(view.tray())) {
         if (t.kind !== 'word') continue;
@@ -2287,12 +2309,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return moveHeroPairToCells(best.pair.left, best.pair.right, best.left, best.right);
   }
 
-  /** 有空格：tray 孤儿单字上板；满盘时可顶回普通武器 */
+  /** 有空格：tray 孤儿单字上板；满盘时可棋盘合并或顶回普通武器 */
   function tryLateTrayWordDeploy(): boolean {
     if (hasFreeCells()) {
       if (tryPlaceTraySingleWords()) return true;
       return tryDisplaceUnitForTrayWord();
     }
+    if (!trayHasWords()) return false;
     if (!subopt() && tryBoardMergeThenPlace()) return true;
     return tryDisplaceUnitForTrayWord();
   }

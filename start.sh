@@ -154,12 +154,15 @@ echo \"✅ 已原子切换：\$DIR → \$REL\""
     remote_cmd="set -e
 DIR='${ECS_DIR}'
 RELROOT=\"\$(dirname \"\$DIR\")/releases\"
-CUR=\"\$(readlink \"\$DIR\" 2>/dev/null || true)\"
+# 必须用 readlink -f：否则 symlink 目标与 ls 列出的绝对路径对不上，rollback 会误选「最新版」= 当前错误版
+rel_path() { readlink -f \"\$1\" 2>/dev/null || echo \"\$1\"; }
+CUR=\"\$(rel_path \"\$DIR\" 2>/dev/null || true)\"
 ARG='${TARGET_ARG}'
 if [ \"\$ARG\" = list ] || [ \"\$ARG\" = ls ]; then
   echo \"可回滚发布（新→旧，* 为当前）：\"
+  echo \"  当前指向：\${CUR:-（\$DIR 非 symlink 或未识别）}\"
   for r in \$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null); do
-    if [ \"\$r\" = \"\$CUR\" ]; then echo \"* \$r\"; else echo \"  \$r\"; fi
+    if [ \"\$(rel_path \"\$r\")\" = \"\$CUR\" ]; then echo \"* \$r\"; else echo \"  \$r\"; fi
   done
   exit 0
 fi
@@ -170,14 +173,26 @@ if [ -n \"\$ARG\" ]; then
   done
   [ -z \"\$TARGET\" ] && { echo \"❌ 未找到匹配发布：\$ARG（用 rollback list 查看）\"; exit 1; }
 else
+  SEEN_CUR=0
   for r in \$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null); do
-    [ \"\$r\" != \"\$CUR\" ] && { TARGET=\"\$r\"; break; }
+    if [ \"\$SEEN_CUR\" = 1 ]; then TARGET=\"\$r\"; break; fi
+    if [ -n \"\$CUR\" ] && [ \"\$(rel_path \"\$r\")\" = \"\$CUR\" ]; then SEEN_CUR=1; fi
   done
-  [ -z \"\$TARGET\" ] && { echo \"❌ 没有可回滚的历史发布\"; exit 1; }
+  if [ -z \"\$TARGET\" ]; then
+    TARGET=\"\$(ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null | sed -n '2p' || true)\"
+  fi
+  [ -z \"\$TARGET\" ] && { echo \"❌ 没有可回滚的历史发布（仅 1 个 release 或当前未识别）\"; exit 1; }
 fi
 [ -d \"\$TARGET\" ] || { echo \"❌ 目标发布不存在：\$TARGET\"; exit 1; }
+if [ -n \"\$CUR\" ] && [ \"\$(rel_path \"\$TARGET\")\" = \"\$CUR\" ]; then
+  echo \"❌ 目标与当前相同，无需回滚（若线上仍不对，可能是浏览器缓存 index.html，请强刷 Ctrl+Shift+R）\"
+  exit 1
+fi
 ln -sfn \"\$TARGET\" \"\$DIR\"
-echo \"↩️  已回滚：\$DIR → \$TARGET（原：\${CUR:-无}）\""
+echo \"↩️  已回滚：\$DIR → \$TARGET\"
+echo \"   原：\${CUR:-无}\"
+echo \"   新：\$(rel_path \"\$TARGET\")\"
+echo \"   若页面仍不对，请强刷或清缓存（index.html 可能被浏览器缓存）\""
     ssh "$ECS_SSH" "$remote_cmd"
     if [ "$TARGET_ARG" != "list" ] && [ "$TARGET_ARG" != "ls" ]; then
       code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$ECS_URL" || echo 000)"
