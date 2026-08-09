@@ -633,7 +633,7 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.5–1s 随机）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
 
@@ -650,11 +650,6 @@ export class Battle {
   readonly map: GameMap;
   readonly pathLen: number;
   private slotOrder: Cell[];
-  /** 静态地图格 → 路径距离（开局预计算，挖格后按需补） */
-  private playerNearestPathDistByCell = new Map<string, number>();
-  private playerExitDistByCell = new Map<string, number>();
-  private aiNearestPathDistByCell = new Map<string, number>();
-  private aiExitDistByCell = new Map<string, number>();
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private sinceLastElite = Number.POSITIVE_INFINITY; // 距上一只带技能精英已刷出的普通妖数
@@ -1292,7 +1287,7 @@ export class Battle {
       placedWords: () => [...this.aiWords.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.aiNearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.aiPath, cell),
-      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      exitDist: (cell) => this.aiExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
@@ -1521,13 +1516,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           this.aiPathCoverAt(cell.c, cell.r, rge),
-          this.distToPathEntrance(this.aiPath, cell),
+          this.aiExitDist(cell),
           rge,
           this.aiNearestPathDist(cell),
         );
       },
       dangerNear: () => this.aiDangerNear(),
-      exitDist: (cell) => this.distToPathEntrance(this.aiPath, cell),
+      exitDist: (cell) => this.aiExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
@@ -1588,13 +1583,13 @@ export class Battle {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
           pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, rge),
-          this.distToPathEntrance(this.map.path, cell),
+          this.playerExitDist(cell),
           rge,
           this.nearestPathDist(cell),
         );
       },
       dangerNear: () => this.dangerNear(),
-      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      exitDist: (cell) => this.playerExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
@@ -2507,10 +2502,12 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0; // 用 AI 独立随机流，不扰动玩家 rng
       const maxTargets = Math.max(1, base + extra);
-      const inRange = this.aiMonsters
-        .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-        .filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p))
-        .sort((a, b) => b.m.dist - a.m.dist);
+      const inRange = this.sortCombatTargets(
+        this.aiMonsters
+          .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
+          .filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p)),
+        this.aiDangerNear(),
+      );
       if (inRange.length === 0) continue;
       const dmg = damage(stat.atk);
       const color = this.unitColor(u.type);
@@ -2543,10 +2540,12 @@ export class Battle {
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
-      const inRange = this.aiMonsters
-        .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-        .filter((x) => inAttackRange(ax, ay, stat.rge, x.p))
-        .sort((a, b) => b.m.dist - a.m.dist);
+      const inRange = this.sortCombatTargets(
+        this.aiMonsters
+          .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
+          .filter((x) => inAttackRange(ax, ay, stat.rge, x.p)),
+        this.aiDangerNear(),
+      );
       s.cooldown -= dt;
       if (s.cooldown > 0 || inRange.length === 0) continue;
       const base = Math.floor(stat.targets);
@@ -2589,7 +2588,7 @@ export class Battle {
         });
       }
     }
-    // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
+    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       if (aiPlacedThisFrame) {
@@ -2690,10 +2689,12 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const inRange = this.monsters
-        .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
-        .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p))
-        .sort((a, b) => b.m.dist - a.m.dist); // 优先打最靠前（进度大）的妖怪
+      const inRange = this.sortCombatTargets(
+        this.monsters
+          .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
+          .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p)),
+        this.dangerNear(),
+      );
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊抬高攻击
       const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
@@ -2821,10 +2822,12 @@ export class Battle {
       s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
-      const inRange = this.monsters
-        .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
-        .filter((x) => inAttackRange(ax, ay, this.generalRge(g), x.p))
-        .sort((a, b) => b.m.dist - a.m.dist);
+      const inRange = this.sortCombatTargets(
+        this.monsters
+          .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
+          .filter((x) => inAttackRange(ax, ay, this.generalRge(g), x.p)),
+        this.dangerNear(),
+      );
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
         s.skillCd -= dt;
@@ -3479,7 +3482,7 @@ export class Battle {
       placedWords: () => [...this.words.values()].map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       nearestPathDist: (cell) => this.nearestPathDist(cell),
       pathTouchSides: (cell) => this.pathTouchSidesOf(this.map.path, cell),
-      exitDist: (cell) => this.distToPathEntrance(this.map.path, cell),
+      exitDist: (cell) => this.playerExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>
         pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
@@ -3495,6 +3498,13 @@ export class Battle {
         const wb = this.weaponBonuses[def.id];
         return generalStat(def, tier).rge + (wb?.rge ?? 0);
       },
+      generalAtk: (general, tier) => {
+        const def = generalById(general);
+        if (!def) return 0;
+        const wb = this.weaponBonuses[def.id];
+        return generalStat(def, tier).atk * (1 + (wb?.atk ?? 0));
+      },
+      dangerEngageAt: (ax, ay, rge, atk) => this.dangerEngageAtPlayer(ax, ay, rge, atk),
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => this.autoPlaceApply(i, cell),
       moveUnit: (from, to) => {
