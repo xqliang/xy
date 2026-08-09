@@ -78,6 +78,31 @@ export function menuStartToastAnchorY(): number {
 }
 const START_BTN = { x: (VIEW_W - START_W) / 2, y: START_Y, w: START_W, h: START_H };
 const ENDLESS_GAP = 10;
+
+/** 与 menu-home 底图一致的宣纸暖色（资源未加载时的 fallback） */
+const MENU_PAPER_TOP = '#f0e4c8';
+const MENU_PAPER_MID = '#dec18e';
+const MENU_PAPER_LOW = '#d4b878';
+const MENU_PAPER_BOTTOM = '#c8a068';
+const MENU_PAPER_WASH = 'rgba(240,233,220,0.5)';
+
+function drawMenuPaperFallback(ctx: CanvasRenderingContext2D): void {
+  const paper = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  paper.addColorStop(0, MENU_PAPER_TOP);
+  paper.addColorStop(0.38, MENU_PAPER_MID);
+  paper.addColorStop(0.72, MENU_PAPER_LOW);
+  paper.addColorStop(1, MENU_PAPER_BOTTOM);
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  const side = ctx.createLinearGradient(0, 0, VIEW_W, 0);
+  side.addColorStop(0, 'rgba(120,110,98,0.22)');
+  side.addColorStop(0.1, 'rgba(120,110,98,0)');
+  side.addColorStop(0.9, 'rgba(120,110,98,0)');
+  side.addColorStop(1, 'rgba(120,110,98,0.22)');
+  ctx.fillStyle = side;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
 const ENDLESS_LABEL = '无尽模式';
 const ENDLESS_ROW_Y = START_Y + START_H + ENDLESS_GAP;
 const ENDLESS_HIT = { x: VIEW_W / 2 - 72, y: ENDLESS_ROW_Y - 8, w: 144, h: 34 };
@@ -88,7 +113,7 @@ const BAG_SIZE = 92;
 const RANK_BTN = { x: 16, y: BOTTOM_Y, w: BOTTOM_W, h: BOTTOM_H };
 const BAG_BTN = {
   x: RANK_BTN.x + RANK_BTN.w + 16 + 60,
-  y: BOTTOM_Y + (BOTTOM_H - BAG_SIZE) / 2,
+  y: BOTTOM_Y + (BOTTOM_H - BAG_SIZE) / 2 + 10,
   w: BAG_SIZE,
   h: BAG_SIZE,
 };
@@ -114,21 +139,16 @@ export function menuButtonAt(x: number, y: number): string | null {
 }
 
 function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
+  drawMenuPaperFallback(ctx);
   const bg = sprite('menu-home');
   if (bg) {
     const scale = Math.max(VIEW_W / bg.width, VIEW_H / bg.height);
     const dw = bg.width * scale;
     const dh = bg.height * scale;
     ctx.drawImage(bg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
-    ctx.fillStyle = 'rgba(240,233,220,0.5)';
+    ctx.fillStyle = MENU_PAPER_WASH;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    return;
   }
-  const paper = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-  paper.addColorStop(0, '#ebe3d0');
-  paper.addColorStop(1, '#c8ba9e');
-  ctx.fillStyle = paper;
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 }
 
 /** 首页主标题：深色描边 + 金字渐变，避免水墨背景上发飘 */
