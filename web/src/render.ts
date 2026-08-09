@@ -104,7 +104,9 @@ export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
+  trayDragStart: { x: number; y: number } | null; // 候选区按下起点（区分点击与拖拽）
   selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
+  selectedTrayIndex: number | null; // 点击选中的候选区字牌（查看武将信息）
   selectedMonster: { side: 'player' | 'ai'; id: number } | null; // 点击选中的妖怪（按 id，可跨格移动）
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
@@ -883,6 +885,41 @@ function drawWordTile(
     drawTierBadge(ctx, x + s * 0.42, y - s * 0.36, tier, Math.round(s * 0.3));
   }
 }
+
+/** 未激活单字武将：右上角循环飘起的「Z」睡眠感 */
+function drawSleepingZ(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  s: number,
+  nowMs: number,
+) {
+  const cycleS = 2.1;
+  const t = nowMs / 1000;
+  ctx.save();
+  ctx.font = `bold ${Math.round(s * 0.24)}px "PingFang SC", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < 3; i++) {
+    const phase = (t / cycleS + i * 0.38) % 1;
+    const alpha = phase < 0.12 ? phase / 0.12 : phase > 0.88 ? (1 - phase) / 0.12 : 1;
+    if (alpha <= 0.02) continue;
+    const ox = s * 0.34 + phase * s * 0.1 + i * s * 0.06;
+    const oy = -s * 0.38 - phase * s * 0.42 - i * s * 0.05;
+    const sc = 0.55 + phase * 0.55;
+    ctx.save();
+    ctx.translate(x + ox, y + oy);
+    ctx.scale(sc, sc);
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.lineWidth = 1.3;
+    ctx.strokeStyle = '#4a5878';
+    ctx.fillStyle = '#b8c8e8';
+    ctx.strokeText('Z', 0, 0);
+    ctx.fillText('Z', 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
 // 营帐屋顶开合角度(弧度，0=闭合)：征兵时(summonAnimT 从 0 起)先逆时针掀开到 90°(竖起)，保持至丝带飞完，再顺时针合上。
 function campRoofAngle(t: number): number {
   // 与下方丝带左→右错开伸出对齐：末槽约 0.26s 才满长，屋顶稍晚再合
@@ -1021,6 +1058,14 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
         drawTrayToken(ctx, token, c.x, c.y, tokenSize);
       }
+    }
+    if (ui.selectedTrayIndex === i && token) {
+      ctx.save();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#ffe08a';
+      roundRect(ctx, sx + 1, sy + 1, sw - 2, sh - 2, 8);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 }
@@ -3124,39 +3169,43 @@ function drawWordSelection(
   w: { char: string; general: string; tier: number; cell: { c: number; r: number } },
   panelHalf: 'ai' | 'player' = 'ai',
   fromAi = false,
+  fromTray = false,
 ) {
   const def = generalById(w.general);
   if (!def) return;
-  const active = (fromAi ? b.aiActiveGenerals() : b.activeGenerals()).find((g) =>
-    g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r),
-  );
+  const active = fromTray
+    ? undefined
+    : (fromAi ? b.aiActiveGenerals() : b.activeGenerals()).find((g) =>
+      g.cells.some((cc) => cc.c === w.cell.c && cc.r === w.cell.r),
+    );
   ctx.save();
-  // 选中格金边：已激活则左右两字同时描边
-  const selCells = active ? active.cells : [w.cell];
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#ffe08a';
-  for (const c of selCells) {
-    const gx = BOARD_X + c.c * CELL;
-    const gy = BOARD_Y + c.r * CELL;
-    roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
-    ctx.stroke();
-  }
-  // 激活则画范围环（圆心取双格中点）
-  if (active) {
-    const ax = (active.cells[0].c + active.cells[1].c) / 2;
-    const ay = (active.cells[0].r + active.cells[1].r) / 2;
-    const { x, y } = cellCenterPx(ax, ay);
-    const rge = fromAi ? generalStat(def, active.tier).rge : b.generalRge(active);
-    ctx.beginPath();
-    // 半径含半格(rge+0.5)，与命中判定「圆与方格相交」及兵种范围环显示一致
-    ctx.arc(x, y, (rge + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(240,185,60,0.12)';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(240,185,60,0.8)';
-    ctx.setLineDash([7, 6]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  if (!fromTray) {
+    // 选中格金边：已激活则左右两字同时描边
+    const selCells = active ? active.cells : [w.cell];
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffe08a';
+    for (const c of selCells) {
+      const gx = BOARD_X + c.c * CELL;
+      const gy = BOARD_Y + c.r * CELL;
+      roundRect(ctx, gx + 2, gy + 2, CELL - 4, CELL - 4, 8);
+      ctx.stroke();
+    }
+    // 激活则画范围环（圆心取双格中点）
+    if (active) {
+      const ax = (active.cells[0].c + active.cells[1].c) / 2;
+      const ay = (active.cells[0].r + active.cells[1].r) / 2;
+      const { x, y } = cellCenterPx(ax, ay);
+      const rge = fromAi ? generalStat(def, active.tier).rge : b.generalRge(active);
+      ctx.beginPath();
+      ctx.arc(x, y, (rge + TUNING.rangeTolerance) * CELL, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(240,185,60,0.12)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(240,185,60,0.8)';
+      ctx.setLineDash([7, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
   ctx.restore();
 
@@ -3255,7 +3304,11 @@ function drawWordSelection(
     const other = def.chars.find((c) => c !== w.char) ?? '';
     ctx.fillStyle = '#ff9a6a';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`未激活：需「${other}」左右紧邻`, px + 12, py + ph - 12);
+    ctx.fillText(
+      fromTray ? `候选区：需「${other}」左右紧邻激活` : `未激活：需「${other}」左右紧邻`,
+      px + 12,
+      py + ph - 12,
+    );
   }
   ctx.restore();
 }
@@ -3333,6 +3386,20 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (ui.selectedMonster) {
     drawMonsterSelection(ctx, b, ui.selectedMonster);
     return;
+  }
+  if (ui.selectedTrayIndex !== null) {
+    const token = b.tray[ui.selectedTrayIndex];
+    if (token?.kind === 'word') {
+      drawWordSelection(
+        ctx,
+        b,
+        { char: token.char, general: token.general, tier: token.tier, cell: { c: -1, r: -1 } },
+        'ai',
+        false,
+        true,
+      );
+      return;
+    }
   }
   if (!ui.selected) return;
   // 唐僧优先：路径终点格上可能无单位，但仍可查看 tips
@@ -3730,6 +3797,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const key = `${w.cell.c},${w.cell.r}`;
     const qTier = activeTier.get(key) ?? 0;
     drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
+    if (qTier === 0) drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
   }
   // 再给「左右紧邻同将」的激活武将套品质色框（框色随阶：白→绿→蓝→紫→橙）
   for (const g of b.activeGenerals()) {
@@ -4482,6 +4550,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     const key = `${w.cell.c},${w.cell.r}`;
     const qTier = activeTier.get(key) ?? 0;
     drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
+    if (qTier === 0) drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
   }
   for (const g of b.aiActiveGenerals()) {
     const a = cellCenterPx(g.cells[0].c, g.cells[0].r);

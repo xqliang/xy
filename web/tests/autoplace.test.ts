@@ -1460,6 +1460,41 @@ it('runBattleReposition 不会 A↔B 无限对抖', () => {
   expect(steps).toBe(0);
 });
 
+it('危险时：同阶两刀已在交战不因贴路分互换', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [5, 6];
+  v.monsterCells = [{ c: 5, r: 0 }, { c: 6, r: 0 }];
+  v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'dao', tier: 1, cell: { c: 2, r: 0 } });
+  expect(planBattleReposition(v).ok).toBe(false);
+  expect(runBattleReposition(v, 50)).toBe(0);
+});
+
+it('危险时：高阶刀在右上角已优位时不与低阶互换', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [5, 6];
+  v.monsterCells = [{ c: 5, r: 0 }, { c: 6, r: 0 }];
+  v.unitsMap.set('5,0', { type: 'dao', tier: 2, cell: { c: 5, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'dao', tier: 1, cell: { c: 2, r: 0 } });
+  expect(planBattleReposition(v).ok).toBe(false);
+  expect(runBattleReposition(v, 50)).toBe(0);
+});
+
+it('危险时：低阶占优位时应与高阶刀互换一次', () => {
+  const v = new FakeRepositionView();
+  v.dangerNearFlag = true;
+  v.monsterDists = [5];
+  v.monsterCells = [{ c: 5, r: 0 }];
+  v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'dao', tier: 2, cell: { c: 2, r: 0 } });
+  expect(planBattleReposition(v).ok).toBe(true);
+  expect(v.unitsMap.get('5,0')?.tier).toBe(2);
+  expect(v.unitsMap.get('2,0')?.tier).toBe(1);
+  expect(runBattleReposition(v, 50)).toBe(0);
+});
+
 it('危险时优先把兵力往怪物即将路过的路段调度', () => {
   const v = new FakeRepositionView();
   v.dangerNearFlag = true;

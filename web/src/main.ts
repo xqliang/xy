@@ -83,10 +83,12 @@ function isSameTangsengSelection(b: Battle, selected: Cell | null, target: Cell,
 function clearBoardSelect(): void {
   ui.selected = null;
   ui.selectedMonster = null;
+  ui.selectedTrayIndex = null;
 }
 
 function selectBoardCell(cell: Cell): void {
   ui.selectedMonster = null;
+  ui.selectedTrayIndex = null;
   ui.selected = { c: cell.c, r: cell.r };
 }
 
@@ -138,7 +140,7 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, selected: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
@@ -408,6 +410,7 @@ function onPointerDown(e: PointerEvent) {
     ui.dragFrom = null;
     ui.dragTrayIndex = null;
     ui.dragPos = null;
+    ui.trayDragStart = null;
     return;
   }
   // 被动详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
@@ -416,8 +419,8 @@ function onPointerDown(e: PointerEvent) {
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
   if (ti !== null && battle.tray[ti]) {
-    clearBoardSelect();
     ui.dragTrayIndex = ti;
+    ui.trayDragStart = { x, y };
     ui.dragPos = { x, y };
     canvas.setPointerCapture(e.pointerId);
     return;
@@ -427,6 +430,7 @@ function onPointerDown(e: PointerEvent) {
   if (monHit) {
     const same = ui.selectedMonster?.side === monHit.side && ui.selectedMonster.id === monHit.id;
     ui.selected = null;
+    ui.selectedTrayIndex = null;
     ui.selectedMonster = same ? null : monHit;
     return;
   }
@@ -508,11 +512,20 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
     const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
     if (ui.dragTrayIndex !== null) {
-      // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
-      if (target) {
+      const token = battle.tray[ui.dragTrayIndex];
+      const start = ui.trayDragStart;
+      const moved = start && Math.hypot(ui.dragPos.x - start.x, ui.dragPos.y - start.y) > 8;
+      if (!moved && token?.kind === 'word' && trayTarget === ui.dragTrayIndex) {
+        ui.selected = null;
+        ui.selectedMonster = null;
+        ui.selectedTrayIndex = ui.selectedTrayIndex === ui.dragTrayIndex ? null : ui.dragTrayIndex;
+      } else if (target) {
+        // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
         battle.placeFromTray(ui.dragTrayIndex, target);
+        ui.selectedTrayIndex = null;
       } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
+        ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom && target) {
       if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
@@ -530,6 +543,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
   ui.dragFrom = null;
   ui.dragTrayIndex = null;
   ui.dragPos = null;
+  ui.trayDragStart = null;
 }
 
 // 桌面端滚轮滚动商城

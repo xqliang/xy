@@ -2342,13 +2342,23 @@ export function planBattleReposition(
       const engAfter =
         view.engageScore(b.cell, a.type, a.tier) + view.engageScore(a.cell, b.type, b.tier);
       const engageGain = engAfter - engBefore;
+      const sameType = a.type === b.type;
       // 禁止：两边换完仍都打不到、仅靠危险贴路启发来回换位
       if (!unlocks && engageGain <= 0.05) continue;
       let gain = engageGain;
       if (aIdle && aEngagesAfter) gain += ENGAGE_UNLOCK_BONUS;
       if (bIdle && bEngagesAfter) gain += ENGAGE_UNLOCK_BONUS;
-      // 危险且都能打时：略偏好把交战单位放在更贴近即将路过路段的格
-      if (danger && engageGain >= -0.01) {
+      // 同型对调：不用危险贴路启发式（否则异阶/同阶会在两格间来回抖）
+      if (sameType && !unlocks) {
+        if (a.tier === b.tier) continue;
+        const hi = a.tier >= b.tier ? a : b;
+        const lo = a.tier >= b.tier ? b : a;
+        const hiCellAfter = hi === a ? b.cell : a.cell;
+        const hiEngGain =
+          view.engageScore(hiCellAfter, hi.type, hi.tier) - view.engageScore(hi.cell, hi.type, hi.tier);
+        if (engageGain <= 0.05 || hiEngGain <= 0.05) continue;
+      } else if (danger && engageGain >= -0.01) {
+        // 异型且都能打时：略偏好把交战单位放在更贴近即将路过路段的格
         const prefer =
           (aEngagesAfter ? placementBonus(b.cell) : 0) +
           (bEngagesAfter ? placementBonus(a.cell) : 0) -
