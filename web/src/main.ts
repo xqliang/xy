@@ -867,16 +867,21 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
         ui.selectedTrayIndex = null;
       }
-    } else if (ui.dragFrom && target) {
-      if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
-        // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
-        // 已激活武将：点左右任一格都视为同一选中态（双字同时选中）
-        const same = isSameSelection(battle, ui.selected, target);
-        if (same) clearBoardSelect();
-        else selectBoardCell(target);
-      } else {
-        battle.dragBoard(ui.dragFrom, target);
+    } else if (ui.dragFrom) {
+      if (trayTarget !== null && !battle.tray[trayTarget]) {
+        battle.recallToTray(ui.dragFrom, trayTarget);
         clearBoardSelect();
+      } else if (target) {
+        if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
+          // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
+          // 已激活武将：点左右任一格都视为同一选中态（双字同时选中）
+          const same = isSameSelection(battle, ui.selected, target);
+          if (same) clearBoardSelect();
+          else selectBoardCell(target);
+        } else {
+          battle.dragBoard(ui.dragFrom, target);
+          clearBoardSelect();
+        }
       }
     }
   }

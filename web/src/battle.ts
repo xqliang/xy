@@ -350,11 +350,12 @@ export const MAP_SKILL: Record<string, MonsterSkill> = {
   pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
 };
 
-// 候选区令牌：兵种 / 铲子 / 武将字牌（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
+// 候选区令牌：兵种 / 铲子 / 武将字牌 / 桃树（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
 export type TrayToken =
   | { kind: 'unit'; type: UnitType; tier: number; /** 地图挤回候选区，布阵待换低阶上板 */ displaced?: boolean }
   | { kind: 'shovel' }
-  | { kind: 'word'; char: string; general: string; tier: number };
+  | { kind: 'word'; char: string; general: string; tier: number }
+  | { kind: 'tree'; level: number; growT: number };
 
 export type Status = 'ready' | 'playing' | 'won' | 'lost';
 
@@ -969,6 +970,56 @@ export class Battle {
   private wordAt(c: number, r: number): PlacedWord | undefined {
     return this.words.get(cellKey(c, r));
   }
+
+  /** 候选区首个空槽（0..traySize-1），满则 null */
+  firstEmptyTraySlot(): number | null {
+    for (let i = 0; i < TUNING.traySize; i++) {
+      if (!this.tray[i]) return i;
+    }
+    return null;
+  }
+
+  private clearTraySlot(index: number): void {
+    delete this.tray[index];
+  }
+
+  /** 棋盘单位/字牌/桃树拖回候选区空槽（已激活武将不可收回） */
+  recallToTray(from: Cell, slot: number): boolean {
+    if (slot < 0 || slot >= TUNING.traySize) return false;
+    if (this.tray[slot]) {
+      this.message = '该候选槽已有令牌';
+      return false;
+    }
+    if (this.activeGenerals().some((g) => g.cells.some((c) => c.c === from.c && c.r === from.r))) {
+      this.message = '已激活武将不能收回候选区';
+      return false;
+    }
+    const k = cellKey(from.c, from.r);
+    const tree = this.trees.get(k);
+    if (tree) {
+      this.trees.delete(k);
+      this.tray[slot] = { kind: 'tree', level: tree.level, growT: tree.growT };
+      this.message = '桃树已收回候选区（暂停产桃）';
+      return true;
+    }
+    const w = this.words.get(k);
+    if (w) {
+      this.words.delete(k);
+      this.tray[slot] = { kind: 'word', char: w.char, general: w.general, tier: w.tier };
+      this.message = `字牌「${w.char}」已收回候选区`;
+      return true;
+    }
+    const u = this.units.get(k);
+    if (u) {
+      this.units.delete(k);
+      this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier };
+      this.message = `${UNITS[u.type].name} 已收回候选区`;
+      this.emit('place');
+      return true;
+    }
+    return false;
+  }
+
   private aiWordAt(c: number, r: number): PlacedWord | undefined {
     return this.aiWords.get(cellKey(c, r));
   }
@@ -984,16 +1035,18 @@ export class Battle {
     const k = cellKey(cell.c, cell.r);
     const w = this.words.get(k);
     if (w) {
-      if (this.tray.length >= TUNING.traySize) return false;
+      const slot = this.firstEmptyTraySlot();
+      if (slot === null) return false;
       this.words.delete(k);
-      this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true });
+      this.tray[slot] = { kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true };
       return true;
     }
     const u = this.units.get(k);
     if (u) {
-      if (this.tray.length >= TUNING.traySize) return false;
+      const slot = this.firstEmptyTraySlot();
+      if (slot === null) return false;
       this.units.delete(k);
-      this.tray.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
+      this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier, displaced: true };
       return true;
     }
     return true;
@@ -1136,10 +1189,19 @@ export class Battle {
         return false;
       }
       this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
-      this.tray.splice(from, 1);
+      this.clearTraySlot(from);
       this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
       this.emit('merge');
       return true;
+    }
+    if (a.kind === 'tree' && b.kind === 'tree') {
+      if (a.level === b.level && b.level < PEACH_TREE_MAX_LEVEL) {
+        this.tray[to] = { kind: 'tree', level: b.level + 1, growT: 0 };
+        this.clearTraySlot(from);
+        this.message = `候选区桃树升为 ${b.level + 1} 级`;
+        this.emit('merge');
+        return true;
+      }
     }
     // 字牌 ↔ 兵种/铲子：交换候选槽（与棋盘字↔兵交换一致）
     this.tray[from] = b;
@@ -1877,10 +1939,37 @@ export class Battle {
       }
       this.unlocked.add(cellKey(to.c, to.r));
       this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
-      this.tray.splice(index, 1);
+      this.clearTraySlot(index);
       this.peach += this.mods.shovelPeach; // 摸金校尉
       this.emit('shovel');
       this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}🍑）` : '铲子挖开了新阵位';
+      return true;
+    }
+    if (token.kind === 'tree') {
+      if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) {
+        this.message = '桃树只能种在未开垦的空地';
+        return false;
+      }
+      const k = cellKey(to.c, to.r);
+      const exist = this.trees.get(k);
+      if (exist) {
+        if (exist.level === token.level && exist.level < PEACH_TREE_MAX_LEVEL) {
+          exist.level += 1;
+          exist.growT = 0;
+          this.clearTraySlot(index);
+          this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#7ec46a' });
+          this.message = `桃树升为 ${exist.level} 级`;
+          this.emit('merge');
+          return true;
+        }
+        this.trees.set(k, { level: token.level, cell: { c: to.c, r: to.r }, growT: token.growT });
+        this.tray[index] = { kind: 'tree', level: exist.level, growT: exist.growT };
+        this.message = '桃树交换位置';
+        return true;
+      }
+      this.trees.set(k, { level: token.level, cell: { c: to.c, r: to.r }, growT: token.growT });
+      this.clearTraySlot(index);
+      this.message = '桃树已种回（恢复产桃）';
       return true;
     }
     if (!this.isUnlocked(to.c, to.r)) {
@@ -1898,7 +1987,7 @@ export class Battle {
         if (wa && wb && wa.tier === wb.tier && token.tier === wa.tier && wa.tier < cap) {
           wa.tier += 1;
           wb.tier += 1;
-          this.tray.splice(index, 1);
+          this.clearTraySlot(index);
           this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
           this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
           this.message = `${g.def.name} 升为 ${wa.tier} 阶`;
@@ -1930,7 +2019,7 @@ export class Battle {
         return true;
       }
       this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
-      this.tray.splice(index, 1);
+      this.clearTraySlot(index);
       const activated = this.activeGenerals().find((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r));
       this.emit(activated ? 'general' : 'place');
       if (activated) {
@@ -1941,6 +2030,7 @@ export class Battle {
       }
       return true;
     }
+    if (token.kind !== 'unit') return false;
     // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
@@ -1956,7 +2046,7 @@ export class Battle {
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier });
         this.units.set(cellKey(to.c, to.r), { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
-        this.tray.splice(index, 1);
+        this.clearTraySlot(index);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
         this.emit('merge');
         return true;
@@ -1968,7 +2058,7 @@ export class Battle {
       return true;
     }
     this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
-    this.tray.splice(index, 1);
+    this.clearTraySlot(index);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.emit('place');
     return true;
@@ -2339,7 +2429,7 @@ export class Battle {
     if (this.monsters.length === 0) return;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
-    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * mul;
+    const dmg = this.normalMonsterHp() * mul;
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
@@ -2390,6 +2480,12 @@ export class Battle {
   effectiveDifficulty(wave: number = this.wave): number {
     const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
+  }
+
+  /** 无尽波 >10：基础血量/移速算完后 × (1 + (wave-10)/100)；对战与其它模式为 1 */
+  endlessWavePostMul(wave: number = this.wave): number {
+    if (!this.endless || wave <= 10) return 1;
+    return 1 + (wave - 10) / 100;
   }
 
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
@@ -2453,15 +2549,21 @@ export class Battle {
     return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
   }
 
-  /** 普通怪基础血量（含境界/无尽圈系数，不含 Boss 倍乘） */
+  /** 普通怪基础血量（含境界/无尽圈系数与无尽后期加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
-    return (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
+    const base = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
+    return base * this.endlessWavePostMul(wave);
   }
 
-  /** 某波普通怪移速（含被动减速、难度加速，不含 Boss/骑兵倍乘） */
-  private normalMonsterSpeed(wave: number = this.wave): number {
+  /** 某波普通怪基础移速（含难度加速与无尽后期加成，不含被动减速、Boss/骑兵倍乘） */
+  private endlessMonsterBaseSpeed(wave: number = this.wave): number {
     const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
-    return TUNING.monsterSpd * this.mods.monsterSpdMul * diffSpd;
+    return TUNING.monsterSpd * diffSpd * this.endlessWavePostMul(wave);
+  }
+
+  /** 某波普通怪移速（含被动减速、难度加速与无尽后期加成，不含 Boss/骑兵倍乘） */
+  private normalMonsterSpeed(wave: number = this.wave): number {
+    return this.endlessMonsterBaseSpeed(wave) * this.mods.monsterSpdMul;
   }
 
   /** 某波 Boss 移速（含被动减速、难度加速） */
@@ -2628,7 +2730,6 @@ export class Battle {
         : isCavalry
           ? TUNING.cavalrySpdMul
           : 1;
-    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty() - 1); // 高难度妖怪更快
     const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
     type MonsterSpec = {
       hp: number;
@@ -2671,8 +2772,8 @@ export class Battle {
       skillCd,
     };
     const off = Math.min(0, distOffset);
-    const playerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * this.aiDebuffPlayerSpdMul * diffSpd * spdMul;
-    const aiSpd = TUNING.monsterSpd * diffSpd * spdMul;
+    const playerSpd = this.normalMonsterSpeed() * this.aiDebuffPlayerSpdMul * spdMul;
+    const aiSpd = this.endlessMonsterBaseSpeed() * spdMul;
     this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
     if (!this.endless) {
       this.aiMonsters.push(makeOne(this.aiEntranceDist + off, aiSpd, bossSpec));
@@ -2687,8 +2788,8 @@ export class Battle {
         skill: null,
         skillCd: TUNING.skillFirstDelay,
       };
-      const escortPlayerSpd = TUNING.monsterSpd * this.mods.monsterSpdMul * this.aiDebuffPlayerSpdMul * diffSpd;
-      const escortAiSpd = TUNING.monsterSpd * diffSpd;
+      const escortPlayerSpd = this.normalMonsterSpeed() * this.aiDebuffPlayerSpdMul;
+      const escortAiSpd = this.endlessMonsterBaseSpeed();
       for (let i = 0; i < bossEscortCount; i++) {
         const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * SPAWN_DIST_JITTER;
         this.monsters.push(makeOne(this.entranceDist + escortOff, escortPlayerSpd, escortSpec));

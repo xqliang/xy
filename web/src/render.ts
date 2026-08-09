@@ -804,6 +804,8 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
     }
   } else if (token.kind === 'word') {
     drawWordTile(ctx, token.char, token.tier, x, y, s);
+  } else if (token.kind === 'tree') {
+    drawPeachTree(ctx, x, y, CELL * 0.72, token.level);
   } else {
     // 立绘尺寸与地图上单位保持一致(同用 CELL*0.72)，避免 tray 里显得更大
     drawUnit(ctx, token.type, token.tier, x, y, CELL * 0.72);
@@ -1046,7 +1048,11 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         const u = (t - retractAt) / RETRACT_DUR; // 0→1 从营收向槽
         drawSummonRibbon(ctx, token, u, 1, 1 - u * 0.85, c, i);
       } else {
-        const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+        const tokenSize = token.kind === 'word'
+          ? CELL * 0.78
+          : token.kind === 'tree'
+            ? CELL * 0.72
+            : TRAY_H - 16;
         drawTrayToken(ctx, token, c.x, c.y, tokenSize);
       }
     }
@@ -2388,20 +2394,18 @@ function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
   }
 }
 
-// 二郎 天眼诛邪：天眼睁开 → 自眼眶横向射出贯穿光束打向目标
-function drawUltErlang(
+// 二郎天眼光束：自额心射向目标（普攻/大招共用）
+function drawErlangSkyEyeBeam(
   ctx: CanvasRenderingContext2D,
-  x: number, y: number,
+  fromX: number, fromY: number,
+  toX: number, toY: number,
   p: number, fade: number, tier: number,
-  fromC?: number, fromR?: number,
+  widthMul = 1,
 ) {
-  const hasOrigin = fromC != null && fromR != null;
-  const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : { x: x - CELL * 2.4, y };
-  // 天眼略高于武将中心（额中）
-  const eyeX = fromPx.x;
-  const eyeY = fromPx.y - CELL * 0.18;
-  const dx = x - eyeX;
-  const dy = y - eyeY;
+  const eyeX = fromX;
+  const eyeY = fromY - CELL * 0.18;
+  const dx = toX - eyeX;
+  const dy = toY - eyeY;
   const dist = Math.hypot(dx, dy) || 1;
   const ang = Math.atan2(dy, dx);
 
@@ -2409,7 +2413,6 @@ function drawUltErlang(
   const beamReach = easeOut(Math.max(0, Math.min(1, (p - 0.12) / 0.55)));
   const reach = dist * beamReach;
 
-  // 天眼（在二郎身上）
   ctx.globalAlpha = fade;
   ctx.strokeStyle = '#bfe9ff';
   ctx.lineWidth = 2.5;
@@ -2429,11 +2432,10 @@ function drawUltErlang(
 
   if (beamReach <= 0.01) return;
 
-  const beamW = (5 + tier * 1.8) * (0.45 + open * 0.55);
+  const beamW = (5 + tier * 1.8) * widthMul * (0.45 + open * 0.55);
   const tipX = eyeX + Math.cos(ang) * reach;
   const tipY = eyeY + Math.sin(ang) * reach;
 
-  // 沿眼→目标方向的横向光束（本地 +x）
   ctx.save();
   ctx.translate(eyeX, eyeY);
   ctx.rotate(ang);
@@ -2454,7 +2456,6 @@ function drawUltErlang(
   ctx.fillRect(0, -beamW * 0.12, reach, beamW * 0.24);
   ctx.restore();
 
-  // 命中爆点
   if (beamReach > 0.65) {
     const bp = (beamReach - 0.65) / 0.35;
     const rad = CELL * (0.28 + tier * 0.08) * (0.55 + bp);
@@ -2466,6 +2467,18 @@ function drawUltErlang(
     ctx.fillStyle = g2;
     ctx.beginPath(); ctx.arc(tipX, tipY, rad, 0, Math.PI * 2); ctx.fill();
   }
+}
+
+// 二郎 天眼诛邪：天眼睁开 → 自眼眶射出贯穿光束打向目标
+function drawUltErlang(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  p: number, fade: number, tier: number,
+  fromC?: number, fromR?: number,
+) {
+  const hasOrigin = fromC != null && fromR != null;
+  const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : { x: x - CELL * 2.4, y };
+  drawErlangSkyEyeBeam(ctx, fromPx.x, fromPx.y, x, y, p, fade, tier);
 }
 
 // —— 输出群攻 ——
@@ -3989,23 +4002,7 @@ function drawHeroAttackFx(
       break;
     }
     case 'erlang': {
-      const grow = easeOut(Math.min(1, prog / 0.45));
-      const w = (2.5 + tier * 1.2) * sc * grow;
-      const h = CELL * (1.2 + sc * 0.9);
-      ctx.globalAlpha = fade * (0.55 + sc * 0.45);
-      const grad = ctx.createLinearGradient(tx, ty - h, tx, ty + CELL * 0.25);
-      grad.addColorStop(0, 'rgba(180,235,255,0)');
-      grad.addColorStop(0.65, 'rgba(140,210,255,0.75)');
-      grad.addColorStop(1, f.color);
-      ctx.fillStyle = grad;
-      ctx.fillRect(tx - w / 2, ty - h, w, h + CELL * 0.25);
-      if (tier >= 2) {
-        ctx.globalAlpha = fade * sc * 0.5;
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.ellipse(tx, ty - h * 0.75, w * 0.35, CELL * 0.12 * sc, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      drawErlangSkyEyeBeam(ctx, ax, ay, tx, ty, prog, fade, tier, sc * 0.55);
       break;
     }
     case 'niulang': {
@@ -5306,6 +5303,10 @@ function drawAimReticle(
 /** 候选令牌拖到该棋盘格是否合法（与 placeFromTray 语义对齐） */
 function trayTokenCanDropOnCell(b: Battle, token: TrayToken, cell: Cell): boolean {
   if (token.kind === 'shovel') {
+    return b.lockedCells().some((c) => c.c === cell.c && c.r === cell.r)
+      && !b.trees.has(`${cell.c},${cell.r}`);
+  }
+  if (token.kind === 'tree') {
     return b.lockedCells().some((c) => c.c === cell.c && c.r === cell.r);
   }
   if (!b.unlockedCells().some((c) => c.c === cell.c && c.r === cell.r)) return false;
@@ -5325,7 +5326,10 @@ function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean 
   if (a.kind === 'unit' && b.kind === 'unit') {
     return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
   }
-  return true; // 字/兵/铲异类 → 交换
+  if (a.kind === 'tree' && b.kind === 'tree') {
+    return a.level === b.level && a.level < PEACH_TREE_MAX_LEVEL;
+  }
+  return true; // 字/兵/铲/桃异类 → 交换
 }
 
 // 托盘拖拽时：标出全部可落点（棋盘 + 可合并的候选槽）+ 源槽黑圈，对标竞品瞄准心
@@ -5421,7 +5425,19 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 托盘拖拽：先画全部可落点瞄准标记（在 ghost 之下）
   if (ui.dragTrayIndex !== null) drawTrayDropHints(ctx, b, ui);
 
-  // 当前悬停格加粗描边；兵种悬停合法格时实时预览攻击范围
+  // 棋盘拖回候选区：标出空槽
+  if (ui.dragFrom && ui.dragTrayIndex === null) {
+    for (let i = 0; i < TUNING.traySize; i++) {
+      if (b.tray[i]) continue;
+      const cx = TRAY_LEFT + i * TRAY_SLOT;
+      drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
+        plus: true,
+        fill: true,
+      });
+    }
+  }
+
+  // 当前悬停格加粗描边
   const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
   if (target) {
     const x = BOARD_X + target.c * CELL;

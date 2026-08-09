@@ -40,6 +40,16 @@ describe('endless persistence', () => {
 });
 
 describe('endless difficulty curve', () => {
+  it('无尽波>10：基础血量/移速后再 ×(1+(wave-10)/100)', () => {
+    const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
+    expect(b.endlessWavePostMul(10)).toBe(1);
+    expect(b.endlessWavePostMul(11)).toBeCloseTo(1.01, 5);
+    expect(b.endlessWavePostMul(20)).toBeCloseTo(1.1, 5);
+    expect(b.endlessWavePostMul(50)).toBeCloseTo(1.4, 5);
+    const vs = new Battle(1, 1, undefined, undefined, {}, [], [], false);
+    expect(vs.endlessWavePostMul(30)).toBe(1);
+  });
+
   it('effectiveDifficulty 分圈阶梯：每 10 波一圈 ×STEP', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
     const S = TUNING.endlessCycleStep;
