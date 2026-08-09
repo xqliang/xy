@@ -600,7 +600,14 @@ function frame(now: number): void {
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
   } else {
     // —— 战斗 —— //
-    if (!ui.paused) battle.step(dt);
+    if (!ui.paused) {
+      try {
+        battle.step(dt);
+      } catch (err) {
+        console.error('[battle.step]', err);
+        battle.message = '战斗逻辑异常，已跳过本帧（请刷新页面）';
+      }
+    }
     startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
     // 播放引擎发出的音效事件
     if (battle.sfxEvents.length) {
