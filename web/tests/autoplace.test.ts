@@ -724,6 +724,30 @@ it('tray 合出高级后可换地图上更低阶异型武器', () => {
   expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'archer' && t.tier === 1)).toBe(true);
 });
 
+it('tray 遗留缺种武器时与地图重复同级/低阶异型互换', () => {
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'spear', tier: 1 }],
+    [{ c: 2, r: 2 }, { c: 4, r: 2 }],
+  );
+  v.unitsMap.set('2,2', { type: 'dao', tier: 1, cell: { c: 2, r: 2 } });
+  v.unitsMap.set('4,2', { type: 'dao', tier: 1, cell: { c: 4, r: 2 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  expect(v.placedUnits().some((u) => u.type === 'spear')).toBe(true);
+  expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'dao')).toBe(true);
+});
+
+it('缺种互换：不换地图唯一兵种，也不换高于 tray 阶的兵器', () => {
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'spear', tier: 1 }],
+    [{ c: 2, r: 2 }, { c: 4, r: 2 }],
+  );
+  v.unitsMap.set('2,2', { type: 'dao', tier: 1, cell: { c: 2, r: 2 } });
+  v.unitsMap.set('4,2', { type: 'archer', tier: 2, cell: { c: 4, r: 2 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 3 });
+  expect(v.placedUnits().some((u) => u.type === 'spear')).toBe(false);
+  expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'spear')).toBe(true);
+});
+
 it('满槽棋盘合：覆盖相近时优先保留靠近出口的格', () => {
   // 两格同贴路(r=0)→pathCover 相同；出口在 c=0 → 应保留 (0,0)，腾 (5,0) 放 archer
   const v = new FakeView(

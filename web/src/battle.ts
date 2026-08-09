@@ -37,7 +37,7 @@ import {
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import { rollWeaponDrop, type WeaponBonuses } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -1345,7 +1345,7 @@ export class Battle {
     };
   }
 
-  /** 该格兵种对指定怪群的路径威胁分（范围内怪 atk 之和）；无怪时假设出怪口有怪 */
+  /** 该格兵种对指定怪群的路径威胁分（范围内怪 atk×残血加权之和）；无怪时假设出怪口有怪 */
   private engageScoreAt(
     monsters: Monster[],
     path: Cell[],
@@ -1353,17 +1353,112 @@ export class Battle {
     cell: Cell,
     type: UnitType,
     tier: number,
+    dangerNear: boolean,
   ): number {
     const stat = getUnitStat(type, tier);
-    const targets =
-      monsters.length > 0
-        ? monsters.map((m) => posAlong(path, m.dist))
-        : [posAlong(path, entranceDist)];
-    let score = 0;
-    for (const p of targets) {
-      if (inAttackRange(cell.c, cell.r, stat.rge, p)) score += stat.atk;
+    const lite = monsters.map((m) => ({ dist: m.dist, hp: m.hp, maxHp: m.maxHp }));
+    return engageThreatAt(
+      lite,
+      path,
+      entranceDist,
+      cell.c,
+      cell.r,
+      stat.rge,
+      stat.atk,
+      dangerNear,
+      type,
+    );
+  }
+
+  /** 危险时优先集火残血怪，否则优先打最靠前妖怪 */
+  private sortCombatTargets<T extends { m: Monster }>(inRange: T[], dangerNear: boolean): T[] {
+    if (!dangerNear) return inRange.sort((a, b) => b.m.dist - a.m.dist);
+    return inRange.sort((a, b) => {
+      const ra = a.m.hp / a.m.maxHp;
+      const rb = b.m.hp / b.m.maxHp;
+      const dr = ra - rb;
+      if (Math.abs(dr) > 0.06) return dr;
+      return b.m.dist - a.m.dist;
+    });
+  }
+
+  private heroEngageScoreAt(
+    monsters: Monster[],
+    path: Cell[],
+    entranceDist: number,
+    left: Cell,
+    right: Cell,
+    general: string,
+    tier: number,
+    dangerNear: boolean,
+    ai = false,
+  ): number {
+    const def = generalById(general);
+    if (!def) return 0;
+    const ax = (left.c + right.c) / 2;
+    const ay = (left.r + right.r) / 2;
+    const stat = generalStat(def, tier);
+    const wb = ai ? undefined : this.weaponBonuses[general];
+    const atk = stat.atk * (1 + (wb?.atk ?? 0));
+    const rge = stat.rge + (wb?.rge ?? 0);
+    const lite = monsters.map((m) => ({ dist: m.dist, hp: m.hp, maxHp: m.maxHp }));
+    return engageThreatAt(lite, path, entranceDist, ax, ay, rge, atk, dangerNear);
+  }
+
+  private dangerEngageAtPlayer(ax: number, ay: number, rge: number, atk: number): number {
+    if (!this.dangerNear()) return 0;
+    const lite = this.monsters.map((m) => ({ dist: m.dist, hp: m.hp, maxHp: m.maxHp }));
+    return engageThreatAt(lite, this.map.path, this.entranceDist, ax, ay, rge, atk, true);
+  }
+
+  private repositionHeroPair(fromLeft: Cell, fromRight: Cell, toLeft: Cell, toRight: Cell, ai = false): boolean {
+    if (toLeft.c + 1 !== toRight.c || toLeft.r !== toRight.r) return false;
+    if (fromLeft.c === toLeft.c && fromLeft.r === toLeft.r && fromRight.c === toRight.c && fromRight.r === toRight.r) {
+      return false;
     }
-    return score;
+    const cellFree = ai
+      ? (c: Cell) => this.aiCellFree(c.c, c.r)
+      : (c: Cell) => this.cellFree(c.c, c.r);
+    const isUnlocked = ai
+      ? (c: number, r: number) => this.aiUnlocked.has(cellKey(c, r))
+      : (c: number, r: number) => this.isUnlocked(c, r);
+    const canOccupy = (to: Cell, fromA: Cell, fromB: Cell) => {
+      if ((to.c === fromA.c && to.r === fromA.r) || (to.c === fromB.c && to.r === fromB.r)) return true;
+      return isUnlocked(to.c, to.r) && cellFree(to);
+    };
+    if (!canOccupy(toLeft, fromLeft, fromRight) || !canOccupy(toRight, fromLeft, fromRight)) return false;
+    const moveWord = ai
+      ? (from: Cell, to: Cell) => {
+          const kFrom = cellKey(from.c, from.r);
+          const kTo = cellKey(to.c, to.r);
+          const w = this.aiWords.get(kFrom);
+          if (!w) return false;
+          if (!this.aiUnlocked.has(kTo) || !this.aiCellFree(to.c, to.r)) return false;
+          this.aiWords.delete(kFrom);
+          w.cell = { c: to.c, r: to.r };
+          this.aiWords.set(kTo, w);
+          return true;
+        }
+      : (from: Cell, to: Cell) => {
+          const kFrom = cellKey(from.c, from.r);
+          const kTo = cellKey(to.c, to.r);
+          const w = this.words.get(kFrom);
+          if (!w) return false;
+          if (!this.isUnlocked(to.c, to.r) || !this.cellFree(to.c, to.r)) return false;
+          this.words.delete(kFrom);
+          w.cell = { c: to.c, r: to.r };
+          this.words.set(kTo, w);
+          return true;
+        };
+    const order =
+      (toLeft.c === fromRight.c && toLeft.r === fromRight.r) || (toRight.c === fromLeft.c && toRight.r === fromLeft.r)
+        ? [[fromRight, toRight], [fromLeft, toLeft]] as const
+        : [[fromLeft, toLeft], [fromRight, toRight]] as const;
+    for (const [from, to] of order) {
+      if (from.c === to.c && from.r === to.r) continue;
+      if (!moveWord(from, to)) return false;
+    }
+    return true;
   }
 
   /** 格对「怪物即将路过」路段的贴近分（挖铲/危险布阵用） */
@@ -1413,8 +1508,10 @@ export class Battle {
           .map((w) => ({ char: w.char, general: w.general, cell: w.cell, tier: w.tier })),
       isActiveHeroCell: (cell) =>
         this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
-      canEngage: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier) > 0,
-      engageScore: (cell, type, tier) => this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier),
+      canEngage: (cell, type, tier) =>
+        this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear()) > 0,
+      engageScore: (cell, type, tier) =>
+        this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear()),
       seatScore: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
@@ -1429,6 +1526,17 @@ export class Battle {
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
+      activeHeroPairs: () =>
+        this.aiActiveGenerals().map((g) => ({
+          left: g.cells[0]!,
+          right: g.cells[1]!,
+          general: g.def.id,
+          tier: g.tier,
+        })),
+      heroEngageScore: (left, right, general, tier) =>
+        this.heroEngageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, left, right, general, tier, this.aiDangerNear(), true),
+      moveHeroPair: (fromLeft, fromRight, toLeft, toRight) =>
+        this.repositionHeroPair(fromLeft, fromRight, toLeft, toRight, true),
       };
     }
     return {
@@ -1467,8 +1575,10 @@ export class Battle {
       swapUnitWord: (unitCell, wordCell) => this.swapUnitWord(unitCell, wordCell),
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
-      canEngage: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier) > 0,
-      engageScore: (cell, type, tier) => this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier),
+      canEngage: (cell, type, tier) =>
+        this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear()) > 0,
+      engageScore: (cell, type, tier) =>
+        this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear()),
       seatScore: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
         return placeCellScore(
@@ -1483,6 +1593,17 @@ export class Battle {
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
+      activeHeroPairs: () =>
+        this.activeGenerals().map((g) => ({
+          left: g.cells[0]!,
+          right: g.cells[1]!,
+          general: g.def.id,
+          tier: g.tier,
+        })),
+      heroEngageScore: (left, right, general, tier) =>
+        this.heroEngageScoreAt(this.monsters, this.map.path, this.entranceDist, left, right, general, tier, this.dangerNear()),
+      moveHeroPair: (fromLeft, fromRight, toLeft, toRight) =>
+        this.repositionHeroPair(fromLeft, fromRight, toLeft, toRight),
     };
   }
 

@@ -3,6 +3,7 @@
 // 原则：绝不丢弃令牌（无处可放者留在 tray）；有空格必落 tray 兵（射程内优先，否则兜底填最近空位）；
 // 挖出空位后：先让棋盘武器迁/换到更合适座位，再处理 tray。
 // tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
+// tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
 // 第 5 波起：tray 字优先于场上普通武器调位/落兵；尽量清空 tray 字（地图上已有同字者可留 tray）。
@@ -1042,12 +1043,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!pendingTrayDeploy() && !subopt() && tryYieldOrphanSeatsToUnits()) return true;
     // 8) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!pendingTrayDeploy() && !subopt() && tryRelocateOrphansToRear()) return true;
-    // 9) 地图槽位已满：先 tray 内合 / 棋盘合腾位再落子
+    // 9) 地图槽位已满：缺种互换 → tray 内合 / 棋盘合腾位再落子
     if (view.freeCells().length === 0) {
+      if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
       if (tryTrayMergeOntoBoard()) return true;
       if (tryTrayInternalMergeAndDeploy()) return true;
       if (tryBoardMergeThenPlace()) return true;
     }
+    if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
     return false; // 无可推进动作
   }
 
@@ -1079,9 +1082,62 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return tryFillAnyFreeSeat();
   }
 
-  /** 合后或常规：落子 + 合后换占低阶（不含 tray 内合成链） */
+  function boardUnitTypeCounts(): Map<UnitType, number> {
+    const m = new Map<UnitType, number>();
+    for (const u of view.placedUnits()) {
+      m.set(u.type, (m.get(u.type) ?? 0) + 1);
+    }
+    return m;
+  }
+
+  function typeOnBoard(type: UnitType): boolean {
+    return view.placedUnits().some((u) => u.type === type);
+  }
+
+  /**
+   * tray 遗留且地图尚无该兵种：与棋盘上同级/更低阶、且同型有多枚的兵器互换上板。
+   * 优先换掉同型中座位分最低的多余实例，尽量丰富地图兵种。
+   */
+  function tryDiversifyTrayUnitsViaSwap(): boolean {
+    if (subopt()) return false;
+    const typeCounts = boardUnitTypeCounts();
+    const tray = view.tray();
+    let best: { trayIdx: number; target: PlacedUnitLite; seatLoss: number; traySeat: number } | null = null;
+
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i]!;
+      if (t.kind !== 'unit') continue;
+      if (typeOnBoard(t.type)) continue;
+      const rge = getUnitStat(t.type, t.tier).rge;
+
+      for (const u of view.placedUnits()) {
+        if (u.type === t.type) continue;
+        if ((typeCounts.get(u.type) ?? 0) < 2) continue;
+        if (u.tier > t.tier) continue;
+        if (view.isActiveHeroCell(u.cell)) continue;
+        if (view.nearestPathDist(u.cell) > rge + tol) continue;
+
+        const traySeat = scoreCell(u.cell, t.type, t.tier);
+        const seatLoss = scoreCell(u.cell, u.type, u.tier);
+        if (
+          !best ||
+          u.tier < best.target.tier ||
+          (u.tier === best.target.tier && seatLoss < best.seatLoss) ||
+          (u.tier === best.target.tier && seatLoss === best.seatLoss && traySeat > best.traySeat)
+        ) {
+          best = { trayIdx: i, target: u, seatLoss, traySeat };
+        }
+      }
+    }
+
+    if (!best) return false;
+    return view.place(best.trayIdx, best.target.cell);
+  }
+
+  /** 合后或常规：落子 + 缺种互换 + 合后换占低阶（不含 tray 内合成链） */
   function tryDeployTrayUnitsFromTray(): boolean {
     if (tryPlaceTrayUnitsOnly()) return true;
+    if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
     if (!subopt() && tryTrayMergeThenSwapLowerOther()) return true;
     return tryPlaceTrayUnitsOnly();
   }
@@ -1093,7 +1149,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return true;
   }
 
-  /** tray 兵落子：同阶合成 → 异型换低阶 → 射程内最优格 → 任意空格兜底 → 满盘再 tray 合成链 */
+  /** tray 兵落子：同阶合成 → 缺种互换 → 异型合后换占 → 射程内最优格 → 兜底 → 满盘 tray 合成链 */
   function tryDeployTrayUnits(): boolean {
     if (tryDeployTrayUnitsFromTray()) return true;
     if (!subopt() && canTrayChainMergeNow()) {
