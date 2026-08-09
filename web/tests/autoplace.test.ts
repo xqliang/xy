@@ -1072,11 +1072,13 @@ it('仅 tray 白时左移金吒一格后激活白骨', () => {
     { c: 4, r: 0 }, { c: 5, r: 0 },
   ];
   const v = new FakeView([{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }], cells);
-  v.wordsMap.set('3,0', { char: '金', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
-  v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
+  v.waveNum = 5;
+  v.wordsMap.set('2,0', { char: '金', general: 'jinzha', cell: { c: 2, r: 0 }, tier: 1 });
+  v.wordsMap.set('3,0', { char: '吒', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
   v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
   expect(v.placedWords().find((w) => w.char === '白')?.cell).toEqual({ c: 4, r: 0 });
+  expect(v.isActiveHeroCell({ c: 4, r: 0 })).toBe(true);
 });
 
 it('满级牛郎在前时布阵将未升满金吒前移', () => {
@@ -1643,4 +1645,128 @@ it('第5波起：地图上已有同字时 tray 重复字可留候选区', () => 
   v.wordsMap.set('4,5', { char: '红', general: 'honghaier', cell: { c: 4, r: 5 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 5 });
   expect(v.tray().some((t) => t.kind === 'word' && t.char === '红')).toBe(true);
+});
+
+it('第5波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {
+  const cells = [
+    { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 },
+    { c: 0, r: 7 }, { c: 1, r: 7 },
+  ];
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '白', general: 'bailong', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+      { kind: 'unit', type: 'archer', tier: 2 },
+    ],
+    cells,
+  );
+  v.waveNum = 6;
+  v.unitsMap.set('0,0', { type: 'dao', tier: 1, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,1', { type: 'spear', tier: 3, cell: { c: 1, r: 1 } });
+  v.unitsMap.set('2,1', { type: 'spear', tier: 3, cell: { c: 2, r: 1 } });
+  v.unitsMap.set('0,2', { type: 'cavalry', tier: 3, cell: { c: 0, r: 2 } });
+  v.wordsMap.set('4,0', { char: '龙', general: 'bailong', cell: { c: 4, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '红', general: 'honghaier', cell: { c: 5, r: 0 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 5 });
+  expect(v.placedUnits().some((u) => u.type === 'archer' && u.tier === 2)).toBe(true);
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '白')).toBe(true);
+});
+
+it('第5波起：棋盘金+tray吒应激活金吒（右邻空）', () => {
+  const cells = [
+    { c: 0, r: 2 }, { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 },
+    { c: 4, r: 2 }, { c: 5, r: 2 }, { c: 6, r: 2 },
+    { c: 0, r: 3 }, { c: 1, r: 3 }, { c: 2, r: 3 }, { c: 3, r: 3 },
+    { c: 4, r: 3 }, { c: 5, r: 3 }, { c: 6, r: 3 },
+  ];
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '吒', general: 'jinzha', tier: 1 },
+      { kind: 'unit', type: 'archer', tier: 2 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+    ],
+    cells,
+  );
+  v.waveNum = 6;
+  v.wordChars = (g: string) => {
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    if (g === 'hongpao') return ['红', '袍'] as const;
+    if (g === 'bailong') return ['白', '龙'] as const;
+    if (g === 'liusha') return ['流', '沙'] as const;
+    if (g === 'fanyin') return ['梵', '音'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,2', { char: '白', general: 'bailong', cell: { c: 0, r: 2 }, tier: 2 });
+  v.wordsMap.set('1,2', { char: '龙', general: 'bailong', cell: { c: 1, r: 2 }, tier: 2 });
+  v.wordsMap.set('2,2', { char: '红', general: 'hongpao', cell: { c: 2, r: 2 }, tier: 2 });
+  v.wordsMap.set('3,2', { char: '袍', general: 'hongpao', cell: { c: 3, r: 2 }, tier: 2 });
+  v.wordsMap.set('4,2', { char: '金', general: 'jinzha', cell: { c: 4, r: 2 }, tier: 1 });
+  v.wordsMap.set('0,3', { char: '流', general: 'liusha', cell: { c: 0, r: 3 }, tier: 1 });
+  v.wordsMap.set('1,3', { char: '沙', general: 'liusha', cell: { c: 1, r: 3 }, tier: 1 });
+  v.wordsMap.set('2,3', { char: '梵', general: 'fanyin', cell: { c: 2, r: 3 }, tier: 1 });
+  v.wordsMap.set('3,3', { char: '音', general: 'fanyin', cell: { c: 3, r: 3 }, tier: 1 });
+  v.unitsMap.set('5,3', { type: 'archer', tier: 3, cell: { c: 5, r: 3 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 8 });
+  const jin = v.placedWords().find((w) => w.char === '金');
+  const zha = v.placedWords().find((w) => w.char === '吒');
+  expect(jin).toBeDefined();
+  expect(zha).toBeDefined();
+  expect(jin!.cell.c + 1).toBe(zha!.cell.c);
+  expect(jin!.cell.r).toBe(zha!.cell.r);
+  expect(v.isActiveHeroCell(jin!.cell)).toBe(true);
+  expect(matchGeneral(jin!.char, zha!.char)?.id).toBe('jinzha');
+  expect(v.tray().some((t) => t.kind === 'word' && t.char === '吒')).toBe(false);
+});
+
+it('第5波起：棋盘金+tray吒右邻被占时应换兵激活金吒', () => {
+  const cells = [
+    { c: 3, r: 2 }, { c: 4, r: 2 }, { c: 5, r: 2 }, { c: 6, r: 2 },
+    { c: 3, r: 3 }, { c: 4, r: 3 }, { c: 5, r: 3 }, { c: 6, r: 3 },
+  ];
+  const v = new FakeView(
+    [{ kind: 'word', char: '吒', general: 'jinzha', tier: 1 }],
+    cells,
+  );
+  v.waveNum = 6;
+  v.wordChars = (g: string) => (g === 'jinzha' ? (['金', '吒'] as const) : undefined);
+  v.wordsMap.set('4,2', { char: '金', general: 'jinzha', cell: { c: 4, r: 2 }, tier: 1 });
+  v.unitsMap.set('5,2', { type: 'spear', tier: 4, cell: { c: 5, r: 2 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 12 });
+  const jin = v.placedWords().find((w) => w.char === '金');
+  const zha = v.placedWords().find((w) => w.char === '吒');
+  expect(jin).toBeDefined();
+  expect(zha).toBeDefined();
+  expect(jin!.cell.c + 1).toBe(zha!.cell.c);
+  expect(v.isActiveHeroCell(jin!.cell)).toBe(true);
+});
+
+it('截图局面：tray 弓2 不会异型替换枪1（弓已在场）', () => {
+  const cells = [
+    { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+    { c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 },
+    { c: 0, r: 2 }, { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 },
+  ];
+  const v = new FakeView([{ kind: 'unit', type: 'archer', tier: 2 }], cells);
+  v.waveNum = 6;
+  v.dangerNearFlag = true;
+  v.unitsMap.set('0,0', { type: 'cavalry', tier: 3, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,1', { type: 'dao', tier: 2, cell: { c: 1, r: 1 } });
+  v.unitsMap.set('2,1', { type: 'spear', tier: 3, cell: { c: 2, r: 1 } });
+  v.unitsMap.set('0,2', { type: 'dao', tier: 3, cell: { c: 0, r: 2 } });
+  v.unitsMap.set('1,2', { type: 'spear', tier: 2, cell: { c: 1, r: 2 } });
+  v.unitsMap.set('2,2', { type: 'archer', tier: 3, cell: { c: 2, r: 2 } });
+  v.unitsMap.set('3,2', { type: 'spear', tier: 1, cell: { c: 3, r: 2 } });
+  v.wordsMap.set('2,0', { char: '流', general: 'liusha', cell: { c: 2, r: 0 }, tier: 1 });
+  v.wordsMap.set('3,0', { char: '红', general: 'honghaier', cell: { c: 3, r: 0 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 30 });
+  // 弓2 不会与枪1 异型互换：枪1 可能因调位挪动，但 tray 弓不应占枪1 原格 (3,2)
+  const archer2Cell = v.placedUnits().find((u) => u.type === 'archer' && u.tier === 2)?.cell;
+  const spearAt32 = v.placedUnits().find((u) => u.cell.c === 3 && u.cell.r === 2);
+  expect(archer2Cell).not.toEqual({ c: 3, r: 2 });
+  if (v.tray().some((t) => t.kind === 'unit' && t.type === 'archer' && t.tier === 2)) {
+    expect(archer2Cell).toBeUndefined();
+  } else {
+    expect(archer2Cell).toBeDefined();
+    expect(spearAt32?.type).not.toBe('archer');
+  }
 });
