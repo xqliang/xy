@@ -1367,6 +1367,21 @@ function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: numb
   return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
 }
 
+/** 引导箭头单周期透明度：缓入 → 保持 → 缓出（避免分段线性带来的跳变） */
+function spawnHintAlpha(phase: number): number {
+  const fadeInEnd = 0.24;
+  const fadeOutStart = 0.7;
+  if (phase < fadeInEnd) {
+    const t = phase / fadeInEnd;
+    const e = t * t * (3 - 2 * t); // smoothstep
+    return 0.34 + 0.61 * e;
+  }
+  if (phase < fadeOutStart) return 0.95;
+  const t = (phase - fadeOutStart) / (1 - fadeOutStart);
+  const e = 1 - t * t * (3 - 2 * t);
+  return 0.95 * e;
+}
+
 // 开局唐僧归位前：三箭头接力循环——半透明自格边出现 → 前移变实 → 下一箭在起点接力
 function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.introDone) return;
@@ -1389,14 +1404,12 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
       const along = phase * travel;
       const ax = sx + info.dc * along;
       const ay = sy + info.dr * along;
-      // 半透明出场 → 前移变实 → 末端淡出，循环无缝
-      let alpha: number;
-      if (phase < 0.28) alpha = 0.4 + (phase / 0.28) * 0.55;
-      else if (phase < 0.72) alpha = 0.95;
-      else alpha = 0.95 * (1 - (phase - 0.72) / 0.28);
+      const alpha = spawnHintAlpha(phase);
       if (alpha < 0.04) continue;
       ctx.globalAlpha = alpha;
-      drawPathChevron(ctx, ax, ay, Math.atan2(info.dr, info.dc), size, alpha > 0.7);
+      // 亮度随 alpha 连续过渡，避免 0.7 阈值处描边/光晕突变
+      const litT = Math.max(0, Math.min(1, (alpha - 0.45) / 0.5));
+      drawPathChevron(ctx, ax, ay, Math.atan2(info.dr, info.dc), size, litT);
     }
     ctx.restore();
   };
@@ -1404,18 +1417,21 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
   if (!b.aiDefeated && !b.endless) drawOn(b.aiPath);
 }
 
-/** 半格大小的空心箭头（> 形），沿 ang 朝向；lit 时加亮描边与光晕 */
-function drawPathChevron(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, size: number, lit: boolean) {
+/** 半格大小的空心箭头（> 形），沿 ang 朝向；litT∈[0,1] 连续控制描边与光晕 */
+function drawPathChevron(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, size: number, litT: number) {
   const arm = size * 0.42;
+  const t = Math.max(0, Math.min(1, litT));
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(ang);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = lit ? '#ffe27a' : '#e8c878';
-  ctx.lineWidth = lit ? 4.5 : 3.2;
-  ctx.shadowColor = lit ? 'rgba(255, 210, 80, 0.85)' : 'transparent';
-  ctx.shadowBlur = lit ? 8 : 0;
+  const r0 = 232, g0 = 200, b0 = 120;
+  const r1 = 255, g1 = 226, b1 = 122;
+  ctx.strokeStyle = `rgb(${Math.round(r0 + (r1 - r0) * t)},${Math.round(g0 + (g1 - g0) * t)},${Math.round(b0 + (b1 - b0) * t)})`;
+  ctx.lineWidth = 3.2 + 1.3 * t;
+  ctx.shadowColor = `rgba(255, 210, 80, ${0.85 * t})`;
+  ctx.shadowBlur = 8 * t;
   ctx.beginPath();
   ctx.moveTo(-arm * 0.35, -arm);
   ctx.lineTo(arm * 0.55, 0);
