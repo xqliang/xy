@@ -869,11 +869,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
     if (!pendingTrayDeploy() && !subopt() && tryRelocateToBetterFreeSeats()) return true;
     if (!pendingTrayDeploy() && !subopt() && trySwapHigherTierToBetterSeats()) return true;
-    // 2e) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray）
+    // 2e) 单字落位：远离路径、靠近唐僧（棋盘已有同字则留 tray；有伴侣则勿散落到远处）
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
       if (view.placedWords().some((w) => w.char === t.char)) continue;
       if (isObsoleteTransitionVariant(view, t.char)) continue;
+      if (pickBestBoardMate(t.char, t.general)) continue;
       if (placeSingleWord(i)) return true;
     }
     // 6) 救援式重排：tray 待落时跳过
@@ -1508,24 +1509,29 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
         const mateAtNeed = sameCell(boardMate.cell, needMate);
         const mateAtTray = sameCell(boardMate.cell, needTray);
-        // 只处理伴侣已在目标位，或白龙式「左字在右格待左移」
-        if (!mateAtNeed && !(mateIsLeftChar && mateAtTray)) continue;
 
-        // 目标格被其它激活将占用 → 由 tryTrayHeroInsertByRowShift 整行左移；此处不拆散
         if (view.isActiveHeroCell(needTray)) continue;
         if (view.isActiveHeroCell(needMate) && !mateAtNeed) continue;
 
         const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
         const mateOld = { ...boardMate.cell };
-        const mateAlreadySeated = mateAtNeed;
 
-        // 1) 腾伴侣目标格并迁座（左字须在 needMate；右字须在 needTray）
-        if (!mateAlreadySeated) {
+        // 1) 伴侣归位：左字→needMate，右字→needTray；亦支持从第三格迁来（非仅已在位/白龙式）
+        if (mateIsLeftChar && mateAtTray && !mateAtNeed) {
           if (!clearForHero(needMate, reserved, null)) continue;
           const mateNow = resolveTrackedWord(boardMate);
-          if (!mateNow) continue;
-          if (!view.moveWord(mateNow.cell, needMate)) continue;
+          if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
+        } else if (!mateIsLeftChar && mateAtNeed && !mateAtTray) {
+          if (!clearForHero(needTray, reserved, null)) continue;
+          const mateNow = resolveTrackedWord(boardMate);
+          if (!mateNow || !view.moveWord(mateNow.cell, needTray)) continue;
+        } else if (!mateAtNeed && !mateAtTray) {
+          const target = mateIsLeftChar ? needMate : needTray;
+          if (!clearForHero(target, reserved, null)) continue;
+          const mateNow = resolveTrackedWord(boardMate);
+          if (!mateNow || !view.moveWord(mateNow.cell, target)) continue;
         }
+
         // 2) 落 tray 字：优先挪开占位，满盘挪不开时直接 place（与孤儿/兵交换）
         clearForHero(needTray, reserved, null, [mateOld]);
         const idx = view.tray().findIndex(
