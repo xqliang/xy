@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -22,6 +22,7 @@ import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
+import { getSettings } from './settings';
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
@@ -120,19 +121,8 @@ export function pauseBtnRect(): { x: number; y: number; w: number; h: number } {
   return { x: PAUSE_BTN.x, y: (HUD_H - PAUSE_BTN.s) / 2, w: PAUSE_BTN.s, h: PAUSE_BTN.s };
 }
 
-/** 暂停弹窗「继续游戏」按钮几何 */
-export function pauseContinueRect(): { x: number; y: number; w: number; h: number } {
-  const w = 220, h = 48;
-  return { x: (VIEW_W - w) / 2, y: VIEW_H / 2 + 18, w, h };
-}
-
 export function hitPauseBtn(x: number, y: number): boolean {
   const r = pauseBtnRect();
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-}
-
-export function hitPauseContinue(x: number, y: number): boolean {
-  const r = pauseContinueRect();
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
@@ -766,6 +756,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawDigFx(ctx, b.aiDigFx);
   drawBursts(ctx, b);
   drawPeachFloats(ctx, b);
+  drawDamageFloats(ctx, b);
   drawHeroUlt(ctx, b);
   drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
@@ -780,7 +771,6 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActivePopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawBanner(ctx, b);
-  if (ui.paused) drawPauseOverlay(ctx, b);
 }
 
 // —— 候选区（征兵产出，手工拖到棋盘）——
@@ -1438,14 +1428,15 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
     // 起点：第 2 格朝向出口的那条边（中心沿反方向退半格），避免压闸门
     const sx = cx - info.dc * CELL * 0.5;
     const sy = cy - info.dr * CELL * 0.5;
-    const travel = CELL * 1.7; // 单箭行程（约两格），三箭相位差 1/3 形成接力
+    const travel = CELL * 1.7; // 单箭行程（约两格），三箭相位差形成接力
+    const arrowStagger = 2 / 9; // 相邻箭相位差（原 1/3 周期，间距减 1/3）
     const period = 2.5; // 秒：一箭从出现到淡出
     const t = performance.now() / 1000 / period;
     const size = CELL * 0.48;
     ctx.save();
     for (let i = 0; i < 3; i++) {
-      // i=0 领先；每隔 1/3 周期下一箭在起点半透明出现
-      const phase = ((t - i / 3) % 1 + 1) % 1;
+      // i=0 领先；下一箭在起点半透明接力出现
+      const phase = ((t - i * arrowStagger) % 1 + 1) % 1;
       const along = phase * travel;
       const ax = sx + info.dc * along;
       const ay = sy + info.dr * along;
@@ -2338,21 +2329,33 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'bailong': drawUltBailong(ctx, x, y, prog, fade, f.tier, R); break;
     }
     ctx.restore();
-    // 暴击飘字：红字上飘 + 放大
-    if (f.crit && f.critDmg != null) {
-      ctx.save();
-      ctx.globalAlpha = fade;
-      ctx.fillStyle = '#ff5a3c';
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = 3;
-      ctx.font = `bold ${Math.round(18 + prog * 10)}px "PingFang SC", sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const ty = y - 18 - prog * 26;
-      ctx.strokeText(`暴击! ${Math.round(f.critDmg)}`, x, ty);
-      ctx.fillText(`暴击! ${Math.round(f.critDmg)}`, x, ty);
-      ctx.restore();
-    }
+  }
+}
+
+function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (!getSettings().showDamageNumbers) return;
+  for (const d of b.damageFloats) {
+    const { x, y: cy } = cellCenterPx(d.c, d.r);
+    const px = x + d.xJitter * CELL;
+    const py = cy + d.y * CELL;
+    const fallProgress = d.y >= d.peakY ? (d.y - d.peakY) / DAMAGE_FLOAT_FALL : 0;
+    const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
+    const popT = Math.min(1, d.age / 0.1);
+    const popScale = 1 + (1 - popT) * (d.crit ? 0.32 : 0.22);
+    const text = d.crit ? `暴击! ${Math.round(d.amount)}` : `${Math.round(d.amount)}`;
+    const basePx = d.crit ? 17 : 14;
+    const fontPx = Math.round(basePx * popScale);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${fontPx}px "PingFang SC", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillStyle = d.crit ? '#ff5a3c' : '#fff8e8';
+    ctx.strokeText(text, px, py);
+    ctx.fillText(text, px, py);
+    ctx.restore();
   }
 }
 
@@ -4875,37 +4878,6 @@ function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.fill();
   roundRect(ctx, cx + gap / 2, cy - barH / 2, barW, barH, 1.5);
   ctx.fill();
-  ctx.restore();
-}
-
-// 暂停遮罩 +「当前已暂停」提示 + 继续按钮
-function drawPauseOverlay(ctx: CanvasRenderingContext2D, b: Battle) {
-  ctx.save();
-  ctx.fillStyle = 'rgba(12, 10, 8, 0.58)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-  const pw = 300, ph = 168;
-  const px = (VIEW_W - pw) / 2, py = VIEW_H / 2 - ph / 2 - 10;
-  roundRect(ctx, px, py, pw, ph, 14);
-  ctx.fillStyle = 'rgba(36, 28, 20, 0.96)';
-  ctx.fill();
-  ctx.strokeStyle = b.map.theme.accent;
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff6e6';
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  ctx.fillText('游戏已暂停', VIEW_W / 2, py + 48);
-  ctx.fillStyle = 'rgba(255,246,230,0.65)';
-  ctx.font = '14px "PingFang SC", sans-serif';
-  ctx.fillText('当前暂停游戏中', VIEW_W / 2, py + 78);
-  const btn = pauseContinueRect();
-  roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
-  ctx.fillStyle = b.map.theme.accent;
-  ctx.fill();
-  ctx.fillStyle = '#fff8e8';
-  ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText('继续游戏', btn.x + btn.w / 2, btn.y + btn.h / 2);
   ctx.restore();
 }
 

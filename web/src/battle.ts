@@ -19,6 +19,7 @@ import {
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
+import { getSettings } from './settings';
 import {
   generalById,
   generalStat,
@@ -497,7 +498,6 @@ export interface HeroUltFx {
   tier: number;          // 品质阶(1..5)，用于特效规模
   rge: number;           // 英雄当前射程(格)，范围类动画铺开半径
   crit: boolean;         // true=暴击(单体) false=群攻(范围)
-  critDmg?: number;      // 暴击伤害数字(crit 时飘字)
   fromC?: number;        // 施法者格坐标（大圣飞棒 / 二郎·牛郎射线起点）
   fromR?: number;
 }
@@ -516,9 +516,29 @@ export interface PeachFloat {
   peakY: number;
 }
 
+export interface DamageFloat {
+  c: number;
+  r: number;
+  amount: number;
+  y: number;
+  vy: number;
+  peakY: number;
+  age: number;
+  crit: boolean;
+  xJitter: number;
+}
+
 export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
   return -Math.sqrt(2 * gravity * rise);
 }
+
+// 伤害飘字：自头顶弹出，上抛后受重力回落，过顶后淡出消失
+export const DAMAGE_FLOAT_HEAD_Y = -0.48;
+export const DAMAGE_FLOAT_RISE = 0.38;
+export const DAMAGE_FLOAT_RISE_CRIT = 0.52;
+export const DAMAGE_FLOAT_FALL = 0.16;
+export const DAMAGE_FLOAT_GRAVITY = 10;
+export const DAMAGE_FLOAT_GRAVITY_CRIT = 11;
 
 export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
 
@@ -572,6 +592,7 @@ export class Battle {
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
+  damageFloats: DamageFloat[] = []; // 受击伤害飘字
   digFx: { c: number; r: number; t: number }[] = []; // 铲子挖坑动画(来回两下)，t 累积秒数
   aiDigFx: { c: number; r: number; t: number }[] = []; // AI 侧挖坑动画（对称展示，见 render）
   // 自动布阵对"刚挖开、开格动画未完"的格做的延迟落子：先预占该格，动画结束后由 updateFx 真正落子。
@@ -1419,6 +1440,30 @@ export class Battle {
     );
   }
 
+  /** 对妖怪扣血并触发受击反馈（闪白 + 可选伤害飘字） */
+  private hurtMonster(m: Monster, dmg: number, pos: { c: number; r: number }, hitFlash = 0.12, crit = false): void {
+    m.hp -= dmg;
+    m.hitFlash = hitFlash;
+    this.spawnDamageFloat(pos.c, pos.r, dmg, crit);
+  }
+
+  private spawnDamageFloat(c: number, r: number, amount: number, crit = false): void {
+    if (!getSettings().showDamageNumbers || amount <= 0) return;
+    const gravity = crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY;
+    const rise = crit ? DAMAGE_FLOAT_RISE_CRIT : DAMAGE_FLOAT_RISE;
+    this.damageFloats.push({
+      c,
+      r,
+      amount,
+      y: DAMAGE_FLOAT_HEAD_Y,
+      vy: peachFloatInitialVy(gravity, rise),
+      peakY: DAMAGE_FLOAT_HEAD_Y,
+      age: 0,
+      crit,
+      xJitter: (this.rng.next() - 0.5) * 0.28,
+    });
+  }
+
   /** 危险时优先集火残血怪，否则优先打最靠前妖怪 */
   private sortCombatTargets<T extends { m: Monster }>(inRange: T[], dangerNear: boolean): T[] {
     if (!dangerNear) return inRange.sort((a, b) => b.m.dist - a.m.dist);
@@ -2194,7 +2239,7 @@ export class Battle {
     const p = posAtDistance(this.map, front.dist);
     for (const m of this.monsters) {
       const q = posAtDistance(this.map, m.dist);
-      if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) { m.hp -= dmg; m.hitFlash = 0.2; }
+      if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) this.hurtMonster(m, dmg, q, 0.2);
     }
     this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
@@ -2754,8 +2799,7 @@ export class Battle {
       let hitCount = 0;
       for (const target of inRange) {
         if (hitCount >= maxTargets) break;
-        target.m.hp -= dmg;
-        target.m.hitFlash = 0.12; // 受击闪白
+        this.hurtMonster(target.m, dmg, target.p, 0.12);
         const fxTtl = this.attackFxTtl(u.type, u.tier);
         this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: target.p, ttl: fxTtl, maxTtl: fxTtl, color, wtype: u.type, tier: u.tier });
         this.bursts.push({ kind: 'hit', c: target.p.c, r: target.p.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
@@ -2898,8 +2942,7 @@ export class Battle {
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
-        t.m.hp -= dmg;
-        t.m.hitFlash = 0.12;
+        this.hurtMonster(t.m, dmg, t.p, 0.12);
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
@@ -2917,19 +2960,16 @@ export class Battle {
     g.state.skillFlash = 1;
     const center = inRange[0]!.p;
     const crit = ultTypeOf(g.def) === 'crit';
-    let critDmg: number | undefined;
     switch (g.def.skill) {
       case 'burst': {
-        for (const t of inRange) { t.m.hp -= damage(atk * 3); t.m.hitFlash = 0.15; }
+        for (const t of inRange) this.hurtMonster(t.m, damage(atk * 3), t.p, 0.15);
         break;
       }
       case 'ranged': {
         // 暴击：单体高倍 ×(5×CRIT_MULT)
         const t = inRange[0]!;
         const dmg = damage(atk * 5 * CRIT_MULT);
-        t.m.hp -= dmg;
-        t.m.hitFlash = 0.2;
-        critDmg = dmg;
+        this.hurtMonster(t.m, dmg, t.p, 0.2, true);
         break;
       }
       case 'stun': {
@@ -2938,8 +2978,7 @@ export class Battle {
         const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
         for (const t of inRange) {
           t.m.stunT = Math.max(t.m.stunT, dur);
-          t.m.hp -= damage(atk * dmgMul);
-          t.m.hitFlash = 0.12;
+          this.hurtMonster(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
       }
@@ -2947,8 +2986,7 @@ export class Battle {
         const push = g.def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
         for (const t of inRange) {
           t.m.dist = Math.max(this.entranceDist, t.m.dist - push);
-          t.m.hp -= damage(atk * TUNING.heroKnockDmgMul);
-          t.m.hitFlash = 0.12;
+          this.hurtMonster(t.m, damage(atk * TUNING.heroKnockDmgMul), t.p, 0.12);
         }
         break;
       }
@@ -2956,8 +2994,7 @@ export class Battle {
         const dmgMul = g.def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
         for (const t of inRange) {
           t.m.slowT = Math.max(t.m.slowT, TUNING.heroSlowDur);
-          t.m.hp -= damage(atk * dmgMul);
-          t.m.hitFlash = 0.12;
+          this.hurtMonster(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
       }
@@ -2973,8 +3010,7 @@ export class Battle {
       case 'burn': {
         // 红孩/红袍：瞬时命中较轻，余量转为持续灼烧（真正的 DoT，区别于哪吒/金吒的纯爆发）
         for (const t of inRange) {
-          t.m.hp -= damage(atk * TUNING.heroBurnHitMul);
-          t.m.hitFlash = 0.15;
+          this.hurtMonster(t.m, damage(atk * TUNING.heroBurnHitMul), t.p, 0.15);
           t.m.burnT = Math.max(t.m.burnT, TUNING.heroBurnDur);
           t.m.burnDps = Math.max(t.m.burnDps, atk * TUNING.heroBurnDpsMul);
         }
@@ -2999,7 +3035,6 @@ export class Battle {
       tier: g.tier,
       rge: this.generalRge(g),
       crit,
-      critDmg,
       ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
     });
     this.addGeneralCombatExp(g, Battle.heroSkillExp);
@@ -3253,8 +3288,7 @@ export class Battle {
     for (const m of this.monsters) {
       const p = posAtDistance(this.map, m.dist);
       if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.aiClearRadius) {
-        m.hp -= dmg;
-        m.hitFlash = 0.15;
+        this.hurtMonster(m, dmg, p, 0.15);
       }
     }
     this.ultFlash = 0.6;
@@ -3366,6 +3400,13 @@ export class Battle {
       if (p.y < p.peakY) p.peakY = p.y;
     }
     this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
+    for (const d of this.damageFloats) {
+      d.age += dt;
+      d.vy += (d.crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY) * dt;
+      d.y += d.vy * dt;
+      if (d.y < d.peakY) d.peakY = d.y;
+    }
+    this.damageFloats = this.damageFloats.filter((d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);
     for (const d of this.digFx) d.t += dt;
     this.digFx = this.digFx.filter((d) => d.t < DIG_DUR);
     for (const d of this.aiDigFx) d.t += dt;

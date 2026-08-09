@@ -13,6 +13,8 @@ let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false; // 总静音（音效+音乐），默认关（即有声）
 let musicOn = true; // 背景音乐默认开启；用户显式关闭则持久化为 '0'
+let musicVolume = 0.7;
+let sfxVolume = 0.8;
 muted = storeGet(MUTE_KEY) === '1';
 musicOn = storeGet(MUSIC_KEY) !== '0';
 
@@ -23,7 +25,7 @@ export function initAudio(): void {
     ctx = createAudioContext(); // 平台适配：Web=AudioContext，微信=wx.createWebAudioContext()
     if (!ctx) return;
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.5;
+    master.gain.value = muted ? 0 : 0.5 * sfxVolume;
     master.connect(ctx.destination);
   } catch {
     ctx = null;
@@ -36,7 +38,7 @@ export function isMuted(): boolean {
 export function toggleMute(): boolean {
   muted = !muted;
   try { storeSet(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
-  if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.05);
+  if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5 * sfxVolume, ctx.currentTime, 0.05);
   return muted;
 }
 
@@ -64,7 +66,7 @@ function tone(freq: number, dur: number, opts: { type?: Wave; gain?: number; to?
   if (opts.to != null) osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.to), t0 + dur);
   const peak = opts.gain ?? 0.25;
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(peak, t0 + Math.min(0.02, dur * 0.3));
+  g.gain.exponentialRampToValueAtTime(peak * sfxVolume, t0 + Math.min(0.02, dur * 0.3));
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   osc.connect(g); g.connect(master);
   osc.start(t0); osc.stop(t0 + dur + 0.02);
@@ -81,7 +83,7 @@ function noise(dur: number, opts: { gain?: number; hp?: number; lp?: number; del
   const src = ctx.createBufferSource();
   src.buffer = buf;
   const g = ctx.createGain();
-  g.gain.value = opts.gain ?? 0.2;
+  g.gain.value = (opts.gain ?? 0.2) * sfxVolume;
   let node: AudioNode = src;
   if (opts.hp != null) { const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = opts.hp; node.connect(f); node = f; }
   if (opts.lp != null) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = opts.lp; node.connect(f); node = f; }
@@ -161,6 +163,26 @@ function decodeBgm(url: string): Promise<AudioBuffer | null> {
 }
 
 // 用已解码的 buffer 起一个循环源，接到给定增益节点（该节点已入 ambientNodes，随 stopAmbient 清理）。
+export function applyAudioVolumes(music: number, sfx: number): void {
+  musicVolume = Math.max(0, Math.min(1, music));
+  sfxVolume = Math.max(0, Math.min(1, sfx));
+  if (master && ctx) {
+    master.gain.setTargetAtTime(muted ? 0 : 0.5 * sfxVolume, ctx.currentTime, 0.05);
+  }
+  if (!ctx) return;
+  const mg = musicOn && !muted && musicVolume > 0 ? 0.5 * musicVolume : 0;
+  for (const a of ambientNodes) {
+    if (a.node instanceof GainNode) {
+      a.node.gain.setTargetAtTime(mg, ctx.currentTime, 0.05);
+    }
+  }
+  if (musicVolume <= 0) stopAmbient();
+  else if (musicOn && ambientMap === MENU_ID) startMenuMusic();
+}
+
+export function getMusicVolume(): number { return musicVolume; }
+export function getSfxVolume(): number { return sfxVolume; }
+
 function startBgmLoop(buffer: AudioBuffer, out: GainNode): void {
   if (!ctx) return;
   const src = ctx.createBufferSource();
@@ -176,7 +198,7 @@ function startBgmLoop(buffer: AudioBuffer, out: GainNode): void {
 function startFileBgm(mapId: string, url: string): void {
   if (!ctx || !master) return;
   const g = ctx.createGain();
-  g.gain.value = 0.5;
+  g.gain.value = 0.5 * musicVolume;
   g.connect(master);
   ambientNodes.push({ node: g });
   const cached = bgmBuffers[url];
@@ -197,7 +219,7 @@ export function stopAmbient(): void {
 // 启动某地图的背景音乐（幂等：同图不重启）。各地图一首真实音频循环；Web 端 fetch 播放，
 // 微信端无本地 fetch 则静音（合成氛围音已移除）。
 export function startAmbient(mapId: string): void {
-  if (!ctx || !master || !musicOn) return; // 背景音乐关闭时不播放（音效仍正常）
+  if (!ctx || !master || !musicOn || musicVolume <= 0) return; // 背景音乐关闭时不播放（音效仍正常）
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;
@@ -208,7 +230,7 @@ export function startAmbient(mapId: string): void {
 // 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。Web 端可 fetch；微信端无本地
 // fetch，首页保持静音（原本也无首页音乐）。循环音量渐变由文件烘焙的淡入/淡出保证。
 export function startMenuMusic(): void {
-  if (!ctx || !master || !musicOn) return;
+  if (!ctx || !master || !musicOn || musicVolume <= 0) return;
   if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return;
   if (ambientMap === MENU_ID && ambientNodes.length) return;
   stopAmbient();

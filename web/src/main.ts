@@ -9,7 +9,6 @@ import {
   VIEW_W,
   VIEW_H,
   hitPauseBtn,
-  hitPauseContinue,
   hitMonsterAt,
   isPlayerTangsengCell,
   isAiTangsengCell,
@@ -17,7 +16,12 @@ import {
 } from './render';
 import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS } from './board';
-import { loadAssets } from './assets';
+import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
+import {
+  drawPausePopup,
+  pausePopupHitAt,
+  type PausePhase,
+} from './pause-popup';
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
@@ -43,10 +47,27 @@ import { drawCodex, codexHitBack } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt } from './bag';
 import { loadBag, addWeapon, toggleEquip, weaponBonuses, weaponById, type BagState } from './weapons';
-import { playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute, isMusicOn, toggleMusic, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
+import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
+import {
+  getSettings,
+  setShowDamageNumbers,
+  setMusicVolume,
+  setSfxVolume,
+  type GameSettings,
+} from './settings';
+import {
+  drawSettingsPopup,
+  drawStaminaPopup,
+  drawMapPopup,
+  settingsHitAt,
+  staminaPopupHitAt,
+  mapPopupHitAt,
+  settingsMusicVolumeFromX,
+  settingsSfxVolumeFromX,
+} from './menu-popups';
 import {
   merchantClosed,
   openMerchant,
@@ -135,13 +156,15 @@ let menuToast = '';
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
+let menuHoverId: string | null = null;
 let shopToast = '';
 let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗（null=未开）
 // 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
 let shopScrollY = 0;
 let shopPointerActive = false;
 let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
-let currentMap = params.get('map') ? mapById(params.get('map')!) : pickDailyMap();
+let mapSelection: MapSelection = loadMapSelection();
+let currentMap = params.get('map') ? mapById(params.get('map')!) : resolveMap(mapSelection);
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, loadAiSkill());
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 结算页要播放的段位变化
@@ -150,6 +173,13 @@ let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
 let merchant: MerchantUiState = merchantClosed();
+let gameSettings: GameSettings = getSettings();
+applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+type MenuPopup = 'none' | 'settings' | 'stamina' | 'map';
+let menuPopup: MenuPopup = 'none';
+let staminaPopupToast = '';
+let menuSliderDrag: 'music' | 'sfx' | null = null;
+let pausePhase: PausePhase = 'main';
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
 
 function newGame() {
@@ -158,47 +188,47 @@ function newGame() {
   endHandled = false;
   endlessResult = null;
   ui.paused = false;
+  pausePhase = 'main';
+}
+
+function abortBattleToMenu(): void {
+  ui.paused = false;
+  pausePhase = 'main';
+  clearBoardSelect();
+  try { stopAmbient(); } catch { /* ignore */ }
+  screen = 'menu';
 }
 
 function handleMenu(id: string) {
   playSfx('click');
-  if (id === 'mute') {
-    const m = toggleMute();
-    menuToast = m ? '已静音（全部）' : '已开启声音';
+  if (id === 'settings') {
+    menuPopup = 'settings';
     return;
   }
-  if (id === 'music') {
-    const on = toggleMusic();
-    menuToast = on ? '背景音乐：开' : '背景音乐：关';
-    if (on) startMenuMusic();
+  if (id === 'staminaPlus') {
+    staminaPopupToast = '';
+    menuPopup = 'stamina';
+    return;
+  }
+  if (id === 'mapPick') {
+    menuPopup = 'map';
     return;
   }
   if (id === 'endless') {
     endlessOn = !endlessOn;
     setEndlessEnabled(endlessOn);
-    menuToast = endlessOn ? '无尽模式：开（波数不限，难度渐增）' : '无尽模式：关';
+    menuToast = endlessOn ? '无尽模式：已开启（波数不限，难度渐增）' : '无尽模式：未开启';
     return;
   }
   if (id === 'start') {
     const r = spendStamina(stamina);
     if (!r.ok) {
-      menuToast = '体力不足（需 5 点）！看广告或分享补充';
+      menuToast = '体力不足（需 5 点）！点 + 补充';
       return;
     }
     stamina = r.state;
     newGame();
     screen = 'battle';
-  } else if (id === 'ad') {
-    // 通过 IAA 广告抽象层：微信下拉激励视频、看完才发奖；Web/未配置广告位下即时模拟发奖（体验不变）
-    menuToast = '正在加载广告…';
-    void showRewardedAd('stamina').then((ok) => {
-      if (ok) { stamina = addStamina(stamina, 10); menuToast = '体力 +10'; }
-      else menuToast = '未看完广告，未发放体力';
-      scheduleFrame(); // 广告异步返回后菜单循环可能已停，主动重绘更新提示/体力
-    });
-  } else if (id === 'share') {
-    stamina = addStamina(stamina, 5);
-    menuToast = '体力 +5';
   } else if (id === 'codex') {
     screen = 'codex';
   } else if (id === 'rank') {
@@ -207,15 +237,106 @@ function handleMenu(id: string) {
     bagToast = '';
     bagPopup = null;
     screen = 'bag';
-  } else if (id === 'mapPrev' || id === 'mapNext') {
-    const idx = MAPS.findIndex((m) => m.id === currentMap.id);
-    const n = MAPS.length;
-    const next = id === 'mapNext' ? (idx + 1) % n : (idx - 1 + n) % n;
-    currentMap = MAPS[next]!;
-    menuToast = `地图：${currentMap.name}`;
   } else {
     menuToast = '该功能开发中…';
   }
+}
+
+function handleMenuPopupPointer(x: number, y: number): boolean {
+  if (menuPopup === 'none') return false;
+  if (menuPopup === 'settings') {
+    const hit = settingsHitAt(x, y, gameSettings);
+    if (hit === null) return true;
+    playSfx('click');
+    if (hit.kind === 'close') {
+      menuPopup = 'none';
+      menuSliderDrag = null;
+      return true;
+    }
+    if (hit.kind === 'toggleDamage') {
+      gameSettings = setShowDamageNumbers(gameSettings, !gameSettings.showDamageNumbers);
+      return true;
+    }
+    if (hit.kind === 'musicKnob') {
+      menuSliderDrag = 'music';
+      gameSettings = setMusicVolume(gameSettings, settingsMusicVolumeFromX(x));
+      applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+      if (gameSettings.musicVolume > 0) startMenuMusic();
+      return true;
+    }
+    if (hit.kind === 'sfxKnob') {
+      menuSliderDrag = 'sfx';
+      gameSettings = setSfxVolume(gameSettings, settingsSfxVolumeFromX(x));
+      applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+      return true;
+    }
+    return true;
+  }
+  if (menuPopup === 'map') {
+    const hit = mapPopupHitAt(x, y);
+    if (hit === null) return true;
+    playSfx('click');
+    if (hit.kind === 'close') {
+      menuPopup = 'none';
+      return true;
+    }
+    if (hit.kind === 'daily') {
+      mapSelection = saveMapSelection({ mode: 'daily' });
+      currentMap = resolveMap(mapSelection);
+      menuToast = `已切换：每日推荐（${pickDailyMap().name}）`;
+      menuPopup = 'none';
+      return true;
+    }
+    if (hit.kind === 'map') {
+      mapSelection = saveMapSelection({ mode: 'fixed', mapId: hit.mapId });
+      currentMap = resolveMap(mapSelection);
+      menuToast = `已切换：${currentMap.name}`;
+      menuPopup = 'none';
+      return true;
+    }
+    return true;
+  }
+  const hit = staminaPopupHitAt(x, y);
+  if (hit === null) return true;
+  playSfx('click');
+  if (hit.kind === 'close') {
+    menuPopup = 'none';
+    staminaPopupToast = '';
+    return true;
+  }
+  if (hit.kind === 'ad') {
+    staminaPopupToast = '正在加载广告…';
+    void showRewardedAd('stamina').then((ok) => {
+      if (ok) {
+        stamina = addStamina(stamina, 10);
+        staminaPopupToast = '体力 +10';
+      } else {
+        staminaPopupToast = '未看完广告，未发放体力';
+      }
+      scheduleFrame();
+    });
+    return true;
+  }
+  if (hit.kind === 'share') {
+    stamina = addStamina(stamina, 5);
+    staminaPopupToast = '体力 +5';
+    return true;
+  }
+  return true;
+}
+
+function handleMenuPopupDrag(x: number): void {
+  if (menuPopup !== 'settings' || !menuSliderDrag) return;
+  const v = menuSliderDrag === 'music' ? settingsMusicVolumeFromX(x) : settingsSfxVolumeFromX(x);
+  if (menuSliderDrag === 'music') {
+    gameSettings = setMusicVolume(gameSettings, v);
+    applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+    if (gameSettings.musicVolume > 0) startMenuMusic();
+  } else {
+    gameSettings = setSfxVolume(gameSettings, v);
+    applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+  }
+  scheduleFrame();
 }
 
 function handleMerchantPointer(x: number, y: number): boolean {
@@ -373,6 +494,10 @@ function onPointerDown(e: PointerEvent) {
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
     if (handleMerchantPointer(x, y)) return;
+    if (handleMenuPopupPointer(x, y)) {
+      if (menuSliderDrag) canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     menuDownId = menuButtonAt(x, y);
     menuPressedId = menuDownId;
     if (menuDownId) canvas.setPointerCapture(e.pointerId);
@@ -421,17 +546,27 @@ function onPointerDown(e: PointerEvent) {
     }
     return;
   }
-  // —— 局内暂停：弹窗打开时只处理「继续」；点暂停钮进入暂停 —— //
+  // —— 局内暂停：弹窗内继续 / 终止（二次确认） —— //
   if (ui.paused) {
-    if (hitPauseContinue(x, y)) {
-      playSfx('click');
+    const hit = pausePopupHitAt(x, y, pausePhase);
+    if (hit === null) return;
+    playSfx('click');
+    if (hit.kind === 'continue') {
       ui.paused = false;
+      pausePhase = 'main';
+    } else if (hit.kind === 'quit') {
+      pausePhase = 'confirmQuit';
+    } else if (hit.kind === 'cancelQuit') {
+      pausePhase = 'main';
+    } else if (hit.kind === 'confirmQuit') {
+      abortBattleToMenu();
     }
     return;
   }
   if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {
     playSfx('click');
     ui.paused = true;
+    pausePhase = 'main';
     clearBoardSelect();
     ui.dragFrom = null;
     ui.dragTrayIndex = null;
@@ -491,14 +626,30 @@ canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
 canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
 function onPointerMove(e: PointerEvent) {
-  if (screen === 'menu' && menuDownId) {
+  if (screen === 'menu') {
     const { x, y } = toLogical(e.clientX, e.clientY);
-    const next = menuButtonAt(x, y) === menuDownId ? menuDownId : null;
-    if (next !== menuPressedId) {
-      menuPressedId = next;
+    if (menuSliderDrag) {
+      handleMenuPopupDrag(x);
+      return;
+    }
+    if (menuDownId) {
+      const next = menuButtonAt(x, y) === menuDownId ? menuDownId : null;
+      if (next !== menuPressedId) {
+        menuPressedId = next;
+        scheduleFrame();
+      }
+      return;
+    }
+    if (menuPopup === 'none' && !merchant.open) {
+      const nextHover = menuButtonAt(x, y);
+      if (nextHover !== menuHoverId) {
+        menuHoverId = nextHover;
+        scheduleFrame();
+      }
+    } else if (menuHoverId) {
+      menuHoverId = null;
       scheduleFrame();
     }
-    return;
   }
   if (screen === 'shop') {
     if (!shopPointerActive) return;
@@ -514,17 +665,27 @@ function onPointerMove(e: PointerEvent) {
   scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
 }
 function onPointerUp(e?: PointerEvent, cancelled = false) {
+  if (screen === 'menu') {
+    menuSliderDrag = null;
+  }
   if (screen === 'menu' && menuDownId) {
     const id = menuDownId;
     let stillOn = false;
+    let upX = 0;
+    let upY = 0;
     if (!cancelled && e) {
       const { x, y } = toLogical(e.clientX, e.clientY);
+      upX = x;
+      upY = y;
       stillOn = menuButtonAt(x, y) === id;
     } else if (!cancelled) {
       stillOn = menuPressedId === id;
     }
     menuDownId = null;
     menuPressedId = null;
+    if (!cancelled && e && menuPopup === 'none' && !merchant.open) {
+      menuHoverId = menuButtonAt(upX, upY);
+    }
     if (stillOn) handleMenu(id);
     return;
   }
@@ -615,16 +776,20 @@ function frame(now: number): void {
   if (screen === 'menu') {
     stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
     drawMenu(ctx, {
-      rankLevel: rank.level,
+      rankStars: rank.stars,
       rankName: rankName(rank.level),
       stamina: stamina.value,
+      merit: merit.merit,
       mapName: currentMap.name,
+      mapDaily: mapSelection.mode === 'daily',
       toast: menuToast,
-      muted: isMuted(),
-      musicOn: isMusicOn(),
       endlessOn,
       pressedId: menuPressedId,
+      hoverId: menuHoverId,
     });
+    if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings);
+    else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
+    else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
     if (merchant.open) drawMerchant(ctx, merchant, loadout, merit);
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
@@ -696,6 +861,7 @@ function frame(now: number): void {
     }
     setHudRank(rankName(rank.level));
     draw(ctx, battle, ui);
+    if (ui.paused) drawPausePopup(ctx, pausePhase);
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();

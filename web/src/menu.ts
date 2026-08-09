@@ -1,7 +1,19 @@
-// 主菜单渲染 + 按钮命中。参考原作首页：标题/军衔星级/体力/开始游戏/排行榜/武器背包。
+// 主菜单渲染 + 按钮命中。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_COST } from './stamina';
+import { STARS_PER_TIER } from './rank';
+import {
+  roundRect,
+  drawInkResourceBar,
+  drawInkPlusButton,
+  drawInkCheckbox,
+  drawRankStars,
+  drawMenuSpriteButton,
+  inkCheckboxCenteredLayout,
+  menuInteract,
+  applyMenuInteract,
+} from './menu-ui';
 
 export interface MenuButton {
   id: string;
@@ -12,42 +24,78 @@ export interface MenuButton {
 }
 
 export interface MenuInfo {
-  rankLevel: number;
+  rankStars: number;
   rankName: string;
   stamina: number;
+  merit: number;
   mapName: string;
+  mapDaily: boolean;
   toast: string;
-  muted: boolean;
-  musicOn: boolean;
   endlessOn: boolean;
-  /** 当前按下的按钮 id（手指仍压在该按钮上时有按下态视觉） */
   pressedId: string | null;
+  hoverId: string | null;
 }
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
+const TOP = 18;
+const BAR_H = 26;
+const BAR_GAP = 6;
+const HEADER_BLOCK_H = BAR_H * 2 + BAR_GAP;
+const AVATAR = { x: 16, y: TOP + (HEADER_BLOCK_H - 52) / 2, w: 52, h: 52 };
+const BAR_X = 76;
+const BAR_W = 210;
+const MERIT_BAR = { x: BAR_X, y: TOP, w: BAR_W, h: BAR_H };
+const STAMINA_BAR = { x: BAR_X, y: TOP + BAR_H + BAR_GAP, w: BAR_W, h: BAR_H };
+const PLUS = 22;
+export const STAMINA_PLUS_BTN = {
+  x: STAMINA_BAR.x + STAMINA_BAR.w + 6,
+  y: STAMINA_BAR.y + (BAR_H - PLUS) / 2,
+  w: PLUS,
+  h: PLUS,
+};
+const MAP_PICK_W = 264;
+const MAP_PICK_H = 40;
+export const MAP_PICK_BTN = {
+  x: VIEW_W / 2 - MAP_PICK_W / 2,
+  y: 528,
+  w: MAP_PICK_W,
+  h: MAP_PICK_H,
+};
+
+const SIDE = 96;
+const SIDE_X = 16;
+const SIDE_Y0 = 108;
+const SIDE_GAP = 8;
+const SIDE_BTN = { x: SIDE_X, w: SIDE, h: SIDE };
+const START_W = 372;
+const START_H = 94;
+const START_Y = 620;
+const START_BTN = { x: (VIEW_W - START_W) / 2, y: START_Y, w: START_W, h: START_H };
+const ENDLESS_GAP = 10;
+const ENDLESS_LABEL = '无尽模式';
+const ENDLESS_ROW_Y = START_Y + START_H + ENDLESS_GAP;
+const ENDLESS_HIT = { x: VIEW_W / 2 - 72, y: ENDLESS_ROW_Y - 8, w: 144, h: 34 };
+const BOTTOM_H = 98;
+const BOTTOM_W = 262;
+const BOTTOM_Y = 866;
+const BAG_SIZE = 92;
+const RANK_BTN = { x: 16, y: BOTTOM_Y, w: BOTTOM_W, h: BOTTOM_H };
+const BAG_BTN = {
+  x: RANK_BTN.x + RANK_BTN.w + 16 + 60,
+  y: BOTTOM_Y + (BOTTOM_H - BAG_SIZE) / 2,
+  w: BAG_SIZE,
+  h: BAG_SIZE,
+};
 
 export function menuButtons(): MenuButton[] {
-  const cx = VIEW_W / 2;
   return [
-    { id: 'endless', x: cx - 150, y: 520, w: 300, h: 34 },
-    { id: 'start', x: cx - 150, y: 612, w: 300, h: 74 },
-    { id: 'ad', x: cx - 150, y: 700, w: 145, h: 50 },
-    { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
-    { id: 'mute', x: VIEW_W - 52, y: 16, w: 36, h: 36 },
-    { id: 'music', x: VIEW_W - 96, y: 16, w: 36, h: 36 },
-    { id: 'mapPrev', x: cx - 150, y: 566, w: 44, h: 38 },
-    { id: 'mapNext', x: cx + 106, y: 566, w: 44, h: 38 },
-    { id: 'codex', x: 40, y: 880, w: 140, h: 78 },
-    { id: 'rank', x: VIEW_W / 2 - 70, y: 880, w: 140, h: 78 },
-    { id: 'bag', x: VIEW_W - 180, y: 880, w: 140, h: 78 },
+    { id: 'settings', ...SIDE_BTN, y: SIDE_Y0 },
+    { id: 'codex', ...SIDE_BTN, y: SIDE_Y0 + SIDE + SIDE_GAP },
+    { id: 'staminaPlus', ...STAMINA_PLUS_BTN },
+    { id: 'mapPick', ...MAP_PICK_BTN },
+    { id: 'endless', ...ENDLESS_HIT },
+    { id: 'start', ...START_BTN },
+    { id: 'rank', ...RANK_BTN },
+    { id: 'bag', ...BAG_BTN },
   ];
 }
 
@@ -58,194 +106,152 @@ export function menuButtonAt(x: number, y: number): string | null {
   return null;
 }
 
-export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
-  // 背景（宣纸）
-  const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-  bg.addColorStop(0, '#efe6cf');
-  bg.addColorStop(1, '#d8c9a6');
-  ctx.fillStyle = bg;
+function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
+  const bg = sprite('menu-home');
+  if (bg) {
+    const scale = Math.max(VIEW_W / bg.width, VIEW_H / bg.height);
+    const dw = bg.width * scale;
+    const dh = bg.height * scale;
+    ctx.drawImage(bg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
+    ctx.fillStyle = 'rgba(240,233,220,0.5)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    return;
+  }
+  const paper = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  paper.addColorStop(0, '#ebe3d0');
+  paper.addColorStop(1, '#c8ba9e');
+  ctx.fillStyle = paper;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
 
-  // 顶栏：功德/体力
-  ctx.fillStyle = '#7a3b12';
-  ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`⚡ 体力 ${info.stamina}/${STAMINA_MAX}`, 24, 34);
-  ctx.textAlign = 'right';
-  // 右对齐到音效/音乐按钮左侧（按钮在 VIEW_W-96 起），留 12px 间距，避免与图标重叠
-  ctx.fillText(`今日·${info.mapName}`, VIEW_W - 108, 34);
+export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
+  drawMenuBackground(ctx);
 
-  // 标题
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#b5391f';
-  ctx.font = 'bold 46px "PingFang SC", sans-serif';
-  ctx.fillText('大圣与唐僧', VIEW_W / 2, 120);
-  ctx.fillStyle = '#8a5a2b';
-  ctx.font = '18px "PingFang SC", sans-serif';
-  ctx.fillText(`境界 · ${info.rankName}`, VIEW_W / 2, 158);
-
-  // 军衔星级
-  const stars = Math.min(5, info.rankLevel);
-  ctx.font = '28px sans-serif';
-  ctx.fillStyle = '#e0a020';
-  let starStr = '★'.repeat(stars) + '☆'.repeat(5 - stars);
-  ctx.fillText(starStr, VIEW_W / 2, 196);
-
-  // 主角立绘：待机轻微上下浮动
-  const spr = sprite('hero-wukong');
-  if (spr) {
-    const size = 260;
-    const scale = Math.min(size / spr.width, size / spr.height);
-    const dw = spr.width * scale;
-    const dh = spr.height * scale;
-    const bob = Math.sin(performance.now() / 1000 * 2.1) * 5;
-    ctx.drawImage(spr, VIEW_W / 2 - dw / 2, 250 + bob, dw, dh);
+  roundRect(ctx, AVATAR.x, AVATAR.y, AVATAR.w, AVATAR.h, 10);
+  ctx.fillStyle = 'rgba(40,25,10,0.5)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const av = sprite('hero-wukong');
+  if (av) {
+    const s = AVATAR.w - 8;
+    const scale = Math.min(s / av.width, s / av.height);
+    ctx.drawImage(av, AVATAR.x + 4, AVATAR.y + 4, av.width * scale, av.height * scale);
   }
 
-  // 按钮（pressedId 时轻微下压 + 变暗，让点击有反馈）
+  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(info.merit));
+  drawInkResourceBar(ctx, STAMINA_BAR, '体力', `${info.stamina}/${STAMINA_MAX}`);
+  drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'));
+
+  const titleY = 148;
+  const rankBlockDy = 15;
+  const rankTitleGap = 8;
+  const rankY = 182 + rankBlockDy + rankTitleGap;
+  const starsY = rankY + 30;
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#b5391f';
+  ctx.font = 'bold 44px "PingFang SC", "STKaiti", serif';
+  ctx.strokeStyle = 'rgba(255,240,210,0.6)';
+  ctx.lineWidth = 3;
+  ctx.strokeText('大圣与唐僧', VIEW_W / 2, titleY);
+  ctx.fillText('大圣与唐僧', VIEW_W / 2, titleY);
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = 'bold 18px "PingFang SC", serif';
+  ctx.fillText(`境界 · ${info.rankName}`, VIEW_W / 2, rankY);
+  drawRankStars(ctx, VIEW_W / 2, starsY, Math.min(STARS_PER_TIER, info.rankStars));
+
+  const platY = 350 + rankBlockDy;
+  const bob = Math.sin(performance.now() / 1000 * 2.1) * 5;
+  const heroSpr = sprite('hero-wukong');
+  let heroFootY = platY + 118;
+  if (heroSpr) {
+    const size = 240;
+    const scale = Math.min(size / heroSpr.width, size / heroSpr.height);
+    const dw = heroSpr.width * scale;
+    const dh = heroSpr.height * scale;
+    const drawY = platY - dh / 2 + bob;
+    heroFootY = drawY + dh * 0.92;
+    ctx.fillStyle = 'rgba(55,38,22,0.36)';
+    ctx.beginPath();
+    ctx.ellipse(VIEW_W / 2, heroFootY + 5, 100, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.drawImage(heroSpr, VIEW_W / 2 - dw / 2, drawY, dw, dh);
+  } else {
+    ctx.fillStyle = 'rgba(55,38,22,0.36)';
+    ctx.beginPath();
+    ctx.ellipse(VIEW_W / 2, heroFootY + 5, 100, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const mapInteract = menuInteract(info.pressedId, info.hoverId, 'mapPick');
+  ctx.save();
+  applyMenuInteract(ctx, MAP_PICK_BTN, mapInteract);
+  const mapR = MAP_PICK_BTN.h / 2;
+  roundRect(ctx, MAP_PICK_BTN.x, MAP_PICK_BTN.y, MAP_PICK_BTN.w, MAP_PICK_BTN.h, mapR);
+  ctx.fillStyle =
+    mapInteract === 'pressed' ? 'rgba(48,28,12,0.42)' : mapInteract === 'hover' ? 'rgba(48,28,12,0.3)' : 'rgba(48,28,12,0.2)';
+  ctx.fill();
+  ctx.strokeStyle = mapInteract === 'hover' ? 'rgba(255,220,160,0.5)' : 'rgba(255,220,160,0.32)';
+  ctx.lineWidth = mapInteract === 'hover' ? 2 : 1.5;
+  ctx.stroke();
+  const mapLabel = info.mapDaily ? `今日关卡 · ${info.mapName}` : `关卡 · ${info.mapName}`;
+  const mapCx = MAP_PICK_BTN.x + MAP_PICK_BTN.w / 2;
+  const mapCy = MAP_PICK_BTN.y + MAP_PICK_BTN.h / 2;
+  ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.strokeStyle = 'rgba(40,25,10,0.9)';
+  ctx.lineWidth = 4;
+  ctx.strokeText(`${mapLabel}  ›`, mapCx, mapCy);
+  ctx.fillStyle = '#fff8ee';
+  ctx.fillText(`${mapLabel}  ›`, mapCx, mapCy);
+  ctx.restore();
+
   for (const b of menuButtons()) {
-    const pressed = info.pressedId === b.id;
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-    if (pressed) {
-      ctx.save();
-      ctx.translate(cx, cy + 2);
-      ctx.scale(0.96, 0.96);
-      ctx.translate(-cx, -cy);
-    }
-    if (b.id === 'mute') {
-      if (pressed) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(122,59,18,0.18)';
-        ctx.fill();
-      }
-      ctx.font = '26px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(info.muted ? '🔇' : '🔊', cx, cy);
-      if (pressed) ctx.restore();
+    const interact = menuInteract(info.pressedId, info.hoverId, b.id);
+    if (b.id === 'staminaPlus' || b.id === 'mapPick') continue;
+    if (b.id === 'settings') {
+      drawMenuSpriteButton(ctx, sprite('menu-btn-settings'), b, interact, 'none', '设置', 'secondary', 'cover');
       continue;
     }
-    if (b.id === 'music') {
-      // 背景音乐开关：开=音符，关=半透明音符+红色斜杠
-      if (pressed) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(122,59,18,0.18)';
-        ctx.fill();
-      }
-      ctx.font = '24px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.globalAlpha = info.musicOn ? 1 : 0.35;
-      ctx.fillText('🎵', cx, cy);
-      ctx.globalAlpha = 1;
-      if (!info.musicOn) {
-        ctx.strokeStyle = '#c8392b';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(cx - 13, cy + 13);
-        ctx.lineTo(cx + 13, cy - 13);
-        ctx.stroke();
-      }
-      if (pressed) ctx.restore();
+    if (b.id === 'codex') {
+      drawMenuSpriteButton(ctx, sprite('menu-btn-codex'), b, interact, 'none', '图鉴', 'secondary', 'cover');
+      continue;
+    }
+    if (b.id === 'rank') {
+      drawMenuSpriteButton(ctx, sprite('menu-btn-rank'), b, interact, 'none', '排行榜', 'secondary', 'cover');
+      continue;
+    }
+    if (b.id === 'bag') {
+      drawMenuSpriteButton(ctx, sprite('menu-btn-bag'), b, interact, 'none', undefined, 'secondary', 'contain', true);
+      continue;
+    }
+    if (b.id === 'start') {
+      drawMenuSpriteButton(
+        ctx,
+        sprite('menu-btn-start'),
+        b,
+        interact,
+        'cta',
+        `开始游戏 · ${STAMINA_COST}体力`,
+        'primary',
+        'cover',
+      );
       continue;
     }
     if (b.id === 'endless') {
-      // 勾选框：左侧方框（选中态填色打勾）+ 右侧文案
-      const boxSize = 24;
-      const boxX = b.x + 40;
-      const boxY = b.y + (b.h - boxSize) / 2;
-      if (pressed) {
-        roundRect(ctx, b.x + 20, b.y, b.w - 40, b.h, 8);
-        ctx.fillStyle = 'rgba(122,59,18,0.12)';
-        ctx.fill();
-      }
-      roundRect(ctx, boxX, boxY, boxSize, boxSize, 6);
-      ctx.fillStyle = info.endlessOn ? '#b5391f' : 'rgba(255,244,224,0.65)';
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#7a3b12';
-      ctx.stroke();
-      if (info.endlessOn) {
-        // 打勾
-        ctx.strokeStyle = '#fff4e0';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(boxX + 5, boxY + 12);
-        ctx.lineTo(boxX + 10, boxY + 18);
-        ctx.lineTo(boxX + 19, boxY + 6);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#5a3a12';
-      ctx.font = 'bold 20px "PingFang SC", sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('无尽模式', boxX + boxSize + 12, cy);
-      if (pressed) ctx.restore();
-      continue;
+      const endless = inkCheckboxCenteredLayout(ctx, VIEW_W / 2, ENDLESS_ROW_Y, ENDLESS_LABEL);
+      drawInkCheckbox(ctx, endless.box, ENDLESS_LABEL, info.endlessOn, interact);
     }
-    if (b.id === 'mapPrev' || b.id === 'mapNext') {
-      // 地图切换箭头（调试用）
-      roundRect(ctx, b.x, b.y, b.w, b.h, 10);
-      ctx.fillStyle = pressed ? '#6a4a22' : '#8a6a3a';
-      ctx.fill();
-      ctx.fillStyle = '#fff4e0';
-      ctx.font = 'bold 22px "PingFang SC", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(b.id === 'mapPrev' ? '‹' : '›', cx, cy);
-      if (pressed) ctx.restore();
-      continue;
-    }
-    const isStart = b.id === 'start';
-    roundRect(ctx, b.x, b.y, b.w, b.h, 12);
-    const base =
-      isStart ? '#b5391f' :
-      b.id === 'ad' ? '#c8792b' :
-      b.id === 'share' ? '#4a8a4a' : '#8a6a3a';
-    const dim =
-      isStart ? '#8a2a14' :
-      b.id === 'ad' ? '#9a5a1a' :
-      b.id === 'share' ? '#356a35' : '#6a4a22';
-    ctx.fillStyle = pressed ? dim : base;
-    ctx.fill();
-    if (pressed) {
-      // 内阴影感：顶部压暗一条，强化「按进去」
-      ctx.save();
-      roundRect(ctx, b.x, b.y, b.w, b.h, 12);
-      ctx.clip();
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.fillRect(b.x, b.y, b.w, 6);
-      ctx.restore();
-    }
-    ctx.fillStyle = '#fff4e0';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const label =
-      b.id === 'start' ? `开始游戏 ⚡${STAMINA_COST}` :
-      b.id === 'ad' ? '📺 体力+10' :
-      b.id === 'share' ? '↗ 分享+5' :
-      b.id === 'codex' ? '图鉴' :
-      b.id === 'rank' ? '排行榜' : '武器背包';
-    ctx.font = isStart ? 'bold 26px "PingFang SC", sans-serif' : '16px "PingFang SC", sans-serif';
-    ctx.fillText(label, cx, cy);
-    if (pressed) ctx.restore();
   }
 
-  // 当前地图名（夹在切换箭头之间，调试用）
-  ctx.fillStyle = '#5a3a12';
-  ctx.font = 'bold 20px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(info.mapName, VIEW_W / 2, 585);
-
-  // 提示
   if (info.toast) {
-    ctx.fillStyle = '#b5391f';
-    ctx.font = '16px "PingFang SC", sans-serif';
-    ctx.fillText(info.toast, VIEW_W / 2, 840);
+    ctx.fillStyle = '#8a3010';
+    ctx.font = '15px "PingFang SC", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(info.toast, VIEW_W / 2, VIEW_H - 20);
   }
 }

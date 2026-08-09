@@ -1,4 +1,4 @@
-// 用火山方舟 Ark · Seedream 4.0 生成神秘商人弹窗 UI 素材（西游卷轴 + 行脚商人头像）。
+// 神秘商人弹窗素材：与首页 gen-menu 同套哑光手绘水墨 Q 版。
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -10,19 +10,26 @@ const MODEL = 'doubao-seedream-4-0-250828';
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/game-assets');
 mkdirSync(OUT, { recursive: true });
 
-const UI_STYLE = '，Q版扁平游戏UI素材，造型简洁、粗黑描边、高饱和对比色、纯白色背景，无阴影，无文字，高辨识度';
+const REF =
+  '参考竞品《赵云与阿斗》类弹窗UI：手绘水墨Q版，粗黑墨线不规则描边，哑光宣纸平涂，柔和淡彩晕染，';
+const NEG =
+  '，纯白色背景，无阴影，无界面外框，严禁玻璃高光、镜面反射、塑料质感、3D立体光泽、霓虹渐变';
+
+const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+
 const jobs = [
   {
-    id: 'merchant-scroll',
-    prompt: '竖版古风游戏弹窗卷轴面板，西游记宣纸质感，金黄纸面、深褐木轴上下卷边、朱红祥云暗纹边框，居中留白给UI' + UI_STYLE,
-    size: '1024x1536',
-  },
-  {
     id: 'merchant-peddler',
-    prompt: '西游记行脚神秘商人头像，戴斗笠穿灰褐长袍、挑货担、慈眉笑眼，主色褐黄' + UI_STYLE,
     size: '1024x1024',
+    prompt:
+      '西游记行脚神秘商人半身像，戴斗笠挑货担、灰褐长袍、慈眉笑眼，水墨Q版，占画布70%，无文字无边框' +
+      REF +
+      '灰赭檀木色系' +
+      NEG,
   },
 ];
+
+const todo = only.length ? jobs.filter((j) => only.includes(j.id)) : jobs;
 
 async function gen(job) {
   const res = await fetch(API, {
@@ -40,19 +47,22 @@ async function gen(job) {
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   const img = await fetch(data.data[0].url);
-  const buf = Buffer.from(await img.arrayBuffer());
-  const file = path.join(OUT, `${job.id}.jpg`);
-  writeFileSync(file, buf);
-  console.log(`✅ ${job.id}  ${(buf.length / 1024).toFixed(0)}KB  -> ${file}`);
+  writeFileSync(path.join(OUT, `${job.id}.jpg`), Buffer.from(await img.arrayBuffer()));
+  console.log(`✅ ${job.id}`);
 }
 
-for (const job of jobs) {
+for (const job of todo) {
   try {
     await gen(job);
   } catch (e) {
     console.error(`❌ ${job.id}: ${e.message}`);
   }
 }
-console.log('抠背景转透明 PNG…');
+
+console.log('抠背景…');
 process.env.ASSET_DIR = OUT;
+const jpgOnly = todo.map((j) => `${j.id}.jpg`);
+const savedArgv = process.argv;
+if (jpgOnly.length > 0) process.argv = [process.argv[0], process.argv[1], ...jpgOnly];
 await import('./bg-remove.mjs');
+process.argv = savedArgv;

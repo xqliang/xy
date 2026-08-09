@@ -497,16 +497,17 @@ function shouldPrioritizeTrayBoardMateActivation(
   const def = matchGeneral(pair.chars[0], pair.chars[1]);
   if (!def) return false;
   const mateIsLeft = mate.char === def.chars[0];
+  const needCellReady = (cell: Cell) => view.freeCells().some((c) => sameCell(c, cell));
   if (!mateIsLeft) {
     const needTray = { c: mate.cell.c - 1, r: mate.cell.r };
-    return needTray.c >= 0 && isCellEmptyView(view, needTray);
+    return needTray.c >= 0 && needCellReady(needTray);
   }
   // 棋盘「白」在 intended 右格：左邻非激活将即可试（clearForHero 挪沙/武器）
   const pairLeft = { c: mate.cell.c - 1, r: mate.cell.r };
   if (pairLeft.c >= 0 && !view.isActiveHeroCell(pairLeft)) return true;
   // 白已在左格：tray「龙」落右邻空位
   const needTray = { c: mate.cell.c + 1, r: mate.cell.r };
-  return isCellEmptyView(view, needTray);
+  return needCellReady(needTray);
 }
 
 /** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 白骨 在场时 skip 吒/金 组 金吒） */
@@ -620,9 +621,7 @@ function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
     if (mate.char === def.chars[1]) need = { c: mate.cell.c - 1, r: mate.cell.r };
     else if (mate.char === def.chars[0]) need = { c: mate.cell.c + 1, r: mate.cell.r };
     if (need && need.c >= 0 && !isCellEmptyView(view, need)) {
-      if (view.isActiveHeroCell(need) || view.placedUnits().some((u) => u.cell.c === need.c && u.cell.r === need.r)) {
-        out.push(need);
-      }
+      out.push(need);
     }
     // 白龙式：棋盘「白」在右格，左邻被流沙/武器占（须先腾位）
     if (mate.char === def.chars[0] && t.char === def.chars[1]) {
@@ -714,6 +713,7 @@ function tryShiftPathRowLeft(view: AutoPlaceView): boolean {
     .filter((w) => w.cell.r === row)
     .sort((a, b) => a.cell.c - b.cell.c);
   for (const w of orphans) {
+    if (trayHasPartnerForBoardOrphan(view, w)) continue;
     if (w.cell.c <= 0) continue;
     const dest = { c: w.cell.c - 1, r: row };
     if (!isCellEmptyView(view, dest) && !evacuateCell(view, dest)) continue;
@@ -762,7 +762,6 @@ function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
     if (!sameCell(mate.cell, needMate)) continue;
     if (needTray.c < 0) continue;
     if (isCellEmptyView(view, needTray)) continue;
-    if (!view.isActiveHeroCell(needTray)) continue;
 
     const row = needTray.r;
     const shiftIds = new Set<string>();
@@ -1170,7 +1169,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   /** 腾 blocked 格 / tray 字落棋盘伴侣旁（金+吒、白+龙） */
   function tryPrioritizeTrayBoardMateActivation(): boolean {
     if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
-      if (tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
+      if (tryTrayHeroInsertByRowShift(view)) return true;
       if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     }
     const trayNow = view.tray();
@@ -1224,7 +1223,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 2a-0b) tray 伴侣所需格被占（金吒挡骨左格等）→ 先整行左移插入
     if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
-      if (tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
+      if (tryTrayHeroInsertByRowShift(view)) return true;
       if (tryShiftPathRowLeft(view)) { markHeroLayoutChanged(); return true; }
     }
     // 2a-1) tray 字 + 棋盘伴侣（落点已空或可腾）→ 先于孤儿字挪位（如 白+龙）
@@ -1232,7 +1231,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) { markHeroLayoutChanged(); return true; }
     // 2b-0) 贴路行左移后插入 tray 字（保留已有激活将，一次执行完）
-    if (!subopt() && tryTrayHeroInsertByRowShift(view)) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && tryTrayHeroInsertByRowShift(view)) return true;
     // 2b) 字牌激活：tray 与棋盘伴侣/孤儿凑对
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!; if (t.kind !== 'word') continue;
@@ -2187,7 +2186,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const mateIsLeftChar = boardMate.char === chars[0];
       if (pairs.length > 0) {
         const best = pairs[0]!;
-        const onBest = sameCell(mateIsLeftChar ? best.left : best.right, boardMate.cell);
+        const mateSlot = mateIsLeftChar ? best.left : best.right;
+        const traySlot = mateIsLeftChar ? best.right : best.left;
+        const onBest =
+          sameCell(mateSlot, boardMate.cell)
+          && view.freeCells().some((c) => sameCell(c, traySlot));
         if (onBest) {
           pairs = pairs.filter((p) =>
             sameCell(mateIsLeftChar ? p.left : p.right, boardMate.cell),
@@ -2248,10 +2251,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
           if (!clearForHero(needMate, reserved, null)) continue;
           const mateNow = resolveTrackedWord(boardMate);
           if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
-        } else if (!mateIsLeftChar && mateAtNeed && !mateAtTray) {
-          if (!clearForHero(needTray, reserved, null)) continue;
+        } else if (!mateIsLeftChar && mateAtTray && !mateAtNeed) {
+          if (!clearForHero(needMate, reserved, null)) continue;
           const mateNow = resolveTrackedWord(boardMate);
-          if (!mateNow || !view.moveWord(mateNow.cell, needTray)) continue;
+          if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
         } else if (!mateAtNeed && !mateAtTray) {
           const target = mateIsLeftChar ? needMate : needTray;
           if (!clearForHero(target, reserved, null)) continue;

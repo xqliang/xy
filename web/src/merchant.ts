@@ -1,6 +1,12 @@
-// 神秘商人：每局战斗结算回到首页后自动弹出一次（全屏遮罩 + 卷轴面板），关闭后无入口直至下局结束。
+// 神秘商人：每局战斗结算回到首页后自动弹出一次（水墨卷轴弹窗），关闭后无入口直至下局结束。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
+import {
+  roundRect,
+  drawInkPopupFrame,
+  drawInkActionButton,
+  drawInkResourceBar,
+} from './menu-ui';
 import { activeById, enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { passiveById, enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import {
@@ -38,16 +44,6 @@ export interface MerchantUiState {
 
 export const LOTTERY_MERIT_COST = 45;
 export const MERCHANT_OFFER_COUNT = 3;
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -279,29 +275,32 @@ export function applyMerchantHitFull(
   return applyMerchantHit(hit, merchant, loadout, merit);
 }
 
-/** 技能稀有度色（按功德定价档映射） */
-export function skillRarityColor(cost: number): { label: string; color: string } {
-  if (cost >= 75) return { label: '传说', color: '#ff9a3c' };
-  if (cost >= 65) return { label: '史诗', color: '#b47aff' };
-  if (cost >= 55) return { label: '精良', color: '#6ab0ff' };
-  return { label: '稀有', color: '#6ab07a' };
+/** 技能稀有度（水墨低饱和，仍可读） */
+export function skillRarityColor(cost: number): { label: string; color: string; ink: string } {
+  if (cost >= 75) return { label: '传说', color: '#a87838', ink: 'rgba(168,120,56,0.35)' };
+  if (cost >= 65) return { label: '史诗', color: '#7a5888', ink: 'rgba(122,88,136,0.32)' };
+  if (cost >= 55) return { label: '精良', color: '#5a7088', ink: 'rgba(90,112,136,0.3)' };
+  return { label: '稀有', color: '#6a8050', ink: 'rgba(106,128,80,0.3)' };
 }
 
-// —— 弹窗几何 —— //
-const PW = 520;
-const PH = 880;
+// —— 弹窗几何（与 menu-popups 同套 drawInkPopupFrame） —— //
+const PW = 504;
+const PH = 868;
 const PX = (VIEW_W - PW) / 2;
-const PY = 72;
-const CLOSE_R = { x: PX + 10, y: PY + 10, w: 34, h: 34 };
-const TAB_SHOP = { x: PX + 80, y: PY + 88, w: 160, h: 36 };
-const TAB_LOTTERY = { x: PX + 280, y: PY + 88, w: 160, h: 36 };
-const CONTENT_TOP = PY + 136;
-const CONTENT_H = 430;
-const EQUIP_TOP = PY + 580;
-const CONTINUE_R = { x: PX + 130, y: PY + PH - 58, w: 260, h: 44 };
+const PY = (VIEW_H - PH) / 2 - 8;
+const CLOSE_R = { x: PX + 10, y: PY + 8, w: 36, h: 30 };
+const BODY = PY + 58;
+const TAB_SHOP = { x: PX + 18, y: BODY + 6, w: 228, h: 34 };
+const TAB_LOTTERY = { x: PX + 258, y: BODY + 6, w: 228, h: 34 };
+const MERIT_BAR = { x: PX + 18, y: BODY + 48, w: PW - 110, h: 26 };
+const PEDDLER_BOX = { x: PX + PW - 88, y: BODY + 34, w: 72, h: 72 };
+const CONTENT_TOP = BODY + 92;
+const CONTENT_H = 388;
+const EQUIP_TOP = PY + PH - 196;
+const CONTINUE_R = { x: PX + 32, y: PY + PH - 56, w: PW - 64, h: 42 };
 
-const OFFER_H = 128;
-const OFFER_GAP = 10;
+const OFFER_H = 118;
+const OFFER_GAP = 8;
 function offerRect(i: number): { x: number; y: number; w: number; h: number } {
   return { x: PX + 16, y: CONTENT_TOP + i * (OFFER_H + OFFER_GAP), w: PW - 32, h: OFFER_H };
 }
@@ -330,8 +329,8 @@ function lotPreviewIndex(row: number, col: number): number | null {
 
 const ACT_SLOT = 52;
 const PAS_SLOT = 44;
-const ACT_ROW_Y = EQUIP_TOP + 36;
-const PAS_ROW_Y = EQUIP_TOP + 96;
+const ACT_ROW_Y = EQUIP_TOP + 28;
+const PAS_ROW_Y = EQUIP_TOP + 82;
 
 function equippedActiveRects(loadout: LoadoutState): Array<{ x: number; y: number; w: number; h: number; id: string }> {
   const pitch = ACT_SLOT + 10;
@@ -398,47 +397,36 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   return null;
 }
 
-function drawScrollPanel(ctx: CanvasRenderingContext2D): void {
-  const scrollImg = sprite('merchant-scroll');
-  if (scrollImg) {
-    ctx.drawImage(scrollImg, PX, PY, PW, PH);
-    return;
-  }
-  roundRect(ctx, PX, PY, PW, PH, 18);
-  const grad = ctx.createLinearGradient(PX, PY, PX, PY + PH);
-  grad.addColorStop(0, '#f5e6c8');
-  grad.addColorStop(0.5, '#edd9a8');
-  grad.addColorStop(1, '#e0c890');
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#8b4513';
-  ctx.stroke();
-  ctx.fillStyle = '#6b2f0a';
-  roundRect(ctx, PX + 8, PY - 6, PW - 16, 14, 6);
-  ctx.fill();
-  roundRect(ctx, PX + 8, PY + PH - 8, PW - 16, 14, 6);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,40,10,0.35)';
-  ctx.lineWidth = 1.5;
-  roundRect(ctx, PX + 12, PY + 12, PW - 24, PH - 24, 14);
-  ctx.stroke();
+function drawInkTab(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  label: string,
+  active: boolean,
+): void {
+  drawInkActionButton(ctx, rect, label, false, active ? 'primary' : 'secondary');
 }
 
-function drawMerchantAvatar(ctx: CanvasRenderingContext2D): void {
+function drawMerchantPeddler(ctx: CanvasRenderingContext2D): void {
   const peddler = sprite('merchant-peddler');
-  const cx = VIEW_W / 2;
-  const cy = PY + 52;
+  const box = PEDDLER_BOX;
   if (peddler) {
-    const s = 56;
-    const scale = Math.min(s / peddler.width, s / peddler.height);
-    ctx.drawImage(peddler, cx - (peddler.width * scale) / 2, cy - s + 8, peddler.width * scale, peddler.height * scale);
+    const scale = Math.min(box.w / peddler.width, box.h / peddler.height);
+    const dw = peddler.width * scale;
+    const dh = peddler.height * scale;
+    ctx.drawImage(peddler, box.x + (box.w - dw) / 2, box.y + box.h - dh, dw, dh);
     return;
   }
-  ctx.font = '40px sans-serif';
+  roundRect(ctx, box.x, box.y, box.w, box.h, 10);
+  ctx.fillStyle = 'rgba(55,32,14,0.45)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,0.4)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#fff4e0';
+  ctx.font = 'bold 28px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('🧙', cx, cy);
+  ctx.fillText('商', box.x + box.w / 2, box.y + box.h / 2);
 }
 
 function drawOfferCard(
@@ -456,53 +444,66 @@ function drawOfferCard(
   const cost = skillCost(offer.kind, offer.id);
   const canAfford = merit.merit >= cost;
 
-  roundRect(ctx, r.x, r.y, r.w, r.h, 12);
-  ctx.fillStyle = 'rgba(255,248,230,0.92)';
+  roundRect(ctx, r.x, r.y, r.w, r.h, 10);
+  const card = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+  card.addColorStop(0, 'rgba(248,236,210,0.95)');
+  card.addColorStop(1, 'rgba(228,205,168,0.92)');
+  ctx.fillStyle = card;
   ctx.fill();
-  ctx.lineWidth = 2;
   ctx.strokeStyle = rarity.color;
+  ctx.lineWidth = 2;
   ctx.stroke();
+  roundRect(ctx, r.x + 4, r.y + 4, r.w - 8, r.h - 8, 8);
+  ctx.fillStyle = rarity.ink;
+  ctx.fill();
 
   ctx.fillStyle = rarity.color;
-  ctx.font = 'bold 11px "PingFang SC", sans-serif';
+  ctx.font = 'bold 11px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(rarity.label, r.x + 10, r.y + 8);
+  ctx.fillText(rarity.label, r.x + 12, r.y + 10);
 
-  ctx.font = '34px sans-serif';
-  ctx.fillText(def.icon, r.x + 14, r.y + 34);
+  const iconR = 22;
+  const iconCx = r.x + 36;
+  const iconCy = r.y + r.h / 2 + 6;
+  ctx.beginPath();
+  ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(48,28,12,0.12)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(90,60,30,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.font = '26px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(def.icon, iconCx, iconCy);
 
   ctx.fillStyle = '#4a2808';
-  ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText(def.name, r.x + 58, r.y + 28);
-  ctx.fillStyle = 'rgba(70,45,15,0.85)';
-  ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(def.name, r.x + 68, r.y + 26);
+  ctx.fillStyle = 'rgba(70,45,15,0.82)';
+  ctx.font = '12px "PingFang SC", serif';
   const desc = offer.kind === 'active'
     ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
     : def.desc;
-  ctx.fillText(fitText(ctx, desc, r.w - 130), r.x + 58, r.y + 52);
+  ctx.fillText(fitText(ctx, desc, r.w - 138), r.x + 68, r.y + 48);
 
-  const bw = 88;
-  const bh = 36;
-  const bx = r.x + r.w - bw - 12;
+  const bw = 86;
+  const bh = 34;
+  const bx = r.x + r.w - bw - 10;
   const by = r.y + (r.h - bh) / 2;
-  roundRect(ctx, bx, by, bw, bh, 8);
   if (offer.owned) {
-    ctx.fillStyle = '#3a6a4a';
-    ctx.fill();
-    ctx.fillStyle = '#e8ffe8';
-    ctx.font = 'bold 14px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('装备', bx + bw / 2, by + bh / 2);
+    drawInkActionButton(ctx, { x: bx, y: by, w: bw, h: bh }, '装备', false, 'accent');
   } else {
-    ctx.fillStyle = canAfford ? '#c8792b' : '#8a7a6a';
-    ctx.fill();
-    ctx.fillStyle = '#fff6e6';
-    ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${cost} 功德`, bx + bw / 2, by + bh / 2);
+    drawInkActionButton(
+      ctx,
+      { x: bx, y: by, w: bw, h: bh },
+      `${cost} 功德`,
+      false,
+      canAfford ? 'primary' : 'secondary',
+    );
   }
 }
 
@@ -511,27 +512,16 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
     for (let col = 0; col < 3; col++) {
       const cell = lotCellRect(row, col);
       const isCenter = row === 1 && col === 1;
-      roundRect(ctx, cell.x, cell.y, cell.w, cell.h, 10);
       if (isCenter) {
-        ctx.fillStyle = '#b5391f';
-        ctx.fill();
-        ctx.strokeStyle = '#ffd76a';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.fillStyle = '#fff6e6';
-        ctx.font = 'bold 16px "PingFang SC", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('抽奖', cell.x + cell.w / 2, cell.y + cell.h / 2 - 8);
-        ctx.font = '12px "PingFang SC", sans-serif';
-        ctx.fillText(`${LOTTERY_MERIT_COST} 功德`, cell.x + cell.w / 2, cell.y + cell.h / 2 + 14);
+        drawInkActionButton(ctx, cell, `抽奖 · ${LOTTERY_MERIT_COST}`, false, 'primary');
         continue;
       }
       const idx = lotPreviewIndex(row, col);
       const preview = idx !== null ? m.lotteryPreview[idx] : undefined;
-      ctx.fillStyle = 'rgba(255,248,230,0.9)';
+      roundRect(ctx, cell.x, cell.y, cell.w, cell.h, 8);
+      ctx.fillStyle = 'rgba(248,236,210,0.9)';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(139,69,19,0.45)';
+      ctx.strokeStyle = 'rgba(90,60,30,0.42)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
       if (preview) {
@@ -546,50 +536,54 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
     }
   }
   const legends = [
-    { label: '稀有', color: '#6ab07a' },
-    { label: '精良', color: '#6ab0ff' },
-    { label: '史诗', color: '#b47aff' },
-    { label: '传说', color: '#ff9a3c' },
+    { label: '稀有', color: '#6a8050' },
+    { label: '精良', color: '#5a7088' },
+    { label: '史诗', color: '#7a5888' },
+    { label: '传说', color: '#a87838' },
   ];
-  const ly = CONTENT_TOP + CONTENT_H - 28;
-  const pitch = 118;
-  const lx0 = PX + (PW - legends.length * pitch) / 2 + 20;
-  ctx.font = '12px "PingFang SC", sans-serif';
+  const ly = CONTENT_TOP + CONTENT_H - 24;
+  const pitch = 112;
+  const lx0 = PX + (PW - legends.length * pitch) / 2 + 16;
+  ctx.font = '12px "PingFang SC", serif';
   ctx.textBaseline = 'middle';
   for (let i = 0; i < legends.length; i++) {
     const lg = legends[i]!;
+    roundRect(ctx, lx0 + i * pitch, ly - 7, 14, 14, 3);
     ctx.fillStyle = lg.color;
-    ctx.fillRect(lx0 + i * pitch, ly, 14, 14);
+    ctx.fill();
     ctx.fillStyle = '#5a3a12';
     ctx.textAlign = 'left';
-    ctx.fillText(lg.label, lx0 + i * pitch + 20, ly + 7);
+    ctx.fillText(lg.label, lx0 + i * pitch + 20, ly);
   }
 }
 
 function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
-  roundRect(ctx, PX + 12, EQUIP_TOP, PW - 24, 168, 12);
-  ctx.fillStyle = 'rgba(120,80,30,0.18)';
+  roundRect(ctx, PX + 14, EQUIP_TOP, PW - 28, 132, 10);
+  const panel = ctx.createLinearGradient(PX, EQUIP_TOP, PX, EQUIP_TOP + 132);
+  panel.addColorStop(0, 'rgba(55,32,14,0.38)');
+  panel.addColorStop(1, 'rgba(45,28,12,0.48)');
+  ctx.fillStyle = panel;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(90,50,10,0.35)';
+  ctx.strokeStyle = 'rgba(255,220,160,0.35)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = '#6b3a10';
-  ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText('我的道具', PX + 24, EQUIP_TOP + 10);
-  ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillStyle = 'rgba(90,50,10,0.75)';
-  ctx.fillText(`主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`, PX + 24, ACT_ROW_Y - 16);
-  ctx.fillText(`被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`, PX + 24, PAS_ROW_Y - 16);
+  ctx.fillStyle = '#fff4e0';
+  ctx.font = 'bold 15px "PingFang SC", "STKaiti", serif';
+  ctx.fillText('我的道具', PX + 26, EQUIP_TOP + 10);
+  ctx.font = '12px "PingFang SC", serif';
+  ctx.fillStyle = 'rgba(255,240,210,0.75)';
+  ctx.fillText(`主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`, PX + 26, ACT_ROW_Y - 16);
+  ctx.fillText(`被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`, PX + 26, PAS_ROW_Y - 16);
 
   for (const r of equippedActiveRects(loadout)) {
     const def = activeById(r.id);
     roundRect(ctx, r.x, r.y, r.w, r.h, 8);
-    ctx.fillStyle = '#4a3828';
+    ctx.fillStyle = 'rgba(48,28,12,0.55)';
     ctx.fill();
-    ctx.strokeStyle = '#6ab0ff';
+    ctx.strokeStyle = '#5a7088';
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
@@ -602,9 +596,9 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   for (const r of equippedPassiveRects(loadout)) {
     const def = passiveById(r.id);
     roundRect(ctx, r.x, r.y, r.w, r.h, 7);
-    ctx.fillStyle = '#2c4a30';
+    ctx.fillStyle = 'rgba(48,28,12,0.55)';
     ctx.fill();
-    ctx.strokeStyle = '#6ab07a';
+    ctx.strokeStyle = '#6a8050';
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
@@ -615,24 +609,26 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   }
 
   ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(90,50,10,0.6)';
-  ctx.font = '11px "PingFang SC", sans-serif';
-  ctx.fillText('tip: 道具仅当天有效', VIEW_W / 2, EQUIP_TOP + 152);
+  ctx.fillStyle = 'rgba(255,240,210,0.55)';
+  ctx.font = '11px "PingFang SC", serif';
+  ctx.fillText('道具仅当天有效', VIEW_W / 2, EQUIP_TOP + 118);
 }
 
 function drawUnequipX(ctx: CanvasRenderingContext2D, r: { x: number; y: number; w: number; h: number }): void {
-  ctx.beginPath();
-  ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, 0, Math.PI * 2);
-  ctx.fillStyle = '#c0392b';
+  roundRect(ctx, r.x, r.y, r.w, r.h, 4);
+  ctx.fillStyle = 'rgba(48,28,12,0.65)';
   ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px sans-serif';
+  ctx.strokeStyle = 'rgba(255,220,160,0.45)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = '#ffe8c0';
+  ctx.font = 'bold 11px "PingFang SC", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('×', r.x + r.w / 2, r.y + r.h / 2 + 1);
 }
 
-/** 全屏透明遮罩 + 卷轴面板（叠在首页之上） */
+/** 水墨卷轴弹窗（叠在首页之上） */
 export function drawMerchant(
   ctx: CanvasRenderingContext2D,
   m: MerchantUiState,
@@ -641,48 +637,13 @@ export function drawMerchant(
 ): void {
   if (!m.open) return;
 
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  drawInkPopupFrame(ctx, PX, PY, PW, PH, '神秘商人', CLOSE_R);
 
-  drawScrollPanel(ctx);
+  drawInkTab(ctx, TAB_SHOP, '商店', m.tab === 'shop');
+  drawInkTab(ctx, TAB_LOTTERY, '抽奖', m.tab === 'lottery');
 
-  roundRect(ctx, CLOSE_R.x, CLOSE_R.y, CLOSE_R.w, CLOSE_R.h, 8);
-  ctx.fillStyle = 'rgba(90,50,10,0.25)';
-  ctx.fill();
-  ctx.fillStyle = '#6b3a10';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('×', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2);
-
-  drawMerchantAvatar(ctx);
-
-  ctx.fillStyle = '#b5391f';
-  ctx.font = 'bold 28px "PingFang SC", "STKaiti", serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText('神秘商人', VIEW_W / 2, PY + 68);
-
-  ctx.fillStyle = '#6b3a10';
-  ctx.font = 'bold 14px "PingFang SC", sans-serif';
-  ctx.fillText(`功德 ${merit.merit}`, VIEW_W / 2, PY + 118);
-
-  for (const tab of [{ id: 'shop' as const, r: TAB_SHOP, label: '商店' }, { id: 'lottery' as const, r: TAB_LOTTERY, label: '抽奖' }]) {
-    const active = m.tab === tab.id;
-    roundRect(ctx, tab.r.x, tab.r.y, tab.r.w, tab.r.h, 10);
-    ctx.fillStyle = active ? '#b5391f' : 'rgba(120,80,30,0.15)';
-    ctx.fill();
-    if (active) {
-      ctx.strokeStyle = '#ffd76a';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-    ctx.fillStyle = active ? '#fff6e6' : '#6b3a10';
-    ctx.font = 'bold 16px "PingFang SC", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(tab.label, tab.r.x + tab.r.w / 2, tab.r.y + tab.r.h / 2);
-  }
+  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit));
+  drawMerchantPeddler(ctx);
 
   if (m.tab === 'shop') {
     for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, merit, i);
@@ -691,20 +652,13 @@ export function drawMerchant(
   }
 
   drawEquippedSection(ctx, loadout);
-
-  roundRect(ctx, CONTINUE_R.x, CONTINUE_R.y, CONTINUE_R.w, CONTINUE_R.h, 12);
-  ctx.fillStyle = '#c8792b';
-  ctx.fill();
-  ctx.fillStyle = '#fff6e6';
-  ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('关闭', CONTINUE_R.x + CONTINUE_R.w / 2, CONTINUE_R.y + CONTINUE_R.h / 2);
+  drawInkActionButton(ctx, CONTINUE_R, '关闭', false, 'secondary');
 
   if (m.toast) {
-    ctx.fillStyle = '#b5391f';
-    ctx.font = '14px "PingFang SC", sans-serif';
+    ctx.fillStyle = '#8a3010';
+    ctx.font = '14px "PingFang SC", serif';
     ctx.textAlign = 'center';
-    ctx.fillText(m.toast, VIEW_W / 2, PY + PH + 8);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(m.toast, VIEW_W / 2, PY + PH + 14);
   }
 }

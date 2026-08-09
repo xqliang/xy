@@ -42,7 +42,7 @@ export function loadStamina(): Stamina {
       if (typeof s.value === 'number') {
         // 兼容旧存档 { value, day }：无 lastTick 时从现在起算
         const lastTick = typeof s.lastTick === 'number' ? s.lastTick : Date.now();
-        return syncStamina({ value: Math.max(0, Math.min(99, s.value)), lastTick });
+        return syncStamina({ value: Math.max(0, Math.min(STAMINA_MAX, s.value)), lastTick });
       }
     }
   } catch {
@@ -53,7 +53,7 @@ export function loadStamina(): Stamina {
 
 export function addStamina(s: Stamina, n: number): Stamina {
   s = syncStamina(s);
-  const value = Math.min(99, s.value + n);
+  const value = Math.min(STAMINA_MAX, s.value + n);
   // 补满后停表，避免离满体瞬间再结算历史间隔
   const lastTick = value >= STAMINA_MAX ? Date.now() : s.lastTick;
   return save({ value, lastTick });

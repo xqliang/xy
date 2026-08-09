@@ -43,7 +43,19 @@ export type AssetKey =
   | 'fence-pansidong'
   | 'gate-liushahe'
   | 'merchant-scroll'
-  | 'merchant-peddler';
+  | 'merchant-peddler'
+  | 'menu-home'
+  | 'menu-btn-settings'
+  | 'menu-btn-codex'
+  | 'menu-btn-rank'
+  | 'menu-btn-bag'
+  | 'menu-btn-start'
+  | 'menu-btn-stamina-plus'
+  | 'menu-btn-map'
+  | 'menu-btn-stamina-ad'
+  | 'menu-btn-stamina-share'
+  | 'rank-star-on'
+  | 'rank-star-off';
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;
