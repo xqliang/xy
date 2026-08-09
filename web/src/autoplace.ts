@@ -1439,8 +1439,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!pendingTrayDeploy() && !subopt() && tryYieldOrphanSeatsToUnits()) return true;
     // 8) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!pendingTrayDeploy() && !subopt() && tryRelocateOrphansToRear()) return true;
-    // 9) 满槽或 tray 兵无法直接落子：缺种互换 → tray 内合 / 棋盘合腾位再落子
-    if (view.freeCells().length === 0 || trayUnitsCannotDirectPlace()) {
+    // 9) 满槽或 tray 兵无法直接落子，或 tray 仍有兵且棋盘可链式合：互换 → tray 内合 / 棋盘合腾位
+    if (
+      view.freeCells().length === 0
+      || trayUnitsCannotDirectPlace()
+      || (trayUnitEntries().length > 0 && boardHasMergeableUnits())
+    ) {
       if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
       if (tryTrayMergeOntoBoard()) return true;
       if (tryTrayInternalMergeAndDeploy()) return true;
@@ -1512,15 +1516,45 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
-  function tryPlaceTrayUnitsOnly(): boolean {
+  /** tray 兵器与棋盘同型同阶合并 */
+  function tryMergeTrayUnitsOntoBoard(): boolean {
+    if (subopt()) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i];
       if (!t || t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
-      if (mate && !subopt() && view.place(i, mate.cell)) return true;
+      if (!mate || !canMerge({ type: t.type, tier: t.tier }, { type: mate.type, tier: mate.tier })) continue;
+      if (view.place(i, mate.cell)) return true;
     }
+    return false;
+  }
+
+  /** 棋盘是否存在可同级合并的一对兵器（不含激活将格） */
+  function boardHasMergeableUnits(): boolean {
+    const placed = view.placedUnits();
+    for (let i = 0; i < placed.length; i++) {
+      const a = placed[i]!;
+      if (view.isActiveHeroCell(a.cell)) continue;
+      for (let j = i + 1; j < placed.length; j++) {
+        const b = placed[j]!;
+        if (view.isActiveHeroCell(b.cell)) continue;
+        if (canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return true;
+      }
+    }
+    return false;
+  }
+
+  /** tray 仍有兵且棋盘可链式同级合 → 先腾位再占空格 */
+  function tryBoardMergeForTrayUnits(): boolean {
+    if (subopt()) return false;
+    if (trayUnitEntries().length === 0) return false;
+    if (!boardHasMergeableUnits()) return false;
+    return tryBoardMergeThenPlace();
+  }
+
+  /** 把 tray 中兵器落到空格（射程内、兜底）；不含与棋盘/tray 内合成 */
+  function tryPlaceTrayUnitsOnFreeCells(): boolean {
     const free = view.freeCells();
     if (free.length === 0) return false;
     const unitIdx = trayUnitEntries();
@@ -1533,6 +1567,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (view.place(i, cell)) return true;
     }
     return tryFillAnyFreeSeat();
+  }
+
+  /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
+  function tryPlaceTrayUnitsOnly(): boolean {
+    if (tryMergeTrayUnitsOntoBoard()) return true;
+    if (tryBoardMergeForTrayUnits()) return true;
+    return tryPlaceTrayUnitsOnFreeCells();
   }
 
   function boardUnitTypeCounts(): Map<UnitType, number> {
@@ -1656,6 +1697,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (tryTrayInternalMergeAndDeploy()) return true;
     }
     if (!subopt() && trayUnitsCannotDirectPlace() && tryBoardMergeThenPlace()) return true;
+    if (!subopt() && tryBoardMergeForTrayUnits()) return true;
     return false;
   }
 

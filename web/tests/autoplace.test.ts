@@ -727,6 +727,29 @@ it('盘丝洞满盘：tray 沙应通过合并或腾位上板', () => {
   expect(b.message).not.toBe('布阵：当前暂无可执行操作');
 });
 
+it('满盘 tray 骑1+矛1：先 tray 合骑再棋盘骑2+骑2 腾位落矛', () => {
+  const v = new FakeView(
+    [
+      { kind: 'unit', type: 'cavalry', tier: 1 },
+      { kind: 'unit', type: 'spear', tier: 1 },
+    ],
+    [
+      { c: 0, r: 0 },
+      { c: 1, r: 0 },
+      { c: 2, r: 0 },
+      { c: 0, r: 1 },
+    ],
+  );
+  v.unitsMap.set('0,0', { type: 'cavalry', tier: 2, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,0', { type: 'cavalry', tier: 1, cell: { c: 1, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'cavalry', tier: 1, cell: { c: 2, r: 0 } });
+  v.unitsMap.set('0,1', { type: 'spear', tier: 4, cell: { c: 0, r: 1 } });
+  planAutoPlace(v, { rng });
+  expect(v.tray().length).toBe(0);
+  expect(v.placedUnits().some((u) => u.type === 'cavalry' && u.tier === 3)).toBe(true);
+  expect(v.placedUnits().filter((u) => u.type === 'spear' && u.tier === 1).length).toBeGreaterThanOrEqual(1);
+});
+
 it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位落 tray', () => {
   // 两格都占满：近路(0,0)与远路(0,2) 各一只 dao T1；tray 一只 archer
   // 应合两 dao，保留近路（pathCover 更大），腾出远格放 archer

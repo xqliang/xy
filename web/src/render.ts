@@ -777,6 +777,10 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
 }
 
 // —— 候选区（征兵产出，手工拖到棋盘）——
+const CAMP_SCALE = 1.2; // 营帐屋身+屋顶整体缩放
+const CAMP_X = 12;
+const CAMP_W = 48 * CAMP_SCALE;
+const CAMP_RIBBON_SRC_X = CAMP_X + CAMP_W / 2;
 const TRAY_LEFT = 80; // 左侧留给"营"标（与候选槽拉开更大间距）
 const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）
 export function trayIndexAt(x: number, y: number): number | null {
@@ -926,11 +930,11 @@ function campRoofAngle(t: number): number {
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
-  const campX = 12, campY = TRAY_Y + 4, campW = 48, campH = TRAY_H - 8;
-  const roofH = 16; // 屋顶高
-  const BODY_SHRINK = 6; // 棕色屋身减矮量
+  const campX = CAMP_X, campY = TRAY_Y + 4, campW = CAMP_W, campH = TRAY_H - 8;
+  const roofH = 16 * CAMP_SCALE; // 屋顶高
+  const BODY_SHRINK = 6 * CAMP_SCALE; // 棕色屋身减矮量
   const bodyH0 = campH - roofH - BODY_SHRINK;
-  const bodyH = bodyH0 * 0.75; // 棕色高度再调低 1/4
+  const bodyH = bodyH0 * 0.75 * 1.2 * 1.2; // 屋身高度（相对初版再 ×1.2×1.2）
   // 屋身+屋顶整体在营帐框内垂直居中（屋顶叠在屋身顶沿上方）
   const stackH = bodyH + roofH;
   const stackTop = campY + (campH - stackH) / 2;
@@ -940,13 +944,13 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   wood.addColorStop(0, '#8a5626');
   wood.addColorStop(1, '#6d431d');
   ctx.fillStyle = wood;
-  roundRect(ctx, campX, bodyY, campW, bodyH, 5);
+  roundRect(ctx, campX, bodyY, campW, bodyH, 5 * CAMP_SCALE);
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#4f3115';
   ctx.stroke();
   ctx.fillStyle = '#fff2d8';
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  ctx.font = `bold ${Math.round(22 * CAMP_SCALE)}px "PingFang SC", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('营', campX + campW / 2, bodyY + bodyH / 2 + 1);
@@ -956,8 +960,8 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.translate(campX, bodyY);
   ctx.rotate(-roofAng);
   // 梯形屋顶：檐口(底)最宽并向两侧外挑(比屋身宽)，屋脊(顶)略内收
-  const EAVE = 6; // 屋檐外挑量(比屋身两侧各宽出)
-  const RIDGE_INSET = 6; // 屋脊比檐口内收
+  const EAVE = 6 * CAMP_SCALE; // 屋檐外挑量(比屋身两侧各宽出)
+  const RIDGE_INSET = 6 * CAMP_SCALE; // 屋脊比檐口内收
   ctx.beginPath();
   ctx.moveTo(-EAVE, 0);
   ctx.lineTo(campW + EAVE, 0);
@@ -1084,7 +1088,7 @@ function drawSummonRibbon(
 ) {
   const s0 = Math.max(0, Math.min(0.98, start));
   const s1 = Math.max(s0 + 0.03, Math.min(1, end));
-  const srcX = 34;
+  const srcX = CAMP_RIBBON_SRC_X;
   const srcY = TRAY_Y + TRAY_H / 2;
   const isHero = token.kind === 'word';
   // 字牌用明显的金黄丝带（与普通兵的透明白区分）；普通兵保持淡白

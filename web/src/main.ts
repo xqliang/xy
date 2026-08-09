@@ -561,19 +561,61 @@ function handleShopPopup(x: number, y: number) {
 
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
+
+function isCoarseMobile(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches;
+}
+
+function readViewport(): { w: number; h: number; offsetX: number; offsetY: number } {
+  const vv = window.visualViewport;
+  if (!vv) {
+    return { w: window.innerWidth, h: window.innerHeight, offsetX: 0, offsetY: 0 };
+  }
+  return { w: vv.width, h: vv.height, offsetX: vv.offsetLeft, offsetY: vv.offsetTop };
+}
+
+/** 首次触摸时尝试进入浏览器全屏（Android 等支持；iOS 需「添加到主屏幕」） */
+let mobileFullscreenTried = false;
+function tryMobileFullscreen(): void {
+  if (!isCoarseMobile() || mobileFullscreenTried) return;
+  mobileFullscreenTried = true;
+  const doc = document as Document & { webkitFullscreenElement?: Element | null };
+  if (document.fullscreenElement ?? doc.webkitFullscreenElement) return;
+  const el = document.documentElement as HTMLElement & {
+    requestFullscreen?: () => Promise<void>;
+    webkitRequestFullscreen?: () => Promise<void>;
+  };
+  const req = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
+  req?.().catch(() => { /* 用户拒绝或不支持 */ });
+}
+
 function resize() {
   // DPR 上限 2：3 倍屏按 3×3=9 倍像素填充，手游里 2 倍肉眼几乎无差别，却能砍掉最费电的像素填充量。
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const fit = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
+  const { w, h, offsetX, offsetY } = readViewport();
+  const fit = Math.min(w / VIEW_W, h / VIEW_H);
   cssScale = fit;
   canvas.width = Math.round(VIEW_W * dpr);
   canvas.height = Math.round(VIEW_H * dpr);
-  canvas.style.width = `${Math.round(VIEW_W * fit)}px`;
-  canvas.style.height = `${Math.round(VIEW_H * fit)}px`;
+  const cssW = Math.round(VIEW_W * fit);
+  const cssH = Math.round(VIEW_H * fit);
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  if (isCoarseMobile()) {
+    canvas.style.position = 'fixed';
+    canvas.style.left = `${Math.round(offsetX + (w - cssW) / 2)}px`;
+    canvas.style.top = `${Math.round(offsetY + (h - cssH) / 2)}px`;
+  } else {
+    canvas.style.position = '';
+    canvas.style.left = '';
+    canvas.style.top = '';
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   scheduleFrame(); // 重置画布会清空内容，静态界面需重绘一帧
 }
 window.addEventListener('resize', resize);
+window.visualViewport?.addEventListener('resize', resize);
+window.visualViewport?.addEventListener('scroll', resize);
 resize();
 
 // —— 指针坐标 → 逻辑坐标 —— //
@@ -766,7 +808,7 @@ function onPointerDown(e: PointerEvent) {
     clearBoardSelect(); // 点击空白处取消选中
   }
 }
-canvas.addEventListener('pointerdown', (e) => { onPointerDown(e); scheduleFrame(); });
+canvas.addEventListener('pointerdown', (e) => { tryMobileFullscreen(); onPointerDown(e); scheduleFrame(); });
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
 canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
