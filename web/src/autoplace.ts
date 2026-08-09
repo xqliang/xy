@@ -212,6 +212,30 @@ export function placeCellScore(
   return seatScore(pathCover, exitDist, pathDist, rge);
 }
 
+/** 出怪口段路径覆盖加权：越早能打到入口附近越好（沿路格数计） */
+export function placementEarlyCoverWeight(rge: number): number {
+  if (rge <= 1.5) return 1.5;
+  if (rge >= 2.5) return 1.0;
+  return 0.75;
+}
+
+/** 首次接战沿路距离惩罚：pathFirstEngageDist 越小越好 */
+export function placementFirstEngageWeight(rge: number): number {
+  if (rge <= 1.5) return 0.25;
+  if (rge >= 2.5) return 0.45;
+  return 0.35;
+}
+
+/** 座位分附加：出怪口段覆盖 − 首次接战距离（与 placementCellScore 同口径） */
+export function entrancePathSeatBonus(
+  pathCoverEarly: number,
+  firstEngage: number,
+  rge: number,
+): number {
+  return pathCoverEarly * placementEarlyCoverWeight(rge)
+    - firstEngage * placementFirstEngageWeight(rge);
+}
+
 /** 单字落位：远离路径、靠近唐僧（分越高越好）；不追贴出口 */
 export const SINGLE_WORD_PATH_WEIGHT = 1;
 export const SINGLE_WORD_TANG_WEIGHT = 1.25;
@@ -305,7 +329,18 @@ function cellInAttackRange(ax: number, ay: number, rge: number, p: { c: number; 
   return Math.hypot(ax - nx, ay - ny) < rge + ENGAGE_RANGE_TOL;
 }
 
-/** 圆心 (ax,ay) 对怪群的交战威胁分（范围内 atk×残血加权之和） */
+/**
+ * 有怪时：沿路位置权重，最前怪(dist 最大)≈1，队尾衰减。
+ * 无怪时不调用（落位改走出怪口段 pathCoverEarly / pathFirstEngage）。
+ */
+export function frontMonsterEngageWeight(mDist: number, frontDist: number, entranceDist: number): number {
+  if (frontDist <= entranceDist + 1e-6) return 1;
+  const span = Math.max(0.01, frontDist - entranceDist);
+  const rel = Math.max(0, Math.min(1, (mDist - entranceDist) / span));
+  return 0.15 + 0.85 * rel;
+}
+
+/** 圆心 (ax,ay) 对怪群的交战威胁分（范围内 atk×最前怪加权×残血加权之和） */
 export function engageThreatAt(
   monsters: MonsterEngageLite[],
   path: { c: number; r: number }[],
@@ -317,15 +352,15 @@ export function engageThreatAt(
   danger: boolean,
   unitType?: UnitType,
 ): number {
-  const targets =
-    monsters.length > 0
-      ? monsters
-      : [{ dist: entranceDist, hp: 1, maxHp: 1 }];
+  if (monsters.length === 0) return 0;
+  const frontDist = Math.max(...monsters.map((m) => m.dist));
   let score = 0;
-  for (const m of targets) {
+  for (const m of monsters) {
     const p = posAlong(path, m.dist);
     if (cellInAttackRange(ax, ay, rge, p)) {
-      score += atk * lowHpEngageMul(m.hp, m.maxHp, danger, unitType);
+      score += atk
+        * frontMonsterEngageWeight(m.dist, frontDist, entranceDist)
+        * lowHpEngageMul(m.hp, m.maxHp, danger, unitType);
     }
   }
   return score;
@@ -1030,7 +1065,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     );
   }
 
-  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；危险时追加靠唐僧加权 */
+  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；有怪追最前路段，无怪追出怪口 */
   function scoreCell(cell: Cell, type: UnitType, tier: number): number {
     const rge = getUnitStat(type, tier).rge;
     let s = seatScore(
@@ -1039,11 +1074,17 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       view.nearestPathDist(cell),
       rge,
     );
-    if (view.dangerNear()) {
-      s += dangerPlacementBonus(
-        view.imminentPathScore(cell),
-        view.exitDist(cell),
-        view.tangsengDist(cell),
+    const engage = view.unitEngageScore?.(cell, type, tier) ?? 0;
+    const imminent = view.imminentPathScore(cell);
+    if (imminent > 0) {
+      s += IMMINENT_PLACE_WEIGHT * imminent;
+    } else if (view.dangerNear()) {
+      s += dangerSeatBonus(view.exitDist(cell), view.tangsengDist(cell));
+    } else if (engage <= 0) {
+      s += entrancePathSeatBonus(
+        view.pathCoverEarlyAt(cell.c, cell.r, rge),
+        view.pathFirstEngageAt(cell.c, cell.r, rge),
+        rge,
       );
     }
     return s;
@@ -1066,29 +1107,32 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return reach;
   }
 
-  /** 落位评分：短兵加重出怪口段覆盖；有怪时叠加实时交战分 */
+  /** 落位评分：无怪时出怪口优先；有怪时叠加最前段交战威胁 */
   function placementCellScore(cell: Cell, type: UnitType, tier: number): number {
-    const rge = getUnitStat(type, tier).rge;
     let s = scoreCell(cell, type, tier);
-    if (rge <= 1.5) {
-      s += view.pathCoverEarlyAt(cell.c, cell.r, rge) * 1.5;
-      s -= view.pathFirstEngageAt(cell.c, cell.r, rge) * 0.25;
-    }
     const engage = view.unitEngageScore?.(cell, type, tier) ?? 0;
     if (engage > 0) s += engage * 8;
     return s;
   }
 
-  /** 可达格中选座位分最高者（短兵先占位，避免远程抢近路甜区） */
+  /** 可达格中选座位分最高者；无怪同分则优先更早接到出怪口(pathFirstEngage 更小) */
   function pickReachCell(reach: Cell[], type: UnitType, tier: number): Cell {
+    const rge = getUnitStat(type, tier).rge;
+    const live = reach.some((c) => (view.unitEngageScore?.(c, type, tier) ?? 0) > 0);
     let best = reach[0]!;
     let bestScore = placementCellScore(best, type, tier);
+    let bestFirst = view.pathFirstEngageAt(best.c, best.r, rge);
     for (let i = 1; i < reach.length; i++) {
       const c = reach[i]!;
       const s = placementCellScore(c, type, tier);
-      if (s > bestScore) {
+      const first = view.pathFirstEngageAt(c.c, c.r, rge);
+      if (
+        s > bestScore + 1e-9
+        || (!live && Math.abs(s - bestScore) <= 1e-9 && first < bestFirst - 1e-9)
+      ) {
         best = c;
         bestScore = s;
+        bestFirst = first;
       }
     }
     return best;

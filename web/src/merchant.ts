@@ -660,17 +660,17 @@ function drawOfferCard(
   drawSkillKindTag(ctx, r.x + 12 + rarityW + 8, r.y + 8, offer.kind);
 
   const bx = r.x + r.w - OFFER_BTN_W - 10;
-  const nameMaxW = bx - (r.x + OFFER_TEXT_X) - 8;
-  const textMaxW = r.w - OFFER_TEXT_X - 14;
+  const textX = r.x + OFFER_TEXT_X;
+  const textColW = bx - textX - 8;
   const desc = offer.kind === 'active'
     ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
     : def.desc;
   ctx.font = '12px "PingFang SC", serif';
-  const descLines = fitTextLines(ctx, desc, textMaxW, 3);
+  const descLines = fitTextLines(ctx, desc, textColW, 3);
   const nameH = 18;
   const descLineH = 16;
   const textBlockH = nameH + 4 + descLines.length * descLineH;
-  const blockH = Math.max(44, textBlockH);
+  const blockH = Math.max(OFFER_BTN_H, textBlockH);
   const innerTop = r.y + 26;
   const innerH = r.h - 30;
   const blockTop = innerTop + Math.max(0, (innerH - blockH) / 2);
@@ -694,16 +694,21 @@ function drawOfferCard(
   const textY = blockTop;
   const by = blockTop + (blockH - OFFER_BTN_H) / 2;
 
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(textX, blockTop, textColW, blockH);
+  ctx.clip();
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(fitText(ctx, def.name, nameMaxW), r.x + OFFER_TEXT_X, textY);
+  ctx.fillText(fitText(ctx, def.name, textColW), textX, textY);
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '12px "PingFang SC", serif';
   for (let li = 0; li < descLines.length; li++) {
-    ctx.fillText(descLines[li]!, r.x + OFFER_TEXT_X, textY + nameH + 4 + li * descLineH);
+    ctx.fillText(descLines[li]!, textX, textY + nameH + 4 + li * descLineH);
   }
+  ctx.restore();
 
   const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford);
   drawInkActionButton(

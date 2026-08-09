@@ -1522,7 +1522,7 @@ export class Battle {
     });
   }
 
-  /** 危险时优先集火残血怪，否则优先打最靠前妖怪 */
+  /** 危险时优先集火残血怪；否则优先打沿路最靠前的怪（dist 最大） */
   private sortCombatTargets<T extends { m: Monster }>(inRange: T[], dangerNear: boolean): T[] {
     if (!dangerNear) return inRange.sort((a, b) => b.m.dist - a.m.dist);
     return inRange.sort((a, b) => {
