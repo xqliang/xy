@@ -650,6 +650,10 @@ export class Battle {
   readonly map: GameMap;
   readonly pathLen: number;
   private slotOrder: Cell[];
+  private playerNearestPathDistByCell = new Map<string, number>();
+  private playerExitDistByCell = new Map<string, number>();
+  private aiNearestPathDistByCell = new Map<string, number>();
+  private aiExitDistByCell = new Map<string, number>();
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private sinceLastElite = Number.POSITIVE_INFINITY; // 距上一只带技能精英已刷出的普通妖数
@@ -730,6 +734,30 @@ export class Battle {
       this.aiSummonTimer = knobs.summonInterval * 0.5;
       this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next());
     }
+    this.warmPathDistCaches();
+  }
+
+  private warmPathDistCaches(): void {
+    for (const s of this.slotOrder) {
+      const k = cellKey(s.c, s.r);
+      this.playerNearestPathDistByCell.set(k, Battle.nearestPathDistOn(this.map.path, s));
+      this.playerExitDistByCell.set(k, exitDistToPath(this.map.path, s));
+    }
+    for (const s of this.aiCells) {
+      const k = cellKey(s.c, s.r);
+      this.aiNearestPathDistByCell.set(k, Battle.nearestPathDistOn(this.aiPath, s));
+      this.aiExitDistByCell.set(k, exitDistToPath(this.aiPath, s));
+    }
+  }
+
+  private static nearestPathDistOn(path: Cell[], cell: { c: number; r: number }): number {
+    let min = Infinity;
+    for (const p of path) {
+      if (p.r < 0 || p.r >= ROWS) continue;
+      const d = Math.hypot(p.c - cell.c, p.r - cell.r);
+      if (d < min) min = d;
+    }
+    return min;
   }
 
   // AI 唐僧当前渲染位置（同玩家入场节奏沿镜像路走向归位）
@@ -769,13 +797,21 @@ export class Battle {
 
   // 某格到怪物路径的最近距离（格）——与 board.placeableByProximity 的 nearest 同口径
   nearestPathDist(cell: { c: number; r: number }): number {
-    let min = Infinity;
-    for (const p of this.map.path) {
-      if (p.r < 0 || p.r >= ROWS) continue;
-      const d = Math.hypot(p.c - cell.c, p.r - cell.r);
-      if (d < min) min = d;
-    }
-    return min;
+    const k = cellKey(cell.c, cell.r);
+    const cached = this.playerNearestPathDistByCell.get(k);
+    if (cached !== undefined) return cached;
+    const d = Battle.nearestPathDistOn(this.map.path, cell);
+    this.playerNearestPathDistByCell.set(k, d);
+    return d;
+  }
+
+  private playerExitDist(cell: { c: number; r: number }): number {
+    const k = cellKey(cell.c, cell.r);
+    const cached = this.playerExitDistByCell.get(k);
+    if (cached !== undefined) return cached;
+    const d = exitDistToPath(this.map.path, cell);
+    this.playerExitDistByCell.set(k, d);
+    return d;
   }
 
   // 征兵：消耗蟠桃随机产出候选（兵种/铲子/武将字牌）。成本递增。
@@ -1181,13 +1217,21 @@ export class Battle {
 
   // AI 侧格到 AI 怪路的最近距离（格）——直接量 aiPath，避免镜像换算
   private aiNearestPathDist(cell: { c: number; r: number }): number {
-    let min = Infinity;
-    for (const p of this.aiPath) {
-      if (p.r < 0 || p.r >= ROWS) continue;
-      const d = Math.hypot(p.c - cell.c, p.r - cell.r);
-      if (d < min) min = d;
-    }
-    return min;
+    const k = cellKey(cell.c, cell.r);
+    const cached = this.aiNearestPathDistByCell.get(k);
+    if (cached !== undefined) return cached;
+    const d = Battle.nearestPathDistOn(this.aiPath, cell);
+    this.aiNearestPathDistByCell.set(k, d);
+    return d;
+  }
+
+  private aiExitDist(cell: { c: number; r: number }): number {
+    const k = cellKey(cell.c, cell.r);
+    const cached = this.aiExitDistByCell.get(k);
+    if (cached !== undefined) return cached;
+    const d = exitDistToPath(this.aiPath, cell);
+    this.aiExitDistByCell.set(k, d);
+    return d;
   }
 
   // AI 征兵：与玩家同生成策略（drawSummonTray + 字牌转化），用 aiRng，够桃才征
