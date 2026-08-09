@@ -650,6 +650,11 @@ export class Battle {
   readonly map: GameMap;
   readonly pathLen: number;
   private slotOrder: Cell[];
+  /** 静态地图格 → 路径距离（开局预计算，挖格后按需补） */
+  private playerNearestPathDistByCell = new Map<string, number>();
+  private playerExitDistByCell = new Map<string, number>();
+  private aiNearestPathDistByCell = new Map<string, number>();
+  private aiExitDistByCell = new Map<string, number>();
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private sinceLastElite = Number.POSITIVE_INFINITY; // 距上一只带技能精英已刷出的普通妖数

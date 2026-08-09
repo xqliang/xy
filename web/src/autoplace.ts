@@ -94,6 +94,8 @@ export interface AutoPlaceOpts {
   maxSteps?: number;
   /** 循环上限（防一步内无限调位）；默认 PLAYER_PLACE_MAX_GUARD */
   maxGuard?: number;
+  /** 绝对时间戳（ms）；超时则停止继续布阵步（分帧预算） */
+  deadlineMs?: number;
 }
 
 /** 玩家一键布阵：落子步数 / 循环上限 / 战后调位步数 */
@@ -860,7 +862,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   let rankedPairsCache: Map<string, { left: Cell; right: Cell; score: number }[]> | null = null;
   let stepUnlockedCells: Cell[] | null = null;
   const seen = new Set<string>();
+  const overDeadline = () =>
+    opts.deadlineMs !== undefined
+    && typeof performance !== 'undefined'
+    && performance.now() >= opts.deadlineMs;
   while (guard++ < maxGuard && steps < maxSteps) {
+    if (overDeadline()) break;
     if (!step()) break;
     const key = autoPlaceBoardKey(view);
     if (seen.has(key)) break;
