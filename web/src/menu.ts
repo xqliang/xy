@@ -131,6 +131,32 @@ function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 }
 
+/** 首页主标题：深色描边 + 金字渐变，避免水墨背景上发飘 */
+function drawMenuTitle(ctx: CanvasRenderingContext2D, text: string, cx: number, baselineY: number): void {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'bold 46px "Songti SC", "SimSun", "STSong", "PingFang SC", serif';
+  const textW = ctx.measureText(text).width;
+
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = 'rgba(38,22,8,0.82)';
+  ctx.lineWidth = 5;
+  ctx.strokeText(text, cx, baselineY);
+  ctx.strokeStyle = 'rgba(255,232,180,0.45)';
+  ctx.lineWidth = 2;
+  ctx.strokeText(text, cx, baselineY);
+
+  const grad = ctx.createLinearGradient(cx - textW / 2, baselineY - 36, cx + textW / 2, baselineY);
+  grad.addColorStop(0, '#fff2c8');
+  grad.addColorStop(0.45, '#ffd76a');
+  grad.addColorStop(1, '#b86a28');
+  ctx.fillStyle = grad;
+  ctx.fillText(text, cx, baselineY);
+  ctx.restore();
+}
+
 export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   drawMenuBackground(ctx);
 
@@ -157,19 +183,14 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   );
   drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'), 'inset');
 
-  const titleY = 148;
+  const titleY = 153;
   const rankBlockDy = 15;
   const rankTitleGap = 8;
   const rankY = 182 + rankBlockDy + rankTitleGap;
   const starsY = rankY + 30;
 
+  drawMenuTitle(ctx, '大圣与唐僧', VIEW_W / 2, titleY);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#b5391f';
-  ctx.font = '44px "STKaiti", "KaiTi", "华文楷体", "AR PL UKai CN", serif';
-  ctx.strokeStyle = 'rgba(255,240,210,0.55)';
-  ctx.lineWidth = 2;
-  ctx.strokeText('大圣与唐僧', VIEW_W / 2, titleY);
-  ctx.fillText('大圣与唐僧', VIEW_W / 2, titleY);
   ctx.fillStyle = '#5a3a12';
   ctx.font = 'bold 18px "PingFang SC", serif';
   ctx.fillText(`境界 · ${info.rankName}`, VIEW_W / 2, rankY);
