@@ -3022,16 +3022,18 @@ function drawUltLiusha(ctx: CanvasRenderingContext2D, x: number, y: number, p: n
   ctx.beginPath(); ctx.arc(x, y, expand * R * 0.75, 0, Math.PI * 2); ctx.stroke();
 }
 
-// 梵音 浅润：淡紫音环 + 少许甘露
+// 梵音 浅润：淡紫音环由小向外扩散 + 少许甘露
 function drawUltFanyin(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  ctx.globalAlpha = fade;
   for (let k = 0; k < 2; k++) {
-    const pk = Math.max(0, Math.min(1, p - k * 0.2));
-    const rad = easeOut(pk) * R * (0.4 + k * 0.3);
+    const t = Math.max(0, Math.min(1, (p - k * 0.18) / (1 - k * 0.18)));
+    const grow = easeOut(t);
+    const rad = grow * R * (0.42 + k * 0.33);
+    ctx.globalAlpha = fade * (1 - grow * 0.55) * (k === 0 ? 1 : 0.62);
     ctx.strokeStyle = k === 0 ? 'rgba(200,180,255,0.7)' : 'rgba(180,160,240,0.4)';
     ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
   }
+  ctx.globalAlpha = fade;
   const drops = 4 + tier;
   for (let i = 0; i < drops; i++) {
     const a = (i / drops) * Math.PI * 2;
@@ -4288,9 +4290,10 @@ function drawHeroAttackFx(
       const y = ay + (ty - ay) * prog;
       const rings = 1 + Math.min(2, tier - 1);
       for (let i = 0; i < rings; i++) {
-        const ring = easeOut(Math.min(1, Math.max(0, prog * 1.2 - i * 0.15)));
-        const rad = CELL * (0.12 + ring * (0.35 + sc * 0.25) + i * 0.08);
-        ctx.globalAlpha = fade * (1 - ring * 0.6) * (0.55 + sc * 0.35);
+        const t = Math.max(0, Math.min(1, (prog - i * 0.14) / (1 - i * 0.14)));
+        const grow = easeOut(t);
+        const rad = CELL * grow * (0.3 + sc * 0.38 + i * 0.06);
+        ctx.globalAlpha = fade * (1 - grow * 0.5) * (0.55 + sc * 0.35);
         ctx.strokeStyle = '#ffe8a0';
         ctx.lineWidth = 1.5 + tier * 0.3;
         ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
