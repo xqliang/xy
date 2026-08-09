@@ -1317,7 +1317,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
     // 10) 有空格仍留 tray 字/兵 → 强制落子兜底
     if (mustEmptyTray()) {
-      if (tryPlaceTraySingleWords()) return true;
+      if (tryPlaceTraySingleWords(true)) return true;
       if (tryFillAnyFreeSeat()) return true;
     }
     return false; // 无可推进动作
@@ -2158,20 +2158,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  function tryPlaceTraySingleWords(): boolean {
-    return tryPlaceTraySingleWordsImpl(false);
-  }
-
-  function tryForcePlaceTraySingleWords(): boolean {
-    return tryPlaceTraySingleWordsImpl(true);
-  }
-
-  function tryPlaceTraySingleWordsImpl(force: boolean): boolean {
+  function tryPlaceTraySingleWords(force = false): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!;
       if (t.kind !== 'word') continue;
-      if (placeSingleWord(i)) return true;
+      if (placeSingleWord(i, force)) return true;
     }
     return false;
   }
@@ -2213,16 +2205,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       return s > bs ? c : best;
     }, free[0]!);
     return view.place(i, cell);
-  }
-
-  function tryPlaceTraySingleWords(force = false): boolean {
-    const tray = view.tray();
-    for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
-      if (placeSingleWord(i, force)) return true;
-    }
-    return false;
   }
 
   /**

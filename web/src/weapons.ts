@@ -1,5 +1,6 @@
 // 武器（神兵）系统：每位武将一件专属神兵，五级品质 白/绿/蓝/紫/金。
-// 对局清波随机掉落碎片；左下角点击领取；集齐碎片激活；最多装备 3 件。
+// 对局随机掉落碎片（武将攻击触发）；左下角点击领取；集齐碎片激活；最多装备 3 件。
+// 掉落：开局 35% 预排本局可掉 1 片，武将攻击命中时再 10% 触发（整局最多 1 次）。
 // 数值有上限：攻击/攻速最高 +20%（比例）；范围按品质每阶 +0.35 格（格数加成）。
 import { GENERALS, generalById } from './generals';
 import { storeGet, storeSet, parseStoredJson, safeStringArray } from './storage';
