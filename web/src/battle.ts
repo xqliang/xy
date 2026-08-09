@@ -432,7 +432,7 @@ export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
 export const PEACH_TREE_MAX_LEVEL = 5;
 export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
 
-// 武将的持续状态（按武将 id 记录，拆分再重组可延续升阶进度）
+// 武将的持续状态（按激活对格子 key 记录；拆分后该对进度清除，重组从 1 档重计）
 // level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
 export interface GeneralState {
   level: number;
@@ -601,7 +601,7 @@ export class Battle {
   trees = new Map<string, PeachTree>(); // 蟠桃园桃树（各占一格未开垦地）
   gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
   private plantTimer = 0; // 距下次自动种树累积秒数
-  generalStates = new Map<string, GeneralState>(); // 各武将的等级/经验/冷却（按 id）
+  generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
@@ -699,7 +699,7 @@ export class Battle {
   weaponPickupVisible: (id: string) => boolean = () => true;
   pickedItems: string[] = [];
 
-  private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的武将 id
+  private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的格子对 key
   private rng: RNG;
   readonly map: GameMap;
   readonly pathLen: number;
@@ -1128,6 +1128,19 @@ export class Battle {
     return true;
   }
 
+  /** AI 棋盘两字互换（对齐 dragWord 异字/同字异阶交换） */
+  private aiSwapWords(from: Cell, to: Cell): boolean {
+    const kFrom = cellKey(from.c, from.r);
+    const kTo = cellKey(to.c, to.r);
+    const w = this.aiWords.get(kFrom);
+    const tw = this.aiWords.get(kTo);
+    if (!w || !tw) return false;
+    if (tw.char === w.char && tw.tier === w.tier) return false;
+    this.aiWords.set(kFrom, { ...tw, cell: { c: from.c, r: from.r } });
+    this.aiWords.set(kTo, { ...w, cell: { c: to.c, r: to.r } });
+    return true;
+  }
+
   // 计入道具修正后的当前征兵成本
   effectiveSummonCost(): number {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
@@ -1234,20 +1247,34 @@ export class Battle {
     return true;
   }
 
-  // 取某武将的持续状态（不存在则初始化）
-  private stateOf(id: string): GeneralState {
-    let s = this.generalStates.get(id);
+  // 激活对稳定 key（左右格无序），用于独立经验/CD
+  private static heroPairKey(a: Cell, b: Cell): string {
+    const k1 = cellKey(a.c, a.r);
+    const k2 = cellKey(b.c, b.r);
+    return k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+  }
+
+  private stateOfPair(cells: [Cell, Cell]): GeneralState {
+    const key = Battle.heroPairKey(cells[0], cells[1]);
+    let s = this.generalStates.get(key);
     if (!s) {
       s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
-      this.generalStates.set(id, s);
+      this.generalStates.set(key, s);
     }
     return s;
+  }
+
+  private pruneHeroStates(activePairKeys: Set<string>, store: Map<string, GeneralState>): void {
+    for (const k of [...store.keys()]) {
+      if (!activePairKeys.has(k)) store.delete(k);
+    }
   }
 
   // 扫描棋盘：左右紧邻且 chars 序对匹配某武将 → 激活（按字匹配，支持门派共享字）
   activeGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
+    const activePairKeys = new Set<string>();
     for (const w of this.words.values()) {
       const kL = cellKey(w.cell.c, w.cell.r);
       if (used.has(kL)) continue;
@@ -1267,8 +1294,11 @@ export class Battle {
       if (right.tier < target) right.tier = target;
       w.general = def.id;
       right.general = def.id;
-      if (this.mods.generalTierDelta > 0 && !this.tierBoosted.has(def.id)) {
-        this.tierBoosted.add(def.id);
+      const cells: [Cell, Cell] = [w.cell, right.cell];
+      const pairKey = Battle.heroPairKey(cells[0], cells[1]);
+      activePairKeys.add(pairKey);
+      if (this.mods.generalTierDelta > 0 && !this.tierBoosted.has(pairKey)) {
+        this.tierBoosted.add(pairKey);
         for (let i = 0; i < this.mods.generalTierDelta; i++) {
           if (w.tier < cap) w.tier += 1;
           if (right.tier < cap) right.tier += 1;
@@ -1277,9 +1307,13 @@ export class Battle {
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
-        cells: [w.cell, right.cell],
-        state: this.stateOf(def.id),
+        cells,
+        state: this.stateOfPair(cells),
       });
+    }
+    this.pruneHeroStates(activePairKeys, this.generalStates);
+    for (const k of [...this.tierBoosted]) {
+      if (!activePairKeys.has(k)) this.tierBoosted.delete(k);
     }
     return out;
   }
@@ -1296,6 +1330,7 @@ export class Battle {
   aiActiveGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
+    const activePairKeys = new Set<string>();
     for (const w of this.aiWords.values()) {
       const kL = cellKey(w.cell.c, w.cell.r);
       if (used.has(kL)) continue;
@@ -1312,18 +1347,38 @@ export class Battle {
       if (right.tier < target) right.tier = target;
       w.general = def.id;
       right.general = def.id;
-      if (this.aiMods.generalTierDelta > 0 && !this.aiTierBoosted.has(def.id)) {
-        this.aiTierBoosted.add(def.id);
+      const cells: [Cell, Cell] = [w.cell, right.cell];
+      const pairKey = Battle.heroPairKey(cells[0], cells[1]);
+      activePairKeys.add(pairKey);
+      if (this.aiMods.generalTierDelta > 0 && !this.aiTierBoosted.has(pairKey)) {
+        this.aiTierBoosted.add(pairKey);
         for (let i = 0; i < this.aiMods.generalTierDelta; i++) {
           if (w.tier < cap) w.tier += 1;
           if (right.tier < cap) right.tier += 1;
         }
       }
-      let s = this.aiGeneralStates.get(def.id);
-      if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
-      out.push({ def, tier: Math.min(w.tier, right.tier, cap), cells: [w.cell, right.cell], state: s });
+      out.push({
+        def,
+        tier: Math.min(w.tier, right.tier, cap),
+        cells,
+        state: this.stateOfPairForAi(cells),
+      });
+    }
+    this.pruneHeroStates(activePairKeys, this.aiGeneralStates);
+    for (const k of [...this.aiTierBoosted]) {
+      if (!activePairKeys.has(k)) this.aiTierBoosted.delete(k);
     }
     return out;
+  }
+
+  private stateOfPairForAi(cells: [Cell, Cell]): GeneralState {
+    const key = Battle.heroPairKey(cells[0], cells[1]);
+    let s = this.aiGeneralStates.get(key);
+    if (!s) {
+      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 };
+      this.aiGeneralStates.set(key, s);
+    }
+    return s;
   }
 
   private aiBoardOrphanCharsNow(): string[] {
@@ -1536,6 +1591,7 @@ export class Battle {
         return true;
       },
       swapUnitWord: (unitCell, wordCell) => this.aiSwapUnitWord(unitCell, wordCell),
+      swapWords: (from, to) => this.aiSwapWords(from, to),
       moveWord: (from, to) => {
         const kFrom = cellKey(from.c, from.r);
         const kTo = cellKey(to.c, to.r);
@@ -4107,6 +4163,7 @@ export class Battle {
         this.words.set(kTo, w);
         return true;
       },
+      swapWords: (from, to) => this.swapWords(from, to),
       displaceToTray: (cell) => this.displaceToTray(cell),
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),

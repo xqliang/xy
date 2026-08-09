@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Battle } from '../src/battle';
+import { COLS } from '../src/board';
 
 function placeErlang(b: Battle, leftTier: number, rightTier: number) {
   const cells = b.unlockedCells();
@@ -13,6 +14,37 @@ function placeErlang(b: Battle, leftTier: number, rightTier: number) {
 }
 
 describe('攻击升品质阶', () => {
+  it('同名两组激活：经验与升阶进度各自独立', () => {
+    const b = new Battle(1);
+    const cells = b.unlockedCells();
+    const row0 = cells.filter((c) => c.r === cells[0]!.r).sort((a, c) => a.c - c.c);
+    const a1 = row0[0]!;
+    const r1 = row0.find((c) => c.c === a1.c + 1)!;
+    b.unlocked.add(`${r1.c},${r1.r}`);
+    const row1 = cells.filter((c) => c.r !== a1.r && c.c + 1 < COLS);
+    const a2 = row1.find((c) => row1.some((x) => x.r === c.r && x.c === c.c + 1)) ?? row1[0]!;
+    const r2 = { c: a2.c + 1, r: a2.r };
+    b.unlocked.add(`${a2.c},${a2.r}`);
+    b.unlocked.add(`${r2.c},${r2.r}`);
+
+    b.words.set(`${a1.c},${a1.r}`, { char: '二', general: 'erlang', tier: 2, cell: a1 });
+    b.words.set(`${r1.c},${r1.r}`, { char: '郎', general: 'erlang', tier: 2, cell: r1 });
+    b.words.set(`${a2.c},${a2.r}`, { char: '二', general: 'erlang', tier: 2, cell: a2 });
+    b.words.set(`${r2.c},${r2.r}`, { char: '郎', general: 'erlang', tier: 2, cell: r2 });
+
+    const gs = b.activeGenerals();
+    expect(gs.length).toBe(2);
+    const [g1, g2] = gs;
+    expect(g1!.state).not.toBe(g2!.state);
+
+    const need = Battle.expToNext(g1!.state.level);
+    b.addGeneralCombatExp(g1!, need);
+    expect(b.words.get(`${a1.c},${a1.r}`)?.tier).toBe(3);
+    expect(b.words.get(`${a2.c},${a2.r}`)?.tier).toBe(2);
+    expect(g2!.state.exp).toBe(0);
+    expect(g2!.state.level).toBe(1);
+  });
+
   it('满经验后双字各 +1，徽标上升；拆开保留', () => {
     const b = new Battle(1);
     const { a, right } = placeErlang(b, 2, 3);

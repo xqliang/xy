@@ -104,6 +104,8 @@ export interface AutoPlaceView {
   swapUnitWord(unitCell: Cell, wordCell: Cell): boolean;
   /** 把已上场字牌挪到空 to（不与其他字/兵重叠） */
   moveWord(from: Cell, to: Cell): boolean;
+  /** 两格字牌互换（异字或同字异阶；同字同阶失败） */
+  swapWords(from: Cell, to: Cell): boolean;
   /**
    * 满槽腾位：把该格普通武器或未激活孤儿顶回候选区（候选未满时）。
    * 已激活武将格必须失败。空格视为成功。
@@ -504,8 +506,43 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
   }
 
   if (familyUpgradePending(view)) return true;
+  if (transitionMainUpgradePending(view)) return true;
 
   return false;
+}
+
+/** 已激活过渡将 + tray/棋盘主将侧字 → 可升满5（如 牛郎+魔→牛魔） */
+function transitionMainUpgradePending(view: AutoPlaceView): boolean {
+  for (const mainDef of GENERALS) {
+    if (mainDef.maxTier !== 5) continue;
+    for (const t of filledTrayTokens(view.tray())) {
+      if (t.kind !== 'word') continue;
+      if (!mainDef.chars.includes(t.char)) continue;
+      if (findTransitionReplaceTarget(view, t.char, mainDef)) return true;
+    }
+    for (const w of orphanWordsView(view)) {
+      if (!mainDef.chars.includes(w.char)) continue;
+      if (findTransitionReplaceTarget(view, w.char, mainDef)) return true;
+    }
+  }
+  return false;
+}
+
+/** 过渡将中应被主将侧字替换的那一格（如 牛郎的「郎」） */
+function findTransitionReplaceTarget(
+  view: AutoPlaceView,
+  mainChar: string,
+  mainDef: GeneralDef,
+): PlacedWordLite | null {
+  const anchor = mainDef.chars[0] === mainChar ? mainDef.chars[1]! : mainDef.chars[0]!;
+  if (pairDefForChars(anchor, mainChar)?.id !== mainDef.id) return null;
+  for (const p of scanActivePairs(view)) {
+    if (p.def.maxTier >= mainDef.maxTier) continue;
+    if (p.def.id === mainDef.id) continue;
+    if (p.left.char === anchor) return p.right;
+    if (p.right.char === anchor) return p.left;
+  }
+  return null;
 }
 
 /** tray 满 5 侧字可替换已激活满 3 同门派武将的可换字（如 哪 换 金 → 哪吒） */
@@ -1355,7 +1392,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && trayHasUnplaceablePending() && tryBoardMergeThenPlace()) return true;
     // 1a+) 门派升级 / 过渡字替换 / tray 内成对 — 先于孤儿单字落位
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
-    if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && tryUpgradeTransitionToMainHero()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
@@ -2215,10 +2252,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   /**
-   * 过渡将已激活、tray 有主将侧字：替换过渡侧字（如 牛郎+tray「魔」→ 牛魔）。
-   * 依赖 place 与异字交换：魔落郎格、郎回 tray，牛魔相邻激活。
+   * 过渡将已激活 + tray/棋盘有主将侧字：替换过渡侧字（如 牛郎+魔→牛魔）。
+   * tray：place 异字交换；棋盘孤儿：swapWords 与过渡侧字互换。
    */
-  function tryReplaceTransitionWithMainTrayWord(): boolean {
+  function tryUpgradeTransitionToMainHero(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i];
@@ -2226,19 +2263,28 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       for (const mainDef of GENERALS) {
         if (mainDef.maxTier !== 5) continue;
         if (!mainDef.chars.includes(t.char)) continue;
-        const other = mainDef.chars[0] === t.char ? mainDef.chars[1]! : mainDef.chars[0]!;
-        if (pairDefForChars(other, t.char)?.id !== mainDef.id) continue;
-        for (const p of scanActivePairs(view)) {
-          if (p.def.maxTier >= mainDef.maxTier) continue;
-          if (p.def.id === mainDef.id) continue;
-          let wrong: PlacedWordLite | null = null;
-          if (p.left.char === other) wrong = p.right;
-          else if (p.right.char === other) wrong = p.left;
-          else continue;
-          if (view.place(i, wrong.cell)) return true;
+        const replace = findTransitionReplaceTarget(view, t.char, mainDef);
+        if (replace && view.place(i, replace.cell)) return true;
+      }
+    }
+    let best: { orphan: PlacedWordLite; replace: PlacedWordLite; mainDef: GeneralDef } | null = null;
+    for (const w of orphanWords()) {
+      if (view.isActiveHeroCell(w.cell)) continue;
+      for (const mainDef of GENERALS) {
+        if (mainDef.maxTier !== 5) continue;
+        if (!mainDef.chars.includes(w.char)) continue;
+        const replace = findTransitionReplaceTarget(view, w.char, mainDef);
+        if (!replace) continue;
+        if (
+          !best
+          || mainDef.maxTier > best.mainDef.maxTier
+          || (mainDef.maxTier === best.mainDef.maxTier && wordTier(w) > wordTier(best.orphan))
+        ) {
+          best = { orphan: w, replace, mainDef };
         }
       }
     }
+    if (best && view.swapWords(best.orphan.cell, best.replace.cell)) return true;
     return false;
   }
 

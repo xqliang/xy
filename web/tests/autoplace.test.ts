@@ -168,6 +168,16 @@ class FakeView implements AutoPlaceView {
     if (!this.unlocked.has(kt) || this.unitsMap.has(kt) || this.wordsMap.has(kt)) return false;
     this.wordsMap.delete(kf); w.cell = to; this.wordsMap.set(kt, w); return true;
   }
+  swapWords(from: Cell, to: Cell): boolean {
+    const kf = this.key(from.c, from.r), kt = this.key(to.c, to.r);
+    const w = this.wordsMap.get(kf);
+    const tw = this.wordsMap.get(kt);
+    if (!w || !tw) return false;
+    if (w.char === tw.char && w.tier === tw.tier) return false;
+    this.wordsMap.set(kf, { ...tw, cell: from });
+    this.wordsMap.set(kt, { ...w, cell: to });
+    return true;
+  }
   isActiveHeroCell(cell: Cell): boolean {
     // 与 battle.activeGenerals 一致：按左右连读匹配，不要求 general 字段相同
     const paired = (leftChar: string, rightChar: string, hintGeneral: string) => {
