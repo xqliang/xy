@@ -1,8 +1,10 @@
 // 体力系统：跨平台存储持久化。开局消耗 STAMINA_COST；未满时每 STAMINA_REGEN_MS 自动 +1（上限 STAMINA_MAX）。
+import { isWeChat } from './platform';
 import { storeGet, storeSet, parseStoredJson, safeNumber } from './storage';
 
 const KEY = 'dasheng.stamina';
-export const STAMINA_MAX = 30;
+/** Web 50 / 微信小游戏 30 */
+export const STAMINA_MAX = isWeChat ? 30 : 50;
 export const STAMINA_COST = 5;
 /** 未满体时恢复间隔：10 分钟回 1 点 */
 export const STAMINA_REGEN_MS = 10 * 60 * 1000;

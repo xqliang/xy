@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   nextAiSkill, skillToKnobs, AI_SKILL_MIN, AI_SKILL_MAX, DEFAULT_AI_SKILL,
   aiItemTargetCount, rollAiLoadout, EMPTY_PLAYER_ITEM_CAP,
+  AI_EXCLUDED_PASSIVES, aiWeaponScale, scaleWeaponBonuses,
 } from '../src/ai-skill';
 
 describe('nextAiSkill', () => {
@@ -83,5 +84,49 @@ describe('rollAiLoadout', () => {
       lo.actives.length + lo.passives.length,
     );
     expect(aiItemTargetCount(3, DEFAULT_AI_SKILL)).toBe(3);
+  });
+
+  it('弱 AI 面对满装玩家仍至少带 1 件道具', () => {
+    expect(aiItemTargetCount(8, AI_SKILL_MIN)).toBeGreaterThanOrEqual(1);
+    const lo = rollAiLoadout(['act_palm'], ['xiandan', 'jubaopen', 'fenghuolun'], AI_SKILL_MIN, () => 0);
+    expect(lo.actives.length + lo.passives.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('排除 AI 不适用的被动（蟠桃园 / 洛阳铲）', () => {
+    expect(AI_EXCLUDED_PASSIVES.has('pas_pantao')).toBe(true);
+    expect(AI_EXCLUDED_PASSIVES.has('luoyangchan')).toBe(true);
+    for (let seed = 0; seed < 20; seed++) {
+      const roll = rollAiLoadout(['act_palm'], ['xiandan', 'jubaopen'], DEFAULT_AI_SKILL, (n) => (seed * 17 + n) % n);
+      for (const id of roll.passives) {
+        expect(AI_EXCLUDED_PASSIVES.has(id)).toBe(false);
+      }
+    }
+  });
+
+  it('高 skill 比低 skill 更常选 debuff 被动', () => {
+    const debuffRate = (skill: number) => {
+      let hits = 0;
+      for (let seed = 0; seed < 30; seed++) {
+        const roll = rollAiLoadout([], ['xiandan', 'jubaopen', 'fenghuolun', 'yuni', 'zhuwang'], skill, (n) => (seed * 17 + n) % n);
+        if (roll.passives.some((id) => id === 'yuni' || id === 'zhuwang')) hits++;
+      }
+      return hits;
+    };
+    expect(debuffRate(AI_SKILL_MAX)).toBeGreaterThan(debuffRate(AI_SKILL_MIN));
+  });
+});
+
+describe('aiWeaponScale', () => {
+  it('弱 AI 神兵约 65%，强 AI 约 100%', () => {
+    expect(aiWeaponScale(AI_SKILL_MIN)).toBeCloseTo(0.65, 2);
+    expect(aiWeaponScale(AI_SKILL_MAX)).toBeCloseTo(1.0, 2);
+  });
+
+  it('scaleWeaponBonuses 按比例缩放', () => {
+    const src = { dasheng: { atk: 0.2, frq: 0.1, rge: 1 } };
+    const scaled = scaleWeaponBonuses(src, 0.5);
+    expect(scaled.dasheng!.atk).toBeCloseTo(0.1);
+    expect(scaled.dasheng!.frq).toBeCloseTo(0.05);
+    expect(scaled.dasheng!.rge).toBeCloseTo(0.5);
   });
 });

@@ -123,6 +123,8 @@ export const TUNING = {
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
+  earlyWaveHpTo: 3, // 前 3 波小怪基础血量 ×earlyWaveHpMul
+  earlyWaveHpMul: 0.8,
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
   spawnInterval: 1.25, // 秒/批（基础出怪节奏；同批可随机 1..N 只）
@@ -2494,6 +2496,11 @@ export class Battle {
     return 1 + (wave - 10) / 100;
   }
 
+  /** 前 3 波小怪基础血量倍率 */
+  earlyWaveHpMul(wave: number = this.wave): number {
+    return wave <= TUNING.earlyWaveHpTo ? TUNING.earlyWaveHpMul : 1;
+  }
+
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
   private ensureBossSchedule(wave: number): void {
     const target = Math.max(1, wave);
@@ -2555,10 +2562,10 @@ export class Battle {
     return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
   }
 
-  /** 普通怪基础血量（含境界/分圈系数与波>10 加成，不含 Boss/精英倍乘） */
+  /** 普通怪基础血量（含境界/分圈系数、前3波减量与波>10 加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
     const base = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
-    return base * this.wavePostMul(wave);
+    return base * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
   }
 
   /** 某波普通怪基础移速（含难度加速与波>10 加成，不含被动减速、Boss/骑兵倍乘） */
@@ -3564,10 +3571,13 @@ export class Battle {
     if (this.aiFrqBuffT > 0) this.aiFrqBuffT = Math.max(0, this.aiFrqBuffT - dt);
   }
 
-  /** AI 主动技能：就绪且场上有怪时自动释放（每帧至多一个）。 */
+  /** AI 主动技能：按优先级择时释放（每帧至多一个，未满足时机则保留 CD）。 */
   private tickAiActives(): void {
     if (this.status !== 'playing') return;
-    for (let i = 0; i < this.aiActiveSlots.length; i++) {
+    const order = this.aiActiveSlots
+      .map((_, i) => i)
+      .sort((a, b) => this.aiActiveSlotPriority(a) - this.aiActiveSlotPriority(b));
+    for (const i of order) {
       const slot = this.aiActiveSlots[i];
       if (!slot?.ready) continue;
       if (this.triggerAiActive(i)) return;
@@ -3580,8 +3590,7 @@ export class Battle {
     if (!slot || !slot.ready) return false;
     const def = activeById(slot.id);
     if (!def) return false;
-    const needsMonsters: ActiveEffect[] = ['palm', 'meteor', 'freeze', 'jinggu'];
-    if (needsMonsters.includes(def.effect) && this.aiMonsters.length === 0) return false;
+    if (!this.aiShouldTriggerActive(def.effect)) return false;
     switch (def.effect) {
       case 'palm':
         for (const m of this.aiMonsters) {

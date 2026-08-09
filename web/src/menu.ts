@@ -46,13 +46,13 @@ const BAR_X = AVATAR.x + AVATAR_SIZE + 10;
 const BAR_W = 228;
 const MERIT_BAR = { x: BAR_X, y: TOP, w: BAR_W, h: BAR_H };
 const STAMINA_BAR = { x: BAR_X, y: TOP + BAR_H + BAR_GAP, w: BAR_W, h: BAR_H };
-const PLUS_INSET = 4;
-const PLUS = BAR_H - PLUS_INSET * 2;
+const STAMINA_PLUS_SIZE = 32;
+const STAMINA_PLUS_INSET = 2;
 export const STAMINA_PLUS_BTN = {
-  x: STAMINA_BAR.x + STAMINA_BAR.w - PLUS - PLUS_INSET,
-  y: STAMINA_BAR.y + PLUS_INSET,
-  w: PLUS,
-  h: PLUS,
+  x: STAMINA_BAR.x + STAMINA_BAR.w - STAMINA_PLUS_SIZE - STAMINA_PLUS_INSET,
+  y: STAMINA_BAR.y + (STAMINA_BAR.h - STAMINA_PLUS_SIZE) / 2,
+  w: STAMINA_PLUS_SIZE,
+  h: STAMINA_PLUS_SIZE,
 };
 const MAP_PICK_W = 264;
 const MAP_PICK_H = 40;
@@ -199,7 +199,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     STAMINA_BAR,
     '体力',
     `${info.stamina}/${STAMINA_MAX}`,
-    STAMINA_PLUS_BTN.w + PLUS_INSET + 6,
+    STAMINA_PLUS_BTN.w + STAMINA_PLUS_INSET + 6,
   );
   drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'), 'inset');
 

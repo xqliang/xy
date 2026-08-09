@@ -31,6 +31,38 @@ export type PlaceToken =
   | { kind: 'unit'; type: UnitType; tier: number; displaced?: boolean }
   | { kind: 'word'; char: string; general: string; tier: number; displaced?: boolean };
 
+/** 候选区为固定槽位数组，空槽为 undefined（召回/落子后留洞） */
+export type TraySlotArray = (PlaceToken | undefined)[];
+
+function filledTraySlots(tray: TraySlotArray): { i: number; t: PlaceToken }[] {
+  const out: { i: number; t: PlaceToken }[] = [];
+  for (let i = 0; i < tray.length; i++) {
+    const t = tray[i];
+    if (t) out.push({ i, t });
+  }
+  return out;
+}
+
+function filledTrayTokens(tray: TraySlotArray): PlaceToken[] {
+  return tray.filter((t): t is PlaceToken => t != null);
+}
+
+function traySome(tray: TraySlotArray, pred: (t: PlaceToken) => boolean): boolean {
+  for (let i = 0; i < tray.length; i++) {
+    const t = tray[i];
+    if (t && pred(t)) return true;
+  }
+  return false;
+}
+
+function trayFindIndex(tray: TraySlotArray, pred: (t: PlaceToken) => boolean): number {
+  for (let i = 0; i < tray.length; i++) {
+    const t = tray[i];
+    if (t && pred(t)) return i;
+  }
+  return -1;
+}
+
 export interface PlacedUnitLite { type: UnitType; tier: number; cell: Cell; }
 export interface PlacedWordLite { char: string; general: string; cell: Cell; tier?: number }
 
@@ -40,7 +72,7 @@ export const TRAY_WORD_PRIORITY_FROM_WAVE = 4;
 export interface AutoPlaceView {
   /** 当前波次；≥ TRAY_WORD_PRIORITY_FROM_WAVE 时 tray 凑对激活更谨慎 */
   wave?(): number;
-  tray(): PlaceToken[];                     // 当前候选（随 place 变化，每步重读）
+  tray(): TraySlotArray;                     // 当前候选（固定槽位，空槽 undefined）
   freeCells(): Cell[];                      // 已解锁且空闲，按贴路近→远
   diggableCells(): Cell[];                  // 未解锁可开挖（无桃树）
   placedUnits(): PlacedUnitLite[];
@@ -388,8 +420,8 @@ function bestTrayPartnerForWord(
   const tray = view.tray();
   for (let j = 0; j < tray.length; j++) {
     if (j === skipIndex) continue;
-    const x = tray[j]!;
-    if (x.kind !== 'word') continue;
+    const x = tray[j];
+    if (!x || x.kind !== 'word') continue;
     const mt = pairMaxTier(t.char, x.char);
     if (mt <= 0) continue;
     if (!best || mt > best.maxTier) {
@@ -423,7 +455,7 @@ function isCharPartner(charA: string, charB: string, view: AutoPlaceView, genera
 
 /** tray 内已有该棋盘孤儿字的配对字时，勿挪走棋盘字（如 tray白+棋盘龙） */
 function trayHasPartnerForBoardOrphan(view: AutoPlaceView, w: PlacedWordLite): boolean {
-  for (const t of view.tray()) {
+  for (const t of filledTrayTokens(view.tray())) {
     if (t.kind !== 'word') continue;
     const hint = t.general === w.general ? w.general : t.general;
     if (isCharPartner(t.char, w.char, view, hint)) return true;
@@ -438,7 +470,7 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
 
   for (const w of orphans) {
     for (const t of tray) {
-      if (t.kind !== 'word') continue;
+      if (!t || t.kind !== 'word') continue;
       if (resolveHeroPair(w.char, t.char, view, w.general === t.general ? w.general : undefined)) return true;
     }
   }
@@ -461,11 +493,11 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
   }
 
   for (let i = 0; i < tray.length; i++) {
-    const a = tray[i]!;
-    if (a.kind !== 'word') continue;
+    const a = tray[i];
+    if (!a || a.kind !== 'word') continue;
     for (let j = i + 1; j < tray.length; j++) {
-      const b = tray[j]!;
-      if (b.kind !== 'word') continue;
+      const b = tray[j];
+      if (!b || b.kind !== 'word') continue;
       if (resolveHeroPair(a.char, b.char, view, a.general === b.general ? a.general : undefined)) return true;
     }
   }
@@ -478,7 +510,7 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
 /** tray 满 5 侧字可替换已激活满 3 同门派武将的可换字（如 哪 换 金 → 哪吒） */
 function familyUpgradePending(view: AutoPlaceView): boolean {
   const tray = view.tray();
-  for (const t of tray) {
+  for (const t of filledTrayTokens(tray)) {
     if (t.kind !== 'word') continue;
     if (findFamilyUpgradeTarget(view, t.char)) return true;
   }
@@ -561,8 +593,8 @@ function forEachTrayWordForActivation(
   for (let pass = 0; pass < 2; pass++) {
     const deprioritizedPass = pass === 1;
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
       if (isObsoleteTransitionVariant(view, t.char) !== deprioritizedPass) continue;
       if (fn(i, t)) return true;
@@ -670,7 +702,7 @@ function isHeroMaxed(pair: ActivePair): boolean {
 /** tray 字与棋盘伴侣凑对所需落点被占（常见：金吒占骨左侧） */
 function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
   const out: Cell[] = [];
-  for (const t of view.tray()) {
+  for (const t of filledTrayTokens(view.tray())) {
     if (t.kind !== 'word') continue;
     if (shouldSkipTrayWordActivation(view, t)) continue;
     const mate = pickBestBoardMateView(view, t.char, t.general);
@@ -712,7 +744,7 @@ export function trayBoardHeroDigCells(view: AutoPlaceView): Cell[] {
   const out: Cell[] = [];
   const seen = new Set<string>();
 
-  for (const t of view.tray()) {
+  for (const t of filledTrayTokens(view.tray())) {
     if (t.kind !== 'word') continue;
     if (shouldSkipTrayWordActivation(view, t)) continue;
     const mate = pickBestBoardMateView(view, t.char, t.general);
@@ -890,7 +922,8 @@ function tryTrayHeroInsertByRowShift(view: AutoPlaceView): boolean {
     }
 
     if (!isCellEmptyView(view, needTray)) return false;
-    const idx = view.tray().findIndex(
+    const idx = trayFindIndex(
+      view.tray(),
       (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
     );
     if (idx < 0) return false;
@@ -953,8 +986,8 @@ export function autoPlaceBoardKey(view: AutoPlaceView): string {
     .map((w) => `${w.char}:${w.tier ?? 1}@${w.cell.c},${w.cell.r}`)
     .sort()
     .join(';');
-  const tray = view.tray()
-    .map((t) =>
+  const tray = filledTraySlots(view.tray())
+    .map(({ t }) =>
       t.kind === 'unit' ? `u:${t.type}:${t.tier}`
       : t.kind === 'word' ? `w:${t.char}:${t.tier}`
       : 's',
@@ -991,16 +1024,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** tray 内兵种索引，短射程优先（近格留给短兵） */
   function trayUnitEntries(): { t: Extract<PlaceToken, { kind: 'unit' }>; i: number }[] {
-    return view.tray()
-      .map((t, i) => ({ t, i }))
+    return filledTraySlots(view.tray())
       .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
       .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
   }
 
   /** 地图挤回 tray、待换低阶上板的兵种 */
   function displacedTrayUnitEntries(): { t: Extract<PlaceToken, { kind: 'unit' }>; i: number }[] {
-    return view.tray()
-      .map((t, i) => ({ t, i }))
+    return filledTraySlots(view.tray())
       .filter(
         (x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } =>
           x.t.kind === 'unit' && !!x.t.displaced,
@@ -1016,7 +1047,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function trayHasWords(): boolean {
-    return view.tray().some((t) => t.kind === 'word');
+    return traySome(view.tray(), (t) => t.kind === 'word');
   }
 
   /** 有空格时 tray 不得留字/兵（铲子除外） */
@@ -1053,7 +1084,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** tray 字有棋盘伴侣待凑对激活（仍应先于兵器微调/短兵换座） */
   function trayWordAwaitingBoardMateActivation(): boolean {
-    for (const t of view.tray()) {
+    for (const t of filledTrayTokens(view.tray())) {
       if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
       if (pickBestBoardMateView(view, t.char, t.general)) return true;
@@ -1247,7 +1278,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function trayUnitsOnlyPending(): boolean {
     if (!pendingTrayUnitDeploy()) return false;
     if (pendingTrayWordDeploy()) return false;
-    if (view.tray().some((t) => t.kind === 'word' || t.kind === 'shovel')) return false;
+    if (traySome(view.tray(), (t) => t.kind === 'word' || t.kind === 'shovel')) return false;
     return trayUnitEntries().every(({ t }) => t.tier === 1);
   }
 
@@ -1258,7 +1289,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!pendingTrayUnitDeploy()) return false;
     if (displacedTrayUnitEntries().length > 0) return false;
     let hasPendingWord = false;
-    for (const t of view.tray()) {
+    for (const t of filledTrayTokens(view.tray())) {
       if (t.kind !== 'word') continue;
       if (mayLeaveWordInTray(t)) continue;
       hasPendingWord = true;
@@ -1275,7 +1306,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   /** tray 仍有字待落时不微调已激活将，避免与凑对/激活抢位 */
   function shouldRunHeroCoverageTweak(): boolean {
     if (pendingTrayDeploy() || subopt()) return false;
-    if (view.tray().some((t) => t.kind === 'word')) return false;
+    if (traySome(view.tray(), (t) => t.kind === 'word')) return false;
     return true;
   }
 
@@ -1305,7 +1336,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const tray = view.tray();
     // 1) 铲子：平时挖贴路+近出口；危险时优先挖靠近唐僧的格
     for (let i = 0; i < tray.length; i++) {
-      if (tray[i]!.kind !== 'shovel') continue;
+      const slot = tray[i];
+      if (!slot || slot.kind !== 'shovel') continue;
       const exitW = view.dangerNear()
         ? 0
         : opts.randomDigExitWeight
@@ -1369,7 +1401,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2e) 单字落位兜底（有空格时 placeSingleWord 也会落有伴侣的字）
     if (hasFreeCells()) {
       for (let i = 0; i < tray.length; i++) {
-        const t = tray[i]!; if (t.kind !== 'word') continue;
+        const t = tray[i];
+        if (!t || t.kind !== 'word') continue;
         if (placeSingleWord(i)) return true;
       }
     }
@@ -1445,7 +1478,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryPlaceTrayUnitsOnly(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!; if (t.kind !== 'unit') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'unit') continue;
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && !subopt() && view.place(i, mate.cell)) return true;
     }
@@ -1486,8 +1520,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     let best: { trayIdx: number; target: PlacedUnitLite; seatLoss: number; traySeat: number } | null = null;
 
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'unit') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'unit') continue;
       if (typeOnBoard(t.type)) continue;
 
       for (const u of view.placedUnits()) {
@@ -1527,8 +1561,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     let best: { trayIdx: number; target: PlacedUnitLite; gain: number } | null = null;
 
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'unit') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'unit') continue;
       let bestFree = -Infinity;
       if (!full) {
         for (const c of placementReachCells(free, t.type, t.tier)) {
@@ -1865,8 +1899,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryFamilyUpgrade(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       const target = findFamilyUpgradeTarget(view, t.char);
       if (target && view.place(i, target.cell)) return true;
     }
@@ -1877,8 +1911,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryPromoteHigherTierWords(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       let target: PlacedWordLite | null = null;
       for (const w of orphanWords()) {
         if (w.char !== t.char) continue;
@@ -1921,8 +1955,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryPromoteHigherTierUnits(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'unit') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'unit') continue;
       let target: PlacedUnitLite | null = null;
       let targetSeat = -Infinity;
       for (const u of view.placedUnits()) {
@@ -1981,8 +2015,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       let bestIdx = -1;
       let bestScore = -Infinity;
       for (let i = 0; i < tray.length; i++) {
-        const t = tray[i]!;
-        if (t.kind !== 'word') continue;
+        const t = tray[i];
+        if (!t || t.kind !== 'word') continue;
         if (t.char === junk.char) continue;
         let score = t.tier;
         const hasBoardMate = orphanWords().some(
@@ -1993,6 +2027,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const hasTrayMate = tray.some(
           (x, j) =>
             j !== i &&
+            !!x &&
             x.kind === 'word' &&
             isCharPartner(t.char, x.char, view, t.general === x.general ? t.general : undefined),
         );
@@ -2073,11 +2108,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       maxTier: number;
     } | null = null;
     for (let i = 0; i < tray.length; i++) {
-      const a = tray[i]!;
-      if (a.kind !== 'word') continue;
+      const a = tray[i];
+      if (!a || a.kind !== 'word') continue;
       for (let j = i + 1; j < tray.length; j++) {
-        const b = tray[j]!;
-        if (b.kind !== 'word') continue;
+        const b = tray[j];
+        if (!b || b.kind !== 'word') continue;
         const pair = resolveHeroPair(
           a.char, b.char, view,
           a.general === b.general ? a.general : undefined,
@@ -2106,8 +2141,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryReplaceTransitionWithMainTrayWord(): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       for (const mainDef of GENERALS) {
         if (mainDef.maxTier !== 5) continue;
         if (!mainDef.chars.includes(t.char)) continue;
@@ -2248,8 +2283,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!hasFreeCells()) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       if (bestTrayPartnerForWord(view, t, i)) continue;
       if (pickBestBoardMate(t.char, t.general)) continue;
       if (placeSingleWord(i)) return true;
@@ -2260,8 +2295,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   function tryPlaceTraySingleWords(force = false): boolean {
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       if (placeSingleWord(i, force)) return true;
     }
     return false;
@@ -2272,8 +2307,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (view.freeCells().length > 0) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const t = tray[i]!;
-      if (t.kind !== 'word') continue;
+      const t = tray[i];
+      if (!t || t.kind !== 'word') continue;
       if (mayLeaveWordInTray(t)) continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
       if (pickBestBoardMate(t.char, t.general)) continue;
@@ -2357,12 +2392,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         const leftChar = chars[0];
         const rightChar = chars[1];
         const trayNow = view.tray();
-        const leftIdx = trayNow.findIndex((x) => x.kind === 'word' && x.char === leftChar);
-        const rightIdx0 = trayNow.findIndex((x) => x.kind === 'word' && x.char === rightChar);
+        const leftIdx = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === leftChar);
+        const rightIdx0 = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === rightChar);
         if (leftIdx < 0 || rightIdx0 < 0) continue;
         if (!view.place(leftIdx, left)) continue;
         const trayAfter = view.tray();
-        const rightIdx = trayAfter.findIndex((x) => x.kind === 'word' && x.char === rightChar);
+        const rightIdx = trayFindIndex(trayAfter, (x) => x.kind === 'word' && x.char === rightChar);
         if (rightIdx < 0) return true;
         if (view.place(rightIdx, right)) return true;
         return true;
@@ -2407,7 +2442,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
         // 2) 落 tray 字：优先挪开占位，满盘挪不开时直接 place（与孤儿/兵交换）
         clearForHero(needTray, reserved, null, [mateOld]);
-        const idx = view.tray().findIndex(
+        const idx = trayFindIndex(
+          view.tray(),
           (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
         );
         if (idx < 0) continue;
@@ -2430,11 +2466,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       gain: number;
     } | null = null;
     for (let i = 0; i < tray.length; i++) {
-      const a = tray[i]!;
-      if (a.kind !== 'unit') continue;
+      const a = tray[i];
+      if (!a || a.kind !== 'unit') continue;
       for (let j = i + 1; j < tray.length; j++) {
-        const b = tray[j]!;
-        if (b.kind !== 'unit') continue;
+        const b = tray[j];
+        if (!b || b.kind !== 'unit') continue;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
         const upType = a.type;
         const upTier = a.tier + 1;
@@ -2464,7 +2500,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function trayUnitCount(type: UnitType, tier: number): number {
-    return view.tray().filter(
+    return filledTrayTokens(view.tray()).filter(
       (t): t is Extract<PlaceToken, { kind: 'unit' }> =>
         t.kind === 'unit' && t.type === type && t.tier === tier,
     ).length;
@@ -2490,12 +2526,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const tray = view.tray();
     let best: { i: number; j: number; tier: number } | null = null;
     for (let i = 0; i < tray.length; i++) {
-      const a = tray[i]!;
-      if (a.kind !== 'unit') continue;
+      const a = tray[i];
+      if (!a || a.kind !== 'unit') continue;
       if (!shouldTrayChainMerge(a.type, a.tier)) continue;
       for (let j = i + 1; j < tray.length; j++) {
-        const b = tray[j]!;
-        if (b.kind !== 'unit') continue;
+        const b = tray[j];
+        if (!b || b.kind !== 'unit') continue;
         if (a.type !== b.type || a.tier !== b.tier) continue;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
         if (!best || a.tier > best.tier) best = { i, j, tier: a.tier };
@@ -2513,11 +2549,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (subopt()) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
-      const a = tray[i]!;
-      if (a.kind !== 'unit') continue;
+      const a = tray[i];
+      if (!a || a.kind !== 'unit') continue;
       for (let j = i + 1; j < tray.length; j++) {
-        const b = tray[j]!;
-        if (b.kind !== 'unit') continue;
+        const b = tray[j];
+        if (!b || b.kind !== 'unit') continue;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
         const upTier = a.tier + 1;
         const mate = view.placedUnits().find((u) => u.type === a.type && u.tier === upTier);
@@ -2571,8 +2607,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 腾出的格：优先放「能打到路」的最短射程兵
     const freed = best.drop;
     const tray = view.tray();
-    const candidates = tray
-      .map((t, i) => ({ t, i }))
+    const candidates = filledTraySlots(tray)
       .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
       .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
     if (candidates.length > 0) {

@@ -19,14 +19,30 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-const BACK = { x: 24, y: 40, w: 92, h: 44 };
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const ch of text) {
+    if (ch === '\n') { lines.push(line); line = ''; continue; }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+const BACK = { x: 18, y: 26, w: 88, h: 38 };
+const TITLE_X = (BACK.x + BACK.w + VIEW_W - 18) / 2;
+const TITLE_Y = BACK.y + BACK.h / 2;
+const SUBTITLE_TOP = BACK.y + BACK.h + 10;
 const ROW_H = 62;
 const ROW_GAP = 4;
-const LIST_TOP = 124;
+const LIST_TOP = 128;
 const LIST_BOTTOM_PAD = 40;
 const LEFT = 24;
 const ROW_W = VIEW_W - 48;
-const HEADER_H = 108;
+const HEADER_H = SUBTITLE_TOP + 36;
 
 /** 已装备（最近在前）→ 已获得未装备 → 未获得，各段内按 WEAPONS 自然顺序 */
 export function bagDisplayOrder(bag: BagState): string[] {
@@ -124,25 +140,20 @@ function drawBagRow(
     : `${weaponGradeName(w.id)} · 专属「${gname}」`;
   ctx.fillText(sub, LEFT + 14, y + ROW_H / 2 + 12);
 
-  const barX = LEFT + 14;
-  const barW = ROW_W - 14 - 96;
-  if (!has) {
-    drawFragmentBar(ctx, barX, y + ROW_H - 12, barW, frags, req, gradeColor);
-  }
+  const bw = 72;
+  const bh = 30;
+  const btnRight = 10;
+  const bx = LEFT + ROW_W - bw - btnRight;
+  const by = y + (ROW_H - bh) / 2;
+  const textRight = bx - 10;
 
   ctx.textAlign = 'right';
-  ctx.fillStyle = has ? '#9bffb0' : gradeColor;
-  ctx.font = 'bold 14px "PingFang SC", sans-serif';
-  ctx.fillText(
-    has ? weaponBonusLabel(w.stat, tier) : `碎片 ${frags}/${req}`,
-    LEFT + ROW_W - 96,
-    y + ROW_H / 2,
-  );
+  if (has) {
+    ctx.fillStyle = '#9bffb0';
+    ctx.font = 'bold 14px "PingFang SC", sans-serif';
+    ctx.fillText(weaponBonusLabel(w.stat, tier), textRight, y + ROW_H / 2);
+  }
 
-  const bw = 74;
-  const bh = 30;
-  const bx = LEFT + ROW_W - bw - 12;
-  const by = y + (ROW_H - bh) / 2;
   roundRect(ctx, bx, by, bw, bh, 8);
   ctx.fillStyle = !has ? '#3a3428' : on ? '#c8792b' : '#4a4534';
   ctx.fill();
@@ -181,15 +192,19 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
   ctx.fillText('‹ 返回', BACK.x + BACK.w / 2, BACK.y + BACK.h / 2);
 
   ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText('武器背包', VIEW_W / 2, 56);
+  ctx.font = 'bold 26px "PingFang SC", sans-serif';
+  ctx.fillText('武器背包', TITLE_X, TITLE_Y);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
   ctx.fillStyle = '#d8c8a0';
-  ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(
-    `武将攻击10%掉碎片·每局最多1次·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`,
-    VIEW_W / 2,
-    90,
-  );
+  ctx.font = '11px "PingFang SC", sans-serif';
+  const sub = `武将攻击10%掉碎片·每局最多1次·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`;
+  let sy = SUBTITLE_TOP;
+  for (const ln of wrapText(ctx, sub, VIEW_W - 36).slice(0, 2)) {
+    ctx.fillText(ln, VIEW_W / 2, sy);
+    sy += 15;
+  }
 
   if (toast) {
     ctx.textAlign = 'center';
@@ -206,28 +221,17 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
 export type BagPopupHit = 'toggle' | 'close' | 'outside' | null;
 
 const PW = 400;
-const PH = 300;
+const PH = 372;
 const PX = (VIEW_W - PW) / 2;
 const PY = (VIEW_H - PH) / 2;
-const PAD = 22;
+const PAD = 20;
 const CLOSE_R = { x: PX + PW - 40, y: PY + 14, w: 26, h: 26 };
-const ACTION_R = { x: PX + PAD, y: PY + PH - 60, w: PW - PAD * 2, h: 44 };
+const ACTION_H = 44;
+const ACTION_R = { x: PX + PAD, y: PY + PH - PAD - ACTION_H, w: PW - PAD * 2, h: ACTION_H };
+const DESC_LINE_H = 22;
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-}
-
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
-  const lines: string[] = [];
-  let line = '';
-  for (const ch of text) {
-    if (ch === '\n') { lines.push(line); line = ''; continue; }
-    const test = line + ch;
-    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = ch; }
-    else line = test;
-  }
-  if (line) lines.push(line);
-  return lines;
 }
 
 export function bagPopupHitAt(x: number, y: number): BagPopupHit {
@@ -276,7 +280,7 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
 
   if (!has) {
     const barW = PW - PAD * 2;
-    drawFragmentBar(ctx, PX + PAD, PY + 82, barW, frags, req, weaponGradeColor(id));
+    drawFragmentBar(ctx, PX + PAD, PY + 80, barW, frags, req, weaponGradeColor(id));
     ctx.fillStyle = weaponGradeColor(id);
     ctx.font = 'bold 15px "PingFang SC", sans-serif';
     ctx.fillText(`碎片进度 ${frags}/${req}`, PX + PAD, PY + 92);
@@ -292,12 +296,16 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.textBaseline = 'middle';
   ctx.fillText('✕', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2);
 
+  const dividerY = has ? PY + 74 : PY + 112;
+  const descTop = dividerY + 14;
+  const descMaxBottom = ACTION_R.y - 12;
+
   // 分隔线
   ctx.strokeStyle = 'rgba(255,255,255,0.12)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(PX + PAD, PY + (has ? 76 : 118));
-  ctx.lineTo(PX + PW - PAD, PY + (has ? 76 : 118));
+  ctx.moveTo(PX + PAD, dividerY);
+  ctx.lineTo(PX + PW - PAD, dividerY);
   ctx.stroke();
 
   // 说明：定位 + 当前加成 + 满阶加成 + 获取方式
@@ -320,9 +328,21 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.9)';
-  ctx.font = '15px "PingFang SC", sans-serif';
-  let ty = PY + (has ? 90 : 132);
-  for (const ln of wrapText(ctx, usage, PW - PAD * 2)) { ctx.fillText(ln, PX + PAD, ty); ty += 24; }
+  ctx.font = '14px "PingFang SC", sans-serif';
+  const lines = wrapText(ctx, usage, PW - PAD * 2);
+  let ty = descTop;
+  for (let i = 0; i < lines.length; i++) {
+    if (ty + DESC_LINE_H > descMaxBottom) {
+      if (i < lines.length - 1) {
+        let clipped = lines[i]!;
+        while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > PW - PAD * 2) clipped = clipped.slice(0, -1);
+        ctx.fillText(`${clipped}…`, PX + PAD, ty);
+      }
+      break;
+    }
+    ctx.fillText(lines[i]!, PX + PAD, ty);
+    ty += DESC_LINE_H;
+  }
 
   // 动作按钮：装备 / 已装备(卸下) / 未获得
   roundRect(ctx, ACTION_R.x, ACTION_R.y, ACTION_R.w, ACTION_R.h, 10);
@@ -332,5 +352,5 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.textBaseline = 'middle';
   ctx.fillStyle = !has ? '#6a6250' : '#fff6e6';
   ctx.font = 'bold 17px "PingFang SC", sans-serif';
-  ctx.fillText(!has ? `收集中 ${frags}/${req}` : on ? '已装备（点击卸下）' : '装备', ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
+  ctx.fillText(!has ? (frags > 0 ? '收集中' : '未获得') : on ? '已装备（点击卸下）' : '装备', ACTION_R.x + ACTION_R.w / 2, ACTION_R.y + ACTION_R.h / 2);
 }
