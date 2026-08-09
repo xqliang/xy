@@ -17,6 +17,23 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
   ctx.fillRect(0, 0, w, h);
 }
 
+/** 弹窗标题栏高度（关闭钮在此区域内垂直居中） */
+export const INK_POPUP_HEAD_H = 46;
+
+export function inkPopupCloseRect(
+  popX: number,
+  popY: number,
+  btnW = 36,
+  btnH = 30,
+): { x: number; y: number; w: number; h: number } {
+  return {
+    x: popX + 10,
+    y: popY + (INK_POPUP_HEAD_H - btnH) / 2,
+    w: btnW,
+    h: btnH,
+  };
+}
+
 /** 弹窗卷轴框：返回内容区 top（标题栏下方） */
 export function drawInkPopupFrame(
   ctx: CanvasRenderingContext2D,
@@ -44,7 +61,7 @@ export function drawInkPopupFrame(
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  const headH = 46;
+  const headH = INK_POPUP_HEAD_H;
   roundRect(ctx, x, y, w, headH, 14);
   const head = ctx.createLinearGradient(x, y, x, y + headH);
   head.addColorStop(0, '#8a4020');
@@ -64,8 +81,10 @@ export function drawInkPopupFrame(
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.fillStyle = '#ffe8c0';
-  ctx.font = 'bold 20px "PingFang SC", serif';
-  ctx.fillText('×', closeR.x + closeR.w / 2, closeR.y + closeR.h / 2 + 1);
+  ctx.font = 'bold 22px "PingFang SC", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('×', closeR.x + closeR.w / 2, closeR.y + closeR.h / 2);
 
   return y + headH + 12;
 }
@@ -248,6 +267,7 @@ export function drawInkResourceBar(
   rect: { x: number; y: number; w: number; h: number },
   tag: string,
   text: string,
+  rightPad = 0,
 ): void {
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
   ctx.fillStyle = 'rgba(48,28,12,0.62)';
@@ -255,21 +275,36 @@ export function drawInkResourceBar(
   ctx.strokeStyle = 'rgba(255,220,160,0.45)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  const padX = Math.round(rect.h * 0.35);
+  const tagPx = Math.max(13, Math.round(rect.h * 0.42));
+  const numPx = Math.max(15, Math.round(rect.h * 0.5));
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#e0c080';
-  ctx.font = 'bold 13px "PingFang SC", "STKaiti", serif';
-  ctx.fillText(tag, rect.x + 10, rect.y + rect.h / 2);
+  ctx.font = `bold ${tagPx}px "PingFang SC", "STKaiti", serif`;
+  ctx.fillText(tag, rect.x + padX, rect.y + rect.h / 2);
+  const tagW = ctx.measureText(tag).width;
+  const textOffset = padX + tagW + Math.round(rect.h * 0.22);
+  const textX = rect.x + textOffset;
+  const textMaxW = rect.w - textOffset - padX - rightPad;
   ctx.fillStyle = '#fff6e6';
-  ctx.font = 'bold 14px "PingFang SC", sans-serif';
-  ctx.fillText(text, rect.x + 38, rect.y + rect.h / 2);
+  ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
+  let shown = text;
+  while (shown.length > 1 && ctx.measureText(shown).width > textMaxW) shown = shown.slice(0, -1);
+  if (shown !== text && shown.length > 0) shown += '…';
+  ctx.fillText(shown, textX, rect.y + rect.h / 2);
 }
 
 export function drawInkPlusButton(
   ctx: CanvasRenderingContext2D,
   rect: { x: number; y: number; w: number; h: number },
   interact: MenuInteract,
+  variant: 'raised' | 'inset' = 'raised',
 ): void {
+  if (variant === 'inset') {
+    drawInkPlusButtonInset(ctx, rect, interact);
+    return;
+  }
   const cx = rect.x + rect.w / 2;
   const cy = rect.y + rect.h / 2;
   ctx.save();
@@ -282,10 +317,96 @@ export function drawInkPlusButton(
   ctx.lineWidth = interact === 'hover' ? 2 : 1.5;
   ctx.stroke();
   ctx.fillStyle = '#fff8ee';
-  ctx.font = `bold ${Math.round(rect.h * 0.62)}px "PingFang SC", sans-serif`;
+  ctx.font = `bold ${Math.round(rect.h * 0.58)}px "PingFang SC", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('+', cx, cy);
+  ctx.restore();
+}
+
+function drawInkPlusButtonInset(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  interact: MenuInteract,
+): void {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const r = Math.min(rect.w, rect.h) / 2;
+  const pressed = interact === 'pressed';
+  const hover = interact === 'hover';
+  ctx.save();
+  if (interact !== 'none') applyMenuInteract(ctx, rect, interact);
+
+  // 浅槽底：略深于键帽，托住立体按钮
+  roundRect(ctx, rect.x, rect.y, rect.w, rect.h, r);
+  const well = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
+  well.addColorStop(0, 'rgba(52,78,46,0.42)');
+  well.addColorStop(1, 'rgba(42,64,38,0.32)');
+  ctx.fillStyle = well;
+  ctx.fill();
+
+  const pad = 2;
+  const fx = rect.x + pad;
+  const fy = rect.y + pad + (pressed ? 1 : 0);
+  const fw = rect.w - pad * 2;
+  const fh = rect.h - pad * 2;
+  const fr = r - pad;
+
+  // 底部投影：托起立体键帽
+  if (!pressed) {
+    ctx.save();
+    roundRect(ctx, fx, fy + 2, fw, fh, fr);
+    ctx.fillStyle = 'rgba(0,0,0,0.14)';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 键帽主体：上亮下暗渐变
+  roundRect(ctx, fx, fy, fw, fh, fr);
+  const face = ctx.createLinearGradient(fx, fy, fx, fy + fh);
+  if (pressed) {
+    face.addColorStop(0, '#688f62');
+    face.addColorStop(1, '#557848');
+  } else if (hover) {
+    face.addColorStop(0, '#98b890');
+    face.addColorStop(0.45, '#84a87c');
+    face.addColorStop(1, '#6d9264');
+  } else {
+    face.addColorStop(0, '#8faa86');
+    face.addColorStop(0.5, '#7a9872');
+    face.addColorStop(1, '#68865e');
+  }
+  ctx.fillStyle = face;
+  ctx.fill();
+
+  // 顶部高光层
+  ctx.save();
+  roundRect(ctx, fx, fy, fw, fh, fr);
+  ctx.clip();
+  const shine = ctx.createLinearGradient(fx, fy, fx, fy + fh);
+  shine.addColorStop(0, 'rgba(255,255,255,0.2)');
+  shine.addColorStop(0.55, 'rgba(255,255,255,0.04)');
+  shine.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = shine;
+  ctx.fillRect(fx, fy, fw, fh);
+  ctx.restore();
+
+  ctx.strokeStyle = hover ? 'rgba(255,248,220,0.42)' : 'rgba(255,240,200,0.28)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, fx, fy, fw, fh, fr);
+  ctx.stroke();
+
+  const plusPx = Math.round(fh * 0.54);
+  ctx.font = `bold ${plusPx}px "PingFang SC", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const ty = cy + (pressed ? 0.5 : -0.5);
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillText('+', cx - 0.5, ty - 1);
+  ctx.fillStyle = pressed ? '#dce8d6' : hover ? '#eef6ea' : '#e4ede0';
+  ctx.fillText('+', cx, ty);
+  ctx.fillStyle = 'rgba(28,48,22,0.28)';
+  ctx.fillText('+', cx + 0.5, ty + 1);
   ctx.restore();
 }
 
@@ -294,11 +415,14 @@ function drawRankStarFallback(
   x: number,
   y: number,
   on: boolean,
+  size = 22,
 ): void {
+  const outer = size * 0.41;
+  const inner = size * 0.18;
   ctx.beginPath();
   for (let p = 0; p < 5; p++) {
     const ang = -Math.PI / 2 + p * ((Math.PI * 2) / 5);
-    const rad = p % 2 === 0 ? 9 : 4;
+    const rad = p % 2 === 0 ? outer : inner;
     const px = x + Math.cos(ang) * rad;
     const py = y + Math.sin(ang) * rad;
     if (p === 0) ctx.moveTo(px, py);
@@ -310,6 +434,46 @@ function drawRankStarFallback(
   ctx.strokeStyle = '#8a6010';
   ctx.lineWidth = 1;
   ctx.stroke();
+}
+
+/** 水墨星星排：fills[i]∈[0,1] 控制第 i 颗由空→满的叠化（结算加星/减星动画） */
+export function drawRankStarsAnimated(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  y: number,
+  fills: number[],
+  opts?: { total?: number; gap?: number; size?: number },
+): void {
+  const total = opts?.total ?? fills.length;
+  const gap = opts?.gap ?? 28;
+  const size = opts?.size ?? 22;
+  const x0 = cx - ((total - 1) * gap) / 2;
+  const starOn = sprite('rank-star-on');
+  const starOff = sprite('rank-star-off');
+
+  for (let i = 0; i < total; i++) {
+    const fill = Math.max(0, Math.min(1, fills[i] ?? 0));
+    const x = x0 + i * gap;
+    const transitioning = fill > 0.02 && fill < 0.995;
+    const scale = transitioning ? 1 + 0.16 * Math.sin(fill * Math.PI) : 1;
+    const onSize = size * scale;
+
+    ctx.save();
+    if (starOff && starOn) {
+      ctx.drawImage(starOff, x - size / 2, y - size / 2, size, size);
+      if (fill > 0.001) {
+        ctx.globalAlpha = fill;
+        if (transitioning) {
+          ctx.shadowColor = 'rgba(255,210,80,0.85)';
+          ctx.shadowBlur = 10 * fill;
+        }
+        ctx.drawImage(starOn, x - onSize / 2, y - onSize / 2, onSize, onSize);
+      }
+    } else {
+      drawRankStarFallback(ctx, x, y, fill >= 0.5, size);
+    }
+    ctx.restore();
+  }
 }
 
 export function drawRankStars(ctx: CanvasRenderingContext2D, cx: number, y: number, filled: number, total = 5): void {

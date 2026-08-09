@@ -10,7 +10,8 @@ import {
   drawInkPopupFrame,
   drawInkCheckbox,
   drawInkSlider,
-  drawMenuSpriteButton,
+  drawInkActionButton,
+  inkPopupCloseRect,
 } from './menu-ui';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
@@ -22,7 +23,7 @@ const SET_PW = 400;
 const SET_PH = 300;
 const SET_PX = (VIEW_W - SET_PW) / 2;
 const SET_PY = (VIEW_H - SET_PH) / 2 - 16;
-const SET_CLOSE = { x: SET_PX + 10, y: SET_PY + 8, w: 36, h: 30 };
+const SET_CLOSE = inkPopupCloseRect(SET_PX, SET_PY);
 const SET_BODY = SET_PY + 58;
 const SET_CHECK = { x: SET_PX + 28, y: SET_BODY + 8, w: 20, h: 20 };
 const SET_MUSIC_TRACK = { x: SET_PX + 28, y: SET_BODY + 88, w: SET_PW - 56, h: 10 };
@@ -101,13 +102,22 @@ export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameS
 
 // —— 获取体力弹窗 —— //
 const STA_PW = 400;
-const STA_PH = 340;
+const STA_PH = 468;
 const STA_PX = (VIEW_W - STA_PW) / 2;
 const STA_PY = (VIEW_H - STA_PH) / 2 - 16;
-const STA_CLOSE = { x: STA_PX + 10, y: STA_PY + 8, w: 36, h: 30 };
+const STA_CLOSE = inkPopupCloseRect(STA_PX, STA_PY);
 const STA_BODY = STA_PY + 58;
-const STA_AD = { x: STA_PX + 24, y: STA_PY + STA_PH - 62, w: (STA_PW - 56) / 2, h: 48 };
-const STA_SHARE = { x: STA_PX + STA_PW / 2 + 4, y: STA_PY + STA_PH - 62, w: (STA_PW - 56) / 2, h: 48 };
+const STA_BTN_W = STA_PW - 64;
+const STA_BTN_H = 56;
+const STA_BTN_GAP = 16;
+const STA_BTN_X = STA_PX + 32;
+const STA_BOTTOM = STA_PY + STA_PH - 28;
+const STA_SHARE = { x: STA_BTN_X, y: STA_BOTTOM - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
+const STA_AD = { x: STA_BTN_X, y: STA_SHARE.y - STA_BTN_GAP - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
+const STA_HINT_Y = STA_AD.y - 30;
+const STA_HERO_SIZE = 84;
+const STA_HERO_CY = STA_HINT_Y - 22 - STA_HERO_SIZE / 2;
+const STA_LABEL_Y = STA_BODY + 24;
 
 export type StaminaPopupHit =
   | { kind: 'close' }
@@ -130,23 +140,28 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#5a3a12';
   ctx.font = 'bold 18px "PingFang SC", serif';
-  ctx.fillText(`当前体力  ${stamina} / ${STAMINA_MAX}`, STA_PX + STA_PW / 2, STA_BODY + 18);
+  ctx.fillText(`当前体力  ${stamina} / ${STAMINA_MAX}`, STA_PX + STA_PW / 2, STA_LABEL_Y);
 
   const spr = sprite('hero-bajie');
   const cx = STA_PX + STA_PW / 2;
-  const cy = STA_BODY + 108;
   if (spr) {
-    const s = 108;
+    const s = STA_HERO_SIZE;
     const scale = Math.min(s / spr.width, s / spr.height);
-    ctx.drawImage(spr, cx - (spr.width * scale) / 2, cy - s / 2, spr.width * scale, spr.height * scale);
+    ctx.drawImage(
+      spr,
+      cx - (spr.width * scale) / 2,
+      STA_HERO_CY - s / 2,
+      spr.width * scale,
+      spr.height * scale,
+    );
   }
 
   ctx.fillStyle = stamina >= STAMINA_MAX ? '#8a6020' : '#8a3010';
   ctx.font = '15px "PingFang SC", serif';
-  ctx.fillText(stamina >= STAMINA_MAX ? '体力已满' : '体力不足，请选择补充方式', cx, STA_BODY + 178);
+  ctx.fillText(stamina >= STAMINA_MAX ? '体力已满' : '体力不足，请选择补充方式', cx, STA_HINT_Y);
 
-  drawMenuSpriteButton(ctx, sprite('menu-btn-stamina-ad'), STA_AD, 'none', 'none', '看广告 +10', 'accent');
-  drawMenuSpriteButton(ctx, sprite('menu-btn-stamina-share'), STA_SHARE, 'none', 'none', '分享好友 +5', 'secondary');
+  drawInkActionButton(ctx, STA_AD, '看广告 +10', false, 'accent');
+  drawInkActionButton(ctx, STA_SHARE, '分享好友 +5', false, 'secondary');
 
   if (toast) {
     ctx.fillStyle = '#8a3010';
@@ -160,7 +175,7 @@ const MAP_PW = 420;
 const MAP_PH = 480;
 const MAP_PX = (VIEW_W - MAP_PW) / 2;
 const MAP_PY = (VIEW_H - MAP_PH) / 2 - 8;
-const MAP_CLOSE = { x: MAP_PX + 10, y: MAP_PY + 8, w: 36, h: 30 };
+const MAP_CLOSE = inkPopupCloseRect(MAP_PX, MAP_PY);
 const MAP_DAILY = { x: MAP_PX + 24, y: MAP_PY + 58, w: MAP_PW - 48, h: 44 };
 const MAP_CARD_W = (MAP_PW - 60) / 2;
 const MAP_CARD_H = 100;

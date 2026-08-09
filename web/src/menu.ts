@@ -37,18 +37,20 @@ export interface MenuInfo {
 }
 
 const TOP = 18;
-const BAR_H = 26;
-const BAR_GAP = 6;
+const BAR_H = 34;
+const BAR_GAP = 8;
 const HEADER_BLOCK_H = BAR_H * 2 + BAR_GAP;
-const AVATAR = { x: 16, y: TOP + (HEADER_BLOCK_H - 52) / 2, w: 52, h: 52 };
-const BAR_X = 76;
-const BAR_W = 210;
+const AVATAR_SIZE = 70;
+const AVATAR = { x: 16, y: TOP + (HEADER_BLOCK_H - AVATAR_SIZE) / 2, w: AVATAR_SIZE, h: AVATAR_SIZE };
+const BAR_X = AVATAR.x + AVATAR_SIZE + 10;
+const BAR_W = 228;
 const MERIT_BAR = { x: BAR_X, y: TOP, w: BAR_W, h: BAR_H };
 const STAMINA_BAR = { x: BAR_X, y: TOP + BAR_H + BAR_GAP, w: BAR_W, h: BAR_H };
-const PLUS = 22;
+const PLUS_INSET = 4;
+const PLUS = BAR_H - PLUS_INSET * 2;
 export const STAMINA_PLUS_BTN = {
-  x: STAMINA_BAR.x + STAMINA_BAR.w + 6,
-  y: STAMINA_BAR.y + (BAR_H - PLUS) / 2,
+  x: STAMINA_BAR.x + STAMINA_BAR.w - PLUS - PLUS_INSET,
+  y: STAMINA_BAR.y + PLUS_INSET,
   w: PLUS,
   h: PLUS,
 };
@@ -69,6 +71,11 @@ const SIDE_BTN = { x: SIDE_X, w: SIDE, h: SIDE };
 const START_W = 372;
 const START_H = 94;
 const START_Y = 620;
+export const MENU_START_BTN_Y = START_Y;
+/** 首页飘字起点：开始按钮上缘再往上 20px */
+export function menuStartToastAnchorY(): number {
+  return START_Y - 20;
+}
 const START_BTN = { x: (VIEW_W - START_W) / 2, y: START_Y, w: START_W, h: START_H };
 const ENDLESS_GAP = 10;
 const ENDLESS_LABEL = '无尽模式';
@@ -127,7 +134,7 @@ function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
 export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   drawMenuBackground(ctx);
 
-  roundRect(ctx, AVATAR.x, AVATAR.y, AVATAR.w, AVATAR.h, 10);
+  roundRect(ctx, AVATAR.x, AVATAR.y, AVATAR.w, AVATAR.h, 12);
   ctx.fillStyle = 'rgba(40,25,10,0.5)';
   ctx.fill();
   ctx.strokeStyle = 'rgba(255,220,160,0.5)';
@@ -141,8 +148,14 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   }
 
   drawInkResourceBar(ctx, MERIT_BAR, '功德', String(info.merit));
-  drawInkResourceBar(ctx, STAMINA_BAR, '体力', `${info.stamina}/${STAMINA_MAX}`);
-  drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'));
+  drawInkResourceBar(
+    ctx,
+    STAMINA_BAR,
+    '体力',
+    `${info.stamina}/${STAMINA_MAX}`,
+    STAMINA_PLUS_BTN.w + PLUS_INSET + 6,
+  );
+  drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'), 'inset');
 
   const titleY = 148;
   const rankBlockDy = 15;
@@ -152,9 +165,9 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#b5391f';
-  ctx.font = 'bold 44px "PingFang SC", "STKaiti", serif';
-  ctx.strokeStyle = 'rgba(255,240,210,0.6)';
-  ctx.lineWidth = 3;
+  ctx.font = '44px "STKaiti", "KaiTi", "华文楷体", "AR PL UKai CN", serif';
+  ctx.strokeStyle = 'rgba(255,240,210,0.55)';
+  ctx.lineWidth = 2;
   ctx.strokeText('大圣与唐僧', VIEW_W / 2, titleY);
   ctx.fillText('大圣与唐僧', VIEW_W / 2, titleY);
   ctx.fillStyle = '#5a3a12';

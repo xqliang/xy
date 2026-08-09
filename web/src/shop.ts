@@ -534,7 +534,7 @@ export function drawShopPopup(
   ctx.font = 'bold 16px "PingFang SC", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('✕', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2 + 1);
+  ctx.fillText('✕', CLOSE_R.x + CLOSE_R.w / 2, CLOSE_R.y + CLOSE_R.h / 2);
 
   // 分隔线
   ctx.strokeStyle = 'rgba(255,255,255,0.12)';

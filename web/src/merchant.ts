@@ -6,6 +6,7 @@ import {
   drawInkPopupFrame,
   drawInkActionButton,
   drawInkResourceBar,
+  inkPopupCloseRect,
 } from './menu-ui';
 import { activeById, enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { passiveById, enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
@@ -288,7 +289,7 @@ const PW = 504;
 const PH = 868;
 const PX = (VIEW_W - PW) / 2;
 const PY = (VIEW_H - PH) / 2 - 8;
-const CLOSE_R = { x: PX + 10, y: PY + 8, w: 36, h: 30 };
+const CLOSE_R = inkPopupCloseRect(PX, PY);
 const BODY = PY + 58;
 const TAB_SHOP = { x: PX + 18, y: BODY + 6, w: 228, h: 34 };
 const TAB_LOTTERY = { x: PX + 258, y: BODY + 6, w: 228, h: 34 };
@@ -413,7 +414,13 @@ function drawMerchantPeddler(ctx: CanvasRenderingContext2D): void {
     const scale = Math.min(box.w / peddler.width, box.h / peddler.height);
     const dw = peddler.width * scale;
     const dh = peddler.height * scale;
-    ctx.drawImage(peddler, box.x + (box.w - dw) / 2, box.y + box.h - dh, dw, dh);
+    const dx = box.x + (box.w - dw) / 2;
+    const dy = box.y + box.h - dh;
+    ctx.save();
+    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
+    ctx.clip();
+    ctx.drawImage(peddler, dx, dy, dw, dh);
+    ctx.restore();
     return;
   }
   roundRect(ctx, box.x, box.y, box.w, box.h, 10);
@@ -527,10 +534,15 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
       if (preview) {
         const def = preview.kind === 'active' ? activeById(preview.id) : passiveById(preview.id);
         if (def) {
-          ctx.font = '28px sans-serif';
+          ctx.font = '26px sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(def.icon, cell.x + cell.w / 2, cell.y + cell.h / 2);
+          ctx.fillStyle = '#000';
+          ctx.fillText(def.icon, cell.x + cell.w / 2, cell.y + cell.h / 2 - 10);
+          ctx.fillStyle = '#4a2808';
+          ctx.font = 'bold 11px "PingFang SC", "STKaiti", serif';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(fitText(ctx, def.name, cell.w - 10), cell.x + cell.w / 2, cell.y + cell.h - 8);
         }
       }
     }

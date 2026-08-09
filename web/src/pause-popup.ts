@@ -1,6 +1,6 @@
 // 局内暂停弹窗：继续 / 终止（二次确认），水墨卷轴风。
 import { VIEW_W, VIEW_H } from './render';
-import { drawInkPopupFrame, drawInkActionButton } from './menu-ui';
+import { drawInkPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -23,13 +23,13 @@ const BTN_GAP = 14;
 
 const MAIN_PY = (VIEW_H - 248) / 2;
 const MAIN_PH = 248;
-const MAIN_CLOSE = { x: PX + 10, y: MAIN_PY + 8, w: 36, h: 30 };
+const MAIN_CLOSE = inkPopupCloseRect(PX, MAIN_PY);
 const MAIN_CONTINUE = { x: PX + PAD, y: MAIN_PY + 128, w: PW - PAD * 2, h: BTN_H };
 const MAIN_QUIT = { x: PX + PAD, y: MAIN_CONTINUE.y + BTN_H + BTN_GAP, w: PW - PAD * 2, h: BTN_H };
 
 const CONF_PY = (VIEW_H - 228) / 2;
 const CONF_PH = 228;
-const CONF_CLOSE = { x: PX + 10, y: CONF_PY + 8, w: 36, h: 30 };
+const CONF_CLOSE = inkPopupCloseRect(PX, CONF_PY);
 const CONF_CANCEL = { x: PX + PAD, y: CONF_PY + CONF_PH - PAD - BTN_H, w: (PW - PAD * 2 - 12) / 2, h: BTN_H };
 const CONF_OK = { x: PX + PW / 2 + 6, y: CONF_CANCEL.y, w: CONF_CANCEL.w, h: BTN_H };
 

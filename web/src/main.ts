@@ -17,6 +17,12 @@ import {
 import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS } from './board';
 import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
+import { loadAssets } from './assets';
+import {
+  pushMenuFloatToast,
+  updateMenuFloatToasts,
+  drawMenuFloatToasts,
+} from './menu-toast';
 import {
   drawPausePopup,
   pausePopupHitAt,
@@ -224,6 +230,8 @@ function handleMenu(id: string) {
     const r = spendStamina(stamina);
     if (!r.ok) {
       menuToast = '体力不足（需 5 点）！点 + 补充';
+      pushMenuFloatToast('体力不足，无法开始游戏');
+      scheduleFrame();
       return;
     }
     stamina = r.state;
@@ -774,6 +782,7 @@ function frame(now: number): void {
   if (screen === 'menu') startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
   if (screen === 'menu') {
+    updateMenuFloatToasts(dt);
     stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
     drawMenu(ctx, {
       rankStars: rank.stars,
@@ -791,6 +800,7 @@ function frame(now: number): void {
     else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
     if (merchant.open) drawMerchant(ctx, merchant, loadout, merit);
+    drawMenuFloatToasts(ctx);
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
     if (shopPopup) drawShopPopup(ctx, shopPopup, merit, loadout);

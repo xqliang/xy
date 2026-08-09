@@ -520,12 +520,13 @@ export interface DamageFloat {
   c: number;
   r: number;
   amount: number;
+  x: number;
+  vx: number;
   y: number;
   vy: number;
   peakY: number;
   age: number;
   crit: boolean;
-  xJitter: number;
 }
 
 export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
@@ -539,6 +540,8 @@ export const DAMAGE_FLOAT_RISE_CRIT = 0.52;
 export const DAMAGE_FLOAT_FALL = 0.16;
 export const DAMAGE_FLOAT_GRAVITY = 10;
 export const DAMAGE_FLOAT_GRAVITY_CRIT = 11;
+export const DAMAGE_FLOAT_VX = 0.72; // 左右抛物线初速（格/秒）
+export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
 export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
 
@@ -1451,16 +1454,20 @@ export class Battle {
     if (!getSettings().showDamageNumbers || amount <= 0) return;
     const gravity = crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY;
     const rise = crit ? DAMAGE_FLOAT_RISE_CRIT : DAMAGE_FLOAT_RISE;
+    const vxBase = crit ? DAMAGE_FLOAT_VX_CRIT : DAMAGE_FLOAT_VX;
+    const side = this.rng.next() < 0.5 ? -1 : 1;
+    const vx = side * (vxBase + this.rng.next() * vxBase * 0.45);
     this.damageFloats.push({
       c,
       r,
       amount,
+      x: 0,
+      vx,
       y: DAMAGE_FLOAT_HEAD_Y,
       vy: peachFloatInitialVy(gravity, rise),
       peakY: DAMAGE_FLOAT_HEAD_Y,
       age: 0,
       crit,
-      xJitter: (this.rng.next() - 0.5) * 0.28,
     });
   }
 
@@ -2833,9 +2840,9 @@ export class Battle {
     return msg;
   }
 
-  // 武将升阶进度：10×3^level（30/90/270/810…）；满条时双字各 +1 阶
+  // 武将升阶进度：5×3^level（15/45/135/405…）；满条时双字各 +1 阶
   static expToNext(level: number): number {
-    return 10 * 3 ** level;
+    return 5 * 3 ** level;
   }
   /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
   static combatExpFromHits(dmg: number, hit: number): number {
@@ -3404,6 +3411,7 @@ export class Battle {
       d.age += dt;
       d.vy += (d.crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY) * dt;
       d.y += d.vy * dt;
+      d.x += d.vx * dt;
       if (d.y < d.peakY) d.peakY = d.y;
     }
     this.damageFloats = this.damageFloats.filter((d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);

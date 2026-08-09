@@ -1402,22 +1402,16 @@ function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: numb
   return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
 }
 
-/** 引导箭头单周期透明度：缓入 → 保持 → 缓出（避免分段线性带来的跳变） */
-function spawnHintAlpha(phase: number): number {
-  const fadeInEnd = 0.24;
-  const fadeOutStart = 0.7;
-  if (phase < fadeInEnd) {
-    const t = phase / fadeInEnd;
-    const e = t * t * (3 - 2 * t); // smoothstep
-    return 0.34 + 0.61 * e;
-  }
-  if (phase < fadeOutStart) return 0.95;
-  const t = (phase - fadeOutStart) / (1 - fadeOutStart);
-  const e = 1 - t * t * (3 - 2 * t);
-  return 0.95 * e;
+/** 沿行程位置的透明度：入口淡入、出口淡出 */
+function spawnHintAlphaAlong(along: number, zoneLen: number, fadeLen: number): number {
+  if (along < 0 || along > zoneLen) return 0;
+  const smooth = (t: number) => t * t * (3 - 2 * t);
+  if (along < fadeLen) return 0.3 + 0.65 * smooth(along / fadeLen);
+  if (along > zoneLen - fadeLen) return 0.3 + 0.65 * smooth((zoneLen - along) / fadeLen);
+  return 0.95;
 }
 
-// 开局唐僧归位前：三箭头接力循环——半透明自格边出现 → 前移变实 → 下一箭在起点接力
+// 出怪指引：第 2 格入口起固定 3 枚，沿路径朝场内滚动（前端出、后端进）
 function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.introDone) return;
   if (b.status !== 'ready' && b.status !== 'playing') return;
@@ -1425,26 +1419,30 @@ function drawSpawnDirectionHints(ctx: CanvasRenderingContext2D, b: Battle) {
     const info = pathEntranceDir(path);
     if (!info) return;
     const { x: cx, y: cy } = cellCenterPx(info.c, info.r);
-    // 起点：第 2 格朝向出口的那条边（中心沿反方向退半格），避免压闸门
     const sx = cx - info.dc * CELL * 0.5;
     const sy = cy - info.dr * CELL * 0.5;
-    const travel = CELL * 1.7; // 单箭行程（约两格），三箭相位差形成接力
-    const arrowStagger = 2 / 9; // 相邻箭相位差（原 1/3 周期，间距减 1/3）
-    const period = 2.5; // 秒：一箭从出现到淡出
-    const t = performance.now() / 1000 / period;
+    const arrowCount = 3;
+    const spacing = CELL * 0.28;
+    const zoneLen = spacing * (arrowCount - 1);
+    const wrapSpan = zoneLen + spacing;
+    const fadeLen = spacing * 0.42;
+    const scroll = (performance.now() / 1000 * (spacing / 0.85)) % spacing;
     const size = CELL * 0.48;
     ctx.save();
-    for (let i = 0; i < 3; i++) {
-      // i=0 领先；下一箭在起点半透明接力出现
-      const phase = ((t - i * arrowStagger) % 1 + 1) % 1;
-      const along = phase * travel;
+    for (let i = 0; i < arrowCount; i++) {
+      let along = i * spacing + scroll;
+      while (along > zoneLen) along -= wrapSpan;
+      let alpha: number;
+      if (along < 0) {
+        alpha = spawnHintAlphaAlong(0, zoneLen, fadeLen) * (1 + along / spacing);
+      } else {
+        alpha = spawnHintAlphaAlong(along, zoneLen, fadeLen);
+      }
+      if (alpha < 0.04) continue;
       const ax = sx + info.dc * along;
       const ay = sy + info.dr * along;
-      const alpha = spawnHintAlpha(phase);
-      if (alpha < 0.04) continue;
       ctx.globalAlpha = alpha;
-      // 亮度随 alpha 连续过渡，避免 0.7 阈值处描边/光晕突变
-      const litT = Math.max(0, Math.min(1, (alpha - 0.45) / 0.5));
+      const litT = Math.max(0, Math.min(1, (alpha - 0.3) / 0.65));
       drawPathChevron(ctx, ax, ay, Math.atan2(info.dr, info.dc), size, litT);
     }
     ctx.restore();
@@ -2336,7 +2334,7 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
   if (!getSettings().showDamageNumbers) return;
   for (const d of b.damageFloats) {
     const { x, y: cy } = cellCenterPx(d.c, d.r);
-    const px = x + d.xJitter * CELL;
+    const px = x + d.x * CELL;
     const py = cy + d.y * CELL;
     const fallProgress = d.y >= d.peakY ? (d.y - d.peakY) / DAMAGE_FLOAT_FALL : 0;
     const alpha = 1 - Math.min(1, Math.max(0, fallProgress));

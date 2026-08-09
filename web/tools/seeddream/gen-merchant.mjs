@@ -62,7 +62,16 @@ for (const job of todo) {
 console.log('抠背景…');
 process.env.ASSET_DIR = OUT;
 const jpgOnly = todo.map((j) => `${j.id}.jpg`);
-const savedArgv = process.argv;
+let savedArgv = process.argv;
 if (jpgOnly.length > 0) process.argv = [process.argv[0], process.argv[1], ...jpgOnly];
 await import('./bg-remove.mjs');
+process.argv = savedArgv;
+
+console.log('清理毛边并裁剪…');
+process.env.ASSET_DIR = OUT;
+process.env.POLISH_MAX_SIDE = '216';
+const pngOnly = todo.map((j) => `${j.id}.png`);
+savedArgv = process.argv;
+process.argv = [process.argv[0], process.argv[1], ...pngOnly];
+await import('./polish-png.mjs');
 process.argv = savedArgv;

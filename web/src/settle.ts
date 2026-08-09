@@ -2,6 +2,7 @@
 // 由 main.ts 在 screen==='settle' 时按帧调用 drawSettle，动画进度由「进入结算页的毫秒数」驱动。
 import { VIEW_W, VIEW_H } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
+import { drawRankStarsAnimated } from './menu-ui';
 
 // 动画时间线（毫秒）：先按变化前星态停顿，再播放加/减星，最后停在终态。
 const HOLD_MS = 480; // 展示"变化前"星态的停顿
@@ -59,59 +60,6 @@ function computeStars(c: RankChange, progress: number): { tier: number; fills: n
   return { tier, fills };
 }
 
-// 画一颗五角星。fill=0 暗星，fill=1 亮金星；填充过程带缩放弹入。
-function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, fill: number) {
-  const spikes = 5;
-  const outer = radius;
-  const inner = radius * 0.44;
-  const path = () => {
-    ctx.beginPath();
-    for (let i = 0; i < spikes * 2; i++) {
-      const r = i % 2 === 0 ? outer : inner;
-      const a = (Math.PI / spikes) * i - Math.PI / 2;
-      const x = cx + Math.cos(a) * r;
-      const y = cy + Math.sin(a) * r;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-  };
-  // 暗底星（始终画）
-  ctx.save();
-  path();
-  ctx.fillStyle = '#4a3d28';
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.stroke();
-  ctx.restore();
-
-  if (fill <= 0.001) return;
-  // 金星覆盖：透明度随 fill；正在点亮的星（0<fill<1）轻微放大 + 外发光
-  const f = Math.min(1, fill);
-  ctx.save();
-  ctx.globalAlpha = f;
-  const growing = fill > 0.02 && fill < 0.995;
-  if (growing) {
-    const scale = 1 + 0.18 * Math.sin(Math.min(1, fill) * Math.PI); // 中途最大、收尾回落
-    ctx.translate(cx, cy);
-    ctx.scale(scale, scale);
-    ctx.translate(-cx, -cy);
-    ctx.shadowColor = 'rgba(255,210,63,0.9)';
-    ctx.shadowBlur = 16;
-  }
-  path();
-  const g = ctx.createLinearGradient(cx, cy - outer, cx, cy + outer);
-  g.addColorStop(0, '#ffe58a');
-  g.addColorStop(1, '#f5b400');
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#7a5a12';
-  ctx.stroke();
-  ctx.restore();
-}
-
 // 结算页主绘制。tMs = 进入结算页后的毫秒数。
 export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: number) {
   const progress = Math.max(0, Math.min(1, (tMs - HOLD_MS) / ANIM_MS));
@@ -136,22 +84,14 @@ export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: nu
   const animDone = progress >= 1;
   const showTier = c.won && c.promoted && animDone ? c.state.level
     : (!c.won && c.demoted ? c.state.level : tier);
-  ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillStyle = '#ffe6b0';
-  ctx.fillText(rankName(showTier), cx, VIEW_H * 0.42);
+  ctx.font = 'bold 18px "PingFang SC", serif';
+  ctx.fillStyle = '#e8d4a8';
+  ctx.fillText(`境界 · ${rankName(showTier)}`, cx, VIEW_H * 0.42);
 
-  // 一排 5 颗星
-  const r = 26;
-  const gap = 16;
-  const total = STARS_PER_TIER * (r * 2) + (STARS_PER_TIER - 1) * gap;
-  let sx = cx - total / 2 + r;
+  // 水墨星星排（与主菜单同款立绘，fills 驱动空↔满叠化）
   const sy = VIEW_H * 0.52;
-  // 晋级动画放完后，星排展示新档（0 星）；此前展示补满过程
   const drawFills = c.won && c.promoted && animDone ? new Array<number>(STARS_PER_TIER).fill(0) : fills;
-  for (let i = 0; i < STARS_PER_TIER; i++) {
-    drawStar(ctx, sx, sy, r, drawFills[i]!);
-    sx += r * 2 + gap;
-  }
+  drawRankStarsAnimated(ctx, cx, sy, drawFills, { gap: 32, size: 44 });
 
   // 晋级 / 降档提示（动画收尾时飘出）
   if (animDone && (c.promoted || c.demoted)) {

@@ -154,7 +154,14 @@ for (const f of readdirSync(OUT)) {
 console.log('抠背景…');
 process.env.ASSET_DIR = OUT;
 const jpgOnly = only.length > 0 ? only.map((id) => `${id}.jpg`) : [];
-const savedArgv = process.argv;
+let savedArgv = process.argv;
 if (jpgOnly.length > 0) process.argv = [process.argv[0], process.argv[1], ...jpgOnly];
 await import('./bg-remove.mjs');
+process.argv = savedArgv;
+
+console.log('裁剪缩放到显示尺寸×3…');
+const pngOnly = todo.map((j) => `${j.id}.png`);
+savedArgv = process.argv;
+process.argv = [process.argv[0], process.argv[1], ...pngOnly];
+await import('./resize-portraits.mjs');
 process.argv = savedArgv;
