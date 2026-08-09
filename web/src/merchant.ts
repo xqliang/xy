@@ -16,10 +16,14 @@ import {
   equipPassive,
   grantActive,
   grantPassive,
+  isEquipped as isActiveEquipped,
   isOwnedActive,
   isOwnedPassive,
+  isPassiveEquipped,
   unequipActive,
   unequipPassive,
+  ACTIVE_FULL_HINT,
+  PASSIVE_FULL_HINT,
   type LoadoutState,
 } from './loadout';
 import type { MeritState } from './merit';
@@ -30,7 +34,7 @@ export type SkillKind = 'active' | 'passive';
 export interface MerchantOffer {
   kind: SkillKind;
   id: string;
-  /** 今日已购买、当前未装备 → 展示「装备」免费按钮 */
+  /** 今日已购买 → 展示「装备」/「卸下」免费按钮 */
   owned: boolean;
 }
 
@@ -104,15 +108,25 @@ function allSkills(): SkillRef[] {
   return out;
 }
 
-function isEquipped(loadout: LoadoutState, ref: SkillRef): boolean {
+function isSkillRefEquipped(loadout: LoadoutState, ref: SkillRef): boolean {
   return ref.kind === 'active'
     ? loadout.equipped.includes(ref.id)
     : loadout.passives.includes(ref.id);
 }
 
+function isKindSlotsFull(loadout: LoadoutState, kind: SkillKind): boolean {
+  return kind === 'active'
+    ? loadout.equipped.length >= MAX_EQUIPPED_ACTIVES
+    : loadout.passives.length >= MAX_EQUIPPED_PASSIVES;
+}
+
+function slotFullHint(kind: SkillKind): string {
+  return kind === 'active' ? ACTIVE_FULL_HINT : PASSIVE_FULL_HINT;
+}
+
 /** 随机池：排除当前已装备；已拥有未装备可再次出现 */
 export function rollMerchantOffers(loadout: LoadoutState): MerchantOffer[] {
-  const pool = allSkills().filter((s) => !isEquipped(loadout, s));
+  const pool = allSkills().filter((s) => !isSkillRefEquipped(loadout, s));
   const picked = shuffle(pool).slice(0, MERCHANT_OFFER_COUNT);
   return picked.map((s) => ({
     kind: s.kind,
@@ -155,7 +169,7 @@ function skillCost(kind: SkillKind, id: string): number {
 }
 
 function pickLotterySkill(loadout: LoadoutState): SkillRef | null {
-  const pool = allSkills().filter((s) => !isEquipped(loadout, s));
+  const pool = allSkills().filter((s) => !isSkillRefEquipped(loadout, s));
   if (pool.length === 0) return null;
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
@@ -190,6 +204,13 @@ export function applyMerchantHit(
       const offer = m.offers[idx];
       if (!offer || offer.owned) {
         return { merchant: { ...m, confirmOffer: null }, loadout: lo, merit: me };
+      }
+      if (isKindSlotsFull(lo, offer.kind)) {
+        return {
+          merchant: { ...m, confirmOffer: null, toast: slotFullHint(offer.kind) },
+          loadout: lo,
+          merit: me,
+        };
       }
       if (offer.kind === 'active') {
         const res = buyActive(lo, me, offer.id);
@@ -230,9 +251,19 @@ export function applyMerchantHit(
       const offer = m.offers[hit.index];
       if (!offer) return { merchant: m, loadout: lo, merit: me };
       if (offer.owned) {
-        const res = offer.kind === 'active' ? equipActive(lo, offer.id) : equipPassive(lo, offer.id);
-        lo = res.loadout;
-        m = { ...m, toast: res.ok ? '已装备' : res.reason ?? '无法装备' };
+        const equipped = isOfferEquipped(lo, offer);
+        if (equipped) {
+          lo = offer.kind === 'active' ? unequipActive(lo, offer.id) : unequipPassive(lo, offer.id);
+          m = { ...m, toast: '已卸下' };
+        } else if (isKindSlotsFull(lo, offer.kind)) {
+          m = { ...m, toast: slotFullHint(offer.kind) };
+        } else {
+          const res = offer.kind === 'active' ? equipActive(lo, offer.id) : equipPassive(lo, offer.id);
+          lo = res.loadout;
+          m = { ...m, toast: res.ok ? '已装备' : res.reason ?? '无法装备' };
+        }
+      } else if (isKindSlotsFull(lo, offer.kind)) {
+        m = { ...m, toast: slotFullHint(offer.kind) };
       } else {
         const cost = skillCost(offer.kind, offer.id);
         if (me.merit < cost) {
@@ -515,6 +546,34 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   return null;
 }
 
+function skillKindMeta(kind: SkillKind): { label: string; color: string; ink: string } {
+  return kind === 'active'
+    ? { label: '主动', color: '#5a7088', ink: 'rgba(90,112,136,0.32)' }
+    : { label: '被动', color: '#6a8050', ink: 'rgba(106,128,80,0.32)' };
+}
+
+function drawSkillKindTag(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  kind: SkillKind,
+): number {
+  const meta = skillKindMeta(kind);
+  ctx.font = 'bold 11px "PingFang SC", "STKaiti", serif';
+  const w = ctx.measureText(meta.label).width + 10;
+  roundRect(ctx, x, y, w, 16, 4);
+  ctx.fillStyle = meta.ink;
+  ctx.fill();
+  ctx.strokeStyle = meta.color;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = meta.color;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(meta.label, x + 5, y + 8);
+  return w;
+}
+
 function drawInkTab(
   ctx: CanvasRenderingContext2D,
   rect: { x: number; y: number; w: number; h: number },
@@ -524,9 +583,40 @@ function drawInkTab(
   drawInkActionButton(ctx, rect, label, false, active ? 'primary' : 'secondary');
 }
 
+function isOfferEquipped(loadout: LoadoutState, offer: MerchantOffer): boolean {
+  return offer.kind === 'active'
+    ? isActiveEquipped(loadout, offer.id)
+    : isPassiveEquipped(loadout, offer.id);
+}
+
+function offerActionLabel(
+  loadout: LoadoutState,
+  offer: MerchantOffer,
+  cost: number,
+  canAfford: boolean,
+): { label: string; variant: 'primary' | 'secondary' | 'accent' } {
+  if (offer.owned) {
+    if (isOfferEquipped(loadout, offer)) {
+      return { label: '卸下', variant: 'secondary' };
+    }
+    if (isKindSlotsFull(loadout, offer.kind)) {
+      return { label: '请先卸下', variant: 'secondary' };
+    }
+    return { label: '装备', variant: 'accent' };
+  }
+  if (isKindSlotsFull(loadout, offer.kind)) {
+    return { label: '请先卸下', variant: 'secondary' };
+  }
+  if (!canAfford) {
+    return { label: `${cost} 功德`, variant: 'secondary' };
+  }
+  return { label: `${cost} 功德`, variant: 'primary' };
+}
+
 function drawOfferCard(
   ctx: CanvasRenderingContext2D,
   m: MerchantUiState,
+  loadout: LoadoutState,
   merit: MeritState,
   index: number,
 ): void {
@@ -557,6 +647,8 @@ function drawOfferCard(
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillText(rarity.label, r.x + 12, r.y + 10);
+  const rarityW = ctx.measureText(rarity.label).width;
+  drawSkillKindTag(ctx, r.x + 12 + rarityW + 8, r.y + 8, offer.kind);
 
   const iconR = 22;
   const iconCx = r.x + 36;
@@ -597,17 +689,14 @@ function drawOfferCard(
     ctx.fillText(descLines[li]!, r.x + OFFER_TEXT_X, textY + nameH + 4 + li * 16);
   }
 
-  if (offer.owned) {
-    drawInkActionButton(ctx, { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H }, '装备', false, 'accent');
-  } else {
-    drawInkActionButton(
-      ctx,
-      { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H },
-      `${cost} 功德`,
-      false,
-      canAfford ? 'primary' : 'secondary',
-    );
-  }
+  const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford);
+  drawInkActionButton(
+    ctx,
+    { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H },
+    label,
+    false,
+    variant,
+  );
 }
 
 function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): void {
@@ -634,10 +723,14 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillStyle = '#000';
-          ctx.fillText(def.icon, cell.x + cell.w / 2, cell.y + cell.h / 2 - 10);
+          ctx.fillText(def.icon, cell.x + cell.w / 2, cell.y + cell.h / 2 - 12);
+          const kindMeta = skillKindMeta(preview.kind);
+          ctx.fillStyle = kindMeta.color;
+          ctx.font = 'bold 10px "PingFang SC", "STKaiti", serif';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(kindMeta.label, cell.x + cell.w / 2, cell.y + cell.h - 22);
           ctx.fillStyle = '#4a2808';
           ctx.font = 'bold 11px "PingFang SC", "STKaiti", serif';
-          ctx.textBaseline = 'bottom';
           ctx.fillText(fitText(ctx, def.name, cell.w - 10), cell.x + cell.w / 2, cell.y + cell.h - 8);
         }
       }
@@ -778,13 +871,17 @@ function drawOfferConfirmPopup(
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 18px "PingFang SC", "STKaiti", serif';
   ctx.fillText('确认购买', CONF_PX + 18, CONF_PY + 16);
+  const kindMeta = skillKindMeta(offer.kind);
+  ctx.fillStyle = kindMeta.color;
+  ctx.font = 'bold 12px "PingFang SC", "STKaiti", serif';
+  ctx.fillText(`${kindMeta.label}技能`, CONF_PX + 18, CONF_PY + 40);
   ctx.fillStyle = '#5a3a12';
   ctx.font = '14px "PingFang SC", serif';
-  ctx.fillText(`购买「${def.name}」`, CONF_PX + 18, CONF_PY + 48);
+  ctx.fillText(`购买「${def.name}」`, CONF_PX + 18, CONF_PY + 58);
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '13px "PingFang SC", serif';
-  ctx.fillText(`将扣除 ${cost} 功德（当前 ${merit.merit}）`, CONF_PX + 18, CONF_PY + 76);
-  ctx.fillText('道具仅当天有效，下局结束后刷新商品。', CONF_PX + 18, CONF_PY + 100);
+  ctx.fillText(`将扣除 ${cost} 功德（当前 ${merit.merit}）`, CONF_PX + 18, CONF_PY + 86);
+  ctx.fillText('道具仅当天有效，下局结束后刷新商品。', CONF_PX + 18, CONF_PY + 110);
 
   drawInkActionButton(ctx, CONF_CANCEL, '取消', false, 'secondary');
   drawInkActionButton(ctx, CONF_OK, '确认购买', false, merit.merit >= cost ? 'primary' : 'secondary');
@@ -807,7 +904,7 @@ export function drawMerchant(
   drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit));
 
   if (m.tab === 'shop') {
-    for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, merit, i);
+    for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, loadout, merit, i);
   } else {
     drawLotteryGrid(ctx, m);
   }

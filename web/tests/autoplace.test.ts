@@ -662,6 +662,24 @@ it('满槽：tray 无可合时棋盘同阶合，保留覆盖更大格，腾位�
   expect(v.tray().length).toBe(0);
 });
 
+it('有空格但 tray 刀够不着：棋盘同阶合腾贴路格再落 tray', () => {
+  // 贴路 (0,0)(1,0) 两刀 T3 可合；远端 (2,0) 弓占位；(0,2) 空但刀 T1 射程够不着
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'dao', tier: 1 }],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 0, r: 2 }],
+  );
+  v.unitsMap.set('0,0', { type: 'dao', tier: 3, cell: { c: 0, r: 0 } });
+  v.unitsMap.set('1,0', { type: 'dao', tier: 3, cell: { c: 1, r: 0 } });
+  v.unitsMap.set('2,0', { type: 'archer', tier: 1, cell: { c: 2, r: 0 } });
+  planAutoPlace(v, { rng });
+  const byCell = new Map(v.placedUnits().map((u) => [`${u.cell.c},${u.cell.r}`, u]));
+  expect(byCell.get('0,0')?.type).toBe('dao');
+  expect(byCell.get('0,0')?.tier).toBe(4);
+  expect(byCell.get('1,0')?.type).toBe('dao');
+  expect(byCell.get('1,0')?.tier).toBe(1);
+  expect(v.tray().length).toBe(0);
+});
+
 it('mergeKeepScore / placeCellScore / seatScore：近出口 + 短射程更看重贴口', () => {
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3, 4));
   expect(mergeKeepScore(3, 0)).toBeGreaterThan(mergeKeepScore(3.5, 5));

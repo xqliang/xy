@@ -1299,8 +1299,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!pendingTrayDeploy() && !subopt() && tryYieldOrphanSeatsToUnits()) return true;
     // 8) 孤儿字迁到更远离路径/靠唐僧的空位
     if (!pendingTrayDeploy() && !subopt() && tryRelocateOrphansToRear()) return true;
-    // 9) 地图槽位已满：缺种互换 → tray 内合 / 棋盘合腾位再落子
-    if (view.freeCells().length === 0) {
+    // 9) 满槽或 tray 兵无法直接落子：缺种互换 → tray 内合 / 棋盘合腾位再落子
+    if (view.freeCells().length === 0 || trayUnitsCannotDirectPlace()) {
       if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
       if (tryTrayMergeOntoBoard()) return true;
       if (tryTrayInternalMergeAndDeploy()) return true;
@@ -1313,6 +1313,23 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   /** tray 合成链：地图无空位，或落子阶段已无可落时再合（不在开局抢先合成） */
   function canTrayChainMergeNow(): boolean {
     return view.freeCells().length === 0 && trayUnitEntries().length >= 2;
+  }
+
+  /** tray 仍有兵器，且任一枚都无法同阶合或落入射程内空格（第 5 波后可兜底占任意空格） */
+  function trayUnitsCannotDirectPlace(): boolean {
+    const unitIdx = trayUnitEntries();
+    if (unitIdx.length === 0) return false;
+    const free = view.freeCells();
+    const allowAnyFree = lateWordPriority() && !pendingTrayWordDeploy();
+    for (const { t } of unitIdx) {
+      const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
+      if (mate && canMerge({ type: t.type, tier: t.tier }, { type: mate.type, tier: mate.tier })) {
+        return false;
+      }
+      if (placementReachCells(free, t.type, t.tier).length > 0) return false;
+      if (allowAnyFree && free.length > 0) return false;
+    }
+    return true;
   }
 
   /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
@@ -1450,13 +1467,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return true;
   }
 
-  /** tray 兵落子：同阶合成 → 缺种互换 → 异型合后换占 → 射程内最优格 → 兜底 → 满盘 tray 合成链 */
+  /** tray 兵落子：同阶合成 → 缺种互换 → 异型合后换占 → 射程内最优格 → 兜底 → 满盘 tray 合成链 → 棋盘合腾位 */
   function tryDeployTrayUnits(): boolean {
     if (tryDeployTrayUnitsFromTray()) return true;
     if (!subopt() && canTrayChainMergeNow()) {
       if (tryTrayMergeOntoBoard()) return true;
       if (tryTrayInternalMergeAndDeploy()) return true;
     }
+    if (!subopt() && trayUnitsCannotDirectPlace() && tryBoardMergeThenPlace()) return true;
     return false;
   }
 

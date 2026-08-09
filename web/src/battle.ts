@@ -3379,6 +3379,24 @@ export class Battle {
     this.monsters = survivors;
   }
 
+  /** 清波后立刻收掉弹道/爆点/飘字等战斗特效，避免波间倒计时仍残留上一波画面 */
+  private clearWaveCombatFx(): void {
+    this.fx = [];
+    this.bursts = [];
+    this.heroUltFx = [];
+    this.peachFloats = [];
+    this.damageFloats = [];
+    this.ultFlash = 0;
+    this.ultCenter = null;
+    for (const u of this.units.values()) {
+      u.firePulse = 0;
+      u.combo = 0;
+    }
+    for (const g of this.activeGenerals()) {
+      g.state.firePulse = 0;
+    }
+  }
+
   private updateFx(dt: number): void {
     for (const f of this.fx) f.ttl -= dt;
     this.fx = this.fx.filter((f) => f.ttl > 0);
@@ -3508,6 +3526,7 @@ export class Battle {
     if (this.status === 'playing' && this.waveActive && this.spawnRemaining === 0 && this.monsters.length === 0) {
       this.waveActive = false;
       this.rollWeaponDropOnClear();
+      this.clearWaveCombatFx();
       this.status = 'ready';
       this.nextWaveTimer = 5; // 5秒后自动开下一波
       this.message = `第 ${this.wave} 波已清！`;

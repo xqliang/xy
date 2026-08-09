@@ -22,7 +22,7 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
     cost: 75,
     desc: '每50s在空地自动种下1棵桃树；桃树按等级产桃(20/10/5/3/2s)，同级拖动可合并升级，最高5级',
   },
-  { id: 'xiandan', name: '仙丹', icon: '💊', cost: 55, desc: '全体攻击 +10%' },
+  { id: 'xiandan', name: '仙丹符', icon: '💊', cost: 55, desc: '全体攻击 +10%' },
   { id: 'fenghuolun', name: '风火轮符', icon: '🌀', cost: 55, desc: '全体攻速 +10%' },
   { id: 'fabaofu', name: '法宝符', icon: '📜', cost: 80, desc: '武将初始品质阶 +1' },
   { id: 'zhaoxian', name: '招贤榜', icon: '📋', cost: 50, desc: '武将字牌掉率 +10%' },

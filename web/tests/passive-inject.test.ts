@@ -5,7 +5,7 @@ import { Battle } from '../src/battle';
 const make = (passives: string[]) => new Battle(1, 1, undefined, undefined, undefined, [], passives);
 
 describe('被动技能开局注入', () => {
-  it('仙丹：全体攻击 +10%', () => {
+  it('仙丹符：全体攻击 +10%', () => {
     expect(make(['xiandan']).mods.atkMul).toBeCloseTo(1.10, 5);
   });
 
