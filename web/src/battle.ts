@@ -741,11 +741,11 @@ export class Battle {
     this.aiTangsengHP += meta.bonusHp; // 对手同享，维持对称
     this.mods.atkMul += meta.atkPct;
     this.mods.frqMul += meta.frqPct;
-    // 装备的主动技能（最多 MAX_EQUIPPED_ACTIVES 个）建运行时槽；初始给半程 CD，避免开局即放
+    // 装备的主动技能（最多 MAX_EQUIPPED_ACTIVES 个）建运行时槽；初始满 CD，避免开局即放
     for (const id of actives.slice(0, MAX_EQUIPPED_ACTIVES)) {
       const def = activeById(id);
       if (!def || def.disabled) continue; // 下架技能不注入
-      this.activeSlots.push({ id, cd: def.cd * 0.5, cdMax: def.cd, ready: false, flash: 0 });
+      this.activeSlots.push({ id, cd: def.cd, cdMax: def.cd, ready: false, flash: 0 });
     }
     // 初始解锁：地图的初始 6 格 + 功德额外阵位
     const openSlots = TUNING.initialOpenSlots + meta.bonusSlots;
@@ -776,7 +776,7 @@ export class Battle {
       for (const id of aiRoll.actives) {
         const def = activeById(id);
         if (!def || def.disabled) continue;
-        this.aiActiveSlots.push({ id, cd: def.cd * 0.5, cdMax: def.cd, ready: false, flash: 0 });
+        this.aiActiveSlots.push({ id, cd: def.cd, cdMax: def.cd, ready: false, flash: 0 });
         this.aiPickedItems.push(id);
       }
       for (const id of aiRoll.passives) {
@@ -2801,6 +2801,8 @@ export class Battle {
       this.aiMeteorPending = false;
       this.castAiMeteor();
     }
+    this.updateAiActives(dt);
+    this.tickAiActives();
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
@@ -3318,6 +3320,87 @@ export class Battle {
     }
     if (this.atkBuffT > 0) this.atkBuffT = Math.max(0, this.atkBuffT - dt);
     if (this.frqBuffT > 0) this.frqBuffT = Math.max(0, this.frqBuffT - dt);
+  }
+
+  private updateAiActives(dt: number): void {
+    for (const slot of this.aiActiveSlots) {
+      if (slot.cd > 0) {
+        slot.cd = Math.max(0, slot.cd - dt);
+        if (slot.cd === 0) slot.ready = true;
+      } else {
+        slot.ready = true;
+      }
+    }
+    if (this.aiAtkBuffT > 0) this.aiAtkBuffT = Math.max(0, this.aiAtkBuffT - dt);
+    if (this.aiFrqBuffT > 0) this.aiFrqBuffT = Math.max(0, this.aiFrqBuffT - dt);
+  }
+
+  /** AI 主动技能：就绪且场上有怪时自动释放（每帧至多一个）。 */
+  private tickAiActives(): void {
+    if (this.status !== 'playing') return;
+    for (let i = 0; i < this.aiActiveSlots.length; i++) {
+      const slot = this.aiActiveSlots[i];
+      if (!slot?.ready) continue;
+      if (this.triggerAiActive(i)) return;
+    }
+  }
+
+  private triggerAiActive(i: number): boolean {
+    if (this.status !== 'playing') return false;
+    const slot = this.aiActiveSlots[i];
+    if (!slot || !slot.ready) return false;
+    const def = activeById(slot.id);
+    if (!def) return false;
+    const needsMonsters: ActiveEffect[] = ['palm', 'meteor', 'freeze', 'jinggu'];
+    if (needsMonsters.includes(def.effect) && this.aiMonsters.length === 0) return false;
+    switch (def.effect) {
+      case 'palm':
+        for (const m of this.aiMonsters) {
+          const p = posAlong(this.aiPath, m.dist);
+          this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' });
+        }
+        for (const m of this.aiMonsters) m.dist = Math.max(0, m.dist - TUNING.palmPushCells);
+        break;
+      case 'meteor':
+        this.doAiMeteor(TUNING.meteorDmgMul);
+        break;
+      case 'atkBuff':
+        this.aiAtkBuffT = 5;
+        break;
+      case 'frqBuff':
+        this.aiFrqBuffT = 5;
+        break;
+      case 'freeze':
+        for (const m of this.aiMonsters) {
+          m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+          const p = posAlong(this.aiPath, m.dist);
+          this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' });
+        }
+        break;
+      case 'jinggu':
+        this.doAiJingu();
+        break;
+    }
+    slot.cd = slot.cdMax;
+    slot.ready = false;
+    return true;
+  }
+
+  private doAiJingu(): void {
+    if (this.aiMonsters.length === 0) return;
+    let front = this.aiMonsters[0]!;
+    for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
+    const center = posAlong(this.aiPath, front.dist);
+    const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * TUNING.jingguDmgMul;
+    for (const m of this.aiMonsters) {
+      const p = posAlong(this.aiPath, m.dist);
+      if (Math.hypot(p.c - center.c, p.r - center.r) <= TUNING.aiClearRadius) {
+        m.hp -= dmg;
+        m.hitFlash = 0.15;
+        this.spawnDamageFloat(p.c, p.r, dmg);
+      }
+    }
+    this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
   }
 
   // 主动技能是否就绪（供渲染/交互判断）

@@ -7,7 +7,7 @@
 // tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
-// 第 4 波起：tray 字优先于场上普通武器调位/落兵；尽量清空 tray 字（地图上已有同字者可留 tray）。
+// 有空格时 tray 不得留字/兵（铲子除外）；字优先于兵，满盘可顶回普通武器腾位。
 // 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
 // 仅当无法左移时才与占位交换（place）。
 // 未激活孤儿字不占前线：与兵器换高覆盖座，或迁到远离路径/靠唐僧的空位。
@@ -34,11 +34,11 @@ export type PlaceToken =
 export interface PlacedUnitLite { type: UnitType; tier: number; cell: Cell; }
 export interface PlacedWordLite { char: string; general: string; cell: Cell; tier?: number }
 
-/** 从该波次起 tray 字优先于普通武器布阵 */
+/** 从该波次起：tray 仍有兵时，仅当伴侣邻格已空才抢先激活（如 金+空右邻+tray吒） */
 export const TRAY_WORD_PRIORITY_FROM_WAVE = 4;
 
 export interface AutoPlaceView {
-  /** 当前波次；≥ TRAY_WORD_PRIORITY_FROM_WAVE 时 tray 字优先于普通武器布阵 */
+  /** 当前波次；≥ TRAY_WORD_PRIORITY_FROM_WAVE 时 tray 凑对激活更谨慎 */
   wave?(): number;
   tray(): PlaceToken[];                     // 当前候选（随 place 变化，每步重读）
   freeCells(): Cell[];                      // 已解锁且空闲，按贴路近→远
@@ -915,25 +915,31 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return (view.wave?.() ?? 0) >= TRAY_WORD_PRIORITY_FROM_WAVE;
   }
 
-  /** 该 tray 字可留候选区：地图上已有同字 */
-  function mayLeaveWordInTray(t: Extract<PlaceToken, { kind: 'word' }>): boolean {
-    return view.placedWords().some((w) => w.char === t.char);
+  function hasFreeCells(): boolean {
+    return view.freeCells().length > 0;
   }
 
-  /** 第 4 波起：tray 仍有应上板的字（非重复同字；有棋盘伴侣的走激活，不阻塞兵器） */
+  function trayHasWords(): boolean {
+    return view.tray().some((t) => t.kind === 'word');
+  }
+
+  /** 有空格时 tray 不得留字/兵（铲子除外） */
+  function mustEmptyTray(): boolean {
+    return hasFreeCells() && (trayHasWords() || trayUnitEntries().length > 0);
+  }
+
+  /** 该 tray 字可留候选区：满盘且地图上已有同字 */
+  function mayLeaveWordInTray(_t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    if (hasFreeCells()) return false;
+    return view.placedWords().some((w) => w.char === _t.char);
+  }
+
+  /** 有空格且 tray 仍有字 → 必须先处理字（单字落位或凑对激活） */
   function pendingTrayWordDeploy(): boolean {
-    if (!lateWordPriority()) return false;
-    for (const t of view.tray()) {
-      if (t.kind !== 'word') continue;
-      if (mayLeaveWordInTray(t)) continue;
-      if (isObsoleteTransitionVariant(view, t.char)) continue;
-      if (pickBestBoardMateView(view, t.char, t.general)) continue;
-      return true;
-    }
-    return false;
+    return hasFreeCells() && trayHasWords();
   }
 
-  /** 有空格且 tray 仍有兵 → 优先落子；第 4 波起 tray 字未清完则暂缓落兵 */
+  /** 有空格且 tray 仍有兵 → 优先落子；tray 字未清完则暂缓落兵 */
   function pendingTrayUnitDeploy(): boolean {
     if (displacedTrayUnitEntries().length > 0) return true;
     if (pendingTrayWordDeploy()) return false;
@@ -1218,7 +1224,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (tryPrioritizeTrayBoardMateActivation()) return true;
     // 1b++) tray 字待伴侣、仍有 tray 兵 → 先落兵（白+龙 待激活时先上弓）
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
-    // 1c) 第4波+：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
+    // 1c) 有空格：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
@@ -1254,7 +1260,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryPromoteTrayUnitOverLowerOther()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) { markHeroLayoutChanged(); return true; }
-    // 2c+) 第 4 波起：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
+    // 2c+) 有空格：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 3–5b) 有空格时落 tray 兵（tray 字未清完则暂缓）
     if (!pendingTrayWordDeploy() && tryDeployTrayUnits()) return true;
@@ -1264,13 +1270,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 2d) 挖出/空出的位：先让棋盘武器迁到更合适空位，再同型高阶抢座（tray 待落时跳过）
     if (!pendingTrayDeploy() && !subopt() && tryRelocateToBetterFreeSeats()) return true;
     if (!pendingTrayDeploy() && !subopt() && trySwapHigherTierToBetterSeats()) return true;
-    // 2e) 单字落位：第 4 波前在此处理；之后已在 2c+ 优先
-    if (!lateWordPriority()) {
+    // 2e) 单字落位兜底（有空格时 placeSingleWord 也会落有伴侣的字）
+    if (hasFreeCells()) {
       for (let i = 0; i < tray.length; i++) {
         const t = tray[i]!; if (t.kind !== 'word') continue;
-        if (mayLeaveWordInTray(t)) continue;
-        if (isObsoleteTransitionVariant(view, t.char)) continue;
-        if (pickBestBoardMate(t.char, t.general)) continue;
         if (placeSingleWord(i)) return true;
       }
     }
@@ -1312,6 +1315,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (tryBoardMergeThenPlace()) return true;
     }
     if (!subopt() && tryDiversifyTrayUnitsViaSwap()) return true;
+    // 10) 有空格仍留 tray 字/兵 → 强制落子兜底
+    if (mustEmptyTray()) {
+      if (tryPlaceTraySingleWords()) return true;
+      if (tryFillAnyFreeSeat()) return true;
+    }
     return false; // 无可推进动作
   }
 
@@ -1320,12 +1328,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.freeCells().length === 0 && trayUnitEntries().length >= 2;
   }
 
-  /** tray 仍有兵器，且任一枚都无法同阶合或落入射程内空格（第 4 波后可兜底占任意空格） */
+  /** tray 仍有兵器，且任一枚都无法同阶合或落入射程内空格（有空格时可兜底占任意空格） */
   function trayUnitsCannotDirectPlace(): boolean {
     const unitIdx = trayUnitEntries();
     if (unitIdx.length === 0) return false;
     const free = view.freeCells();
-    const allowAnyFree = lateWordPriority() && !pendingTrayWordDeploy();
+    const allowAnyFree = hasFreeCells() && !pendingTrayWordDeploy();
     for (const { t } of unitIdx) {
       const mate = view.placedUnits().find((u) => u.type === t.type && u.tier === t.tier);
       if (mate && canMerge({ type: t.type, tier: t.tier }, { type: mate.type, tier: mate.tier })) {
@@ -1483,7 +1491,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 有空格时尽量落能打到怪的兵；无可用接战格则保留 tray */
+  /** 有空格时尽量落能打到怪的兵；否则占任意空格，不留 tray */
   function tryFillAnyFreeSeat(): boolean {
     const free = view.freeCells();
     const unitIdx = trayUnitEntries();
@@ -1494,11 +1502,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const cell = pickReachCell(reach, t.type, t.tier);
       return view.place(i, cell);
     }
-    // 第4波起：伴侣已就位时，后排 unlocked 空格仍填 tray 兵（pathCover 可能为 0）
-    if (lateWordPriority() && !pendingTrayWordDeploy()) {
-      for (const { t, i } of unitIdx) {
-        return view.place(i, nearestFreeCell(free));
-      }
+    for (const { t, i } of unitIdx) {
+      return view.place(i, nearestFreeCell(free));
     }
     return false;
   }
@@ -2132,9 +2137,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return moveHeroPairToCells(best.pair.left, best.pair.right, best.left, best.right);
   }
 
-  /** 第 4 波起：tray 孤儿单字上板；满盘时可顶回普通武器 */
+  /** 有空格：tray 孤儿单字上板；满盘时可顶回普通武器 */
   function tryLateTrayWordDeploy(): boolean {
-    if (!lateWordPriority()) return false;
+    if (!hasFreeCells()) return false;
     if (tryPlaceTraySingleWords()) return true;
     return tryDisplaceUnitForTrayWord();
   }
@@ -2144,9 +2149,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!;
       if (t.kind !== 'word') continue;
-      if (mayLeaveWordInTray(t)) continue;
-      if (isObsoleteTransitionVariant(view, t.char)) continue;
-      if (pickBestBoardMate(t.char, t.general)) continue;
       if (placeSingleWord(i)) return true;
     }
     return false;
@@ -2154,7 +2156,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 满盘：从最适合放字的兵器格顶回 tray，再落字 */
   function tryDisplaceUnitForTrayWord(): boolean {
-    if (!lateWordPriority() || view.freeCells().length > 0) return false;
+    if (view.freeCells().length > 0) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i]!;
@@ -2173,10 +2175,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return false;
   }
 
-  /** 单字：远离路径 + 靠近唐僧 */
+  /** 单字：远离路径 + 靠近唐僧；有空格时即使棋盘已有伴侣也先落子 */
   function placeSingleWord(i: number): boolean {
     const t = view.tray()[i];
-    if (t?.kind === 'word' && pickBestBoardMate(t.char, t.general)) return false;
+    if (t?.kind === 'word' && pickBestBoardMate(t.char, t.general) && !hasFreeCells()) return false;
     const free = view.freeCells();
     if (free.length === 0) return false;
     const cell = free.reduce((best, c) => {
