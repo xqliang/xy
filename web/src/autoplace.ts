@@ -5,7 +5,8 @@
 // tray 可合出更高阶时，可与地图上更低阶的异型武器交换上板。
 // tray 高阶兵：满盘或异型低阶占优位时，优先与场上更低阶异型互换上板（如 tray 弓2 换 枪1）。
 // tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
-// 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子。
+// 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子；
+// tray 有放不下的武器/字时优先棋盘同级合并，再放入 tray，尽量清空候选区。
 // 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
 // 有空格时 tray 不得留字/兵（铲子除外）；字优先于兵，满盘可顶回普通武器腾位。
 // 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
@@ -1350,6 +1351,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 1a) 地图挤回 tray 的待处理兵：换棋盘更低阶武器上板
     if (!subopt() && tryRedeployDisplacedTrayUnits()) return true;
+    // 1a+) tray 有放不下项：棋盘同级合并腾位再放 tray（先于调位，避免空转）
+    if (!subopt() && trayHasUnplaceablePending() && tryBoardMergeThenPlace()) return true;
     // 1a+) 门派升级 / 过渡字替换 / tray 内成对 — 先于孤儿单字落位
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && tryReplaceTransitionWithMainTrayWord()) { markHeroLayoutChanged(); return true; }
@@ -1472,6 +1475,19 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (allowAnyFree && free.length > 0) return false;
     }
     return true;
+  }
+
+  /** tray 仍有放不下项：兵无法直接落子，或满盘仍有待上板字牌 */
+  function trayHasUnplaceablePending(): boolean {
+    if (trayUnitsCannotDirectPlace()) return true;
+    if (!hasFreeCells() && trayHasWords()) {
+      for (const t of filledTrayTokens(view.tray())) {
+        if (t.kind !== 'word') continue;
+        if (mayLeaveWordInTray(t)) continue;
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
@@ -2273,8 +2289,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 有空格：tray 孤儿单字上板；满盘时可顶回普通武器 */
   function tryLateTrayWordDeploy(): boolean {
-    if (!hasFreeCells()) return false;
-    if (tryPlaceTraySingleWords()) return true;
+    if (hasFreeCells()) {
+      if (tryPlaceTraySingleWords()) return true;
+      return tryDisplaceUnitForTrayWord();
+    }
+    if (!subopt() && tryBoardMergeThenPlace()) return true;
     return tryDisplaceUnitForTrayWord();
   }
 
@@ -2573,8 +2592,24 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /**
    * 满槽且 tray 无「合后再上棋盘」：在棋盘找同型同阶合，
-   * 保留格按 pathCover + 近出口加权（mergeKeepScore）取高；腾出另一格后从 tray 放武器。
+   * 保留格按 pathCover + 近出口加权（mergeKeepScore）取高；腾出另一格后从 tray 落子（兵/字）。
    */
+  /** 合并腾出的格：短射程兵优先，其次其它 tray 令牌（含字牌） */
+  function placeTrayTokenOnFreedCell(cell: Cell): boolean {
+    const tray = view.tray();
+    const unitCandidates = filledTraySlots(tray)
+      .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
+      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
+    for (const { i } of unitCandidates) {
+      if (view.place(i, cell)) return true;
+    }
+    for (let i = 0; i < tray.length; i++) {
+      const t = tray[i];
+      if (t?.kind === 'word' && view.place(i, cell)) return true;
+    }
+    return false;
+  }
+
   function tryBoardMergeThenPlace(): boolean {
     if (subopt()) return false;
     const placed = view.placedUnits();
@@ -2584,6 +2619,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       for (let j = i + 1; j < placed.length; j++) {
         const b = placed[j]!;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) continue;
+        if (view.isActiveHeroCell(a.cell) || view.isActiveHeroCell(b.cell)) continue;
         const scoreA = mergeKeepScore(
           view.pathCover(a.cell, a.type, a.tier),
           view.exitDist(a.cell),
@@ -2604,15 +2640,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     if (!best) return false;
     if (!view.mergeBoard(best.drop, best.keep)) return false;
-    // 腾出的格：优先放「能打到路」的最短射程兵
-    const freed = best.drop;
-    const tray = view.tray();
-    const candidates = filledTraySlots(tray)
-      .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
-      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
-    if (candidates.length > 0) {
-      view.place(candidates[0]!.i, freed);
-    }
+    placeTrayTokenOnFreedCell(best.drop);
     return true; // 棋盘已合（腾位），即使 tray 暂无可放也算推进
   }
 

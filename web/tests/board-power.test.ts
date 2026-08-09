@@ -313,7 +313,8 @@ describe('Battle 接入压力规划', () => {
     while (b.monsters.length < planned && guard++ < 400) b.step(0.5);
     const boss = b.monsters.find((m) => m.isBoss);
     expect(boss).toBeTruthy();
-    const normalHp = TUNING.monsterHpBase + TUNING.monsterHpStep * 1;
+    const normalHp =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * b.effectiveDifficulty(1) * b.earlyWaveHpMul(1);
     expect(boss!.maxHp).toBeGreaterThanOrEqual(normalHp);
   });
 
