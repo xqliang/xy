@@ -147,6 +147,11 @@ function selectBoardCell(cell: Cell): void {
 const canvas = getGameCanvas();
 const ctx = canvas.getContext('2d')!;
 
+// 游戏循环状态须早于 loadAssets().then / resize()：二者都会 scheduleFrame()，否则 rafId 仍在 TDZ。
+let last = performance.now();
+let rafId: number | null = null;
+const MIN_FRAME_MS = 1000 / 60 - 4;
+
 // 切后台暂停：停 rAF 循环与背景音，回前台再唤醒（pauseLoop/resumeLoop 见游戏循环处，函数声明已提升）。
 // 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
 onAppHide(() => pauseLoop());
@@ -546,14 +551,6 @@ function handleShopPopup(x: number, y: number) {
   }
   // r === null：点在弹窗内非按钮区，吞掉本次点击（不关闭）
 }
-
-// —— 游戏循环状态 —— //
-// 提前声明：resize() 在初始化时同步调用 scheduleFrame()，而 scheduleFrame 读取 rafId；
-// 若这些 let/const 声明晚于 resize() 调用点，会触发 TDZ（Cannot access 'rafId' before initialization）导致黑屏。
-let last = performance.now();
-let rafId: number | null = null; // 当前排队中的 rAF id；null 表示循环已停
-// 连续动画限速到 ~60fps：120Hz+ 屏隔帧处理，功耗近乎减半。-4ms 余量容忍 60Hz 抖动，避免误降到 30fps。
-const MIN_FRAME_MS = 1000 / 60 - 4;
 
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;

@@ -400,7 +400,7 @@ const PAS_ROW_Y = ACT_ROW_Y + ACT_SLOT + EQUIP_ROW_GAP;
 
 const CONTENT_H = EQUIP_TOP - CONTENT_TOP - 12;
 
-const OFFER_H = 124;
+const OFFER_H = 128;
 const OFFER_GAP = 6;
 const OFFER_BTN_W = 88;
 const OFFER_BTN_H = 34;
@@ -661,7 +661,7 @@ function drawOfferCard(
 
   const iconR = 22;
   const iconCx = r.x + 36;
-  const iconCy = r.y + r.h / 2;
+  const iconCy = r.y + 44;
   ctx.beginPath();
   ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(48,28,12,0.12)';
@@ -676,22 +676,21 @@ function drawOfferCard(
   ctx.fillText(def.icon, iconCx, iconCy);
 
   const bx = r.x + r.w - OFFER_BTN_W - 10;
-  const by = r.y + (r.h - OFFER_BTN_H) / 2;
-  const textMaxW = bx - (r.x + OFFER_TEXT_X) - 10;
+  const by = r.y + 26;
+  const nameMaxW = bx - (r.x + OFFER_TEXT_X) - 8;
+  const textMaxW = r.w - OFFER_TEXT_X - 14;
   const desc = offer.kind === 'active'
     ? `${def.desc} · CD${activeById(offer.id)!.cd}s`
     : def.desc;
-  const descLines = fitTextLines(ctx, desc, textMaxW, 2);
+  const descLines = fitTextLines(ctx, desc, textMaxW, 3);
   const nameH = 18;
-  const descBlockH = descLines.length * 16;
-  const textBlockH = nameH + 4 + descBlockH;
-  const textY = r.y + Math.max(26, (r.h - textBlockH) / 2);
+  const textY = r.y + 28;
 
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(def.name, r.x + OFFER_TEXT_X, textY);
+  ctx.fillText(fitText(ctx, def.name, nameMaxW), r.x + OFFER_TEXT_X, textY);
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '12px "PingFang SC", serif';
   for (let li = 0; li < descLines.length; li++) {

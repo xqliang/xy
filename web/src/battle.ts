@@ -36,7 +36,13 @@ import {
   type GeneralDef,
 } from './generals';
 import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
-import { rollWeaponDrop, weaponById, type WeaponBonuses } from './weapons';
+import {
+  rollWeaponDrop,
+  weaponById,
+  BATTLE_FRAGMENT_ELIGIBLE_CHANCE,
+  HERO_ATTACK_FRAGMENT_CHANCE,
+  type WeaponBonuses,
+} from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {

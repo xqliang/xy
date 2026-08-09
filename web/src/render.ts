@@ -17,7 +17,7 @@ import {
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
-import { generalById, generalStat, generalsWithChar, partnerChars, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
+import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -3220,7 +3220,12 @@ function drawWordSelection(
     : [];
   const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
   const inactivePartners = !active ? sortedPartnerChars(w.char) : [];
-  const pw = !active && inactivePartners.length > 1 ? 222 : 194;
+  const inactiveHint = !active ? inactivePartnerHint(w.char, fromTray) : '';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  const hintMinW = inactiveHint ? ctx.measureText(inactiveHint).width + 24 : 0;
+  const pw = active
+    ? 194
+    : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
   const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
@@ -3795,6 +3800,75 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
   ctx.restore();
 }
 
+/** 激活武将整体绘制：开火脉冲放大+上跳（与兵器 firePulse 一致） */
+function drawActiveGeneralGroup(
+  ctx: CanvasRenderingContext2D,
+  g: ActiveGeneral,
+  getWord: (c: number, r: number) => { char: string; tier: number } | undefined,
+  opts?: { showBondLabel?: boolean },
+) {
+  const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
+  const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
+  const cx = (a.x + z.x) / 2;
+  const cy = (a.y + z.y) / 2;
+  const pulse = g.state.firePulse;
+
+  for (const c of g.cells) {
+    const { x, y } = cellCenterPx(c.c, c.r);
+    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.32, 0.26);
+  }
+
+  ctx.save();
+  const jump = pulse * 4;
+  const sc = 1 + pulse * 0.16;
+  ctx.translate(cx, cy - jump);
+  ctx.scale(sc, sc);
+  ctx.translate(-cx, -cy);
+
+  for (const c of g.cells) {
+    const w = getWord(c.c, c.r);
+    if (!w) continue;
+    const { x, y } = cellCenterPx(c.c, c.r);
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, false, g.tier);
+  }
+
+  const bx = Math.min(a.x, z.x) - CELL / 2 + 2;
+  const by = Math.min(a.y, z.y) - CELL / 2 + 2;
+  const bw = Math.abs(z.x - a.x) + CELL - 4;
+  const bh = CELL - 4;
+  ctx.globalAlpha = Math.min(1, 0.95 + g.state.skillFlash * 0.05);
+  ctx.strokeStyle = qualityColor(g.tier);
+  ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
+  roundRect(ctx, bx, by, bw, bh, 8);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  const sTile = CELL * 0.78;
+  drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
+  if (opts?.showBondLabel && g.def.id === BOND_GENERAL) {
+    const bondCy = Math.min(a.y, z.y) - CELL * 0.44;
+    const bondPulse = 0.7 + 0.3 * Math.sin(performance.now() / 220);
+    ctx.save();
+    ctx.globalAlpha = bondPulse;
+    ctx.font = 'bold 10px "PingFang SC", sans-serif';
+    const label = BOND_NAME;
+    const tw = ctx.measureText(label).width;
+    const badgeW = tw + 10;
+    roundRect(ctx, cx - badgeW / 2, bondCy - 7, badgeW, 14, 5);
+    ctx.fillStyle = 'rgba(200,146,42,0.9)';
+    ctx.fill();
+    ctx.strokeStyle = '#ffe27a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#fff8e8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, bondCy);
+    ctx.restore();
+  }
+  drawHeroWordWeapon(ctx, g);
+  ctx.restore();
+}
+
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
 function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 已激活武将占用的格 → 抹掉单字阶数上标（只保留金框上方整体 Lv）；并记下整体阶供字色/加粗
@@ -3802,59 +3876,25 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   for (const g of b.activeGenerals()) {
     for (const c of g.cells) activeTier.set(`${c.c},${c.r}`, g.tier);
   }
-  // 先画所有字牌（拖拽中的源格隐藏）
+  // 先画未激活字牌（拖拽中的源格隐藏）
   for (const w of b.words.values()) {
     if (ui.dragFrom && ui.dragFrom.c === w.cell.c && ui.dragFrom.r === w.cell.r) continue;
-    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
     const key = `${w.cell.c},${w.cell.r}`;
     const qTier = activeTier.get(key) ?? 0;
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
-    if (qTier === 0) drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
+    if (qTier > 0) continue;
+    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
+    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, true, 0);
+    drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
   }
-  // 再给「左右紧邻同将」的激活武将套品质色框（框色随阶：白→绿→蓝→紫→橙）
+  // 激活武将：双字+品质框随 firePulse 放大上跳
   for (const g of b.activeGenerals()) {
-    const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
-    const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
-    const x = Math.min(a.x, z.x) - CELL / 2 + 2;
-    const y = Math.min(a.y, z.y) - CELL / 2 + 2;
-    const w = Math.abs(z.x - a.x) + CELL - 4;
-    const h = CELL - 4;
-    ctx.save();
-    // 激活框常亮不呼吸；施法瞬间 skillFlash 略提亮
-    ctx.globalAlpha = Math.min(1, 0.95 + g.state.skillFlash * 0.05);
-    ctx.strokeStyle = qualityColor(g.tier);
-    ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
-    roundRect(ctx, x, y, w, h, 8);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    // 武将整体阶数：统一徽标显示在组合右上角（右字牌那格）
-    const sTile = CELL * 0.78;
-    drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
-    if (g.def.id === BOND_GENERAL) {
-      const cx = (a.x + z.x) / 2;
-      const cy = Math.min(a.y, z.y) - CELL * 0.44;
-      const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 220);
-      ctx.save();
-      ctx.globalAlpha = pulse;
-      ctx.font = 'bold 10px "PingFang SC", sans-serif';
-      const label = BOND_NAME;
-      const tw = ctx.measureText(label).width;
-      const bw = tw + 10;
-      roundRect(ctx, cx - bw / 2, cy - 7, bw, 14, 5);
-      ctx.fillStyle = 'rgba(200,146,42,0.9)';
-      ctx.fill();
-      ctx.strokeStyle = '#ffe27a';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = '#fff8e8';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(label, cx, cy);
-      ctx.restore();
-    }
-    ctx.restore();
-    drawHeroWordWeapon(ctx, g);
+    drawActiveGeneralGroup(
+      ctx,
+      g,
+      (c, r) => b.words.get(`${c},${r}`),
+      { showBondLabel: true },
+    );
   }
 }
 
@@ -4584,31 +4624,16 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     for (const c of g.cells) activeTier.set(`${c.c},${c.r}`, g.tier);
   }
   for (const w of b.aiWords.values()) {
-    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
     const key = `${w.cell.c},${w.cell.r}`;
     const qTier = activeTier.get(key) ?? 0;
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, qTier === 0, qTier);
-    if (qTier === 0) drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
+    if (qTier > 0) continue;
+    const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
+    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
+    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, true, 0);
+    drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
   }
   for (const g of b.aiActiveGenerals()) {
-    const a = cellCenterPx(g.cells[0].c, g.cells[0].r);
-    const z = cellCenterPx(g.cells[1].c, g.cells[1].r);
-    const x = Math.min(a.x, z.x) - CELL / 2 + 2;
-    const y = Math.min(a.y, z.y) - CELL / 2 + 2;
-    const w = Math.abs(z.x - a.x) + CELL - 4;
-    const h = CELL - 4;
-    ctx.save();
-    ctx.globalAlpha = Math.min(1, 0.95 + g.state.skillFlash * 0.05);
-    ctx.strokeStyle = qualityColor(g.tier);
-    ctx.lineWidth = 3 + Math.min(2, (g.tier - 1) * 0.5);
-    roundRect(ctx, x, y, w, h, 8);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    const sTile = CELL * 0.78;
-    drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
-    ctx.restore();
-    drawHeroWordWeapon(ctx, g);
+    drawActiveGeneralGroup(ctx, g, (c, r) => b.aiWords.get(`${c},${r}`));
   }
 }
 
