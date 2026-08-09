@@ -3624,18 +3624,17 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
-    const placeBudgetMs = 8;
-    const deadlineMs = typeof performance !== 'undefined' ? performance.now() + placeBudgetMs : undefined;
+    const trayBefore = this.tray.length;
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
       rng: () => this.rng.next(),
       pSubOptimal: 0,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
-      deadlineMs,
     });
-    const moved = deadlineMs !== undefined && typeof performance !== 'undefined' && performance.now() >= deadlineMs
-      ? 0
-      : this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS);
+    const moved =
+      trayBefore > 0 || this.tray.length > 0
+        ? this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS)
+        : 0;
     const total = placed + moved;
     if (total > 0) {
       if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;

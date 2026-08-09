@@ -41,7 +41,6 @@ export function menuButtons(): MenuButton[] {
     { id: 'start', x: cx - 150, y: 612, w: 300, h: 74 },
     { id: 'ad', x: cx - 150, y: 700, w: 145, h: 50 },
     { id: 'share', x: cx + 5, y: 700, w: 145, h: 50 },
-    { id: 'shop', x: cx - 150, y: 762, w: 300, h: 50 },
     { id: 'mute', x: VIEW_W - 52, y: 16, w: 36, h: 36 },
     { id: 'music', x: VIEW_W - 96, y: 16, w: 36, h: 36 },
     { id: 'mapPrev', x: cx - 150, y: 566, w: 44, h: 38 },
@@ -206,13 +205,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     const base =
       isStart ? '#b5391f' :
       b.id === 'ad' ? '#c8792b' :
-      b.id === 'share' ? '#4a8a4a' :
-      b.id === 'shop' ? '#7a4aa0' : '#8a6a3a';
+      b.id === 'share' ? '#4a8a4a' : '#8a6a3a';
     const dim =
       isStart ? '#8a2a14' :
       b.id === 'ad' ? '#9a5a1a' :
-      b.id === 'share' ? '#356a35' :
-      b.id === 'shop' ? '#5a3078' : '#6a4a22';
+      b.id === 'share' ? '#356a35' : '#6a4a22';
     ctx.fillStyle = pressed ? dim : base;
     ctx.fill();
     if (pressed) {
@@ -231,7 +228,6 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       b.id === 'start' ? `开始游戏 ⚡${STAMINA_COST}` :
       b.id === 'ad' ? '📺 体力+10' :
       b.id === 'share' ? '↗ 分享+5' :
-      b.id === 'shop' ? '🛒 神秘商人' :
       b.id === 'codex' ? '图鉴' :
       b.id === 'rank' ? '排行榜' : '武器背包';
     ctx.font = isStart ? 'bold 26px "PingFang SC", sans-serif' : '16px "PingFang SC", sans-serif';

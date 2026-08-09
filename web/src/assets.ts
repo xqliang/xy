@@ -41,7 +41,9 @@ export type AssetKey =
   | 'fence-baiguling'
   | 'fence-liushahe'
   | 'fence-pansidong'
-  | 'gate-liushahe';
+  | 'gate-liushahe'
+  | 'merchant-scroll'
+  | 'merchant-peddler';
 
 const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
 let ready = false;

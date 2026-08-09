@@ -47,6 +47,14 @@ import { playSfx, startAmbient, startMenuMusic, stopAmbient, isMuted, toggleMute
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
+import {
+  merchantClosed,
+  openMerchant,
+  drawMerchant,
+  merchantHitAt,
+  applyMerchantHitFull,
+  type MerchantUiState,
+} from './merchant';
 
 /** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
 function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
@@ -140,6 +148,8 @@ let settleChange: RankChange | null = null; // 结算页要播放的段位变化
 let settleStart = 0; // 进入结算页的时间戳（performance.now）
 let endlessOn = loadEndlessEnabled(); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
+let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
+let merchant: MerchantUiState = merchantClosed();
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, paused: false };
 
 function newGame() {
@@ -189,11 +199,6 @@ function handleMenu(id: string) {
   } else if (id === 'share') {
     stamina = addStamina(stamina, 5);
     menuToast = '体力 +5';
-  } else if (id === 'shop') {
-    shopToast = '';
-    shopScrollY = 0;
-    shopPopup = null;
-    screen = 'shop';
   } else if (id === 'codex') {
     screen = 'codex';
   } else if (id === 'rank') {
@@ -210,6 +215,28 @@ function handleMenu(id: string) {
     menuToast = `地图：${currentMap.name}`;
   } else {
     menuToast = '该功能开发中…';
+  }
+}
+
+function handleMerchantPointer(x: number, y: number): boolean {
+  if (!merchant.open) return false;
+  const hit = merchantHitAt(x, y, merchant, loadout);
+  if (hit === null) return true;
+  playSfx('click');
+  const res = applyMerchantHitFull(hit, merchant, loadout, merit);
+  merchant = res.merchant;
+  loadout = res.loadout;
+  merit = res.merit;
+  return true;
+}
+
+function leaveSettleToMenu(): void {
+  settleChange = null;
+  endlessResult = null;
+  screen = 'menu';
+  if (pendingMerchant) {
+    merchant = openMerchant(loadout);
+    pendingMerchant = false;
   }
 }
 
@@ -345,6 +372,7 @@ function onPointerDown(e: PointerEvent) {
   resumeAudioAfterGesture(screen === 'menu' ? 'menu' : screen === 'battle' ? 'battle' : 'other', currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
+    if (handleMerchantPointer(x, y)) return;
     menuDownId = menuButtonAt(x, y);
     menuPressedId = menuDownId;
     if (menuDownId) canvas.setPointerCapture(e.pointerId);
@@ -387,9 +415,7 @@ function onPointerDown(e: PointerEvent) {
   }
   if (screen === 'settle') {
     if ((battle.endless && endlessResult) || isSettleAnimDone(performance.now() - settleStart)) {
-      settleChange = null;
-      endlessResult = null;
-      screen = 'menu'; // 无尽结算为静态屏，点击即回；星级结算需动画放完
+      leaveSettleToMenu();
     } else {
       settleStart = performance.now() - SETTLE_ANIM_MS;
     }
@@ -599,6 +625,7 @@ function frame(now: number): void {
       endlessOn,
       pressedId: menuPressedId,
     });
+    if (merchant.open) drawMerchant(ctx, merchant, loadout, merit);
   } else if (screen === 'shop') {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
     if (shopPopup) drawShopPopup(ctx, shopPopup, merit, loadout);
@@ -631,6 +658,7 @@ function frame(now: number): void {
     // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
       endHandled = true;
+      pendingMerchant = true;
       // 神兵掉落入背包（两种模式通用）
       const names: string[] = [];
       for (const wid of battle.droppedWeapons) {

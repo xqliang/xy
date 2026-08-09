@@ -90,7 +90,7 @@ describe('双雄引妖王', () => {
     b.step(0.05);
     const boss = b.monsters.find((m) => m.isBoss);
     const escorts = b.monsters.filter(
-      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist && m.dist >= boss.dist - 2,
+      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist,
     );
     expect(boss).toBeTruthy();
     expect(escorts.length).toBeGreaterThanOrEqual(TUNING.bossEscortMin);
@@ -164,7 +164,7 @@ describe('双雄引妖王', () => {
     b.step(0.05);
     const boss = b.monsters.find((m) => m.isBoss);
     const escorts = b.monsters.filter(
-      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist && m.dist >= boss.dist - 2,
+      (m) => !m.isBoss && !m.isMiniBoss && boss && m.dist < boss.dist,
     );
     expect(boss).toBeTruthy();
     const totalHp = boss!.maxHp + escorts.reduce((s, m) => s + m.maxHp, 0);

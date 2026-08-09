@@ -203,3 +203,26 @@ export function unequipPassive(loadout: LoadoutState, id: string): LoadoutState 
     passives: loadout.passives.filter((x) => x !== id),
   }));
 }
+
+/** 抽奖等场景：不扣功德，直接拥有并尽量装备 */
+export function grantActive(loadout: LoadoutState, id: string): LoadoutState {
+  if (!isActiveEnabled(id)) return loadout;
+  const ownedActives = loadout.ownedActives.includes(id)
+    ? loadout.ownedActives
+    : [...loadout.ownedActives, id];
+  const equipped = loadout.equipped.includes(id) || loadout.equipped.length >= MAX_EQUIPPED_ACTIVES
+    ? loadout.equipped
+    : [...loadout.equipped, id];
+  return save(normalize({ ...loadout, day: today(), ownedActives, equipped }));
+}
+
+export function grantPassive(loadout: LoadoutState, id: string): LoadoutState {
+  if (!isPassiveEnabled(id)) return loadout;
+  const ownedPassives = loadout.ownedPassives.includes(id)
+    ? loadout.ownedPassives
+    : [...loadout.ownedPassives, id];
+  const passives = loadout.passives.includes(id) || loadout.passives.length >= MAX_EQUIPPED_PASSIVES
+    ? loadout.passives
+    : [...loadout.passives, id];
+  return save(normalize({ ...loadout, day: today(), ownedPassives, passives }));
+}
