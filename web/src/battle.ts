@@ -96,9 +96,14 @@ export const TUNING = {
   bossEscortMax: 8, // 妖王出场护卫最多只数
   bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
-  // —— 骑兵波（后期随机某波：半数怪替换为骑兵；移速翻倍、血量略低，威胁≈普通×4/3）——
+  // —— 骑兵波（后期随机某波：比例随波次升高；移速翻倍、血量略低）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
-  cavalryWaveChance: 0.5, // 达到后期后，每波有 50% 概率成为骑兵波
+  cavalryWaveChance: 0.5, // 达到后期后，每波成为骑兵波的概率
+  cavalryRatioBase: 0.35, // 本波骑兵比例下界：base + min(waveBonusCap, 波次/100)
+  cavalryRatioWaveBonusCap: 0.2,
+  cavalryRatioWaveDiv: 100,
+  cavalryRatioMaxSpread: 0.2, // 上界 = min(cap, 下界 + spread)，开波时在 [下界, 上界] 随机
+  cavalryRatioCap: 0.7,
   cavalrySpdMul: 2, // 骑兵移速倍率：比普通妖快一倍
   cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
@@ -259,6 +264,20 @@ export function splitBossHpBudget(
   return { bossHp, escortHpEach };
 }
 
+/** 某波骑兵比例区间：[起始, 最大]（开波时在区间内随机一次，逐怪独立判定） */
+export function cavalryRatioBounds(wave: number): { start: number; max: number } {
+  const start = TUNING.cavalryRatioBase + Math.min(TUNING.cavalryRatioWaveBonusCap, wave / TUNING.cavalryRatioWaveDiv);
+  const max = Math.min(TUNING.cavalryRatioCap, start + TUNING.cavalryRatioMaxSpread);
+  return { start, max };
+}
+
+/** 在 [起始, 最大] 内均匀随机本波骑兵占比 */
+export function rollCavalryWaveRatio(wave: number, rngNext: () => number): number {
+  const { start, max } = cavalryRatioBounds(wave);
+  if (max <= start) return start;
+  return start + rngNext() * (max - start);
+}
+
 // 攻击命中判定：以 (ax,ay) 为圆心、半径 (rgeCells + 0.5) 格的攻击圆(与范围环显示同一个圆)，
 // 是否与目标所在方格真实相交(边相切不算 → 严格小于)。目标方格取其中心 round 后的整格。
 // (ax,ay) 用格中心坐标：兵为其所在格整数坐标，英雄为两格中点(可为半格)。
@@ -322,7 +341,7 @@ const MAP_SKILL: Record<string, MonsterSkill> = {
 
 // 候选区令牌：兵种 / 铲子 / 武将字牌（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
 export type TrayToken =
-  | { kind: 'unit'; type: UnitType; tier: number }
+  | { kind: 'unit'; type: UnitType; tier: number; /** 地图挤回候选区，布阵待换低阶上板 */ displaced?: boolean }
   | { kind: 'shovel' }
   | { kind: 'word'; char: string; general: string; tier: number };
 
@@ -424,7 +443,7 @@ export interface Monster {
   isBoss: boolean;
   isMiniBoss: boolean; // 小 Boss：跨地图头目，带独立光环技能
   miniBossKind: MiniBossKind | null; // 小 Boss 种类（非小 Boss 为 null）
-  isCavalry: boolean; // 骑兵：移速翻倍、血量 ×cavalryHpMul（骑兵波中占半数，BOSS 不会是骑兵）
+  isCavalry: boolean; // 骑兵：移速翻倍、血量 ×cavalryHpMul（骑兵波中按本波随机比例，BOSS 不会是骑兵）
   hitFlash: number; // 受击闪白(秒)
   skill: MonsterSkill | null; // 精英/BOSS 携带的减益技能（普通妖/小 Boss 为 null）
   skillCd: number; // 距下次施法的秒数
@@ -630,8 +649,9 @@ export class Battle {
   private spawnRemaining = 0;
   private spawnTimer = 0;
   private sinceLastElite = Number.POSITIVE_INFINITY; // 距上一只带技能精英已刷出的普通妖数
-  private waveMonsterCount = 0; // 本波出怪总数（含后期堆量），用于骑兵半数判定
-  private cavalryWave = false; // 本波是否为骑兵波（半数怪为骑兵）
+  private waveMonsterCount = 0; // 本波出怪总数（含后期堆量），用于出场序号
+  private cavalryWave = false; // 本波是否为骑兵波
+  private cavalryWaveRatio = 0; // 骑兵波内逐怪成为骑兵的概率（开波时在波次相关区间内随机）
   private waveMiniBoss: MiniBossKind | null = null; // 本波预定的小 Boss 种类（非 BOSS 波才可能）
   private miniBossSpawnIdx = -1; // 小 Boss 出场序号（0-based）；-1 表示本波无
   /** 双雄引妖王：距下次额外大 Boss 的秒数；英雄不足时为 -1，重新凑齐后重 roll 满间隔 */
@@ -856,14 +876,14 @@ export class Battle {
     if (w) {
       if (this.tray.length >= TUNING.traySize) return false;
       this.words.delete(k);
-      this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      this.tray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true });
       return true;
     }
     const u = this.units.get(k);
     if (u) {
       if (this.tray.length >= TUNING.traySize) return false;
       this.units.delete(k);
-      this.tray.push({ kind: 'unit', type: u.type, tier: u.tier });
+      this.tray.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
       return true;
     }
     return true;
@@ -876,7 +896,7 @@ export class Battle {
     if (w) {
       if (this.aiTray.length >= TUNING.traySize) return false;
       this.aiWords.delete(k);
-      this.aiTray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      this.aiTray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true });
       return true;
     }
     const ui = this.aiUnits.findIndex((x) => x.cell.c === cell.c && x.cell.r === cell.r);
@@ -884,7 +904,7 @@ export class Battle {
       if (this.aiTray.length >= TUNING.traySize) return false;
       const u = this.aiUnits[ui]!;
       this.aiUnits.splice(ui, 1);
-      this.aiTray.push({ kind: 'unit', type: u.type, tier: u.tier });
+      this.aiTray.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
       return true;
     }
     return true;
@@ -1817,11 +1837,12 @@ export class Battle {
     // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（约 70% 压力）
     this.wavePressure = this.computeWavePressure(this.wave);
     this.spawnRemaining = this.wavePressure.count;
-    this.waveMonsterCount = this.spawnRemaining; // 记录总数用于骑兵半数判定
+    this.waveMonsterCount = this.spawnRemaining;
     const bossWave = this.isBossWave(this.wave);
-    // 后期(第 6 波起)随机某波成为骑兵波：半数怪替换为骑兵（移速翻倍、血量相同）
+    // 后期(第 6 波起)随机某波成为骑兵波；占比在 [35%+min(20%,波/100), min(70%,起始+20%)] 内随机
     this.cavalryWave =
       this.wave >= TUNING.cavalryFromWave && this.rng.next() < TUNING.cavalryWaveChance;
+    this.cavalryWaveRatio = this.cavalryWave ? rollCavalryWaveRatio(this.wave, () => this.rng.next()) : 0;
     // 第 4 波之后、非妖王波：有概率刷出 1 只跨地图小 Boss（顶替本波 1 只普通怪出场）
     this.waveMiniBoss = null;
     this.miniBossSpawnIdx = -1;
@@ -2193,13 +2214,13 @@ export class Battle {
     const isBoss =
       opts?.forceBoss === true ||
       (this.isBossWave(this.wave) && this.spawnRemaining === 1);
-    // 骑兵：仅骑兵波、非 BOSS，按出场序号隔一出一 → 约占本波半数
-    // forceBoss 不占本波序号；仍用当前剩余推算，避免误标小 Boss/骑兵
+    // 骑兵：仅骑兵波、非 BOSS/小 Boss；逐怪按本波随机比例判定
     const spawnedIdx = this.waveMonsterCount - this.spawnRemaining; // 0-based 出场序号
     // 小 Boss：预定序号出场；与 BOSS 互斥，也不做骑兵
     const miniKind = !isBoss && spawnedIdx === this.miniBossSpawnIdx ? this.waveMiniBoss : null;
     const isMiniBoss = miniKind != null;
-    const isCavalry = this.cavalryWave && !isBoss && !isMiniBoss && spawnedIdx % 2 === 0;
+    const isCavalry =
+      this.cavalryWave && !isBoss && !isMiniBoss && this.rng.next() < this.cavalryWaveRatio;
 
     // 小 Boss 带独立光环；精英/妖王带地图技能；普通妖无
     const skill = isMiniBoss ? null : this.rollMonsterSkill(isBoss);

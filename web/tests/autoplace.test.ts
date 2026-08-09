@@ -193,14 +193,14 @@ class FakeView implements AutoPlaceView {
     if (w) {
       if (this.trayArr.length >= this.trayCap) return false;
       this.wordsMap.delete(k);
-      this.trayArr.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier });
+      this.trayArr.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true });
       return true;
     }
     const u = this.unitsMap.get(k);
     if (u) {
       if (this.trayArr.length >= this.trayCap) return false;
       this.unitsMap.delete(k);
-      this.trayArr.push({ kind: 'unit', type: u.type, tier: u.tier });
+      this.trayArr.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
       return true;
     }
     return true;
@@ -1287,4 +1287,17 @@ it('aiHeroPartnerAdjustPending：仅有单字孤儿且无配对 tray 字时为 f
   v.wordsMap.set('3,5', { char: '铁', general: 'tieshan', cell: { c: 3, r: 5 }, tier: 1 });
   v.trayArr = [{ kind: 'unit', type: 'dao', tier: 1 }];
   expect(aiHeroPartnerAdjustPending(v)).toBe(false);
+});
+
+it('待处理：地图挤回 tray 的高阶兵换棋盘更低阶武器上板', () => {
+  const v = new FakeView(
+    [{ kind: 'unit', type: 'archer', tier: 2, displaced: true }],
+    [],
+  );
+  v.unitsMap.set('2,2', { type: 'spear', tier: 1, cell: { c: 2, r: 2 } });
+  v.unitsMap.set('4,2', { type: 'dao', tier: 1, cell: { c: 4, r: 2 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 3 });
+  expect(v.tray().some((t) => t.kind === 'unit' && t.displaced)).toBe(false);
+  const archer = v.placedUnits().find((u) => u.type === 'archer' && u.tier === 2);
+  expect(archer).toBeDefined();
 });

@@ -24,8 +24,8 @@ export interface Cell { c: number; r: number; }
 
 export type PlaceToken =
   | { kind: 'shovel' }
-  | { kind: 'unit'; type: UnitType; tier: number }
-  | { kind: 'word'; char: string; general: string; tier: number };
+  | { kind: 'unit'; type: UnitType; tier: number; displaced?: boolean }
+  | { kind: 'word'; char: string; general: string; tier: number; displaced?: boolean };
 
 export interface PlacedUnitLite { type: UnitType; tier: number; cell: Cell; }
 export interface PlacedWordLite { char: string; general: string; cell: Cell; tier?: number }
@@ -505,14 +505,25 @@ function blockedTrayHeroNeedCells(view: AutoPlaceView): Cell[] {
     if (!pair) continue;
     const def = matchGeneral(pair.chars[0], pair.chars[1]);
     if (!def) continue;
-    let need: Cell;
+    let need: Cell | null = null;
     if (mate.char === def.chars[1]) need = { c: mate.cell.c - 1, r: mate.cell.r };
     else if (mate.char === def.chars[0]) need = { c: mate.cell.c + 1, r: mate.cell.r };
-    else continue;
-    if (need.c < 0) continue;
-    if (isCellEmptyView(view, need)) continue;
-    if (view.isActiveHeroCell(need) || view.placedUnits().some((u) => u.cell.c === need.c && u.cell.r === need.r)) {
-      out.push(need);
+    if (need && need.c >= 0 && !isCellEmptyView(view, need)) {
+      if (view.isActiveHeroCell(need) || view.placedUnits().some((u) => u.cell.c === need.c && u.cell.r === need.r)) {
+        out.push(need);
+      }
+    }
+    // 白龙式：棋盘「白」在右格，左邻被流沙/武器占（须先腾位）
+    if (mate.char === def.chars[0] && t.char === def.chars[1]) {
+      const leftSlot = { c: mate.cell.c - 1, r: mate.cell.r };
+      if (leftSlot.c >= 0 && !isCellEmptyView(view, leftSlot)) {
+        if (
+          view.isActiveHeroCell(leftSlot)
+          || view.placedUnits().some((u) => u.cell.c === leftSlot.c && u.cell.r === leftSlot.r)
+        ) {
+          out.push(leftSlot);
+        }
+      }
     }
   }
   return out;
@@ -745,8 +756,19 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
   }
 
-  /** 有空格且 tray 仍有兵 → 优先落子，暂缓纯调位 */
+  /** 地图挤回 tray、待换低阶上板的兵种 */
+  function displacedTrayUnitEntries(): { t: Extract<PlaceToken, { kind: 'unit' }>; i: number }[] {
+    return view.tray()
+      .map((t, i) => ({ t, i }))
+      .filter(
+        (x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } =>
+          x.t.kind === 'unit' && !!x.t.displaced,
+      );
+  }
+
+  /** 有空格且 tray 仍有兵 → 优先落子，暂缓纯调位；待处理挤回兵也需先上板 */
   function pendingTrayDeploy(): boolean {
+    if (displacedTrayUnitEntries().length > 0) return true;
     return view.freeCells().length > 0 && trayUnitEntries().length > 0;
   }
 
@@ -804,6 +826,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
       if (view.place(i, cell)) return true;
     }
+    // 1a) 地图挤回 tray 的待处理兵：换棋盘更低阶武器上板
+    if (!subopt() && tryRedeployDisplacedTrayUnits()) return true;
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
@@ -816,6 +840,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (mate && shouldPrioritizeTrayBoardMateActivation(view, t, mate) && tryActivateTrayWord(i, t)) {
         return true;
       }
+    }
+    // 2a-0b) tray 伴侣所需格被占（白龙：流沙/武器挡左格）→ 先腾位，再挪其它孤儿字
+    if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
+      if (tryTrayHeroInsertByRowShift(view)) return true;
+      if (tryShiftPathRowLeft(view)) return true;
     }
     // 2a) 棋盘孤儿字：两字已在场但未相邻 → 优先迁到最优对位激活（如「梵+音」「大+蟒」）
     if (!subopt() && tryPairBoardOrphans()) return true;
@@ -1192,6 +1221,32 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         if (!target || wordTier(w) < wordTier(target)) target = w;
       }
       if (target && !view.isActiveHeroCell(target.cell) && view.place(i, target.cell)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 地图挤回 tray 的待处理兵：与棋盘上严格更低阶的武器互换上板（可异型）。
+   * 优先替换最低阶；同阶取对 tray 兵输出更好的座位。
+   */
+  function tryRedeployDisplacedTrayUnits(): boolean {
+    for (const { t, i } of displacedTrayUnitEntries()) {
+      const rge = getUnitStat(t.type, t.tier).rge;
+      let best: { u: PlacedUnitLite; score: number } | null = null;
+      for (const u of view.placedUnits()) {
+        if (u.tier >= t.tier) continue;
+        if (view.isActiveHeroCell(u.cell)) continue;
+        if (view.nearestPathDist(u.cell) > rge + tol) continue;
+        const sc = scoreCell(u.cell, t.type, t.tier);
+        if (
+          !best ||
+          u.tier < best.u.tier ||
+          (u.tier === best.u.tier && sc > best.score)
+        ) {
+          best = { u, score: sc };
+        }
+      }
+      if (best && view.place(i, best.u.cell)) return true;
     }
     return false;
   }

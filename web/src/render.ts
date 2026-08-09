@@ -814,6 +814,20 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
   } else {
     // 立绘尺寸与地图上单位保持一致(同用 CELL*0.72)，避免 tray 里显得更大
     drawUnit(ctx, token.type, token.tier, x, y, CELL * 0.72);
+    if (token.displaced) {
+      ctx.save();
+      ctx.strokeStyle = '#d87818';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, s * 0.4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#d87818';
+      ctx.font = `bold ${Math.round(s * 0.2)}px "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('待', x, y + s * 0.22);
+      ctx.restore();
+    }
   }
 }
 
