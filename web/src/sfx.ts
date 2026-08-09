@@ -8,15 +8,14 @@ import { createAudioContext, isWeChat } from './platform';
 import { ASSET_URLS } from '@asset-manifest';
 
 const MUTE_KEY = 'dasheng.mute';
-const MUSIC_KEY = 'dasheng.music';
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false; // 总静音（音效+音乐），默认关（即有声）
-let musicOn = true; // 背景音乐默认开启；用户显式关闭则持久化为 '0'
+let musicEnabled = true;
+let sfxEnabled = true;
 let musicVolume = 0.7;
 let sfxVolume = 0.8;
 muted = storeGet(MUTE_KEY) === '1';
-musicOn = storeGet(MUSIC_KEY) !== '0';
 
 // 首个用户手势后调用：创建/恢复 AudioContext（浏览器自动播放策略要求）
 export function initAudio(): void {
@@ -25,7 +24,7 @@ export function initAudio(): void {
     ctx = createAudioContext(); // 平台适配：Web=AudioContext，微信=wx.createWebAudioContext()
     if (!ctx) return;
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.5 * sfxVolume;
+    master.gain.value = muted ? 0 : sfxEnabled ? 0.5 * sfxVolume : 0;
     master.connect(ctx.destination);
   } catch {
     ctx = null;
@@ -38,19 +37,13 @@ export function isMuted(): boolean {
 export function toggleMute(): boolean {
   muted = !muted;
   try { storeSet(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
-  if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5 * sfxVolume, ctx.currentTime, 0.05);
+  if (master && ctx) master.gain.setTargetAtTime(muted ? 0 : sfxEnabled ? 0.5 * sfxVolume : 0, ctx.currentTime, 0.05);
   return muted;
 }
 
-// 背景音乐（地图氛围音）开关，独立于音效；默认开启
+// 背景音乐开关（由设置页持久化）
 export function isMusicOn(): boolean {
-  return musicOn;
-}
-export function toggleMusic(): boolean {
-  musicOn = !musicOn;
-  try { storeSet(MUSIC_KEY, musicOn ? '1' : '0'); } catch { /* ignore */ }
-  if (!musicOn) stopAmbient(); // 关闭立即停；开启由对战循环里的 startAmbient 幂等拉起
-  return musicOn;
+  return musicEnabled;
 }
 
 type Wave = 'sine' | 'square' | 'triangle' | 'sawtooth';
@@ -95,7 +88,7 @@ let lastAttack = 0; // 攻击音节流，避免密集刷屏
 
 // 事件 → 声音映射
 export function playSfx(name: string): void {
-  if (muted || !ctx) return;
+  if (muted || !sfxEnabled || !ctx) return;
   switch (name) {
     case 'click': tone(660, 0.06, { type: 'square', gain: 0.14 }); break;
     case 'summon': tone(320, 0.18, { type: 'sine', to: 760, gain: 0.22 }); tone(480, 0.14, { type: 'triangle', gain: 0.12, delay: 0.04 }); break;
@@ -163,21 +156,27 @@ function decodeBgm(url: string): Promise<AudioBuffer | null> {
 }
 
 // 用已解码的 buffer 起一个循环源，接到给定增益节点（该节点已入 ambientNodes，随 stopAmbient 清理）。
-export function applyAudioVolumes(music: number, sfx: number): void {
+export function applyAudioVolumes(
+  music: number,
+  sfx: number,
+  opts?: { musicEnabled?: boolean; sfxEnabled?: boolean },
+): void {
   musicVolume = Math.max(0, Math.min(1, music));
   sfxVolume = Math.max(0, Math.min(1, sfx));
+  if (opts?.musicEnabled !== undefined) musicEnabled = opts.musicEnabled;
+  if (opts?.sfxEnabled !== undefined) sfxEnabled = opts.sfxEnabled;
   if (master && ctx) {
-    master.gain.setTargetAtTime(muted ? 0 : 0.5 * sfxVolume, ctx.currentTime, 0.05);
+    master.gain.setTargetAtTime(muted ? 0 : sfxEnabled ? 0.5 * sfxVolume : 0, ctx.currentTime, 0.05);
   }
   if (!ctx) return;
-  const mg = musicOn && !muted && musicVolume > 0 ? 0.5 * musicVolume : 0;
+  const mg = musicEnabled && !muted && musicVolume > 0 ? 0.5 * musicVolume : 0;
   for (const a of ambientNodes) {
     if (a.node instanceof GainNode) {
       a.node.gain.setTargetAtTime(mg, ctx.currentTime, 0.05);
     }
   }
-  if (musicVolume <= 0) stopAmbient();
-  else if (musicOn && ambientMap === MENU_ID) startMenuMusic();
+  if (!musicEnabled || musicVolume <= 0) stopAmbient();
+  else if (musicEnabled && ambientMap === MENU_ID) startMenuMusic();
 }
 
 export function getMusicVolume(): number { return musicVolume; }
@@ -204,7 +203,7 @@ function startFileBgm(mapId: string, url: string): void {
   const cached = bgmBuffers[url];
   if (cached) { startBgmLoop(cached, g); return; }
   void decodeBgm(url).then((buf) => {
-    if (buf && ctx && musicOn && ambientMap === mapId) startBgmLoop(buf, g);
+    if (buf && ctx && musicEnabled && ambientMap === mapId) startBgmLoop(buf, g);
   });
 }
 
@@ -219,7 +218,7 @@ export function stopAmbient(): void {
 // 启动某地图的背景音乐（幂等：同图不重启）。各地图一首真实音频循环；Web 端 fetch 播放，
 // 微信端无本地 fetch 则静音（合成氛围音已移除）。
 export function startAmbient(mapId: string): void {
-  if (!ctx || !master || !musicOn || musicVolume <= 0) return; // 背景音乐关闭时不播放（音效仍正常）
+  if (!ctx || !master || !musicEnabled || musicVolume <= 0) return; // 背景音乐关闭时不播放（音效仍正常）
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;
@@ -230,7 +229,7 @@ export function startAmbient(mapId: string): void {
 // 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。Web 端可 fetch；微信端无本地
 // fetch，首页保持静音（原本也无首页音乐）。循环音量渐变由文件烘焙的淡入/淡出保证。
 export function startMenuMusic(): void {
-  if (!ctx || !master || !musicOn || musicVolume <= 0) return;
+  if (!ctx || !master || !musicEnabled || musicVolume <= 0) return;
   if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return;
   if (ambientMap === MENU_ID && ambientNodes.length) return;
   stopAmbient();
@@ -248,7 +247,7 @@ export function prefetchMenuBgm(): Promise<void> {
 
 /** 启动时/回前台：恢复 AudioContext 并尝试播首页音乐（可能被浏览器策略拦截，首击仍会 resume） */
 export async function bootstrapMenuMusic(): Promise<void> {
-  if (!musicOn) return;
+  if (!musicEnabled) return;
   initAudio();
   if (!ctx || !master) return;
   if (ctx.state === 'suspended') {
@@ -262,13 +261,13 @@ export function resumeAudioAfterGesture(screen: 'menu' | 'battle' | 'other', map
   initAudio();
   if (!ctx || ctx.state === 'suspended') {
     void ctx?.resume().then(() => {
-      if (!musicOn || !ctx || ctx.state !== 'running') return;
+      if (!musicEnabled || !ctx || ctx.state !== 'running') return;
       if (screen === 'menu') startMenuMusic();
       else if (screen === 'battle' && mapId) startAmbient(mapId);
     });
     return;
   }
-  if (!musicOn) return;
+  if (!musicEnabled) return;
   if (screen === 'menu') startMenuMusic();
   else if (screen === 'battle' && mapId) startAmbient(mapId);
 }

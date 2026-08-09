@@ -60,6 +60,8 @@ import { loadAiSkill, saveAiSkill, nextAiSkill } from './ai-skill';
 import {
   getSettings,
   setShowDamageNumbers,
+  setMusicEnabled,
+  setSfxEnabled,
   setMusicVolume,
   setSfxVolume,
   type GameSettings,
@@ -150,6 +152,16 @@ function nextSeed(): number {
 }
 
 type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag' | 'settle';
+
+function usesMenuMusic(s: Screen): boolean {
+  return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag';
+}
+
+function audioScreenKind(s: Screen): 'menu' | 'battle' | 'other' {
+  if (usesMenuMusic(s)) return 'menu';
+  if (s === 'battle') return 'battle';
+  return 'other';
+}
 let screen: Screen = 'menu';
 let rank: RankState = loadRank();
 let stamina: Stamina = loadStamina();
@@ -180,7 +192,15 @@ let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
 let merchant: MerchantUiState = merchantClosed();
 let gameSettings: GameSettings = getSettings();
-applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+
+function syncAudioFromSettings(): void {
+  applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume, {
+    musicEnabled: gameSettings.musicEnabled,
+    sfxEnabled: gameSettings.sfxEnabled,
+  });
+}
+
+syncAudioFromSettings();
 type MenuPopup = 'none' | 'settings' | 'stamina' | 'map';
 let menuPopup: MenuPopup = 'none';
 let staminaPopupToast = '';
@@ -265,17 +285,27 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       gameSettings = setShowDamageNumbers(gameSettings, !gameSettings.showDamageNumbers);
       return true;
     }
+    if (hit.kind === 'toggleMusic') {
+      gameSettings = setMusicEnabled(gameSettings, !gameSettings.musicEnabled);
+      syncAudioFromSettings();
+      if (gameSettings.musicEnabled && usesMenuMusic(screen)) startMenuMusic();
+      return true;
+    }
+    if (hit.kind === 'toggleSfx') {
+      gameSettings = setSfxEnabled(gameSettings, !gameSettings.sfxEnabled);
+      syncAudioFromSettings();
+      return true;
+    }
     if (hit.kind === 'musicKnob') {
       menuSliderDrag = 'music';
       gameSettings = setMusicVolume(gameSettings, settingsMusicVolumeFromX(x));
-      applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
-      if (gameSettings.musicVolume > 0) startMenuMusic();
+      syncAudioFromSettings();
       return true;
     }
     if (hit.kind === 'sfxKnob') {
       menuSliderDrag = 'sfx';
       gameSettings = setSfxVolume(gameSettings, settingsSfxVolumeFromX(x));
-      applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
+      syncAudioFromSettings();
       return true;
     }
     return true;
@@ -338,12 +368,10 @@ function handleMenuPopupDrag(x: number): void {
   const v = menuSliderDrag === 'music' ? settingsMusicVolumeFromX(x) : settingsSfxVolumeFromX(x);
   if (menuSliderDrag === 'music') {
     gameSettings = setMusicVolume(gameSettings, v);
-    applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
-    if (gameSettings.musicVolume > 0) startMenuMusic();
   } else {
     gameSettings = setSfxVolume(gameSettings, v);
-    applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume);
   }
+  syncAudioFromSettings();
   scheduleFrame();
 }
 
@@ -498,7 +526,7 @@ function handleButton(x: number, y: number): boolean {
 
 function onPointerDown(e: PointerEvent) {
   e.preventDefault();
-  resumeAudioAfterGesture(screen === 'menu' ? 'menu' : screen === 'battle' ? 'battle' : 'other', currentMap.id);
+  resumeAudioAfterGesture(audioScreenKind(screen), currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
     if (handleMerchantPointer(x, y)) return;
@@ -778,8 +806,8 @@ function frame(now: number): void {
   let dt = elapsed / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
-  // 首页放首页 BGM；战斗放地图氛围音（在战斗分支内启动）；其余界面静音。均幂等。
-  if (screen === 'menu') startMenuMusic();
+  // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
+  if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
   if (screen === 'menu') {
     updateMenuFloatToasts(dt);
@@ -886,7 +914,7 @@ function pauseLoop(): void {
 }
 function resumeLoop(): void {
   last = performance.now(); // 重置计时，避免回前台瞬间 dt 过大导致跳步
-  if (screen === 'menu') void bootstrapMenuMusic();
+  if (usesMenuMusic(screen)) void bootstrapMenuMusic();
   scheduleFrame();
 }
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {

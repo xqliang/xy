@@ -1,6 +1,5 @@
 // 神秘商人：每局战斗结算回到首页后自动弹出一次（水墨卷轴弹窗），关闭后无入口直至下局结束。
 import { VIEW_W, VIEW_H } from './render';
-import { sprite } from './assets';
 import {
   roundRect,
   drawInkPopupFrame,
@@ -321,14 +320,23 @@ const CLOSE_R = inkPopupCloseRect(PX, PY);
 const BODY = PY + 58;
 const TAB_SHOP = { x: PX + 18, y: BODY + 6, w: 228, h: 34 };
 const TAB_LOTTERY = { x: PX + 258, y: BODY + 6, w: 228, h: 34 };
-const MERIT_BAR = { x: PX + 18, y: BODY + 48, w: PW - 110, h: 26 };
-const PEDDLER_BOX = { x: PX + PW - 88, y: BODY + 34, w: 72, h: 72 };
+const MERIT_BAR = { x: PX + 18, y: BODY + 48, w: 148, h: 26 };
 const CONTENT_TOP = BODY + 92;
 const CONTINUE_H = 40;
 const CONTINUE_PAD = 14;
 const CONTINUE_R = { x: PX + 32, y: PY + PH - CONTINUE_H - CONTINUE_PAD, w: PW - 64, h: CONTINUE_H };
-const EQUIP_PANEL_H = 188;
-const EQUIP_TOP = CONTINUE_R.y - 36 - EQUIP_PANEL_H;
+const EQUIP_PANEL_SIDE = 14;
+const EQUIP_LABEL_COL = 34;
+const EQUIP_GRID_X0 = PX + EQUIP_PANEL_SIDE + EQUIP_LABEL_COL;
+const EQUIP_HEADER_H = 42;
+const ACT_SLOT = 52;
+const PAS_SLOT = 44;
+const EQUIP_ROW_GAP = 14;
+const EQUIP_PANEL_H = EQUIP_HEADER_H + ACT_SLOT + EQUIP_ROW_GAP + PAS_SLOT + 12;
+const EQUIP_TOP = CONTINUE_R.y - 32 - EQUIP_PANEL_H;
+const ACT_ROW_Y = EQUIP_TOP + EQUIP_HEADER_H;
+const PAS_ROW_Y = ACT_ROW_Y + ACT_SLOT + EQUIP_ROW_GAP;
+
 const CONTENT_H = EQUIP_TOP - CONTENT_TOP - 12;
 
 const OFFER_H = 124;
@@ -362,16 +370,17 @@ function lotPreviewIndex(row: number, col: number): number | null {
   return 5 + col;
 }
 
-const ACT_SLOT = 52;
-const PAS_SLOT = 44;
-const ACT_ROW_Y = EQUIP_TOP + 50;
-const PAS_ROW_Y = EQUIP_TOP + 126;
-
 type EquipSlotRect = { x: number; y: number; w: number; h: number; id: string | null };
+
+function equipGridStartX(slotCount: number, slotW: number, pitch: number): number {
+  const gridW = slotCount * pitch - (pitch - slotW);
+  const avail = PW - EQUIP_PANEL_SIDE * 2 - EQUIP_LABEL_COL;
+  return EQUIP_GRID_X0 + Math.max(0, (avail - gridW) / 2);
+}
 
 function activeSlotRects(loadout: LoadoutState): EquipSlotRect[] {
   const pitch = ACT_SLOT + 10;
-  const startX = PX + (PW - MAX_EQUIPPED_ACTIVES * pitch + 10) / 2;
+  const startX = equipGridStartX(MAX_EQUIPPED_ACTIVES, ACT_SLOT, pitch);
   return Array.from({ length: MAX_EQUIPPED_ACTIVES }, (_, i) => ({
     x: startX + i * pitch,
     y: ACT_ROW_Y,
@@ -383,7 +392,7 @@ function activeSlotRects(loadout: LoadoutState): EquipSlotRect[] {
 
 function passiveSlotRects(loadout: LoadoutState): EquipSlotRect[] {
   const pitch = PAS_SLOT + 6;
-  const startX = PX + (PW - MAX_EQUIPPED_PASSIVES * pitch + 6) / 2;
+  const startX = equipGridStartX(MAX_EQUIPPED_PASSIVES, PAS_SLOT, pitch);
   return Array.from({ length: MAX_EQUIPPED_PASSIVES }, (_, i) => ({
     x: startX + i * pitch,
     y: PAS_ROW_Y,
@@ -478,35 +487,6 @@ function drawInkTab(
   active: boolean,
 ): void {
   drawInkActionButton(ctx, rect, label, false, active ? 'primary' : 'secondary');
-}
-
-function drawMerchantPeddler(ctx: CanvasRenderingContext2D): void {
-  const peddler = sprite('merchant-peddler');
-  const box = PEDDLER_BOX;
-  if (peddler) {
-    const scale = Math.min(box.w / peddler.width, box.h / peddler.height);
-    const dw = peddler.width * scale;
-    const dh = peddler.height * scale;
-    const dx = box.x + (box.w - dw) / 2;
-    const dy = box.y + box.h - dh;
-    ctx.save();
-    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
-    ctx.clip();
-    ctx.drawImage(peddler, dx, dy, dw, dh);
-    ctx.restore();
-    return;
-  }
-  roundRect(ctx, box.x, box.y, box.w, box.h, 10);
-  ctx.fillStyle = 'rgba(55,32,14,0.45)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,220,160,0.4)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = '#fff4e0';
-  ctx.font = 'bold 28px "PingFang SC", "STKaiti", serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('商', box.x + box.w / 2, box.y + box.h / 2);
 }
 
 function drawOfferCard(
@@ -650,15 +630,34 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
   }
 }
 
-function slotRowCenterX(slots: EquipSlotRect[]): number {
-  if (slots.length === 0) return PX + PW / 2;
-  const first = slots[0]!;
-  const last = slots[slots.length - 1]!;
-  return (first.x + last.x + last.w) / 2;
+function drawEquipRowLabel(
+  ctx: CanvasRenderingContext2D,
+  rowY: number,
+  rowH: number,
+  chars: [string, string],
+  count: number,
+  max: number,
+): void {
+  const cx = PX + EQUIP_PANEL_SIDE + EQUIP_LABEL_COL / 2;
+  const cy = rowY + rowH / 2;
+  const lines = [chars[0], chars[1], `${count}/${max}`];
+  const lineStep = 13;
+  const blockTop = cy - ((lines.length - 1) * lineStep) / 2;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,240,210,0.85)';
+  ctx.font = '12px "PingFang SC", serif';
+  ctx.fillText(lines[0]!, cx, blockTop);
+  ctx.fillText(lines[1]!, cx, blockTop + lineStep);
+  ctx.font = '10px "PingFang SC", serif';
+  ctx.fillStyle = 'rgba(255,240,210,0.55)';
+  ctx.fillText(lines[2]!, cx, blockTop + lineStep * 2);
+  ctx.restore();
 }
 
 function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
-  roundRect(ctx, PX + 14, EQUIP_TOP, PW - 28, EQUIP_PANEL_H, 10);
+  roundRect(ctx, PX + EQUIP_PANEL_SIDE, EQUIP_TOP, PW - EQUIP_PANEL_SIDE * 2, EQUIP_PANEL_H, 10);
   const panel = ctx.createLinearGradient(PX, EQUIP_TOP, PX, EQUIP_TOP + EQUIP_PANEL_H);
   panel.addColorStop(0, 'rgba(55,32,14,0.38)');
   panel.addColorStop(1, 'rgba(45,28,12,0.48)');
@@ -670,29 +669,19 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
 
   const actSlots = activeSlotRects(loadout);
   const pasSlots = passiveSlotRects(loadout);
-  const cx = PX + PW / 2;
+  const titleX = PX + EQUIP_PANEL_SIDE + 6;
 
   ctx.textBaseline = 'top';
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.fillStyle = '#fff4e0';
   ctx.font = 'bold 15px "PingFang SC", "STKaiti", serif';
-  ctx.fillText('我的道具', cx, EQUIP_TOP + 8);
+  ctx.fillText('我的道具', titleX, EQUIP_TOP + 8);
   ctx.font = '11px "PingFang SC", serif';
   ctx.fillStyle = 'rgba(255,240,210,0.6)';
-  ctx.fillText('道具仅当天有效 · 点击 × 卸下', cx, EQUIP_TOP + 26);
+  ctx.fillText('道具仅当天有效 · 点击 × 卸下', titleX, EQUIP_TOP + 26);
 
-  ctx.font = '12px "PingFang SC", serif';
-  ctx.fillStyle = 'rgba(255,240,210,0.8)';
-  ctx.fillText(
-    `主动 ${loadout.equipped.length}/${MAX_EQUIPPED_ACTIVES}`,
-    slotRowCenterX(actSlots),
-    ACT_ROW_Y - 18,
-  );
-  ctx.fillText(
-    `被动 ${loadout.passives.length}/${MAX_EQUIPPED_PASSIVES}`,
-    slotRowCenterX(pasSlots),
-    PAS_ROW_Y - 20,
-  );
+  drawEquipRowLabel(ctx, ACT_ROW_Y, ACT_SLOT, ['主', '动'], loadout.equipped.length, MAX_EQUIPPED_ACTIVES);
+  drawEquipRowLabel(ctx, PAS_ROW_Y, PAS_SLOT, ['被', '动'], loadout.passives.length, MAX_EQUIPPED_PASSIVES);
 
   for (const r of actSlots) {
     if (r.id) {
@@ -740,7 +729,6 @@ export function drawMerchant(
   drawInkTab(ctx, TAB_LOTTERY, '抽奖', m.tab === 'lottery');
 
   drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit));
-  drawMerchantPeddler(ctx);
 
   if (m.tab === 'shop') {
     for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, merit, i);

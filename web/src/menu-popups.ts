@@ -20,15 +20,19 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
 
 // —— 设置弹窗 —— //
 const SET_PW = 400;
-const SET_PH = 300;
+const SET_PH = 330;
 const SET_PX = (VIEW_W - SET_PW) / 2;
 const SET_PY = (VIEW_H - SET_PH) / 2 - 16;
 const SET_CLOSE = inkPopupCloseRect(SET_PX, SET_PY);
 const SET_BODY = SET_PY + 58;
 const SET_CHECK = { x: SET_PX + 28, y: SET_BODY + 8, w: 20, h: 20 };
+const SET_MUSIC_ENABLE = { x: SET_PX + 28, y: SET_BODY + 38, w: 20, h: 20 };
+const SET_MUSIC_ROW = SET_BODY + 68;
 const SET_MUSIC_TRACK = { x: SET_PX + 28, y: SET_BODY + 88, w: SET_PW - 56, h: 10 };
 const SET_MUSIC_KNOB = { w: 22, h: 22 };
-const SET_SFX_TRACK = { x: SET_PX + 28, y: SET_BODY + 148, w: SET_PW - 56, h: 10 };
+const SET_SFX_ENABLE = { x: SET_PX + 28, y: SET_BODY + 118, w: 20, h: 20 };
+const SET_SFX_ROW = SET_BODY + 148;
+const SET_SFX_TRACK = { x: SET_PX + 28, y: SET_BODY + 168, w: SET_PW - 56, h: 10 };
 const SET_SFX_KNOB = { w: 22, h: 22 };
 
 function sliderKnobX(track: { x: number; w: number }, value: number, knobW: number): number {
@@ -48,15 +52,23 @@ export function settingsSfxKnobRect(settings: GameSettings): { x: number; y: num
 export type SettingsHit =
   | { kind: 'close' }
   | { kind: 'toggleDamage' }
+  | { kind: 'toggleMusic' }
+  | { kind: 'toggleSfx' }
   | { kind: 'musicKnob' }
   | { kind: 'sfxKnob' }
   | null;
+
+function settingsEnableHit(box: { x: number; y: number; w: number; h: number }, labelW: number): { x: number; y: number; w: number; h: number } {
+  return { x: box.x, y: box.y - 4, w: box.w + 8 + labelW, h: box.h + 8 };
+}
 
 export function settingsHitAt(x: number, y: number, settings: GameSettings): SettingsHit {
   if (inRect(x, y, SET_CLOSE)) return { kind: 'close' };
   if (inRect(x, y, SET_CHECK) || inRect(x, y, { x: SET_CHECK.x, y: SET_CHECK.y, w: 140, h: 24 })) {
     return { kind: 'toggleDamage' };
   }
+  if (inRect(x, y, settingsEnableHit(SET_MUSIC_ENABLE, 56))) return { kind: 'toggleMusic' };
+  if (inRect(x, y, settingsEnableHit(SET_SFX_ENABLE, 28))) return { kind: 'toggleSfx' };
   if (inRect(x, y, settingsMusicKnobRect(settings)) || inRect(x, y, SET_MUSIC_TRACK)) {
     return { kind: 'musicKnob' };
   }
@@ -82,17 +94,19 @@ export function settingsSfxVolumeFromX(px: number): number {
 export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameSettings): void {
   drawInkPopupFrame(ctx, SET_PX, SET_PY, SET_PW, SET_PH, '设置', SET_CLOSE);
   drawInkCheckbox(ctx, SET_CHECK, '显示伤害数字', settings.showDamageNumbers, 'none');
+  drawInkCheckbox(ctx, SET_MUSIC_ENABLE, '背景音乐', settings.musicEnabled, 'none');
   drawInkSlider(
     ctx,
-    SET_BODY + 68,
+    SET_MUSIC_ROW,
     '音乐音量',
     SET_MUSIC_TRACK,
     settingsMusicKnobRect(settings),
     settings.musicVolume,
   );
+  drawInkCheckbox(ctx, SET_SFX_ENABLE, '音效', settings.sfxEnabled, 'none');
   drawInkSlider(
     ctx,
-    SET_BODY + 128,
+    SET_SFX_ROW,
     '音效音量',
     SET_SFX_TRACK,
     settingsSfxKnobRect(settings),
