@@ -600,12 +600,9 @@ function offerActionLabel(
       return { label: '卸下', variant: 'secondary' };
     }
     if (isKindSlotsFull(loadout, offer.kind)) {
-      return { label: '请先卸下', variant: 'secondary' };
+      return { label: '装备', variant: 'secondary' };
     }
     return { label: '装备', variant: 'accent' };
-  }
-  if (isKindSlotsFull(loadout, offer.kind)) {
-    return { label: '请先卸下', variant: 'secondary' };
   }
   if (!canAfford) {
     return { label: `${cost} 功德`, variant: 'secondary' };

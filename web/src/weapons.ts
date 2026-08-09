@@ -175,4 +175,22 @@ export function generalNameOfWeapon(id: string): string {
   return def ? generalById(def.general)?.name ?? '' : '';
 }
 
+/** 从战斗内已注入的加成反查该武将当前装备神兵（仅已装备且生效时有值） */
+export function generalEquippedWeapon(
+  generalId: string,
+  wb?: { atk: number; frq: number; rge: number },
+): { def: WeaponDef; tier: number } | null {
+  if (!wb) return null;
+  const def = weaponOfGeneral(generalId);
+  if (!def) return null;
+  const raw = wb[def.stat];
+  if (!raw || raw <= 0) return null;
+  const tier =
+    def.stat === 'rge'
+      ? Math.round(raw / WEAPON_RANGE_STEP)
+      : Math.round(raw / weaponPctBonus(1));
+  if (tier < 1) return null;
+  return { def, tier: Math.max(1, Math.min(MAX_WEAPON_TIER, tier)) };
+}
+
 export const ALL_GENERAL_IDS = GENERALS.map((g) => g.id);

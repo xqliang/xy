@@ -1215,6 +1215,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (tryPrioritizeTrayBoardMateActivation()) return true;
     // 1b++) tray 字待伴侣、仍有 tray 兵 → 先落兵（白+龙 待激活时先上弓）
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
+    // 1c) 第5波+：无棋盘伴侣的 tray 字先上板（避免凑对/调位吃光步数）
+    if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 2a-0) 门派升级：tray 满5侧字替换已激活满3同门派可换字（如 哪 换 金 → 哪吒）
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     // 2a-0c) 过渡将占位时用 tray 主将字替换（如 牛郎+tray魔 → 牛魔）
@@ -2171,10 +2173,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   /** 单字：远离路径 + 靠近唐僧 */
   function placeSingleWord(i: number): boolean {
     const t = view.tray()[i];
-    if (t?.kind === 'word') {
-      if (pickBestBoardMate(t.char, t.general)) return false;
-      if (blockedTrayHeroNeedCells(view).length > 0) return false;
-    }
+    if (t?.kind === 'word' && pickBestBoardMate(t.char, t.general)) return false;
     const free = view.freeCells();
     if (free.length === 0) return false;
     const cell = free.reduce((best, c) => {

@@ -1639,6 +1639,92 @@ it('待处理：地图挤回 tray 的高阶兵换棋盘更低阶武器上板', (
   expect(archer).toBeDefined();
 });
 
+it('第5波：铁背金吒已激活时 tray 红+牛应落入空格', () => {
+  const cells: Cell[] = [];
+  for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
+      { kind: 'word', char: '牛', general: 'niulang', tier: 1 },
+    ],
+    cells,
+  );
+  v.waveNum = 5;
+  v.wordChars = (g: string) => {
+    if (g === 'tiebei') return ['铁', '背'] as const;
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    if (g === 'honghaier') return ['红', '孩'] as const;
+    if (g === 'niulang') return ['牛', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('3,6', { char: '铁', general: 'tiebei', cell: { c: 3, r: 6 }, tier: 1 });
+  v.wordsMap.set('4,6', { char: '背', general: 'tiebei', cell: { c: 4, r: 6 }, tier: 1 });
+  v.wordsMap.set('3,7', { char: '金', general: 'jinzha', cell: { c: 3, r: 7 }, tier: 1 });
+  v.wordsMap.set('4,7', { char: '吒', general: 'jinzha', cell: { c: 4, r: 7 }, tier: 1 });
+  v.unitsMap.set('0,6', { type: 'archer', tier: 1, cell: { c: 0, r: 6 } });
+  v.unitsMap.set('2,6', { type: 'dao', tier: 2, cell: { c: 2, r: 6 } });
+  v.unitsMap.set('2,7', { type: 'dao', tier: 1, cell: { c: 2, r: 7 } });
+  v.unitsMap.set('1,6', { type: 'cavalry', tier: 3, cell: { c: 1, r: 6 } });
+  v.unitsMap.set('1,7', { type: 'cavalry', tier: 2, cell: { c: 1, r: 7 } });
+  v.unitsMap.set('0,7', { type: 'spear', tier: 2, cell: { c: 0, r: 7 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 150 });
+  expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
+  expect(v.placedWords().some((w) => w.char === '牛')).toBe(true);
+  expect(v.tray().some((t) => t.kind === 'word')).toBe(false);
+});
+
+it('第5波：棋盘 orphan 郎 + tray 牛待激活时不应阻塞 红 落位', () => {
+  const cells: Cell[] = [];
+  for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
+      { kind: 'word', char: '牛', general: 'niulang', tier: 1 },
+    ],
+    cells,
+  );
+  v.waveNum = 5;
+  v.wordChars = (g: string) => {
+    if (g === 'honghaier') return ['红', '孩'] as const;
+    if (g === 'niulang') return ['牛', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('3,6', { char: '铁', general: 'tiebei', cell: { c: 3, r: 6 }, tier: 1 });
+  v.wordsMap.set('4,6', { char: '背', general: 'tiebei', cell: { c: 4, r: 6 }, tier: 1 });
+  v.wordsMap.set('3,7', { char: '金', general: 'jinzha', cell: { c: 3, r: 7 }, tier: 1 });
+  v.wordsMap.set('4,7', { char: '吒', general: 'jinzha', cell: { c: 4, r: 7 }, tier: 1 });
+  v.wordsMap.set('2,7', { char: '郎', general: 'niulang', cell: { c: 2, r: 7 }, tier: 1 });
+  v.unitsMap.set('1,7', { type: 'dao', tier: 1, cell: { c: 1, r: 7 } });
+  const steps = planAutoPlaceSteps(v, { rng, maxSteps: 150 });
+  expect(steps).toBeGreaterThan(0);
+  expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
+});
+
+it('第5波：伴侣格被占时不应阻塞 orphan 单字落位', () => {
+  const cells: Cell[] = [];
+  for (let c = 0; c < 8; c++) for (let r = 5; r < 10; r++) cells.push({ c, r });
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '红', general: 'honghaier', tier: 1 },
+      { kind: 'word', char: '牛', general: 'niulang', tier: 1 },
+      { kind: 'word', char: '吒', general: 'jinzha', tier: 1 },
+    ],
+    cells,
+  );
+  v.waveNum = 5;
+  v.wordChars = (g: string) => {
+    if (g === 'jinzha') return ['金', '吒'] as const;
+    if (g === 'honghaier') return ['红', '孩'] as const;
+    if (g === 'niulang') return ['牛', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('3,6', { char: '金', general: 'jinzha', cell: { c: 3, r: 6 }, tier: 1 });
+  v.unitsMap.set('4,6', { type: 'dao', tier: 1, cell: { c: 4, r: 6 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 10 });
+  expect(v.placedWords().some((w) => w.char === '红')).toBe(true);
+  expect(v.placedWords().some((w) => w.char === '牛')).toBe(true);
+});
+
 it('第5波起：tray 字优先于 tray 兵种落子', () => {
   const v = new FakeView(
     [

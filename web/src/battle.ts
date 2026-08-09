@@ -55,7 +55,7 @@ import {
 } from './board-power';
 import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
-import { DEFAULT_AI_SKILL, skillToKnobs } from './ai-skill';
+import { DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs } from './ai-skill';
 import {
   COLS,
   ROWS,
@@ -633,11 +633,23 @@ export class Battle {
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = TANGSENG_INITIAL_HP;
-  aiFrqMul = 1; // AI 侧全体攻速倍率（预留：对称道具可同时抬高敌我）
+  aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
+  aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
+  /** AI 道具对玩家侧妖怪的减速（淤泥/蛛网） */
+  private aiDebuffPlayerSpdMul = 1;
+  private aiDebuffPlayerMud = false;
+  aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
+  private aiAtkBuffT = 0;
+  private aiFrqBuffT = 0;
+  private aiShovelTimer = 0;
+  private aiTierBoosted = new Set<string>();
+  private aiMeteorPending = false;
+  aiPickedItems: string[] = []; // HUD 右上角展示
   aiMonsters: Monster[] = [];
   aiUnits: PlacedUnit[] = []; // AI 自动部署的单位（上半场）
   aiDefeated = false;
   private nextWaveTimer = 0; // 波间自动切换倒计时
+  private wasDangerNear = false; // 危险提示边沿：进入 danger 时播一次提示音
 
   // 候选区（征兵产出）与铲子（开格资源）
   tray: TrayToken[] = [];
@@ -755,6 +767,23 @@ export class Battle {
       this.pickedItems.push(id);
     }
     if (!endless) {
+      const aiRoll = rollAiLoadout(
+        actives.slice(0, MAX_EQUIPPED_ACTIVES),
+        passives.slice(0, MAX_EQUIPPED_PASSIVES),
+        aiSkill,
+        (n) => this.aiRng.int(n),
+      );
+      for (const id of aiRoll.actives) {
+        const def = activeById(id);
+        if (!def || def.disabled) continue;
+        this.aiActiveSlots.push({ id, cd: def.cd * 0.5, cdMax: def.cd, ready: false, flash: 0 });
+        this.aiPickedItems.push(id);
+      }
+      for (const id of aiRoll.passives) {
+        if (!isPassiveEnabled(id)) continue;
+        this.applyAiItem(id);
+        this.aiPickedItems.push(id);
+      }
       const knobs = skillToKnobs(aiSkill);
       this.aiSummonTimer = knobs.summonInterval * 0.5;
       this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next());
@@ -798,7 +827,7 @@ export class Battle {
 
   /** 淤泥被动：出怪口附近 3 格内妖怪移速降低 */
   monsterInMudZone(m: Monster): boolean {
-    return this.mods.mud && m.dist - this.entranceDist < 3;
+    return (this.mods.mud || this.aiDebuffPlayerMud) && m.dist - this.entranceDist < 3;
   }
 
   // 该格是否已解锁
@@ -1016,6 +1045,10 @@ export class Battle {
     return Math.max(1, this.summonCost + this.mods.summonCostDelta);
   }
 
+  effectiveAiSummonCost(): number {
+    return Math.max(1, this.aiSummonCost + this.aiMods.summonCostDelta);
+  }
+
   /** 测试钩子：将字牌保底计数设为阈值，便于单测触发 forceWord */
   forceWordPityForTest(): void { this.summonsSinceWord = TUNING.wordPityAfter; }
   /** 测试钩子：将铲子保底计数设为阈值，便于单测触发 forceShovel */
@@ -1157,7 +1190,6 @@ export class Battle {
   }
 
   // AI 侧武将激活扫描（镜像 activeGenerals：matchGeneral 配对 + 继承对齐，读 aiWords/aiGeneralStates）。
-  // AI 基础经济：不享法宝符 generalTierDelta 加成。
   aiActiveGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
     const used = new Set<string>();
@@ -1177,6 +1209,13 @@ export class Battle {
       if (right.tier < target) right.tier = target;
       w.general = def.id;
       right.general = def.id;
+      if (this.aiMods.generalTierDelta > 0 && !this.aiTierBoosted.has(def.id)) {
+        this.aiTierBoosted.add(def.id);
+        for (let i = 0; i < this.aiMods.generalTierDelta; i++) {
+          if (w.tier < cap) w.tier += 1;
+          if (right.tier < cap) right.tier += 1;
+        }
+      }
       let s = this.aiGeneralStates.get(def.id);
       if (!s) { s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 }; this.aiGeneralStates.set(def.id, s); }
       out.push({ def, tier: Math.min(w.tier, right.tier, cap), cells: [w.cell, right.cell], state: s });
@@ -1205,6 +1244,7 @@ export class Battle {
       if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false; // 只挖 AI 可摆放格
       this.aiUnlocked.add(k);
       this.aiDigFx.push({ c: to.c, r: to.r, t: 0 }); // 开格动画（对称展示；延迟落子据此判定）
+      if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach;
       this.aiTray.splice(index, 1);
       return true;
     }
@@ -1261,8 +1301,8 @@ export class Battle {
 
   // AI 征兵：与玩家同生成策略（drawSummonTray + 字牌转化），用 aiRng，够桃才征
   private aiSummon(): boolean {
-    if (this.aiPeach < this.aiSummonCost) return false;
-    this.aiPeach -= this.aiSummonCost;
+    if (this.aiPeach < this.effectiveAiSummonCost()) return false;
+    this.aiPeach -= this.effectiveAiSummonCost();
     this.aiSummonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.aiSummonCount === 0;
@@ -1299,7 +1339,7 @@ export class Battle {
       return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance) {
+      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance + this.aiMods.wordRateBonus) {
         return drawOneWord(forcePartner && !partnerForced);
       }
       return tok;
@@ -1329,7 +1369,7 @@ export class Battle {
         : isElite
           ? PEACH_PER_ELITE
           : PEACH_PER_KILL;
-    this.aiPeach += base;
+    this.aiPeach += base + this.aiMods.killBonus;
   }
 
   // AI 布阵视图（喂给共享 planAutoPlace）
@@ -2149,6 +2189,30 @@ export class Battle {
       case 'tongxin': this.tangsengMaxHP += 3; this.tangsengHP += 3; this.aiTangsengHP += 2; break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.10); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
+    }
+  }
+
+  /** AI 侧被动道具：镜像 applyItem，作用于 aiMods / 对手唐僧 / 玩家妖怪 debuff */
+  private applyAiItem(id: string): void {
+    switch (id) {
+      case 'xiandan': this.aiMods.atkMul += 0.10; break;
+      case 'fenghuolun': this.aiMods.frqMul += 0.10; break;
+      case 'fabaofu': this.aiMods.generalTierDelta += 1; break;
+      case 'zhaoxian': this.aiMods.wordRateBonus += 0.1; break;
+      case 'mojin': this.aiMods.shovelPeach += 6; break;
+      case 'luoyangchan': break; // AI 不自动产铲
+      case 'yunshi': this.aiMods.meteor = true; break;
+      case 'yuni': this.aiDebuffPlayerMud = true; break;
+      case 'xianyuan': this.aiMods.summonCostDelta -= 1; break;
+      case 'jubaopen': this.aiMods.killBonus += 1; break;
+      case 'hushen': this.aiTangsengHP += 1; break;
+      case 'tongxin': this.aiTangsengHP += 2; break;
+      case 'zhuwang': this.aiDebuffPlayerSpdMul = Math.max(0.4, this.aiDebuffPlayerSpdMul - 0.10); break;
+      case 'dinghai': {
+        const lc = this.aiCells.find((c) => !this.aiUnlocked.has(cellKey(c.c, c.r)));
+        if (lc) this.aiUnlocked.add(cellKey(lc.c, lc.r));
+        break;
+      }
     }
   }
 
@@ -3517,6 +3581,9 @@ export class Battle {
     this.updateGenerals(dt);
     this.updateActives(dt);
     this.updateMonsters(dt);
+    const dangerNow = this.dangerNear();
+    if (dangerNow && !this.wasDangerNear) this.emit('danger');
+    this.wasDangerNear = dangerNow;
     this.updateAi(dt);
     this.updateFx(dt);
     if (this.checkOpponentDefeated()) return; // 对手先阵亡 → 我方胜

@@ -23,6 +23,7 @@ import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
 import { getSettings } from './settings';
+import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
@@ -3217,8 +3218,9 @@ function drawWordSelection(
   const buffLines = !fromAi && active
     ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
+  const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
   const pw = 194;
-  const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0);
+  const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -3256,8 +3258,20 @@ function drawWordSelection(
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
     ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98);
   }
+  let weaponRowY = showBondDetail ? 114 : 90;
+  if (equippedWeapon) {
+    const { def: wdef, tier } = equippedWeapon;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = weaponQualityColor(tier);
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(`神兵「${wdef.name}」${weaponQualityName(tier)}阶`, px + 12, weaponRowY);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255,240,210,0.82)';
+    ctx.fillText(weaponBonusLabel(wdef.stat, tier), px + pw - 12, weaponRowY);
+    weaponRowY += 16;
+  }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
-  const statTop = showBondDetail ? 114 : 90;
+  const statTop = equippedWeapon ? weaponRowY : (showBondDetail ? 114 : 90);
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -4883,7 +4897,7 @@ function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
 function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button, phase: 'halo' | 'edge') {
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
   if (phase === 'halo') {
-    const expand = 3 + pulse * 3;
+    const expand = pulse * 3; // 外圈最大比旧版收小 3px（原 3+pulse*3）
     ctx.save();
     ctx.globalAlpha = 0.32 + pulse * 0.28;
     ctx.strokeStyle = '#ffe27a';
@@ -5047,13 +5061,14 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.font = 'bold 16px "PingFang SC", sans-serif';
       ctx.fillText(String(Math.ceil(slot.cd)), cx, cy);
     } else {
-      // 就绪：金色脉冲圆环
+      // 就绪：与征兵提示同色系、更慢更淡的金边脉冲
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
       ctx.save();
-      ctx.globalAlpha = 0.5 + 0.4 * Math.sin(performance.now() / 130);
+      ctx.globalAlpha = 0.28 + pulse * 0.2;
       ctx.strokeStyle = '#ffe27a';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r + 1 + pulse, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
