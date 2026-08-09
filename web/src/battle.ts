@@ -427,6 +427,7 @@ export interface GeneralState {
   cooldown: number;
   skillCd: number;
   firePulse: number;
+  fireDir?: number; // 上次开火朝向(弧度)，字牌攻击时驱动兵器形变
   skillFlash: number;
 }
 

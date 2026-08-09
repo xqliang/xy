@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, generalsWithChar, partnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -3841,6 +3841,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       ctx.restore();
     }
     ctx.restore();
+    drawHeroWordWeapon(ctx, g);
   }
 }
 
@@ -4309,6 +4310,30 @@ function drawHeroAttackFx(
   ctx.restore();
 }
 
+/** 激活武将字牌攻击瞬间：复用专属兵器特效，firePulse 驱动出招形变 */
+function drawHeroWordWeapon(ctx: CanvasRenderingContext2D, g: ActiveGeneral) {
+  const pulse = g.state.firePulse;
+  if (pulse <= 0.02) return;
+  const ax = (g.cells[0].c + g.cells[1].c) / 2;
+  const ay = (g.cells[0].r + g.cells[1].r) / 2;
+  const { x: hx, y: hy } = cellCenterPx(ax, ay);
+  const dir = g.state.fireDir ?? -Math.PI / 2;
+  const reach = CELL * 1.1;
+  const tx = hx + Math.cos(dir) * reach;
+  const ty = hy + Math.sin(dir) * reach;
+  const prog = 1 - pulse;
+  const fakeFx: HitFx = {
+    from: { c: ax, r: ay },
+    to: { c: ax + Math.cos(dir) * 2, r: ay + Math.sin(dir) * 2 },
+    ttl: 1,
+    maxTtl: 1,
+    color: qualityColor(g.tier),
+    tier: g.tier,
+    heroId: g.def.id,
+  };
+  drawHeroAttackFx(ctx, fakeFx, hx, hy, tx, ty, prog, dir, g.tier, g.def.id, g.def.maxTier);
+}
+
 function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const f of b.fx) {
     const a = cellCenterPx(f.from.c, f.from.r);
@@ -4569,6 +4594,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     const sTile = CELL * 0.78;
     drawTierBadge(ctx, z.x + sTile * 0.42, z.y - sTile * 0.36, g.tier, Math.round(sTile * 0.3));
     ctx.restore();
+    drawHeroWordWeapon(ctx, g);
   }
 }
 
