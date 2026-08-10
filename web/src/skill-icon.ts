@@ -1,9 +1,12 @@
 // 技能图标绘制：优先 Seedream 小图，失败/未加载则回退汉字字形。
 import { sprite } from './assets';
 
-/** 技能 id（act_palm / zhuwang）→ 资源 key（skill-act-palm） */
+/** 技能 id（act_palm / pas_pantao / hushen）→ 资源 key（skill-act-palm / skill-pas-pantao / skill-pas-hushen） */
 export function skillAssetKey(skillId: string): string {
-  return `skill-${skillId.replace(/_/g, '-')}`;
+  const dashed = skillId.replace(/_/g, '-');
+  // 主动统一 act_*；被动多数历史 id 无 pas_ 前缀，资源仍落在 skill-pas-*
+  if (dashed.startsWith('act-') || dashed.startsWith('pas-')) return `skill-${dashed}`;
+  return `skill-pas-${dashed}`;
 }
 
 /** 在圆形徽章上绘制技能图标（有图用图，否则汉字） */

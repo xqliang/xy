@@ -511,6 +511,7 @@ function drawFilledEquipSlot(
   icon: string,
   radius: number,
   stroke: string,
+  skillId: string,
 ): void {
   roundRect(ctx, r.x, r.y, r.w, r.h, radius);
   ctx.fillStyle = 'rgba(48,28,12,0.55)';
@@ -518,11 +519,8 @@ function drawFilledEquipSlot(
   ctx.strokeStyle = stroke;
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  ctx.fillStyle = '#fff4e0';
-  ctx.font = `${Math.round(r.w * 0.48)}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(icon, r.x + r.w / 2, r.y + r.h / 2);
+  const glyphR = Math.min(r.w, r.h) * 0.42;
+  drawSkillGlyph(ctx, r.x + r.w / 2, r.y + r.h / 2, glyphR, icon, stroke, true, skillId);
   drawUnequipX(ctx, unequipBtnRect(r));
 }
 
@@ -835,7 +833,7 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
 
   for (const r of actSlots) {
     if (r.id) {
-      drawFilledEquipSlot(ctx, r, activeById(r.id)?.icon ?? '?', 8, '#5a7088');
+      drawFilledEquipSlot(ctx, r, activeById(r.id)?.icon ?? '?', 8, '#5a7088', r.id);
     } else {
       drawEmptyEquipSlot(ctx, r, 8, 'rgba(90,112,136,0.55)');
     }
@@ -843,7 +841,7 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
 
   for (const r of pasSlots) {
     if (r.id) {
-      drawFilledEquipSlot(ctx, r, passiveById(r.id)?.icon ?? '?', 7, '#6a8050');
+      drawFilledEquipSlot(ctx, r, passiveById(r.id)?.icon ?? '?', 7, '#6a8050', r.id);
     } else {
       drawEmptyEquipSlot(ctx, r, 7, 'rgba(106,128,80,0.55)');
     }
