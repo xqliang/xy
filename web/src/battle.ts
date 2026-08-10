@@ -1713,16 +1713,9 @@ export class Battle {
     });
   }
 
-  /** 危险时优先集火残血怪；否则优先打沿路最靠前的怪（dist 最大） */
-  private sortCombatTargets<T extends { m: Monster }>(inRange: T[], dangerNear: boolean): T[] {
-    if (!dangerNear) return inRange.sort((a, b) => b.m.dist - a.m.dist);
-    return inRange.sort((a, b) => {
-      const ra = a.m.hp / a.m.maxHp;
-      const rb = b.m.hp / b.m.maxHp;
-      const dr = ra - rb;
-      if (Math.abs(dr) > 0.06) return dr;
-      return b.m.dist - a.m.dist;
-    });
+  /** 攻击目标优先级：始终优先打攻击范围内沿路走过格子最多（dist 最大，即离唐僧最近）的怪，不因险情改变 */
+  private sortCombatTargets<T extends { m: Monster }>(inRange: T[]): T[] {
+    return inRange.sort((a, b) => b.m.dist - a.m.dist);
   }
 
   private heroEngageScoreAt(
@@ -2990,7 +2983,6 @@ export class Battle {
   // AI 单位攻击 AI 怪（与玩家同一套战斗数值；出招特效走共用 this.fx）
   private updateAiUnits(dt: number): void {
     if (this.aiMonsters.length === 0) return;
-    const dangerNear = this.aiDangerNear();
     const monsterPos = this.aiMonsters.map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }));
     for (const u of this.aiUnits) {
       u.cooldown -= dt;
@@ -3001,9 +2993,7 @@ export class Battle {
       const maxTargets = Math.max(1, base + extra);
       const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p));
       if (inRangeRaw.length === 0) continue;
-      const inRange = maxTargets === 1 && !dangerNear
-        ? inRangeRaw.sort((a, b) => b.m.dist - a.m.dist)
-        : this.sortCombatTargets(inRangeRaw, dangerNear);
+      const inRange = this.sortCombatTargets(inRangeRaw);
       const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
       const color = this.unitColor(u.type);
       let hit = 0;
@@ -3042,7 +3032,6 @@ export class Battle {
         this.aiMonsters
           .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
           .filter((x) => inAttackRange(ax, ay, rge, x.p)),
-        this.aiDangerNear(),
       );
       s.cooldown -= dt;
       if (s.cooldown > 0 || inRange.length === 0) continue;
@@ -3202,7 +3191,6 @@ export class Battle {
         this.monsters
           .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
           .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p)),
-        this.dangerNear(),
       );
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊抬高攻击
@@ -3415,7 +3403,6 @@ export class Battle {
         this.monsters
           .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
           .filter((x) => inAttackRange(ax, ay, this.generalRge(g), x.p)),
-        this.dangerNear(),
       );
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
