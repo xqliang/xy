@@ -185,13 +185,13 @@ export const TUNING = {
   // —— AI 清场 / 紧箍咒 ——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
   aiClearRadius: 2.5, // AI 清场 / 紧箍咒作用半径（格）
-  aiClearDmgMul: 2.4, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
+  aiClearDmgMul: 2.3, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
   // —— 主动技能数值 ——
   palmPushCells: 6, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
   meteorRadius: 1.4, // 主动陨石半径
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
-  jingguDmgMul: 2.4, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
+  jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
   atkBuffMul: 1.3, // 主动仙丹攻击倍率（与风火轮对齐，收窄叠乘峰值）
   frqBuffMul: 1.3, // 主动风火轮攻速倍率
   freezeStunDur: 2.5, // 冰封定身时长（全场；CD 24s）
