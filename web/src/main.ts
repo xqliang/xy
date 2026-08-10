@@ -1,5 +1,7 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING } from './battle';
+import { canMerge } from '@core';
+import type { UnitType } from '@core';
 import {
   draw,
   getButtons,
@@ -13,10 +15,15 @@ import {
   hitAiItemChip,
   isPlayerTangsengCell,
   isAiTangsengCell,
+  pauseBtnRect,
+  cellRect,
+  trayTokenRect,
+  trayRowRect,
+  summonAnimDone,
   type UiState,
 } from './render';
 import type { Cell } from './board';
-import { pickDailyMap, mapById, MAPS } from './board';
+import { pickDailyMap, mapById, MAPS, pathEntranceCell } from './board';
 import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
 import { loadAssets, type AssetLoadProgress } from './assets';
 import { drawLoadingScreen, drawLoadingBackdrop } from './loading-screen';
@@ -68,7 +75,7 @@ import {
 } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
-import { drawWeaponPickups, weaponPickupHitAt } from './weaponPickup';
+import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weaponPickup';
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
@@ -107,8 +114,21 @@ import {
   drawMerchant,
   merchantHitAt,
   applyMerchantHitFull,
+  merchantActiveRowRect,
+  merchantPassiveRowRect,
   type MerchantUiState,
 } from './merchant';
+import {
+  loadTutorialState,
+  maybeStartTutorial,
+  advanceTutorial,
+  skipTutorial,
+  tutorialHitAt,
+  drawTutorialOverlay,
+  type TutorialState,
+  type TutorialOverlay,
+  type TutorialSequence,
+} from './tutorial';
 
 /** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
 function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
@@ -339,6 +359,301 @@ function openHelpLink(id: HelpLinkId): void {
 let pausePhase: PausePhase = 'main';
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
 
+// —— 新手引导：首次触发时机 + 各锚点闭包（引用当前 battle/merchant，battle 会随 newGame() 重新赋值） —— //
+let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
+let tutorialOverlay: TutorialOverlay | null = null;
+
+function buttonRect(id: string): { x: number; y: number; w: number; h: number } | null {
+  const btn = getButtons(battle).find((b) => b.id === id);
+  return btn ? { x: btn.x, y: btn.y, w: btn.w, h: btn.h } : null;
+}
+
+function battleIntroSequence(): TutorialSequence {
+  return {
+    id: 'battleIntro',
+    steps: [
+      {
+        id: 'spawnGate',
+        title: '怪物出口',
+        text: '敌人会从这里的出怪口不断冒出，沿路线冲向你的唐僧。',
+        getAnchor: () => {
+          const gate = pathEntranceCell(battle.map.path);
+          return cellRect(gate.c, gate.r);
+        },
+      },
+      {
+        id: 'tangseng',
+        title: '防守目标',
+        text: '这是唐僧，血量归零就会失败，务必守住他。',
+        getAnchor: () => cellRect(battle.map.tangseng.c, battle.map.tangseng.r),
+      },
+      {
+        id: 'pause',
+        title: '暂停游戏',
+        text: '点这里可以随时暂停游戏，方便查看局面或临时离开。',
+        getAnchor: () => pauseBtnRect(),
+      },
+      {
+        id: 'summon',
+        title: '怎么征兵',
+        text: '点【征兵】消耗蟠桃招募士兵和武将，是你的主要操作。',
+        getAnchor: () => buttonRect('summon'),
+      },
+    ],
+  };
+}
+
+function firstSummonSequence(): TutorialSequence {
+  return {
+    id: 'firstSummon',
+    steps: [
+      {
+        id: 'unitTypes',
+        title: '兵种介绍',
+        text: '刀兵近战均衡、枪兵可穿透打多个目标、骑兵机动灵活、弓兵射程最远，合理搭配更抗打。',
+        getAnchor: () => trayRowRect(),
+      },
+      {
+        id: 'dragToBoard',
+        title: '部署到地图',
+        text: '把候选区里的令牌拖到下方绿色格子上即可放置。',
+        getAnchor: () => {
+          const i = battle.tray.findIndex((t) => t.kind === 'unit' || t.kind === 'word');
+          return i >= 0 ? trayTokenRect(i) : trayRowRect();
+        },
+      },
+      {
+        id: 'autoplace',
+        title: '一键布阵',
+        text: '不想手动拖拽？点【布阵】自动帮你摆放候选区里的兵和武将。',
+        getAnchor: () => buttonRect('autoplace'),
+      },
+    ],
+  };
+}
+
+function firstPlacementAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const key = battle.units.keys().next().value as string | undefined;
+  if (!key) return null;
+  const [c, r] = key.split(',').map(Number);
+  if (!Number.isFinite(c) || !Number.isFinite(r)) return null;
+  return cellRect(c, r);
+}
+
+function firstPlacementSequence(): TutorialSequence {
+  return {
+    id: 'firstPlacement',
+    steps: [
+      {
+        id: 'attackRange',
+        title: '查看攻击范围',
+        text: '点击场上的兵可以查看它的攻击范围（圆环内能打到怪），再点一次取消选中。',
+        getAnchor: firstPlacementAnchor,
+      },
+    ],
+  };
+}
+
+function firstHeroWordAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const i = battle.tray.findIndex((t) => t.kind === 'word');
+  return i >= 0 ? trayTokenRect(i) : null;
+}
+
+function firstHeroWordSequence(): TutorialSequence {
+  return {
+    id: 'firstHeroWord',
+    steps: [
+      {
+        id: 'heroWord',
+        title: '什么是英雄',
+        text: '这是武将（英雄）字牌，代表一位有专属技能的英雄，比普通兵种更强。',
+        getAnchor: firstHeroWordAnchor,
+      },
+    ],
+  };
+}
+
+function firstShovelAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const i = battle.tray.findIndex((t) => t.kind === 'shovel');
+  return i >= 0 ? trayTokenRect(i) : null;
+}
+
+/** 挑一个「离怪物出口最近」的锁定格作为推荐开挖点（贴合布阵后攻击范围覆盖更长路线的直觉）。 */
+function firstShovelDigSpotAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const locked = battle.lockedCells();
+  if (locked.length === 0) return null;
+  const gate = pathEntranceCell(battle.map.path);
+  let best = locked[0]!;
+  let bestDist = Infinity;
+  for (const c of locked) {
+    const d = Math.hypot(c.c - gate.c, c.r - gate.r);
+    if (d < bestDist) { bestDist = d; best = c; }
+  }
+  return cellRect(best.c, best.r);
+}
+
+function firstShovelSequence(): TutorialSequence {
+  return {
+    id: 'firstShovel',
+    steps: [
+      {
+        id: 'shovelUse',
+        title: '洛阳铲怎么用',
+        text: '这是洛阳铲，把它拖到锁定的灰格上即可挖开，解锁新的部署位置。',
+        getAnchor: firstShovelAnchor,
+      },
+      {
+        id: 'shovelWhere',
+        title: '挖哪里最好',
+        text: '推荐优先挖靠近怪物出口、摆放武器后攻击范围能覆盖更长路线的区域，防守效率更高；也可以直接点【布阵】自动挖最优位置。',
+        getAnchor: firstShovelDigSpotAnchor,
+      },
+    ],
+  };
+}
+
+function firstHeroComboAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const g = battle.activeGenerals()[0];
+  if (!g) return null;
+  const [a, b] = g.cells;
+  const ra = cellRect(a.c, a.r);
+  const rb = cellRect(b.c, b.r);
+  const x = Math.min(ra.x, rb.x);
+  const y = Math.min(ra.y, rb.y);
+  return { x, y, w: Math.max(ra.x + ra.w, rb.x + rb.w) - x, h: Math.max(ra.y + ra.h, rb.y + rb.h) - y };
+}
+
+function firstHeroComboSequence(): TutorialSequence {
+  return {
+    id: 'firstHeroCombo',
+    steps: [
+      {
+        id: 'heroCombo',
+        title: '怎么合并英雄',
+        text: '把同一位武将的两张字牌拼到左右相邻，就能激活武将并获得强力效果。',
+        getAnchor: firstHeroComboAnchor,
+      },
+    ],
+  };
+}
+
+/** 在棋盘单位与候选区兵种令牌中查找一对「同兵种同等级」可合并的目标，返回其外接高亮框。 */
+function firstMergeableAnchor(): { x: number; y: number; w: number; h: number } | null {
+  const spots: { rect: { x: number; y: number; w: number; h: number }; type: UnitType; tier: number }[] = [];
+  for (const [key, u] of battle.units) {
+    const [c, r] = key.split(',').map(Number);
+    spots.push({ rect: cellRect(c, r), type: u.type, tier: u.tier });
+  }
+  battle.tray.forEach((t, i) => {
+    if (t.kind === 'unit') spots.push({ rect: trayTokenRect(i), type: t.type, tier: t.tier });
+  });
+  for (let i = 0; i < spots.length; i++) {
+    for (let j = i + 1; j < spots.length; j++) {
+      if (canMerge({ type: spots[i]!.type, tier: spots[i]!.tier }, { type: spots[j]!.type, tier: spots[j]!.tier })) {
+        const a = spots[i]!.rect;
+        const b = spots[j]!.rect;
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+      }
+    }
+  }
+  return null;
+}
+
+function firstMergeableSequence(): TutorialSequence {
+  return {
+    id: 'firstMergeable',
+    steps: [
+      {
+        id: 'mergeUpgrade',
+        title: '合并升级武器',
+        text: '同兵种同等级的两个单位拖到一起即可合并升阶，也可以直接点【布阵】自动帮你合并。',
+        getAnchor: firstMergeableAnchor,
+      },
+    ],
+  };
+}
+
+function firstFragmentDropSequence(): TutorialSequence {
+  return {
+    id: 'firstFragmentDrop',
+    steps: [
+      {
+        id: 'fragmentInfo',
+        title: '武器碎片是什么',
+        text: '击杀怪物时有机会掉落神兵碎片，点这张卡片即可领取。',
+        getAnchor: () => weaponPickupRect(0),
+      },
+      {
+        id: 'weaponUpgrade',
+        title: '怎么升级武器',
+        text: '集满所需碎片会自动解锁/强化神兵，可到首页【背包】查看进度并装备。',
+        getAnchor: () => weaponPickupRect(0),
+      },
+    ],
+  };
+}
+
+function merchantFirstOpenSequence(): TutorialSequence {
+  return {
+    id: 'merchantFirstOpen',
+    steps: [
+      {
+        id: 'activeSkill',
+        title: '主动技能是什么',
+        text: '主动技能需要在局内手动点击释放，有冷却时间，能造成爆发效果。',
+        getAnchor: () => merchantActiveRowRect(),
+      },
+      {
+        id: 'passiveSkill',
+        title: '被动技能是什么',
+        text: '被动技能装备后全程自动生效，无需手动操作。',
+        getAnchor: () => merchantPassiveRowRect(),
+      },
+    ],
+  };
+}
+
+// 首次征兵后：等候选令牌飞入动画结束、真正落位到 tray 后再弹引导，避免指向还在飞行中的令牌
+let pendingFirstSummonTutorial = false;
+
+/** 局内条件触发的引导：每帧检查一次，命中即弹（只弹未展示过的第一条）。 */
+function checkBattleTutorials(): void {
+  if (tutorialOverlay) return;
+  if (battle.status !== 'ready' && battle.status !== 'playing') return;
+  if (pendingFirstSummonTutorial && summonAnimDone(battle)) {
+    pendingFirstSummonTutorial = false;
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstSummonSequence());
+  }
+  if (tutorialOverlay) return;
+  if (battle.units.size > 0) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstPlacementSequence());
+  }
+  if (tutorialOverlay) return;
+  // 候选令牌飞入动画期间 tray 数据已就位但尚未落位显示，需等动画结束再检测同级可合并，避免抢在首次征兵引导之前弹出
+  if (summonAnimDone(battle) && firstMergeableAnchor()) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstMergeableSequence());
+  }
+  if (tutorialOverlay) return;
+  // 同理需等候选令牌落位动画结束，避免铲子还在飞入时就弹引导
+  if (summonAnimDone(battle) && battle.tray.some((t) => t.kind === 'shovel')) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstShovelSequence());
+  }
+  if (tutorialOverlay) return;
+  if (battle.tray.some((t) => t.kind === 'word')) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstHeroWordSequence());
+  }
+  if (tutorialOverlay) return;
+  if (battle.activeGenerals().length > 0) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstHeroComboSequence());
+  }
+  if (tutorialOverlay) return;
+  if (visibleWeaponPickups().length > 0) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstFragmentDropSequence());
+  }
+}
+
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
   battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, newBattleAiSkill());
@@ -350,6 +665,7 @@ function newGame() {
   ui.passivePopup = null;
   ui.activePopup = null;
   ui.aiItemPopup = null;
+  pendingFirstSummonTutorial = false;
 }
 
 function abortBattleToMenu(): void {
@@ -400,6 +716,7 @@ function handleMenu(id: string) {
     stamina = r.state;
     newGame();
     screen = 'battle';
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
   } else if (id === 'codex') {
     resetCodex();
     screen = 'codex';
@@ -591,6 +908,7 @@ function leaveSettleToMenu(): void {
   if (pendingMerchant) {
     merchant = openMerchant(loadout);
     pendingMerchant = false;
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, merchantFirstOpenSequence());
   }
 }
 
@@ -743,8 +1061,9 @@ function handleButton(x: number, y: number): boolean {
     if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
       if (!btn.enabled) return true;
       if (!btn.id.startsWith('pas')) playSfx('click');
-      if (btn.id === 'summon') battle.summon();
-      else if (btn.id === 'autoplace') battle.autoPlaceTray();
+      if (btn.id === 'summon') {
+        if (battle.summon()) pendingFirstSummonTutorial = true;
+      } else if (btn.id === 'autoplace') battle.autoPlaceTray();
       else if (btn.id === 'act0') { if (battle.activeSlots[0]?.ready) battle.triggerActive(0); else { ui.activePopup = 0; ui.activePopupUntil = performance.now() + 2500; } }
       else if (btn.id === 'act1') { if (battle.activeSlots[1]?.ready) battle.triggerActive(1); else { ui.activePopup = 1; ui.activePopupUntil = performance.now() + 2500; } }
       else if (btn.id.startsWith('pas')) {
@@ -763,6 +1082,15 @@ function onPointerDown(e: PointerEvent) {
   if (screen === 'loading') return; // 加载中不响应点击（BGM 仍可在进首页后由首次手势唤醒）
   resumeAudioAfterGesture(audioScreenKind(screen), currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
+  // 新手引导展示中：拦截全部点击，仅响应「跳过引导」或前进到下一步
+  if (tutorialOverlay) {
+    const hit = tutorialHitAt(ctx, x, y, tutorialOverlay);
+    playSfx('click');
+    const res = hit.kind === 'skip' ? skipTutorial(tutorialOverlay, tutorial) : advanceTutorial(tutorialOverlay, tutorial);
+    tutorialOverlay = res.overlay;
+    tutorial = res.state;
+    return;
+  }
   if (screen === 'menu') {
     if (handleMerchantPointer(x, y)) return;
     if (handleMenuPopupPointer(x, y)) {
@@ -1208,13 +1536,17 @@ function frame(now: number): void {
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
   } else {
     // —— 战斗 —— //
-    if (!ui.paused) {
+    // 新手引导展示期间强制唐僧渲染于归位点，避免引导指向的格子里唐僧还没走到（不影响 introT 计时）
+    battle.tangsengRenderOverride = !!tutorialOverlay;
+    // 新手引导展示中同样冻结战斗（不 step），但保留连续重绘以播放箭头跳动动画
+    if (!ui.paused && !tutorialOverlay) {
       try {
         battle.step(dt);
       } catch (err) {
         console.error('[battle.step]', err);
         battle.message = '战斗逻辑异常，已跳过本帧（请刷新页面）';
       }
+      checkBattleTutorials();
     }
     startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
     // 播放引擎发出的音效事件
@@ -1257,6 +1589,7 @@ function frame(now: number): void {
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
     if (ui.paused) drawPausePopup(ctx, pausePhase);
   }
+  if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();
 }

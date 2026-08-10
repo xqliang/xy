@@ -949,6 +949,17 @@ function campRoofAngle(t: number): number {
   if (t < HOLD_END) return MAX; // 全开保持(令牌丝带飞入)
   return MAX * (1 - (t - HOLD_END) / (CLOSE_END - HOLD_END)); // 合：90°→0
 }
+// 候选槽丝带飞入动画时序常量（drawTray 与 summonAnimDone 共用，确保「令牌真正落槽」判定与实际渲染一致）
+const SUMMON_EXTEND_STAGGER = 0.045; // 相邻槽伸出起点延迟（左→右）
+const SUMMON_EXTEND_DUR = 0.08;
+const SUMMON_HOLD = 0.03;
+const SUMMON_RETRACT_DUR = 0.09;
+/** 征兵后，候选区令牌是否已全部飞入落位（可据此延后弹出引导，避免指向还在飞行中的令牌）。 */
+export function summonAnimDone(b: Battle): boolean {
+  const lastExtendAt = Math.max(0, TUNING.traySize - 1) * SUMMON_EXTEND_STAGGER;
+  const settleAt = lastExtendAt + SUMMON_EXTEND_DUR + SUMMON_HOLD + SUMMON_RETRACT_DUR;
+  return b.summonAnimT >= settleAt;
+}
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
   const campX = CAMP_X, campY = TRAY_Y + 4, campW = CAMP_W, campH = TRAY_H - 8;
@@ -1018,10 +1029,10 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.stroke();
   ctx.restore();
   // 5 个候选槽：丝带从「营」左→右错开伸出，短暂满长后从营端收回，再出图标
-  const EXTEND_STAGGER = 0.045; // 相邻槽伸出起点延迟（左→右）
-  const EXTEND_DUR = 0.08;
-  const HOLD = 0.03;
-  const RETRACT_DUR = 0.09;
+  const EXTEND_STAGGER = SUMMON_EXTEND_STAGGER; // 相邻槽伸出起点延迟（左→右）
+  const EXTEND_DUR = SUMMON_EXTEND_DUR;
+  const HOLD = SUMMON_HOLD;
+  const RETRACT_DUR = SUMMON_RETRACT_DUR;
   for (let i = 0; i < TUNING.traySize; i++) {
     const cx = TRAY_LEFT + i * TRAY_SLOT;
     // 木框凹槽（内凹口袋）：上暗下亮内凹渐变 + 深色描边 + 顶部内阴影
