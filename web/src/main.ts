@@ -45,7 +45,7 @@ import { loadRank, recordWin, recordLose, rankName, type RankState, type RankCha
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
-import { drawMenu, menuButtonAt } from './menu';
+import { drawMenu, menuButtonAt, STAMINA_PLUS_BTN } from './menu';
 import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import {
   loadLoadout,
@@ -615,6 +615,20 @@ function merchantFirstOpenSequence(): TutorialSequence {
   };
 }
 
+function lowStaminaSequence(): TutorialSequence {
+  return {
+    id: 'lowStamina',
+    steps: [
+      {
+        id: 'staminaPlus',
+        title: '体力不足',
+        text: '体力不够时无法开始游戏，点这里的【+】可以看广告或分享好友补充体力。',
+        getAnchor: () => ({ ...STAMINA_PLUS_BTN }),
+      },
+    ],
+  };
+}
+
 // 首次征兵后：等候选令牌飞入动画结束、真正落位到 tray 后再弹引导，避免指向还在飞行中的令牌
 let pendingFirstSummonTutorial = false;
 
@@ -710,6 +724,7 @@ function handleMenu(id: string) {
     if (!r.ok) {
       menuToast = '体力不足（需 5 点）！点 + 补充';
       pushMenuFloatToast('体力不足，无法开始游戏');
+      tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, lowStaminaSequence());
       scheduleFrame();
       return;
     }
