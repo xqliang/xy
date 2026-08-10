@@ -960,11 +960,16 @@ const SUMMON_EXTEND_STAGGER = 0.045; // 相邻槽伸出起点延迟（左→右�
 const SUMMON_EXTEND_DUR = 0.08;
 const SUMMON_HOLD = 0.03;
 const SUMMON_RETRACT_DUR = 0.09;
+/** 指定候选槽的令牌是否已飞入落位（与 drawTray 丝带时序一致）。 */
+export function traySlotAnimDone(b: Battle, slotIndex: number): boolean {
+  const extendAt = slotIndex * SUMMON_EXTEND_STAGGER;
+  const settleAt = extendAt + SUMMON_EXTEND_DUR + SUMMON_HOLD + SUMMON_RETRACT_DUR;
+  return b.summonAnimT >= settleAt;
+}
+
 /** 征兵后，候选区令牌是否已全部飞入落位（可据此延后弹出引导，避免指向还在飞行中的令牌）。 */
 export function summonAnimDone(b: Battle): boolean {
-  const lastExtendAt = Math.max(0, TUNING.traySize - 1) * SUMMON_EXTEND_STAGGER;
-  const settleAt = lastExtendAt + SUMMON_EXTEND_DUR + SUMMON_HOLD + SUMMON_RETRACT_DUR;
-  return b.summonAnimT >= settleAt;
+  return traySlotAnimDone(b, Math.max(0, TUNING.traySize - 1));
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。

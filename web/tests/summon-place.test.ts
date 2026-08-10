@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Battle, TUNING, makePlacedUnit } from '../src/battle';
+import { summonAnimDone, traySlotAnimDone } from '../src/render';
 
 describe('Battle.summon tray rules', () => {
   it('clears leftover tray tokens before writing the new hand', () => {
@@ -47,5 +48,28 @@ describe('Battle.placeFromTray', () => {
     expect(b.placeFromTray(0, cell)).toBe(true);
     expect(b.units.get(`${cell.c},${cell.r}`)?.tier).toBe(2);
     expect(b.tray[0]).toBeUndefined();
+  });
+});
+
+describe('tray summon animation timing', () => {
+  it('traySlotAnimDone tracks per-slot settle time', () => {
+    const b = new Battle(1);
+    b.summonAnimT = 0;
+    expect(traySlotAnimDone(b, 0)).toBe(false);
+    expect(traySlotAnimDone(b, 2)).toBe(false);
+    b.summonAnimT = 0.2;
+    expect(traySlotAnimDone(b, 0)).toBe(true);
+    expect(traySlotAnimDone(b, 2)).toBe(false);
+    b.summonAnimT = 0.29;
+    expect(traySlotAnimDone(b, 2)).toBe(true);
+  });
+
+  it('summonAnimDone waits for last slot', () => {
+    const b = new Battle(1);
+    const last = Math.max(0, TUNING.traySize - 1);
+    b.summonAnimT = 0.29;
+    expect(summonAnimDone(b)).toBe(false);
+    b.summonAnimT = 0.045 * last + 0.08 + 0.03 + 0.09;
+    expect(summonAnimDone(b)).toBe(true);
   });
 });

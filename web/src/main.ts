@@ -20,6 +20,7 @@ import {
   trayTokenRect,
   trayRowRect,
   summonAnimDone,
+  traySlotAnimDone,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -659,8 +660,12 @@ function checkBattleTutorials(): void {
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstShovelSequence());
   }
   if (tutorialOverlay) return;
-  if (battle.tray.some((t) => t.kind === 'word')) {
-    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstHeroWordSequence());
+  // 英雄字牌需等该槽飞入动画结束再弹引导，避免指向空槽或丝带
+  {
+    const heroTrayIdx = battle.tray.findIndex((t) => t.kind === 'word');
+    if (heroTrayIdx >= 0 && traySlotAnimDone(battle, heroTrayIdx)) {
+      tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstHeroWordSequence());
+    }
   }
   if (tutorialOverlay) return;
   if (battle.activeGenerals().length > 0) {
