@@ -41,3 +41,4 @@ web/vite.log
 # 本地 worktree / SDD 进度（勿入库）
 .worktrees/
 .superpowers/
+.claude/
