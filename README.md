@@ -67,5 +67,6 @@ docs/          # 设计与规划文档
 - 经济：初始蟠桃 20、杀怪 +1、唐僧掉血 +10（卖血）、BOSS +10；每波怪数 9+n，抽卡成本 8+2n。
 - 目标胜率约 60%（由 AI skill / rubber-band 自适应长期收敛）。
 - 对战压力比随波次升高（≤6 波 60% → 16+ 波 90%）；波次目标与代理说明见 `docs/versus-user-agent.md`。
+- 武将普攻/大招范围与目标上限见 **`docs/hero-combat-reference.md`**。
 
 详见 `game-core/src/`（`config/units.ts`、`domain/*.ts`）与其单元测试。
