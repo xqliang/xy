@@ -156,6 +156,15 @@ export function hitPauseBtn(x: number, y: number): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
+/** HUD 蟠桃图标+数字的大致包围盒（暂停钮右侧），供新手引导高亮定位 */
+export function peachHudRect(): { x: number; y: number; w: number; h: number } {
+  const pauseR = pauseBtnRect();
+  const iconSize = PEACH_UI_ICON_SIZE;
+  const x = pauseR.x + pauseR.w + 10;
+  const y = HUD_H / 2 - iconSize / 2 - 4;
+  return { x, y, w: iconSize + 6 + 44, h: iconSize + 8 };
+}
+
 // HUD 显示的境界名（由 main 设置）
 let hudRankLabel = '';
 export function setHudRank(label: string): void {

@@ -17,6 +17,7 @@ import {
   isPlayerTangsengCell,
   isAiTangsengCell,
   pauseBtnRect,
+  peachHudRect,
   cellRect,
   trayTokenRect,
   trayRowRect,
@@ -135,6 +136,7 @@ import {
   type TutorialState,
   type TutorialOverlay,
   type TutorialSequence,
+  type TutorialStep,
 } from './tutorial';
 
 /** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
@@ -407,38 +409,53 @@ function buttonRect(id: string): { x: number; y: number; w: number; h: number } 
 }
 
 function battleIntroSequence(): TutorialSequence {
-  return {
-    id: 'battleIntro',
-    steps: [
-      {
-        id: 'spawnGate',
-        title: '怪物出口',
-        text: '敌人会从这里的出怪口不断冒出，沿路线冲向你的唐僧。',
-        getAnchor: () => {
-          const gate = pathEntranceCell(battle.map.path);
-          return cellRect(gate.c, gate.r);
-        },
+  const steps: TutorialStep[] = [
+    {
+      id: 'spawnGate',
+      title: '怪物出口',
+      text: '敌人会从这里的出怪口不断冒出，沿路线冲向你的唐僧。',
+      getAnchor: () => {
+        const gate = pathEntranceCell(battle.map.path);
+        return cellRect(gate.c, gate.r);
       },
-      {
-        id: 'tangseng',
-        title: '防守目标',
-        text: '这是唐僧，血量归零就会失败，务必守住他。',
-        getAnchor: () => cellRect(battle.map.tangseng.c, battle.map.tangseng.r),
-      },
-      {
-        id: 'pause',
-        title: '暂停游戏',
-        text: '点这里可以随时暂停游戏，方便查看局面或临时离开。',
-        getAnchor: () => pauseBtnRect(),
-      },
-      {
-        id: 'summon',
-        title: '怎么征兵',
-        text: '点【征兵】消耗蟠桃招募士兵和武将，是你的主要操作。',
-        getAnchor: () => buttonRect('summon'),
-      },
-    ],
-  };
+    },
+    {
+      id: 'tangseng',
+      title: '防守目标',
+      text: '这是唐僧，血量归零就会失败，务必守住他。',
+      getAnchor: () => cellRect(battle.map.tangseng.c, battle.map.tangseng.r),
+    },
+  ];
+  // 无尽模式没有 AI 对手（不会被击败判负），不展示该步
+  if (!battle.endless) {
+    steps.push({
+      id: 'aiOpponent',
+      title: 'AI 对手',
+      text: '对角是 AI 对手的唐僧，双方同时应战——谁的唐僧先被妖怪吃掉，谁就算输！',
+      getAnchor: () => cellRect(battle.aiTangseng.c, battle.aiTangseng.r),
+    });
+  }
+  steps.push(
+    {
+      id: 'pause',
+      title: '暂停游戏',
+      text: '点这里可以随时暂停游戏，方便查看局面或临时离开。',
+      getAnchor: () => pauseBtnRect(),
+    },
+    {
+      id: 'peach',
+      title: '蟠桃',
+      text: '这里显示你当前拥有的蟠桃数量，击杀妖怪也会掉落。蟠桃是征兵的唯一资源，攒够后就能召募士兵和武将。',
+      getAnchor: () => peachHudRect(),
+    },
+    {
+      id: 'goSummon',
+      title: '赶紧去征兵',
+      text: '唐僧还在赶来的路上——趁这段时间点【征兵】招募，再把士兵拖到地图上布阵，等他归位、怪物来袭时才有防线可用！',
+      getAnchor: () => buttonRect('summon'),
+    },
+  );
+  return { id: 'battleIntro', steps };
 }
 
 function firstSummonSequence(): TutorialSequence {

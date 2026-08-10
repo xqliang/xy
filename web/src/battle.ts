@@ -1399,7 +1399,7 @@ export class Battle {
   introT = 0;
   introDone = false;
   static readonly INTRO_DUR = 6; // 秒
-  // 新手引导展示期间强制渲染唐僧于归位点（不影响 introT/introDone 计时，仅用于展示）
+  // 新手引导展示期间强制渲染我方/AI 唐僧于归位点（不影响 introT/introDone 计时，仅用于展示）
   tangsengRenderOverride = false;
 
   // —— 伪竞技 AI 对手（上半场，对角唐僧）——
@@ -1612,7 +1612,7 @@ export class Battle {
 
   // AI 唐僧当前渲染位置（同玩家入场节奏沿镜像路走向归位）
   aiTangsengRenderPos(): { c: number; r: number } {
-    if (this.introDone) return posAlong(this.aiPath, this.aiPathLen);
+    if (this.introDone || this.tangsengRenderOverride) return posAlong(this.aiPath, this.aiPathLen);
     const p = Math.min(1, this.introT / Battle.INTRO_DUR);
     return posAlong(this.aiPath, p * this.aiPathLen);
   }
