@@ -9,6 +9,7 @@
 #   ./start.sh build      # 生产构建（输出 web/dist）
 #   ./start.sh preview    # 预览已构建产物（http://127.0.0.1:5180）
 #   ./start.sh test       # 运行 game-core 数值单元测试
+#   ./start.sh versus-agent [局数] [种子]  # 对战用户代理 headless 模拟（默认 20 局 @10×）
 #   ./start.sh check      # 类型检查（game-core + web）
 #   ./start.sh deploy     # 一键构建并部署到 ECS（默认 ssh ecs → /opt/xy/html，端口 8082）
 #                         # 可用环境变量覆盖：ECS_SSH / ECS_DIR / ECS_URL
@@ -93,6 +94,15 @@ case "$CMD" in
   test)
     ensure_deps "$ROOT/game-core"
     (cd "$ROOT/game-core" && npm test)
+    ;;
+  versus-agent)
+    ensure_deps "$ROOT/web"
+    GAMES="${2:-20}"
+    SEED="${3:-42000}"
+    echo "🤖 对战用户代理模拟：${GAMES} 局 @10×（seed=${SEED}）"
+    echo "   行为：征兵 → 布阵 → 主动技能；局间更新 AI skill / 连胜"
+    echo "   详见 docs/versus-user-agent.md"
+    (cd "$ROOT/web" && VERSUS_AGENT_GAMES="$GAMES" VERSUS_AGENT_SEED="$SEED" npm run versus-agent)
     ;;
   check)
     ensure_deps "$ROOT/game-core"; ensure_deps "$ROOT/web"
@@ -201,7 +211,7 @@ echo \"   若页面仍不对，请强刷或清缓存（index.html 可能被浏�
     ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | bg | stop | logs | build | preview | test | check | deploy | rollback | wx"
+    echo "可用：dev | bg | stop | logs | build | preview | test | versus-agent | check | deploy | rollback | wx"
     exit 1
     ;;
 esac

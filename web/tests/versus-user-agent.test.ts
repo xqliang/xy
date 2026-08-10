@@ -31,16 +31,24 @@ describe('versus-user-agent', () => {
     expect(b.peach).toBeLessThan(peachBefore);
   });
 
-  it('20 局 @10×：输出胜率分布并校验平衡', () => {
+  it('批量模拟：输出胜率与波次分布', () => {
+    const games = Number(process.env.VERSUS_AGENT_GAMES ?? 20);
+    const seedBase = Number(process.env.VERSUS_AGENT_SEED ?? 42_000);
     const report = runVersusSession({
-      games: 20,
-      seedBase: 42_000,
+      games,
+      seedBase,
       speedMul: DEFAULT_SPEED_MUL,
       initialAiSkill: DEFAULT_AI_SKILL,
     });
     console.log('\n' + formatVersusSessionReport(report));
 
-    expect(report.timeouts).toBeLessThan(4);
+    const waves = report.results.map((r) => r.wave);
+    const avgWave = waves.reduce((a, b) => a + b, 0) / waves.length;
+    const waveHist = new Map<number, number>();
+    for (const w of waves) waveHist.set(w, (waveHist.get(w) ?? 0) + 1);
+    console.log(`平均波次: ${avgWave.toFixed(2)}  分布: ${[...waveHist.entries()].sort((a, b) => a[0] - b[0]).map(([w, n]) => `${w}波×${n}`).join(', ')}`);
+
+    expect(report.timeouts).toBeLessThan(Math.ceil(games * 0.2));
     expect(report.playerWinRate).toBeGreaterThan(0.35);
     expect(report.playerWinRate).toBeLessThan(0.9);
     expect(report.aiSkillEnd).toBeGreaterThanOrEqual(0.72);

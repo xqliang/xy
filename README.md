@@ -14,6 +14,7 @@
 ./start.sh build      # 生产构建（输出 web/dist）
 ./start.sh preview    # 预览构建产物
 ./start.sh test       # 运行数值单元测试（game-core）
+./start.sh versus-agent [局数] [种子]  # 对战用户代理 headless 模拟（默认 20 局 @10×，见 docs/versus-user-agent.md）
 ./start.sh check      # 类型检查（game-core + web）
 ./start.sh deploy     # 一键部署到 ECS（零停机，见 memory/部署说明）
 ./start.sh rollback   # 回滚线上到上一个/指定发布
