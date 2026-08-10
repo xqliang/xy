@@ -47,7 +47,8 @@ export function drawInkPopupFrame(
   title: string,
   closeR: { x: number; y: number; w: number; h: number },
 ): number {
-  ctx.fillStyle = 'rgba(28,22,16,0.42)';
+  // 半透明压暗底层界面（菜单/战场），卷轴浮在其上
+  ctx.fillStyle = 'rgba(28,22,16,0.38)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   roundRect(ctx, x, y, w, h, 14);
@@ -461,22 +462,31 @@ function drawRankStarFallback(
   on: boolean,
   size = 22,
 ): void {
-  const outer = size * 0.41;
-  const inner = size * 0.18;
+  const outer = size * 0.46;
+  const inner = size * 0.2;
   ctx.beginPath();
-  for (let p = 0; p < 5; p++) {
-    const ang = -Math.PI / 2 + p * ((Math.PI * 2) / 5);
-    const rad = p % 2 === 0 ? outer : inner;
+  for (let i = 0; i < 10; i++) {
+    const ang = -Math.PI / 2 + i * (Math.PI / 5);
+    const rad = i % 2 === 0 ? outer : inner;
     const px = x + Math.cos(ang) * rad;
     const py = y + Math.sin(ang) * rad;
-    if (p === 0) ctx.moveTo(px, py);
+    if (i === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
   ctx.closePath();
-  ctx.fillStyle = on ? '#d4a020' : 'rgba(120,90,40,0.45)';
-  ctx.fill();
-  ctx.strokeStyle = '#8a6010';
-  ctx.lineWidth = 1;
+  if (on) {
+    const g = ctx.createRadialGradient(x, y - size * 0.08, 1, x, y, outer);
+    g.addColorStop(0, '#f0d060');
+    g.addColorStop(1, '#c08018');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#8a5810';
+  } else {
+    ctx.fillStyle = 'rgba(120,90,40,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90,60,30,0.55)';
+  }
+  ctx.lineWidth = Math.max(1.2, size * 0.04);
   ctx.stroke();
 }
 

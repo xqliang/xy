@@ -201,7 +201,7 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'loading' | 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag' | 'settle';
+type Screen = 'loading' | 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag';
 
 function usesMenuMusic(s: Screen): boolean {
   return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag';
@@ -285,13 +285,17 @@ function newBattleAiSkill(): number {
 let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, newBattleAiSkill());
 bindBattleWeaponPickup();
 let endHandled = false; // 本局胜负是否已结算入境界
-let settleChange: RankChange | null = null; // 结算页要播放的段位变化
-let settleStart = 0; // 进入结算页的时间戳（performance.now）
+let settleChange: RankChange | null = null; // 局内结算弹层要播放的段位变化
+let settleStart = 0; // 打开结算弹层的时间戳（performance.now）
 let endlessOn = safePersisted(loadEndlessEnabled, false); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
 let merchant: MerchantUiState = merchantClosed();
 let gameSettings: GameSettings = safePersisted(getSettings, resetSettings());
+
+function isSettleOpen(): boolean {
+  return settleChange !== null || endlessResult !== null;
+}
 
 function syncAudioFromSettings(): void {
   applyAudioVolumes(gameSettings.musicVolume, gameSettings.sfxVolume, {
@@ -674,6 +678,7 @@ function newGame() {
   bindBattleWeaponPickup();
   endHandled = false;
   endlessResult = null;
+  settleChange = null;
   ui.paused = false;
   pausePhase = 'main';
   ui.passivePopup = null;
@@ -688,6 +693,8 @@ function abortBattleToMenu(): void {
   ui.passivePopup = null;
   ui.activePopup = null;
   ui.aiItemPopup = null;
+  settleChange = null;
+  endlessResult = null;
   clearBoardSelect();
   try { stopAmbient(); } catch { /* ignore */ }
   screen = 'menu';
@@ -1161,13 +1168,13 @@ function onPointerDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  if (screen === 'settle') {
+  if (isSettleOpen()) {
     const pickupId = weaponPickupHitAt(x, y, visibleWeaponPickups(), bag);
     if (pickupId) {
       claimWeaponPickup(pickupId);
       return;
     }
-    if ((battle.endless && endlessResult) || isSettleAnimDone(performance.now() - settleStart)) {
+    if (endlessResult || isSettleAnimDone(performance.now() - settleStart)) {
       leaveSettleToMenu();
     } else {
       settleStart = performance.now() - SETTLE_ANIM_MS;
@@ -1487,9 +1494,13 @@ function scheduleFrame(): void {
 function needsContinuousLoop(): boolean {
   if (screen === 'loading') return loadingUiVisible;
   if (screen === 'menu') return true;
-  if (screen === 'battle') return !ui.paused;
+  if (screen === 'battle') {
+    if (isSettleOpen()) {
+      return !isSettleAnimDone(performance.now() - settleStart) || visibleWeaponPickups().length > 0;
+    }
+    return !ui.paused;
+  }
   if (screen === 'codex') return codexNeedsAnim();
-  if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart) || visibleWeaponPickups().length > 0;
   return false;
 }
 
@@ -1545,16 +1556,12 @@ function frame(now: number): void {
   } else if (screen === 'bag') {
     drawBag(ctx, bag, bagToast, bagScrollY);
     if (bagPopup) drawBagPopup(ctx, bag, bagPopup);
-  } else if (screen === 'settle') {
-    if (battle.endless && endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
-    else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
-    drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
   } else {
-    // —— 战斗 —— //
+    // —— 战斗（含局内结算弹层） —— //
     // 新手引导展示期间强制唐僧渲染于归位点，避免引导指向的格子里唐僧还没走到（不影响 introT 计时）
     battle.tangsengRenderOverride = !!tutorialOverlay;
-    // 新手引导展示中同样冻结战斗（不 step），但保留连续重绘以播放箭头跳动动画
-    if (!ui.paused && !tutorialOverlay) {
+    // 结算弹层 / 暂停 / 引导时冻结战斗（不 step），仍连续重绘以播动画
+    if (!ui.paused && !tutorialOverlay && !isSettleOpen()) {
       try {
         battle.step(dt);
       } catch (err) {
@@ -1569,7 +1576,7 @@ function frame(now: number): void {
       for (const ev of battle.sfxEvents) playSfx(ev);
       battle.sfxEvents.length = 0;
     }
-    // 胜负结算入境界 + 功德（仅一次），随后进入结算页播放星级动画
+    // 胜负结算入境界 + 功德（仅一次），随后在战斗页弹出结算层
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
       endHandled = true;
       pendingMerchant = true;
@@ -1583,7 +1590,6 @@ function frame(now: number): void {
         settleChange = null;
         battle.message = `抵达第 ${battle.wave} 波（功德 +${gain}）`;
         settleStart = performance.now();
-        screen = 'settle';
       } else {
         const won = battle.status === 'won';
         // 对战连胜：下一局按档位隐藏加压（70% / 80% / 全力）
@@ -1596,13 +1602,14 @@ function frame(now: number): void {
         endlessResult = null;
         settleChange = change;
         settleStart = performance.now();
-        screen = 'settle';
       }
     }
     setHudRank(rankName(rank.level));
     draw(ctx, battle, ui);
+    if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
+    else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
-    if (ui.paused) drawPausePopup(ctx, pausePhase);
+    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase);
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
@@ -1695,6 +1702,7 @@ const hook: GameHook = {
     bindBattleWeaponPickup();
     endHandled = false;
     endlessResult = null;
+    settleChange = null;
     screen = 'battle';
     scheduleFrame();
   },

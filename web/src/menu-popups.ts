@@ -1,7 +1,7 @@
 // 首页弹窗：设置、获取体力、选择关卡（水墨卷轴风，紧凑布局）。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
-import { STAMINA_MAX } from './stamina';
+import { STAMINA_MAX, STAMINA_REGEN_MS } from './stamina';
 import { MAPS } from './board';
 import type { GameSettings } from './settings';
 import type { MapSelection } from './map-select';
@@ -284,7 +284,7 @@ export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameS
 
 // —— 获取体力弹窗 —— //
 const STA_PW = 400;
-const STA_PH = 468;
+const STA_PH = 492;
 const STA_PX = (VIEW_W - STA_PW) / 2;
 const STA_PY = (VIEW_H - STA_PH) / 2 - 16;
 const STA_CLOSE = inkPopupCloseRect(STA_PX, STA_PY);
@@ -296,10 +296,12 @@ const STA_BTN_X = STA_PX + 32;
 const STA_BOTTOM = STA_PY + STA_PH - 28;
 const STA_SHARE = { x: STA_BTN_X, y: STA_BOTTOM - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
 const STA_AD = { x: STA_BTN_X, y: STA_SHARE.y - STA_BTN_GAP - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
-const STA_HINT_Y = STA_AD.y - 30;
+const STA_REGEN_Y = STA_AD.y - 22;
+const STA_HINT_Y = STA_REGEN_Y - 22;
 const STA_HERO_SIZE = 84;
 const STA_HERO_CY = STA_HINT_Y - 22 - STA_HERO_SIZE / 2;
 const STA_LABEL_Y = STA_BODY + 24;
+const STA_REGEN_MIN = Math.round(STAMINA_REGEN_MS / 60_000);
 
 export type StaminaPopupHit =
   | { kind: 'close' }
@@ -358,6 +360,9 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
   ctx.fillStyle = stamina >= STAMINA_MAX ? '#8a6020' : '#8a3010';
   ctx.font = '15px "PingFang SC", serif';
   ctx.fillText(stamina >= STAMINA_MAX ? '体力已满' : '体力不足，请选择补充方式', cx, STA_HINT_Y);
+  ctx.fillStyle = 'rgba(90,60,30,0.62)';
+  ctx.font = '13px "PingFang SC", serif';
+  ctx.fillText(`未满时每 ${STA_REGEN_MIN} 分钟自动恢复 1 点`, cx, STA_REGEN_Y);
 
   drawInkActionButton(ctx, STA_AD, '看广告 +10', false, 'accent');
   drawInkActionButton(ctx, STA_SHARE, '分享好友 +5', false, 'secondary');
