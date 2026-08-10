@@ -2833,7 +2833,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 }
 
 /** 战中动态调位视图：依据当前存活怪群评估座位，每次至多执行一次 move/swap */
-export type BattleRepositionHeroPair = { left: Cell; right: Cell; general: string; tier: number };
+export type BattleRepositionHeroPair = {
+  left: Cell;
+  right: Cell;
+  general: string;
+  tier: number;
+  /** 该将品质阶上限；省略时视为已达顶（不参与练级轮换） */
+  maxTier?: number;
+};
 
 export interface BattleRepositionView {
   placedUnits(): PlacedUnitLite[];
@@ -2857,11 +2864,17 @@ export interface BattleRepositionView {
   activeHeroPairs?(): BattleRepositionHeroPair[];
   heroEngageScore?(left: Cell, right: Cell, general: string, tier: number): number;
   moveHeroPair?(fromLeft: Cell, fromRight: Cell, toLeft: Cell, toRight: Cell): boolean;
+  /** 两对已激活将整体互换座位（练级轮换用） */
+  swapHeroPairs?(aLeft: Cell, aRight: Cell, bLeft: Cell, bRight: Cell): boolean;
+  /** 场上是否有怪（无怪时不做练级轮换） */
+  monstersPresent?(): boolean;
 }
 
 export interface BattleRepositionOpts {
   /** 禁止对同一对格子再次 swap/move（仅挡紧邻一次，防 AI 来回抖） */
   blockedPair?: { a: Cell; b: Cell };
+  /** AI：怪物口练级轮换 + 满级后按射程微调 */
+  heroLeveling?: boolean;
 }
 
 export function repositionPairKey(a: Cell, b: Cell): string {
@@ -2873,6 +2886,95 @@ export function repositionPairKey(a: Cell, b: Cell): string {
 function isBlockedPair(a: Cell, b: Cell, blocked?: { a: Cell; b: Cell }): boolean {
   if (!blocked) return false;
   return repositionPairKey(a, b) === repositionPairKey(blocked.a, blocked.b);
+}
+
+function heroPairMaxTier(p: BattleRepositionHeroPair): number {
+  return p.maxTier ?? p.tier;
+}
+
+function isHeroPairMaxed(p: BattleRepositionHeroPair): boolean {
+  return p.tier >= heroPairMaxTier(p);
+}
+
+/** 练级优先级：先满5将，再满3将；同档内阶越低越优先 */
+function heroFarmPriority(p: BattleRepositionHeroPair): number {
+  const cap = heroPairMaxTier(p);
+  if (p.tier >= cap) return -1;
+  const capBonus = cap >= 5 ? 1000 : 0;
+  return capBonus + (cap - p.tier) * 10 + cap;
+}
+
+function heroPairExitDist(view: BattleRepositionView, left: Cell, right: Cell): number {
+  const cx = (left.c + right.c) / 2;
+  const cy = (left.r + right.r) / 2;
+  return view.exitDist({ c: cx, r: cy });
+}
+
+function sameHeroPair(a: BattleRepositionHeroPair, b: BattleRepositionHeroPair): boolean {
+  return sameCell(a.left, b.left) && sameCell(a.right, b.right);
+}
+
+/** 全部满级后：按 heroEngageScore / 出口距离微调座位 */
+function tryHeroCoverageReposition(view: BattleRepositionView): boolean {
+  if (!view.activeHeroPairs || !view.heroEngageScore || !view.moveHeroPair) return false;
+  const MIN_GAIN = 0.12;
+  let best: {
+    fromLeft: Cell;
+    fromRight: Cell;
+    toLeft: Cell;
+    toRight: Cell;
+    gain: number;
+  } | null = null;
+  for (const pair of view.activeHeroPairs()) {
+    const cur = view.heroEngageScore(pair.left, pair.right, pair.general, pair.tier);
+    for (const cand of enumerateHeroPairSeats(view)) {
+      if (sameCell(cand.left, pair.left) && sameCell(cand.right, pair.right)) continue;
+      const next = view.heroEngageScore(cand.left, cand.right, pair.general, pair.tier);
+      const gain = next - cur;
+      if (gain < MIN_GAIN) continue;
+      if (!best || gain > best.gain) {
+        best = {
+          fromLeft: pair.left,
+          fromRight: pair.right,
+          toLeft: cand.left,
+          toRight: cand.right,
+          gain,
+        };
+      }
+    }
+  }
+  if (!best) return false;
+  return view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight);
+}
+
+/**
+ * AI 练级轮换：怪物口满级将让位给优先更高的未封顶将；全部满级后做射程微调。
+ */
+function tryHeroExpFarmRotation(view: BattleRepositionView): boolean {
+  const pairs = view.activeHeroPairs?.() ?? [];
+  if (pairs.length === 0) return false;
+  if (view.monstersPresent && !view.monstersPresent()) {
+    return pairs.every(isHeroPairMaxed) && tryHeroCoverageReposition(view);
+  }
+
+  const growing = pairs.filter((p) => !isHeroPairMaxed(p));
+  if (growing.length === 0) return tryHeroCoverageReposition(view);
+
+  const entrance = pairs.reduce((best, p) =>
+    heroPairExitDist(view, p.left, p.right) < heroPairExitDist(view, best.left, best.right) ? p : best,
+  );
+  const desired = growing.reduce((best, p) =>
+    heroFarmPriority(p) > heroFarmPriority(best) ? p : best,
+  );
+
+  if (sameHeroPair(entrance, desired)) return false;
+
+  const shouldSwap =
+    isHeroPairMaxed(entrance)
+    || heroFarmPriority(desired) > heroFarmPriority(entrance) + 50;
+
+  if (!shouldSwap || !view.swapHeroPairs) return false;
+  return view.swapHeroPairs(entrance.left, entrance.right, desired.left, desired.right);
 }
 
 function enumerateHeroPairSeats(view: BattleRepositionView): { left: Cell; right: Cell }[] {
@@ -2937,6 +3039,8 @@ export function planBattleReposition(
   view: BattleRepositionView,
   opts?: BattleRepositionOpts,
 ): { ok: boolean; pair?: { a: Cell; b: Cell } } {
+  if (opts?.heroLeveling && tryHeroExpFarmRotation(view)) return { ok: true };
+
   const units = view.placedUnits();
   if (units.length === 0) {
     if (view.dangerNear() && tryDangerHeroReposition(view)) return { ok: true };

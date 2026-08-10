@@ -1800,6 +1800,36 @@ export class Battle {
     return true;
   }
 
+  private findAdjacentFreePair(ai: boolean): { left: Cell; right: Cell } | null {
+    const cells = ai
+      ? this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r))
+      : this.unlockedCells().filter((c) => this.cellFree(c.c, c.r));
+    const set = new Set(cells.map((c) => cellKey(c)));
+    for (const left of cells) {
+      const right: Cell = { c: left.c + 1, r: left.r };
+      if (set.has(cellKey(right))) return { left, right };
+    }
+    return null;
+  }
+
+  /** 两对已激活武将互换座位（经临时空位三连移） */
+  private swapHeroPairs(
+    aLeft: Cell,
+    aRight: Cell,
+    bLeft: Cell,
+    bRight: Cell,
+    ai = false,
+  ): boolean {
+    if (
+      aLeft.c === bLeft.c && aLeft.r === bLeft.r && aRight.c === bRight.c && aRight.r === bRight.r
+    ) return false;
+    const temp = this.findAdjacentFreePair(ai);
+    if (!temp) return false;
+    if (!this.repositionHeroPair(bLeft, bRight, temp.left, temp.right, ai)) return false;
+    if (!this.repositionHeroPair(aLeft, aRight, bLeft, bRight, ai)) return false;
+    return this.repositionHeroPair(temp.left, temp.right, aLeft, aRight, ai);
+  }
+
   /** 格对「怪物即将路过」路段的贴近分（挖铲/危险布阵用） */
   private imminentPathScoreAt(
     monsters: Monster[],
@@ -1871,11 +1901,15 @@ export class Battle {
           right: g.cells[1]!,
           general: g.def.id,
           tier: g.tier,
+          maxTier: g.def.maxTier,
         })),
       heroEngageScore: (left, right, general, tier) =>
         this.heroEngageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, left, right, general, tier, this.aiDangerNear(), true),
       moveHeroPair: (fromLeft, fromRight, toLeft, toRight) =>
         this.repositionHeroPair(fromLeft, fromRight, toLeft, toRight, true),
+      swapHeroPairs: (aLeft, aRight, bLeft, bRight) =>
+        this.swapHeroPairs(aLeft, aRight, bLeft, bRight, true),
+      monstersPresent: () => this.aiMonsters.length > 0,
       };
     }
     return {
@@ -1949,9 +1983,10 @@ export class Battle {
   /** 依当前怪群动态调整武器位；AI 侧 maxSteps=1（随机节流），玩家一键布阵可连续多步 */
   private tickBattleReposition(side: 'player' | 'ai', maxSteps = 1): number {
     if (side === 'ai') {
-      if (this.aiUnits.length === 0 || this.aiMonsters.length === 0) return 0;
+      if (this.aiActiveGenerals().length === 0 && this.aiUnits.length === 0) return 0;
       const r = planBattleReposition(this.buildBattleRepositionView('ai'), {
         blockedPair: this.aiLastRepositionPair ?? undefined,
+        heroLeveling: true,
       });
       this.aiLastRepositionPair = r.ok && r.pair ? r.pair : null;
       return r.ok ? 1 : 0;

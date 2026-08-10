@@ -1494,6 +1494,17 @@ class FakeRepositionView implements BattleRepositionView {
     );
     return true;
   }
+  swapHeroPairs(aLeft: Cell, aRight: Cell, bLeft: Cell, bRight: Cell) {
+    const temp = this.free.find((c) =>
+      this.free.some((r) => r.c === c.c + 1 && r.r === c.r),
+    );
+    if (!temp) return false;
+    const tempRight = { c: temp.c + 1, r: temp.r };
+    if (!this.moveHeroPair(bLeft, bRight, temp, tempRight)) return false;
+    if (!this.moveHeroPair(aLeft, aRight, bLeft, bRight)) return false;
+    return this.moveHeroPair(temp, tempRight, aLeft, aRight);
+  }
+  monstersPresent() { return this.monsterEngage.length > 0 || this.monsterCells.length > 0; }
   moveUnit(from: Cell, to: Cell) {
     const kFrom = `${from.c},${from.r}`;
     const u = this.unitsMap.get(kFrom);
@@ -1852,6 +1863,42 @@ it('危险时：已激活武将整体挪位以打到残血怪', () => {
   expect(planBattleReposition(v).ok).toBe(true);
   expect(v.wordsMap.get('4,0')?.char).toBe('白');
   expect(v.wordsMap.get('5,0')?.char).toBe('骨');
+});
+
+it('AI 练级轮换：怪物口满5将让位给未封顶满5将', () => {
+  const v = new FakeRepositionView();
+  v.monsterEngage = [{ dist: 2, hp: 20, maxHp: 20 }];
+  v.wordsMap.set('0,0', { char: '大', general: 'dasheng', cell: { c: 0, r: 0 }, tier: 5 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'dasheng', cell: { c: 1, r: 0 }, tier: 5 });
+  v.wordsMap.set('4,0', { char: '龙', general: 'long', cell: { c: 4, r: 0 }, tier: 3 });
+  v.wordsMap.set('5,0', { char: '王', general: 'long', cell: { c: 5, r: 0 }, tier: 3 });
+  v.heroCells.add('0,0'); v.heroCells.add('1,0'); v.heroCells.add('4,0'); v.heroCells.add('5,0');
+  v.heroPairs = [
+    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'dasheng', tier: 5, maxTier: 5 },
+    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'long', tier: 3, maxTier: 5 },
+  ];
+  v.free = [{ c: 2, r: 0 }, { c: 3, r: 0 }];
+  expect(planBattleReposition(v, { heroLeveling: true }).ok).toBe(true);
+  expect(v.wordsMap.get('0,0')?.char).toBe('龙');
+  expect(v.wordsMap.get('4,0')?.char).toBe('大');
+});
+
+it('AI 练级轮换：优先满5将再满3将', () => {
+  const v = new FakeRepositionView();
+  v.monsterEngage = [{ dist: 2, hp: 20, maxHp: 20 }];
+  v.wordsMap.set('0,0', { char: '八', general: 'bajie', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '戒', general: 'bajie', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('4,0', { char: '铁', general: 'tieshan', cell: { c: 4, r: 0 }, tier: 2 });
+  v.wordsMap.set('5,0', { char: '扇', general: 'tieshan', cell: { c: 5, r: 0 }, tier: 2 });
+  v.heroCells.add('0,0'); v.heroCells.add('1,0'); v.heroCells.add('4,0'); v.heroCells.add('5,0');
+  v.heroPairs = [
+    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'bajie', tier: 3, maxTier: 3 },
+    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'tieshan', tier: 2, maxTier: 5 },
+  ];
+  v.free = [{ c: 2, r: 0 }, { c: 3, r: 0 }];
+  expect(planBattleReposition(v, { heroLeveling: true }).ok).toBe(true);
+  expect(v.wordsMap.get('0,0')?.char).toBe('铁');
+  expect(v.wordsMap.get('4,0')?.char).toBe('八');
 });
 
 it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.5–1s', () => {
