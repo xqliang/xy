@@ -1901,7 +1901,7 @@ it('AI 练级轮换：优先满5将再满3将', () => {
   expect(v.wordsMap.get('4,0')?.char).toBe('八');
 });
 
-it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.5–1s', () => {
+it('rollAiAdjustInterval：兵器 0.1–0.25s、配对字 0.05–0.1s', () => {
   expect(rollAiAdjustInterval(false, () => 0)).toBe(AI_WEAPON_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
   expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);

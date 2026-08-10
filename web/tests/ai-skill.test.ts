@@ -62,11 +62,11 @@ describe('nextAiSkill', () => {
     expect(nextAiSkill(1.0, false)).toBeLessThan(1.0);
   });
 
-  it('负的降幅 > 胜的升幅（目标 70% 的非对称步长）', () => {
+  it('负的降幅 > 胜的升幅（目标 60% 的非对称步长）', () => {
     const up = nextAiSkill(1.0, true) - 1.0;
     const down = 1.0 - nextAiSkill(1.0, false);
     expect(down).toBeGreaterThan(up);
-    expect(down / up).toBeCloseTo(7 / 3, 1);
+    expect(down / up).toBeCloseTo(0.6 / 0.4, 1);
   });
 
   it('clamp 到 [MIN, MAX]', () => {
@@ -74,7 +74,7 @@ describe('nextAiSkill', () => {
     expect(nextAiSkill(AI_SKILL_MAX, true)).toBe(AI_SKILL_MAX);
   });
 
-  it('对固定强度玩家：以伯努利 p=0.7 输入长期收敛，均衡点胜率≈70%', () => {
+  it('对固定强度玩家：以伯努利 p=0.6 输入长期收敛，均衡点胜率≈60%', () => {
     let skill = 1.4;
     let seed = 12345;
     const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -86,10 +86,10 @@ describe('nextAiSkill', () => {
       skill = nextAiSkill(skill, won);
     }
     const rate = wins / (N - 1000);
-    expect(rate).toBeGreaterThan(0.62);
-    expect(rate).toBeLessThan(0.78);
-    expect(skill).toBeGreaterThan(0.85);
-    expect(skill).toBeLessThan(1.15);
+    expect(rate).toBeGreaterThan(0.52);
+    expect(rate).toBeLessThan(0.68);
+    expect(skill).toBeGreaterThan(0.95);
+    expect(skill).toBeLessThan(1.35);
   });
 });
 
@@ -105,8 +105,8 @@ describe('skillToKnobs', () => {
     expect(skillToKnobs(AI_SKILL_MAX).pSubOptimal).toBeGreaterThanOrEqual(0);
   });
   it('征兵间隔被 clamp 在可信人手速内', () => {
-    expect(skillToKnobs(AI_SKILL_MAX).summonInterval).toBeGreaterThanOrEqual(1.2 - 1e-9);
-    expect(skillToKnobs(AI_SKILL_MIN).summonInterval).toBeLessThanOrEqual(5.0 + 1e-9);
+    expect(skillToKnobs(AI_SKILL_MAX).summonInterval).toBeGreaterThanOrEqual(0.6 - 1e-9);
+    expect(skillToKnobs(AI_SKILL_MIN).summonInterval).toBeLessThanOrEqual(3.0 + 1e-9);
   });
 });
 
@@ -123,6 +123,16 @@ describe('rollAiLoadout', () => {
 
     const two = rollAiLoadout([], [], DEFAULT_AI_SKILL, (n) => n - 1);
     expect(two.actives.length + two.passives.length).toBe(2);
+  });
+
+  it('空 loadout 仍叠加 rubber-band itemBonus（连胜加压 / 连败减压）', () => {
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 0, 2)).toBe(2);
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 2, 2)).toBe(2); // 不突破 CAP
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 1, -2)).toBe(0);
+    expect(aiItemTargetCount(0, DEFAULT_AI_SKILL, () => 2, -1)).toBe(1);
+
+    const pressed = rollAiLoadout([], [], AI_SKILL_MAX, () => 0, { itemBonus: 2 });
+    expect(pressed.actives.length + pressed.passives.length).toBe(2);
   });
 
   it('玩家有配置时 AI 数量接近且随 skill 调节', () => {

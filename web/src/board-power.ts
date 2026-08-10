@@ -1,16 +1,23 @@
 // 战场最优输出估算：按当前地图把已上场兵种重排到可达格，
 // 综合攻速/范围/伤害/目标数（含被动乘区）得到最优 DPS，
-// 并据此按约 70% 压力推算 Boss 血量与第 4 波起的出怪数 / 叠怪批次。
+// 并据此按随波次升高的压力比推算 Boss 血量与第 6 波起的出怪数 / 叠怪批次。
 import { getUnitStat, type UnitType } from '@core';
 import { exitDistToPath, posAlong, posAtDistance, type Cell, type GameMap } from './board';
 import { placeCellScore } from './autoplace';
 
-/** 目标压力：怪物总血量 ≈ 武器最优输出的该比例 */
-export const PRESSURE_RATIO = 0.7;
+/**
+ * 压力比下限（第 PRESSURE_FROM_WAVE 波起）：怪物总血 ≈ 最优输出 × 该比例。
+ * @deprecated 请用 pressureRatioForWave(wave)；保留作默认/兼容别名。
+ */
+export const PRESSURE_RATIO = 0.60;
+/** 压力比上限（第 PRESSURE_RATIO_FULL_WAVE 波及以后） */
+export const PRESSURE_RATIO_MAX = 0.90;
+/** 压力比爬满的波次（与高级局 15+ 对齐） */
+export const PRESSURE_RATIO_FULL_WAVE = 16;
 /** 压力窗口（秒）：用窗口内产出血量 vs 武器输出比来调数量 */
 export const PRESSURE_WINDOW_SEC = 10;
 /** 第几波起按最优输出抬高出怪数 / 允许单次叠多只（此前只用基准） */
-export const PRESSURE_FROM_WAVE = 4;
+export const PRESSURE_FROM_WAVE = 6;
 /** 门口路段长度（格）：用于判断会不会在出怪口被秒 */
 export const ENTRANCE_ZONE_LEN = 2.5;
 /** 出怪间隔下限（秒） */
@@ -23,8 +30,20 @@ export const SPAWN_DIST_JITTER = 0.5;
 export const SPAWN_BATCH_CAP_MAX = 10;
 
 /**
+ * 随波次升高的压力比：波 6 ≈ 60% → 波 16+ ≈ 90%（线性）。
+ * 波 < PRESSURE_FROM_WAVE 时用下限（Boss 血参考仍可能用到）。
+ */
+export function pressureRatioForWave(wave: number): number {
+  const w = Math.max(1, Math.floor(wave));
+  if (w <= PRESSURE_FROM_WAVE) return PRESSURE_RATIO;
+  const span = Math.max(1, PRESSURE_RATIO_FULL_WAVE - PRESSURE_FROM_WAVE);
+  const t = Math.min(1, (w - PRESSURE_FROM_WAVE) / span);
+  return PRESSURE_RATIO + t * (PRESSURE_RATIO_MAX - PRESSURE_RATIO);
+}
+
+/**
  * 单次出怪批次上限 N（实际出 1..N 随机）：前期 1，第 PRESSURE_FROM_WAVE 波起随波次升高。
- * 波 4–5 → 2，6–7 → 3，…，约波 20 起封顶 10。
+ * 波 6–7 → 2，8–9 → 3，…，约波 22 起封顶 10。
  */
 export function spawnBatchCap(wave: number): number {
   if (wave < PRESSURE_FROM_WAVE) return 1;
@@ -424,7 +443,7 @@ export function planSpawnInterval(input: {
  * - 出怪间隔：基础节奏 + 门口 DPS 防灭队；同批随机 1..N 叠怪见 spawnBatchCap。
  */
 export function planWavePressure(input: PressurePlanInput): PressurePlan {
-  const ratio = input.pressureRatio ?? PRESSURE_RATIO;
+  const ratio = input.pressureRatio ?? pressureRatioForWave(input.wave);
   const window = input.windowSec ?? PRESSURE_WINDOW_SEC;
   const fromWave = input.fromWave ?? PRESSURE_FROM_WAVE;
 

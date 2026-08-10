@@ -53,7 +53,7 @@ import {
   pathCoverageLenEntranceWeightedAlong,
   pathFirstEngageDistAlong,
   planWavePressure,
-  PRESSURE_RATIO,
+  pressureRatioForWave,
   spawnBatchCap,
   SPAWN_DIST_JITTER,
   type BoardPowerResult,
@@ -126,7 +126,7 @@ export const TUNING = {
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
-  earlyWaveHpTo: 3, // 前 3 波小怪基础血量 ×earlyWaveHpMul
+  earlyWaveHpTo: 5, // 前 5 波小怪基础血量 ×earlyWaveHpMul（推迟血量悬崖，对局更容易过 6–8 波）
   earlyWaveHpMul: 0.8,
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
@@ -151,7 +151,7 @@ export const TUNING = {
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
-  eliteFromWave: 3, // 第 3 波起可能刷出精英妖
+  eliteFromWave: 4, // 第 4 波起可能刷出精英妖（略推迟控场，降低开局秒杀感）
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 1, // 控制技能作用半径（格）
@@ -679,7 +679,7 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1.5–4s / 补配对字 0.5–1s 随机）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 0.1–0.25s / 补配对字 0.05–0.1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
   /** 对战隐藏调节：抽字/道具概率，不在 UI 展示 */
@@ -2377,7 +2377,7 @@ export class Battle {
     this.status = 'playing';
     this.waveActive = true;
     this.healUsedThisWave = false;
-    // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（约 70% 压力）
+    // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（压力比随波次升高）
     this.wavePressure = this.computeWavePressure(this.wave);
     this.spawnRemaining = this.wavePressure.count;
     this.waveMonsterCount = this.spawnRemaining;
@@ -2692,7 +2692,7 @@ export class Battle {
 
   // 本波出怪总数基准：经济基准(9+n，同时决定掉落) + 后期堆量。
   // 只在 battle 层叠加，不改 game-core 的 monstersInWave，保持"第5波蟠桃转负"的经济不变量与测试。
-  // 第 4 波起还会按最优输出抬升（见 computeWavePressure），本函数结果作为最低保底。
+  // 第 PRESSURE_FROM_WAVE 波起还会按最优输出抬升（见 computeWavePressure），本函数结果作为最低保底。
   private baselineWaveSpawnCount(wave: number): number {
     const base = monstersInWave(wave); // 9 + n
     const extra =
@@ -2770,7 +2770,7 @@ export class Battle {
   }
 
   /**
-   * 按最优 DPS 规划本波出怪数、Boss 血量与出怪间隔（约 70% 压力）。
+   * 按最优 DPS 规划本波出怪数、Boss 血量与出怪间隔（压力比随波次升高）。
    * @param hasMiniBoss 本波是否预定顶替 1 只普通怪刷小 Boss：其额外血量需占预算，
    *   否则怪量不变但血量更高会让实际压力悄悄超出规划比例（见 planWavePressure）。
    */
@@ -2778,7 +2778,7 @@ export class Battle {
   private computeCurrentBossHp(): number {
     const power = this.estimateOptimalPower();
     const pathDmg = power.pathDamage(this.bossSpeed());
-    return Math.max(this.normalMonsterHp(), pathDmg * PRESSURE_RATIO);
+    return Math.max(this.normalMonsterHp(), pathDmg * pressureRatioForWave(this.wave));
   }
 
   private computeWavePressure(wave: number, hasMiniBoss = false): PressurePlan {
@@ -3082,7 +3082,7 @@ export class Battle {
         this.tickAiShovelReserve();
       }
     }
-    // 2) 战中调整：兵器调位 1.5–4s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
+    // 2) 战中调整：兵器调位 0.1–0.25s 随机；待补英雄配对字时 0.05–0.1s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       if (aiPlacedThisFrame) {

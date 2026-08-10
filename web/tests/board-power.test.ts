@@ -6,7 +6,10 @@ import {
   planWavePressure,
   planSpawnInterval,
   spawnBatchCap,
+  pressureRatioForWave,
   PRESSURE_RATIO,
+  PRESSURE_RATIO_MAX,
+  PRESSURE_RATIO_FULL_WAVE,
   PRESSURE_WINDOW_SEC,
   PRESSURE_FROM_WAVE,
   SPAWN_INTERVAL_MIN,
@@ -129,15 +132,28 @@ describe('estimateOptimalBoardPower', () => {
   });
 });
 
+describe('pressureRatioForWave', () => {
+  it('压力波前用下限，满波封顶，中间线性爬升', () => {
+    expect(pressureRatioForWave(1)).toBeCloseTo(PRESSURE_RATIO, 5);
+    expect(pressureRatioForWave(PRESSURE_FROM_WAVE)).toBeCloseTo(PRESSURE_RATIO, 5);
+    expect(pressureRatioForWave(PRESSURE_RATIO_FULL_WAVE)).toBeCloseTo(PRESSURE_RATIO_MAX, 5);
+    expect(pressureRatioForWave(99)).toBeCloseTo(PRESSURE_RATIO_MAX, 5);
+    const mid = PRESSURE_FROM_WAVE + (PRESSURE_RATIO_FULL_WAVE - PRESSURE_FROM_WAVE) / 2;
+    expect(pressureRatioForWave(mid)).toBeCloseTo((PRESSURE_RATIO + PRESSURE_RATIO_MAX) / 2, 5);
+    expect(pressureRatioForWave(PRESSURE_FROM_WAVE + 1))
+      .toBeGreaterThan(pressureRatioForWave(PRESSURE_FROM_WAVE));
+  });
+});
+
 describe('spawnBatchCap', () => {
-  it('第 4 波前为 1，之后随波次升高至封顶（无尽可到 10）', () => {
+  it('压力波前为 1，之后随波次升高至封顶（无尽可到 10）', () => {
     expect(spawnBatchCap(1)).toBe(1);
     expect(spawnBatchCap(PRESSURE_FROM_WAVE - 1)).toBe(1);
-    expect(spawnBatchCap(4)).toBe(2);
-    expect(spawnBatchCap(5)).toBe(2);
-    expect(spawnBatchCap(6)).toBe(3);
-    expect(spawnBatchCap(12)).toBe(6); // 正常通关波仍未封顶
-    expect(spawnBatchCap(20)).toBe(SPAWN_BATCH_CAP_MAX);
+    expect(spawnBatchCap(6)).toBe(2);
+    expect(spawnBatchCap(7)).toBe(2);
+    expect(spawnBatchCap(8)).toBe(3);
+    expect(spawnBatchCap(14)).toBe(6); // 正常通关波仍未封顶
+    expect(spawnBatchCap(22)).toBe(SPAWN_BATCH_CAP_MAX);
     expect(spawnBatchCap(99)).toBe(SPAWN_BATCH_CAP_MAX);
   });
 });
@@ -203,13 +219,14 @@ describe('planWavePressure', () => {
       ...spawnOpts,
     });
     expect(p.count).toBe(12);
-    expect(p.bossHp).toBeCloseTo(power.pathDamage(0.4) * PRESSURE_RATIO, 5);
+    expect(p.bossHp).toBeCloseTo(power.pathDamage(0.4) * pressureRatioForWave(PRESSURE_FROM_WAVE - 1), 5);
     expect(p.spawnInterval).toBeCloseTo(1.25, 5);
   });
 
-  it('第 4 波起按 10s×70% 预算抬高数量，且不低于保底', () => {
+  it(`第 ${PRESSURE_FROM_WAVE} 波起按 10s×压力比预算抬高数量，且不低于保底`, () => {
+    const ratio = pressureRatioForWave(PRESSURE_FROM_WAVE);
     const p = planWavePressure({
-      wave: 4,
+      wave: PRESSURE_FROM_WAVE,
       baselineCount: 5,
       normalHp: 50,
       isBossWave: false,
@@ -217,14 +234,14 @@ describe('planWavePressure', () => {
       power,
       ...spawnOpts,
     });
-    const budget = 100 * PRESSURE_WINDOW_SEC * PRESSURE_RATIO; // 700
+    const budget = 100 * PRESSURE_WINDOW_SEC * ratio;
     expect(p.count).toBe(Math.max(5, Math.ceil(budget / 50)));
   });
 
   it('小 Boss 顶替 1 只普通怪出场：多出的血量占预算，避免实际压力超出规划比例', () => {
     const normalHp = 50;
     const noMini = planWavePressure({
-      wave: 4,
+      wave: PRESSURE_FROM_WAVE,
       baselineCount: 1,
       normalHp,
       isBossWave: false,
@@ -233,7 +250,7 @@ describe('planWavePressure', () => {
       ...spawnOpts,
     });
     const withMini = planWavePressure({
-      wave: 4,
+      wave: PRESSURE_FROM_WAVE,
       baselineCount: 1,
       normalHp,
       isBossWave: false,
@@ -251,10 +268,11 @@ describe('planWavePressure', () => {
     expect(withMiniTotalHp).toBeLessThanOrEqual(noMiniTotalHp + normalHp);
   });
 
-  it('Boss 血量 ≈ 全路集火伤害 × 70%，且数量综合 Boss 抗伤后仍 ≥ 保底', () => {
+  it('Boss 血量 ≈ 全路集火伤害 × 当波压力比，且数量综合 Boss 抗伤后仍 ≥ 保底', () => {
     const bossSpd = 0.4;
+    const wave = PRESSURE_FROM_WAVE;
     const p = planWavePressure({
-      wave: 5,
+      wave,
       baselineCount: 14,
       normalHp: 104,
       isBossWave: true,
@@ -262,7 +280,7 @@ describe('planWavePressure', () => {
       power,
       ...spawnOpts,
     });
-    expect(p.bossHp).toBeCloseTo(power.pathDamage(bossSpd) * PRESSURE_RATIO, 5);
+    expect(p.bossHp).toBeCloseTo(power.pathDamage(bossSpd) * pressureRatioForWave(wave), 5);
     expect(p.count).toBeGreaterThanOrEqual(14);
   });
 
@@ -343,7 +361,7 @@ describe('Battle 接入压力规划', () => {
     expect(b.snapshot().spawnInterval!).toBeGreaterThanOrEqual(TUNING.spawnIntervalMin);
   });
 
-  it('第 4 波起单次可叠多只，多出怪在门口后方半格内', () => {
+  it('压力波起单次可叠多只，多出怪在门口后方半格内', () => {
     const b = new Battle(11);
     (b as unknown as { wave: number }).wave = 7;
     (b as unknown as { waveActive: boolean }).waveActive = false;

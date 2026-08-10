@@ -150,11 +150,11 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位：普通兵器 1–2.5s；待补英雄配对字 0.5–1s */
-export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1;
-export const AI_WEAPON_ADJUST_INTERVAL_MAX = 2.5;
-export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.5;
-export const AI_PARTNER_ADJUST_INTERVAL_MAX = 1;
+/** AI 战中调位：普通兵器 0.1–0.25s；待补英雄配对字 0.05–0.1s */
+export const AI_WEAPON_ADJUST_INTERVAL_MIN = 0.1;
+export const AI_WEAPON_ADJUST_INTERVAL_MAX = 0.25;
+export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.05;
+export const AI_PARTNER_ADJUST_INTERVAL_MAX = 0.1;
 
 export function rollAiAdjustInterval(partnerPending: boolean, rng: () => number): number {
   const r = rng();
@@ -3033,7 +3033,7 @@ function tryDangerHeroReposition(view: BattleRepositionView): boolean {
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位；
  * 亦可与未激活孤儿字换位（字牌不输出，让出攻位）。
  * 危险时优先把「打不到」的兵换到能打到怪的座位；禁止仅因贴路启发在两格间来回抖。
- * 每次调用至多成功一次 move/swap；AI 侧兵器调位 1–2.5s 随机节流。
+ * 每次调用至多成功一次 move/swap；AI 侧兵器调位 0.1–0.25s 随机节流。
  */
 export function planBattleReposition(
   view: BattleRepositionView,

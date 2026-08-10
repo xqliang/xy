@@ -50,9 +50,9 @@ describe('versus-user-agent', () => {
 
     expect(report.timeouts).toBeLessThan(Math.ceil(games * 0.2));
     expect(report.playerWinRate).toBeGreaterThan(0.35);
-    expect(report.playerWinRate).toBeLessThan(0.9);
+    expect(report.playerWinRate).toBeLessThanOrEqual(0.85);
     expect(report.aiSkillEnd).toBeGreaterThanOrEqual(0.72);
     expect(report.aiSkillEnd).toBeLessThanOrEqual(1.8);
     expect(loadAiSkill()).toBe(report.aiSkillEnd);
-  }, 120_000);
+  }, 180_000);
 });

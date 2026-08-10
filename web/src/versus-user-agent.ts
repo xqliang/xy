@@ -1,11 +1,12 @@
 /**
  * 对战用户代理：模拟真实点击节奏（征兵 → 布阵 → 主动技能），用于 headless 批量对局。
- * 不含体力限制；可通过 step(dt) 倍率加速（默认 10×）。
+ * 不含体力限制；默认 10× 快放，但用 1/fps 物理子步进（避免大 dt 同帧多漏/少开火）。
  */
 import { Battle } from './battle';
 import {
   AI_TARGET_WINRATE,
   DEFAULT_AI_SKILL,
+  effectiveAiSkill,
   loadAiSkill,
   nextAiSkill,
   recordVersusOutcome,
@@ -13,18 +14,22 @@ import {
   saveAiSkill,
   loadPlayerWinStreak,
   loadPlayerLossStreak,
+  versusRubberBand,
 } from './ai-skill';
 import { RNG } from './rng';
 
 export const DEFAULT_SPEED_MUL = 10;
 export const DEFAULT_FPS = 30;
-/** 单局最大 tick 数（防 hang） */
+/** 单局最大外层 tick 数（防 hang）；每 tick = speedMul 个物理步 */
 export const DEFAULT_FRAME_CAP = 60 * 30;
 
 export type MatchOutcome = 'won' | 'lost' | 'timeout';
 
 export interface VersusUserAgentOpts {
-  /** 每 tick 推进的游戏秒数 = (1/fps) * speedMul */
+  /**
+   * 快放倍率：每 tick 推进 speedMul 个物理帧（每帧 1/fps 秒）。
+   * 勿把整段 dt 一次喂给 battle.step——大 dt 会同帧多漏怪且少开火。
+   */
   speedMul?: number;
   fps?: number;
   frameCap?: number;
@@ -34,6 +39,11 @@ export interface VersusUserAgentOpts {
   skipReadyWait?: boolean;
   /** 是否自动释放已就绪主动技能 */
   useActives?: boolean;
+  /**
+   * 征兵/布阵/放技能的最小间隔（游戏秒）。
+   * 默认 0.75：贴近人手，避免「每物理帧狂点」把 AI 经济甩开导致胜率虚高。
+   */
+  actionInterval?: number;
 }
 
 export interface VersusMatchResult {
@@ -68,7 +78,7 @@ export interface VersusSessionReport {
   aiSkillMin: number;
   aiSkillMax: number;
   targetWinRate: number;
-  /** 胜率落在 [0.45, 0.85] 且 AI skill 未贴边 */
+  /** 胜率落在目标窗内且 AI skill 未贴边 */
   balanceOk: boolean;
   results: VersusMatchResult[];
 }
@@ -80,6 +90,7 @@ const DEFAULT_AGENT: Required<VersusUserAgentOpts> = {
   waveCap: 0,
   skipReadyWait: true,
   useActives: true,
+  actionInterval: 0.75,
 };
 
 /** 单 tick：模拟用户一次操作循环（开战 → 征兵 → 布阵 → 技能） */
@@ -104,6 +115,16 @@ export function userAgentTick(battle: Battle, opts: VersusUserAgentOpts = {}): v
   }
 }
 
+/** 仅开战（不受 actionInterval 节流） */
+export function userAgentStartWave(battle: Battle, opts: VersusUserAgentOpts = {}): boolean {
+  const o = { ...DEFAULT_AGENT, ...opts };
+  if (o.skipReadyWait && battle.status === 'ready') {
+    battle.startNextWave();
+    return true;
+  }
+  return false;
+}
+
 /** 模拟结算后流程：记录连胜/连败、更新跨局 AI skill（等同关闭神秘商人并开始下一局的前置状态） */
 export function simulatePostMatch(sessionAiSkill: number, playerWon: boolean): number {
   recordVersusOutcome(playerWon);
@@ -112,9 +133,14 @@ export function simulatePostMatch(sessionAiSkill: number, playerWon: boolean): n
   return next;
 }
 
-function tickDt(opts: VersusUserAgentOpts): number {
+function physDt(opts: VersusUserAgentOpts): number {
   const o = { ...DEFAULT_AGENT, ...opts };
-  return (1 / o.fps) * o.speedMul;
+  return 1 / o.fps;
+}
+
+function substeps(opts: VersusUserAgentOpts): number {
+  const o = { ...DEFAULT_AGENT, ...opts };
+  return Math.max(1, Math.round(o.speedMul));
 }
 
 /** 跑一局对战直至胜/负/超时 */
@@ -124,15 +150,31 @@ export function playVersusMatch(
   opts: VersusUserAgentOpts = {},
 ): VersusMatchResult {
   const o = { ...DEFAULT_AGENT, ...opts };
+  const winStreak = loadPlayerWinStreak();
+  const lossStreak = loadPlayerLossStreak();
+  const band = versusRubberBand(winStreak, lossStreak);
+  const effective = effectiveAiSkill(matchAiSkill, band);
   const battle = new Battle(seed, 1, undefined, undefined, {}, [], [], false, matchAiSkill);
-  const dt = tickDt(o);
+  const dt = physDt(o);
+  const steps = substeps(o);
   let frames = 0;
+  let simSeconds = 0;
+  let nextActionAt = 0;
 
   while (battle.status !== 'won' && battle.status !== 'lost') {
     if (frames >= o.frameCap) break;
     if (o.waveCap > 0 && battle.wave >= o.waveCap) break;
-    userAgentTick(battle, o);
-    battle.step(dt);
+    if (userAgentStartWave(battle, o)) {
+      nextActionAt = simSeconds; // 开波后立即可操作
+    } else if (simSeconds >= nextActionAt) {
+      userAgentTick(battle, o);
+      nextActionAt = simSeconds + o.actionInterval;
+    }
+    for (let i = 0; i < steps; i++) {
+      battle.step(dt);
+      simSeconds += dt;
+      if (battle.status === 'won' || battle.status === 'lost') break;
+    }
     frames++;
   }
 
@@ -146,13 +188,13 @@ export function playVersusMatch(
     outcome,
     wave: snap.wave,
     frames,
-    simSeconds: frames * dt,
+    simSeconds,
     playerHp: snap.tangsengHP,
     aiHp: snap.aiHp ?? 0,
     baseAiSkill: matchAiSkill,
-    matchAiSkill,
-    winStreak: loadPlayerWinStreak(),
-    lossStreak: loadPlayerLossStreak(),
+    matchAiSkill: effective,
+    winStreak,
+    lossStreak,
   };
 }
 
@@ -191,8 +233,8 @@ export function runVersusSession(opts: VersusSessionOpts): VersusSessionReport {
   const playerWinRate = decided > 0 ? wins / decided : 0;
 
   const balanceOk =
-    playerWinRate >= 0.45
-    && playerWinRate <= 0.85
+    playerWinRate >= 0.40
+    && playerWinRate <= 0.80
     && aiSkillMin >= 0.72
     && aiSkillMax <= 1.8
     && timeouts <= Math.ceil(games * 0.15);

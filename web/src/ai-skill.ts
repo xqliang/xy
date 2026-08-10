@@ -32,8 +32,8 @@ export interface VersusRubberBand {
 export const DEFAULT_AI_SKILL = 1.0;
 export const AI_SKILL_MIN = 0.72; // 下限刻意收紧：AI 再弱也维持基本防线（打压不过头/不明显）
 export const AI_SKILL_MAX = 1.8;
-export const AI_TARGET_WINRATE = 0.7;
-const STEP_K = 0.06; // 步长；胜 +0.3k、负 -0.7k
+export const AI_TARGET_WINRATE = 0.6;
+const STEP_K = 0.06; // 步长；胜 +(1-p*)k、负 -p*k（p*=0.6 → 胜 +0.4k、负 -0.6k）
 
 const NEUTRAL_BAND: VersusRubberBand = {
   aiWordTier5Bias: 1,
@@ -64,8 +64,8 @@ export interface AiKnobs {
   pSubOptimal: number;    // 布阵次优概率 [0, PSUB_MAX]
 }
 
-const BASE_SUMMON_INTERVAL = 2.4; // skill=1 时的征兵节奏
-const ITV_MIN = 1.2, ITV_MAX = 5.0;
+const BASE_SUMMON_INTERVAL = 1.2; // skill=1 时的征兵节奏（贴近人手点征兵）
+const ITV_MIN = 0.6, ITV_MAX = 3.0;
 const PSUB_MAX = 0.35; // 次优上限，保证 AI 始终连贯
 const PSUB_SLOPE = 0.9;
 
@@ -257,7 +257,9 @@ export function aiItemTargetCount(
   itemBonus = 0,
 ): number {
   if (playerCount <= 0) {
-    return pick ? pick(EMPTY_PLAYER_ITEM_CAP + 1) : 0;
+    // 空 loadout：0..CAP 随机，再叠 rubber-band itemBonus；不突破 CAP（避免 AI 比「玩家未装备」设计上限更满）
+    const base = pick ? pick(EMPTY_PLAYER_ITEM_CAP + 1) : 0;
+    return Math.max(0, Math.min(EMPTY_PLAYER_ITEM_CAP, base + itemBonus));
   }
   const minItems = Math.max(1, Math.ceil(playerCount * AI_MIN_ITEM_RATIO));
   const ratio = aiSkill / DEFAULT_AI_SKILL;
