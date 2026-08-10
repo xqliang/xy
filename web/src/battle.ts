@@ -126,8 +126,10 @@ export const TUNING = {
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
-  earlyWaveHpTo: 5, // 前 5 波小怪基础血量 ×earlyWaveHpMul（推迟血量悬崖，对局更容易过 6–8 波）
+  earlyWaveHpTo: 5, // 波 1–earlyWaveHpTo：HP × earlyWaveHpMul
   earlyWaveHpMul: 0.8,
+  earlyWaveHpMul6: 0.9, // 第 6 波软血
+  earlyWaveHpMul7: 0.95, // 第 7 波软血；第 8 波起满血
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
   spawnInterval: 1.25, // 秒/批（基础出怪节奏；同批可随机 1..N 只）
@@ -2642,9 +2644,13 @@ export class Battle {
     return 1 + (wave - 10) / 100;
   }
 
-  /** 前 3 波小怪基础血量倍率 */
+  /** 前期软血：波 1–5 ×0.8，波 6 ×0.9，波 7 ×0.95，其后满血 */
   earlyWaveHpMul(wave: number = this.wave): number {
-    return wave <= TUNING.earlyWaveHpTo ? TUNING.earlyWaveHpMul : 1;
+    const w = Math.max(1, Math.floor(wave));
+    if (w <= TUNING.earlyWaveHpTo) return TUNING.earlyWaveHpMul;
+    if (w === 6) return TUNING.earlyWaveHpMul6;
+    if (w === 7) return TUNING.earlyWaveHpMul7;
+    return 1;
   }
 
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
