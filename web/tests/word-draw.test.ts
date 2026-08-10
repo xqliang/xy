@@ -6,9 +6,12 @@ import {
   PAIR_PITY_AFTER,
   neededPartnerChars,
   pendingPartnerChars,
+  wordDrawEntries,
+  FAMILY_MAX5_ACTIVE_T3_PENALTY,
+  isCharAtFieldCapacity,
 } from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
-import { hintGeneralForChar } from '../src/generals';
+import { hintGeneralForChar, charHeroCapacity } from '../src/generals';
 
 class FakeRng {
   constructor(private seq: number[], private i = 0) {}
@@ -71,6 +74,40 @@ describe('征兵阶段权重', () => {
       if (pick.char === '仙') xian++;
     }
     expect(xian).toBeLessThan(20);
+  });
+
+  it('同盘征兵绝不重复相同字', () => {
+    for (let i = 0; i < 300; i++) {
+      const rng = new FakeRng([i / 300, 0.4, 0.8]);
+      const pick = pickWordChar(rng, 5, [], ['铁'], false);
+      expect(pick.char).not.toBe('铁');
+    }
+  });
+
+  it('charHeroCapacity：牛可 3 张、魔仅 1 张', () => {
+    expect(charHeroCapacity('牛')).toBe(3);
+    expect(charHeroCapacity('魔')).toBe(1);
+    expect(isCharAtFieldCapacity('魔', new Map([['魔', 1]]))).toBe(true);
+    expect(isCharAtFieldCapacity('牛', new Map([['牛', 2]]))).toBe(false);
+    expect(isCharAtFieldCapacity('牛', new Map([['牛', 3]]))).toBe(true);
+  });
+
+  it('场上魔字已满则不再抽魔', () => {
+    for (let i = 0; i < 200; i++) {
+      const rng = new FakeRng([i / 200, 0.3]);
+      const pick = pickWordChar(rng, 5, [], [], false, [], undefined, {
+        fieldCharCounts: new Map([['魔', 1]]),
+      });
+      expect(pick.char).not.toBe('魔');
+    }
+  });
+
+  it('场上已有牛魔时压低同门派满3字（青）权重', () => {
+    const base = wordDrawEntries(5, [], [], [], undefined, {}).find((e) => e.char === '青')?.w ?? 0;
+    const penalized = wordDrawEntries(5, [], [], [], undefined, {
+      activeMax5Families: new Set(['牛']),
+    }).find((e) => e.char === '青')?.w ?? 0;
+    expect(penalized).toBeLessThan(base * FAMILY_MAX5_ACTIVE_T3_PENALTY + 0.001);
   });
 });
 

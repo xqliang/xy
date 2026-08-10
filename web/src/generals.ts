@@ -202,6 +202,11 @@ export function partnerChars(char: string): string[] {
   return [...out];
 }
 
+/** 某字可归属的武将数 → 场上该字实例数上限（如牛：牛郎/牛魔/青牛 → 3） */
+export function charHeroCapacity(char: string): number {
+  return generalsWithChar(char).length;
+}
+
 /** 字牌品质阶上限：取含该字的武将中较高 maxTier（共享字可升到 5，再由激活武将封顶） */
 export function maxTierForChar(char: string): number {
   const gs = generalsWithChar(char);

@@ -1,6 +1,13 @@
 // 武将字牌抽取：阶段权重（前期满3 / 后期满5）+ 孤儿补缺 + 半对保底
 // 优先级：配对字 > 不重复 > 高级（满5）
-import { GENERALS, hintGeneralForChar, partnerChars, type GeneralDef } from './generals';
+// 每局限制：同盘不重复字、场上字数上限、满5在场时压低同门派满3
+import {
+  GENERALS,
+  charHeroCapacity,
+  hintGeneralForChar,
+  partnerChars,
+  type GeneralDef,
+} from './generals';
 
 export const PAIR_PITY_AFTER = 4;
 
@@ -13,6 +20,8 @@ export const HIGH_TIER_BIAS = 1.75;
 export const LOW_TIER_BIAS = 0.65;
 /** 每多出现 1 次，权重乘以该系数（配对缺口字不受此打压） */
 export const OCCURRENCE_DECAY = 0.55;
+/** 场上已有同门派满5 激活时，满3 过渡将字的权重倍率 */
+export const FAMILY_MAX5_ACTIVE_T3_PENALTY = 0.12;
 
 /** 波段对满3/满5的相对权重（需压过满3基础 weight≈3、满5≈1 的差距） */
 export function phaseWeight(wave: number, maxTier: 3 | 5): number {
@@ -70,8 +79,30 @@ export function collectOrphanChars(
   return orphans;
 }
 
+/** 统计字频 */
+export function countChars(chars: readonly string[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const c of chars) m.set(c, (m.get(c) ?? 0) + 1);
+  return m;
+}
+
+/** 场上该字已达可组武将数上限 → 不再生成 */
+export function isCharAtFieldCapacity(char: string, fieldCharCounts: ReadonlyMap<string, number>): boolean {
+  return (fieldCharCounts.get(char) ?? 0) >= charHeroCapacity(char);
+}
+
 function charCountOf(counts: ReadonlyMap<string, number> | undefined, char: string): number {
   return counts?.get(char) ?? 0;
+}
+
+function isCharDrawBlocked(
+  char: string,
+  trayCharsAlready: readonly string[],
+  fieldCharCounts: ReadonlyMap<string, number> | undefined,
+): boolean {
+  if (trayCharsAlready.includes(char)) return true;
+  if (fieldCharCounts && isCharAtFieldCapacity(char, fieldCharCounts)) return true;
+  return false;
 }
 
 function buildWeightedEntries(
@@ -81,6 +112,8 @@ function buildWeightedEntries(
   ownedChars: string[],
   charCounts?: ReadonlyMap<string, number>,
   tier5BiasMul = 1,
+  fieldCharCounts?: ReadonlyMap<string, number>,
+  activeMax5Families?: ReadonlySet<string>,
 ): { char: string; general: string; w: number }[] {
   const needed = new Set(pendingPartnerChars(orphanChars, trayCharsAlready));
   const owned = new Set([...ownedChars, ...orphanChars, ...trayCharsAlready]);
@@ -90,7 +123,12 @@ function buildWeightedEntries(
 
   for (const g of GENERALS) {
     const pw = phaseWeight(wave, g.maxTier);
+    let familyPenalty = 1;
+    if (g.maxTier === 3 && activeMax5Families?.has(g.family)) {
+      familyPenalty = FAMILY_MAX5_ACTIVE_T3_PENALTY;
+    }
     for (const c of g.chars) {
+      if (isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts)) continue;
       const base = g.weight * pw;
       const isPartner = needed.has(c);
       // 配对最优先；无配对时偏向满5 高级字
@@ -102,6 +140,7 @@ function buildWeightedEntries(
       } else if (owned.has(c) && !isPartner) {
         mult *= DUP_WEIGHT;
       }
+      mult *= familyPenalty;
       const w = base * mult;
       if (!seen.has(c)) {
         seen.add(c);
@@ -132,6 +171,31 @@ function pickFromWeighted(rng: Rng, entries: { char: string; general: string; w:
 
 export interface WordPickOpts {
   tier5BiasMul?: number;
+  /** 场上各字实例数（仅棋盘，不含本盘 tray） */
+  fieldCharCounts?: ReadonlyMap<string, number>;
+  /** 已激活满5 武将的门派 family 集合 */
+  activeMax5Families?: ReadonlySet<string>;
+}
+
+/** 测试/诊断：当前抽字权重表 */
+export function wordDrawEntries(
+  wave: number,
+  orphanChars: string[],
+  trayCharsAlready: string[],
+  ownedChars: string[] = [],
+  charCounts?: ReadonlyMap<string, number>,
+  opts?: WordPickOpts,
+): { char: string; general: string; w: number }[] {
+  return buildWeightedEntries(
+    wave,
+    orphanChars,
+    trayCharsAlready,
+    ownedChars,
+    charCounts,
+    opts?.tier5BiasMul ?? 1,
+    opts?.fieldCharCounts,
+    opts?.activeMax5Families,
+  );
 }
 
 /**
@@ -139,6 +203,8 @@ export interface WordPickOpts {
  * - forcePartner：只从仍缺的配对字中抽
  * - 否则：配对加权 ≫ 不重复的高级字 ≫ 重复字（接近不抽）
  * - ownedChars：棋盘已有字（含已激活），用于去重
+ * - 同盘 trayCharsAlready：本盘已抽字，绝不再出相同字
+ * - fieldCharCounts：场上字数达武将上限则剔除
  */
 export function pickWordChar(
   rng: Rng,
@@ -151,8 +217,12 @@ export function pickWordChar(
   opts?: WordPickOpts,
 ): WordPick {
   const tier5BiasMul = opts?.tier5BiasMul ?? 1;
+  const fieldCharCounts = opts?.fieldCharCounts;
+  const activeMax5Families = opts?.activeMax5Families;
   if (forcePartner) {
-    const need = pendingPartnerChars(orphanChars, trayCharsAlready);
+    const need = pendingPartnerChars(orphanChars, trayCharsAlready).filter(
+      (c) => !isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts),
+    );
     if (need.length > 0) {
       const char = rng.pick(need);
       return { char, general: hintGeneralForChar(char) };
@@ -160,7 +230,16 @@ export function pickWordChar(
   }
   return pickFromWeighted(
     rng,
-    buildWeightedEntries(wave, orphanChars, trayCharsAlready, ownedChars, charCounts, tier5BiasMul),
+    buildWeightedEntries(
+      wave,
+      orphanChars,
+      trayCharsAlready,
+      ownedChars,
+      charCounts,
+      tier5BiasMul,
+      fieldCharCounts,
+      activeMax5Families,
+    ),
   );
 }
 

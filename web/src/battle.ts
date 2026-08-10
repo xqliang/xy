@@ -35,7 +35,7 @@ import {
   CRIT_MULT,
   type GeneralDef,
 } from './generals';
-import { collectOrphanChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
+import { collectOrphanChars, countChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
 import {
   rollWeaponDrop,
   weaponById,
@@ -945,6 +945,8 @@ export class Battle {
     // 配对/去重只看棋盘（旧 tray 整盘替换，不计入孤儿与已拥有）
     const orphansBefore = this.boardOrphanCharsNow();
     const ownedBoard = this.boardWordCharsNow();
+    const fieldCharCounts = this.boardFieldCharCounts();
+    const activeMax5Families = this.activeMax5FamiliesNow();
     const forcePartner = !firstSummon && orphansBefore.length > 0 && this.summonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
@@ -957,7 +959,11 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.wordDrawCounts(),
-        { tier5BiasMul: this.versusBand.playerWordTier5Bias },
+        {
+          tier5BiasMul: this.versusBand.playerWordTier5Bias,
+          fieldCharCounts,
+          activeMax5Families,
+        },
       );
       trayWordsSoFar.push(w.char);
       this.bumpWordCharCount(w.char);
@@ -1183,6 +1189,32 @@ export class Battle {
   /** 棋盘已有全部字（含已激活），抽字去重用 */
   private boardWordCharsNow(): string[] {
     return [...this.words.values()].map((w) => w.char);
+  }
+
+  /** 场上各字实例数（仅棋盘，不含 tray） */
+  private boardFieldCharCounts(): Map<string, number> {
+    return countChars(this.boardWordCharsNow());
+  }
+
+  /** 已激活满5 武将的门派集合 */
+  private activeMax5FamiliesNow(): Set<string> {
+    const families = new Set<string>();
+    for (const g of this.activeGenerals()) {
+      if (g.def.maxTier === 5) families.add(g.def.family);
+    }
+    return families;
+  }
+
+  private aiBoardFieldCharCounts(): Map<string, number> {
+    return countChars([...this.aiWords.values()].map((w) => w.char));
+  }
+
+  private aiActiveMax5FamiliesNow(): Set<string> {
+    const families = new Set<string>();
+    for (const g of this.aiActiveGenerals()) {
+      if (g.def.maxTier === 5) families.add(g.def.family);
+    }
+    return families;
   }
 
   /** 抽字用：历次抽字计数 + 当前棋盘各字实例数 */
@@ -1478,6 +1510,8 @@ export class Battle {
     const forceWord = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
     const orphansBefore = this.aiBoardOrphanCharsNow();
     const ownedBoard = this.aiBoardWordCharsNow();
+    const fieldCharCounts = this.aiBoardFieldCharCounts();
+    const activeMax5Families = this.aiActiveMax5FamiliesNow();
     const forcePartner = !firstSummon && orphansBefore.length > 0 && this.aiSummonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
@@ -1490,7 +1524,11 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.aiWordDrawCounts(),
-        { tier5BiasMul: this.versusBand.aiWordTier5Bias },
+        {
+          tier5BiasMul: this.versusBand.aiWordTier5Bias,
+          fieldCharCounts,
+          activeMax5Families,
+        },
       );
       trayWordsSoFar.push(w.char);
       this.bumpAiWordCharCount(w.char);
