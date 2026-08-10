@@ -439,7 +439,9 @@ export function peachTreeMergeBankNeed(level: number): number {
   return 1 << Math.max(0, level - 1);
 }
 
-export const PALM_PUSH_DUR = 0.8; // 如来神掌回推特效时长（秒）
+export const SKILL_FX_DUR = 0.8; // 主动技能爆发特效时长（秒）
+/** @deprecated 使用 SKILL_FX_DUR */
+export const PALM_PUSH_DUR = SKILL_FX_DUR;
 
 // 如来神掌沿路回推动画：从最前怪沿路径逐格回推
 export interface PalmPushFx {
@@ -450,8 +452,11 @@ export interface PalmPushFx {
   snapshots: { id: number; startDist: number }[];
 }
 
-/** 紧箍咒爆发特效（玩家/AI 半场各可独立播放） */
-export interface JinguFx {
+/** 主动技能瞬时爆发特效（玩家/AI 半场各可独立播放） */
+export type SkillFxKind = 'jinggu' | 'meteor' | 'freeze' | 'atkBuff' | 'frqBuff';
+
+export interface SkillFx {
+  kind: SkillFxKind;
   t: number;
   dur: number;
   c: number;
@@ -629,8 +634,8 @@ export class Battle {
   private plantTimer = 0; // 距下次自动种树累积秒数
   private plantBank = 0; // 满格时蟠桃园累积的「虚拟树」，达阈值后合并升级
   palmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（渲染 + 逐帧位移）
-  jinguFx: JinguFx | null = null; // 玩家半场紧箍咒
-  aiJinguFx: JinguFx | null = null; // AI 半场紧箍咒
+  playerSkillFx: SkillFx | null = null; // 玩家半场主动技能爆发特效
+  aiSkillFx: SkillFx | null = null; // AI 半场主动技能爆发特效
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
@@ -2467,7 +2472,7 @@ export class Battle {
     for (const m of this.monsters) if (m.dist > frontStartDist) frontStartDist = m.dist;
     this.palmPushFx = {
       t: 0,
-      dur: PALM_PUSH_DUR,
+      dur: SKILL_FX_DUR,
       cells,
       frontStartDist,
       snapshots: this.monsters.map((m) => ({ id: m.id, startDist: m.dist })),
@@ -2504,14 +2509,29 @@ export class Battle {
     return fx.frontStartDist - fx.cells * eased;
   }
 
-  private updateJinguFx(dt: number): void {
-    if (this.jinguFx) {
-      this.jinguFx.t += dt;
-      if (this.jinguFx.t >= this.jinguFx.dur) this.jinguFx = null;
+  private setSkillFx(kind: SkillFxKind, cell: { c: number; r: number }, ai: boolean): void {
+    const fx: SkillFx = { kind, t: 0, dur: SKILL_FX_DUR, c: cell.c, r: cell.r };
+    if (ai) this.aiSkillFx = fx;
+    else this.playerSkillFx = fx;
+  }
+
+  private frontMonsterCell(ai: boolean): { c: number; r: number } | null {
+    const list = ai ? this.aiMonsters : this.monsters;
+    if (list.length === 0) return null;
+    let front = list[0]!;
+    for (const m of list) if (m.dist > front.dist) front = m;
+    const p = ai ? posAlong(this.aiPath, front.dist) : posAtDistance(this.map, front.dist);
+    return { c: p.c, r: p.r };
+  }
+
+  private updateSkillFx(dt: number): void {
+    if (this.playerSkillFx) {
+      this.playerSkillFx.t += dt;
+      if (this.playerSkillFx.t >= this.playerSkillFx.dur) this.playerSkillFx = null;
     }
-    if (this.aiJinguFx) {
-      this.aiJinguFx.t += dt;
-      if (this.aiJinguFx.t >= this.aiJinguFx.dur) this.aiJinguFx = null;
+    if (this.aiSkillFx) {
+      this.aiSkillFx.t += dt;
+      if (this.aiSkillFx.t >= this.aiSkillFx.dur) this.aiSkillFx = null;
     }
   }
 
@@ -2703,7 +2723,7 @@ export class Battle {
   }
 
   // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
-  private doMeteor(mul: number = TUNING.meteorDmgMul): void {
+  private doMeteor(mul: number = TUNING.meteorDmgMul, skillFx = false): void {
     if (this.monsters.length === 0) return;
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
@@ -2713,10 +2733,11 @@ export class Battle {
       const q = posAtDistance(this.map, m.dist);
       if (Math.hypot(q.c - p.c, q.r - p.r) <= TUNING.meteorRadius) this.hurtMonster(m, dmg, q, 0.2);
     }
-    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+    if (skillFx) this.setSkillFx('meteor', p, false);
+    else this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
 
-  private doAiMeteor(mul: number = TUNING.meteorDmgMul): void {
+  private doAiMeteor(mul: number = TUNING.meteorDmgMul, skillFx = false): void {
     if (this.aiMonsters.length === 0) return;
     let front = this.aiMonsters[0]!;
     for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
@@ -2730,7 +2751,8 @@ export class Battle {
         this.spawnDamageFloat(q.c, q.r, dmg);
       }
     }
-    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+    if (skillFx) this.setSkillFx('meteor', p, true);
+    else this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
 
   // 开局预排本局神兵碎片：是否可能掉落 + 掉哪一件（main 注入可见性后调用）
@@ -3869,21 +3891,22 @@ export class Battle {
         for (const m of this.aiMonsters) m.dist = Math.max(0, m.dist - TUNING.palmPushCells);
         break;
       case 'meteor':
-        this.doAiMeteor(TUNING.meteorDmgMul);
+        this.doAiMeteor(TUNING.meteorDmgMul, true);
         break;
       case 'atkBuff':
         this.aiAtkBuffT = 5;
+        this.setSkillFx('atkBuff', this.aiTangseng, true);
         break;
       case 'frqBuff':
         this.aiFrqBuffT = 5;
+        this.setSkillFx('frqBuff', this.aiTangseng, true);
         break;
-      case 'freeze':
-        for (const m of this.aiMonsters) {
-          m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
-          const p = posAlong(this.aiPath, m.dist);
-          this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' });
-        }
+      case 'freeze': {
+        for (const m of this.aiMonsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+        const fc = this.frontMonsterCell(true);
+        if (fc) this.setSkillFx('freeze', fc, true);
         break;
+      }
       case 'jinggu':
         this.doAiJingu();
         break;
@@ -3908,7 +3931,7 @@ export class Battle {
       }
     }
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
-    this.aiJinguFx = { t: 0, dur: PALM_PUSH_DUR, c: center.c, r: center.r };
+    this.setSkillFx('jinggu', center, true);
   }
 
   // 主动技能是否就绪（供渲染/交互判断）
@@ -3937,27 +3960,30 @@ export class Battle {
         this.emit('palm');
         break;
       case 'meteor':
-        this.doMeteor(TUNING.meteorDmgMul);
+        this.doMeteor(TUNING.meteorDmgMul, true);
         this.message = '天降陨石！';
         this.emit('ult');
         break;
       case 'atkBuff':
         this.atkBuffT = 5; this.atkBuffMul = TUNING.atkBuffMul;
-        for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ff7a3c' }); // 己方单位泛红光
+        this.setSkillFx('atkBuff', this.tangsengRenderPos(), false);
         this.message = '仙丹！全体攻击提升';
         this.emit('item');
         break;
       case 'frqBuff':
         this.frqBuffT = 5; this.frqBuffMul = TUNING.frqBuffMul;
-        for (const u of this.units.values()) this.bursts.push({ kind: 'merge', c: u.cell.c, r: u.cell.r, ttl: 0.45, maxTtl: 0.45, big: false, color: '#ffd76a' }); // 己方单位泛金光
+        this.setSkillFx('frqBuff', this.tangsengRenderPos(), false);
         this.message = '风火轮！全体攻速提升';
         this.emit('item');
         break;
-      case 'freeze':
-        for (const m of this.monsters) { m.stunT = Math.max(m.stunT, TUNING.freezeStunDur); const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: false, color: '#9fe8ff' }); } // 每只妖怪冰霜爆
+      case 'freeze': {
+        for (const m of this.monsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+        const fc = this.frontMonsterCell(false);
+        if (fc) this.setSkillFx('freeze', fc, false);
         this.message = '冰封定身！';
         this.emit('item');
         break;
+      }
       case 'jinggu':
         this.doJingu();
         this.emit('ult');
@@ -3984,7 +4010,7 @@ export class Battle {
         this.hurtMonster(m, dmg, p, 0.15);
       }
     }
-    this.jinguFx = { t: 0, dur: PALM_PUSH_DUR, c: center.c, r: center.r };
+    this.setSkillFx('jinggu', center, false);
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
     this.message = '紧箍咒！金光横扫';
   }
@@ -4072,8 +4098,8 @@ export class Battle {
     this.ultFlash = 0;
     this.ultCenter = null;
     this.palmPushFx = null;
-    this.jinguFx = null;
-    this.aiJinguFx = null;
+    this.playerSkillFx = null;
+    this.aiSkillFx = null;
     for (const u of this.units.values()) {
       u.firePulse = 0;
       u.combo = 0;
@@ -4131,7 +4157,7 @@ export class Battle {
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     this.updatePalmPush(dt);
-    this.updateJinguFx(dt);
+    this.updateSkillFx(dt);
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
     this.updateItemEffects(dt); // 被动道具收益（洛阳铲）在所有状态下持续

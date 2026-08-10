@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type JinguFx } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -762,10 +762,10 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawPalmPushFx(ctx, b);
-  drawJinguFx(ctx, b.jinguFx);
+  drawSkillFx(ctx, b.playerSkillFx);
   if (b.endless) drawEndlessPanel(ctx, b);
   else drawAiSide(ctx, b);
-  drawJinguFx(ctx, b.aiJinguFx);
+  drawSkillFx(ctx, b.aiSkillFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
@@ -2225,22 +2225,39 @@ function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-/** 紧箍咒：金色箍环收缩 + 放射咒文光 */
-function drawJinguFx(ctx: CanvasRenderingContext2D, fx: JinguFx | null) {
-  if (!fx) return;
-  const prog = Math.min(1, fx.t / fx.dur);
-  const { x, y } = cellCenterPx(fx.c, fx.r);
+function skillFxFade(prog: number): number {
+  return prog < 0.15 ? prog / 0.15 : 1 - (prog - 0.15) / 0.85;
+}
+
+function drawSkillGlyphPulse(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  char: string,
+  prog: number,
+  fade: number,
+  fill: string,
+  stroke: string,
+) {
+  ctx.globalAlpha = fade * 0.95;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.font = `bold ${Math.round(CELL * (0.38 + 0.08 * Math.sin(prog * Math.PI * 3)))}px "PingFang SC", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.strokeText(char, x, y - 1);
+  ctx.fillText(char, x, y - 1);
+}
+
+function drawJinguSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
   const maxR = TUNING.aiClearRadius * CELL * 1.05;
-  const fade = prog < 0.15 ? prog / 0.15 : 1 - (prog - 0.15) / 0.85;
-  ctx.save();
-  // 外圈扩散闪
   ctx.globalAlpha = fade * 0.35;
   ctx.strokeStyle = '#ffe27a';
   ctx.lineWidth = 5;
   ctx.beginPath();
   ctx.arc(x, y, maxR * (0.35 + prog * 0.85), 0, Math.PI * 2);
   ctx.stroke();
-  // 多层箍环向内收紧
   for (let i = 0; i < 4; i++) {
     const ringP = Math.min(1, prog * 1.25 + i * 0.08);
     const shrink = 1 - ringP * 0.72;
@@ -2254,17 +2271,7 @@ function drawJinguFx(ctx: CanvasRenderingContext2D, fx: JinguFx | null) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
-  // 中心「咒」字脉冲
-  ctx.globalAlpha = fade * 0.95;
-  ctx.fillStyle = '#ffd54a';
-  ctx.strokeStyle = '#fff8dc';
-  ctx.lineWidth = 2;
-  ctx.font = `bold ${Math.round(CELL * (0.38 + 0.08 * Math.sin(prog * Math.PI * 3)))}px "PingFang SC", serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.strokeText('咒', x, y - 1);
-  ctx.fillText('咒', x, y - 1);
-  // 放射金线
+  drawSkillGlyphPulse(ctx, x, y, '咒', prog, fade, '#ffd54a', '#fff8dc');
   ctx.globalAlpha = fade * 0.7;
   ctx.strokeStyle = '#ffc830';
   ctx.lineWidth = 2.5;
@@ -2276,6 +2283,137 @@ function drawJinguFx(ctx: CanvasRenderingContext2D, fx: JinguFx | null) {
     ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
     ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
     ctx.stroke();
+  }
+}
+
+function drawMeteorSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
+  const maxR = TUNING.meteorRadius * CELL * 1.15;
+  const fallP = Math.min(1, prog / 0.42);
+  const rockY = y - CELL * 2.2 * (1 - fallP ** 1.4);
+  const rockR = CELL * 0.22;
+  ctx.globalAlpha = fade * 0.9;
+  ctx.fillStyle = '#5a4030';
+  ctx.strokeStyle = '#2a1810';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, rockY, rockR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (prog > 0.38) {
+    const hitP = Math.min(1, (prog - 0.38) / 0.62);
+    ctx.globalAlpha = fade * (1 - hitP * 0.85);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, maxR * (0.3 + hitP * 0.85));
+    g.addColorStop(0, 'rgba(255,120,40,0.55)');
+    g.addColorStop(0.55, 'rgba(255,70,20,0.28)');
+    g.addColorStop(1, 'rgba(255,40,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, maxR * (0.3 + hitP * 0.85), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffb040';
+    ctx.lineWidth = 4 - hitP * 2;
+    ctx.beginPath();
+    ctx.arc(x, y, maxR * hitP, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+function drawFreezeSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
+  const maxR = TUNING.aiClearRadius * CELL * 0.85;
+  for (let i = 0; i < 3; i++) {
+    const ringP = Math.min(1, prog * 1.1 + i * 0.12);
+    ctx.globalAlpha = fade * (0.45 - i * 0.1);
+    ctx.strokeStyle = i === 0 ? '#dff8ff' : '#9fe8ff';
+    ctx.lineWidth = 3 - i * 0.5;
+    ctx.beginPath();
+    ctx.arc(x, y, maxR * ringP, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + prog * 0.8;
+    const len = maxR * (0.35 + prog * 0.55);
+    ctx.globalAlpha = fade * 0.65;
+    ctx.strokeStyle = '#c8f0ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    ctx.stroke();
+  }
+  drawSkillGlyphPulse(ctx, x, y, '冰', prog, fade, '#e8fbff', '#7ec8e8');
+}
+
+function drawAtkBuffSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
+  const maxR = CELL * 2.4;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, maxR * (0.4 + prog * 0.7));
+  g.addColorStop(0, `rgba(255,90,70,${0.45 * fade})`);
+  g.addColorStop(0.6, `rgba(255,50,40,${0.18 * fade})`);
+  g.addColorStop(1, 'rgba(255,30,30,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, maxR * (0.4 + prog * 0.7), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = fade * 0.75;
+  ctx.strokeStyle = '#ff8060';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, maxR * prog * 0.85, 0, Math.PI * 2);
+  ctx.stroke();
+  drawSkillGlyphPulse(ctx, x, y, '丹', prog, fade, '#ff7060', '#ffd0c8');
+}
+
+function drawFrqBuffSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
+  const spin = prog * Math.PI * 4;
+  for (let ring = 0; ring < 2; ring++) {
+    const r = CELL * (0.55 + ring * 0.22);
+    ctx.globalAlpha = fade * (0.8 - ring * 0.15);
+    ctx.strokeStyle = ring === 0 ? '#ffb830' : '#ff8c20';
+    ctx.lineWidth = 4 - ring;
+    ctx.beginPath();
+    ctx.arc(x, y, r, spin + ring * 0.6, spin + Math.PI * 1.35 + ring * 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, r, spin + Math.PI + ring * 0.6, spin + Math.PI * 2.35 + ring * 0.6);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = fade * 0.35;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, CELL * 1.8);
+  g.addColorStop(0, 'rgba(255,200,60,0.5)');
+  g.addColorStop(1, 'rgba(255,120,20,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, CELL * 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  drawSkillGlyphPulse(ctx, x, y, '轮', prog, fade, '#ffd050', '#fff0b0');
+}
+
+/** 主动技能爆发特效（紧箍咒 / 陨石 / 冰封 / 仙丹 / 风火轮） */
+function drawSkillFx(ctx: CanvasRenderingContext2D, fx: SkillFx | null) {
+  if (!fx) return;
+  const prog = Math.min(1, fx.t / fx.dur);
+  const { x, y } = cellCenterPx(fx.c, fx.r);
+  const fade = skillFxFade(prog);
+  ctx.save();
+  switch (fx.kind) {
+    case 'jinggu':
+      drawJinguSkillFx(ctx, x, y, prog, fade);
+      break;
+    case 'meteor':
+      drawMeteorSkillFx(ctx, x, y, prog, fade);
+      break;
+    case 'freeze':
+      drawFreezeSkillFx(ctx, x, y, prog, fade);
+      break;
+    case 'atkBuff':
+      drawAtkBuffSkillFx(ctx, x, y, prog, fade);
+      break;
+    case 'frqBuff':
+      drawFrqBuffSkillFx(ctx, x, y, prog, fade);
+      break;
+    default: {
+      const _exhaustive: never = fx.kind;
+      void _exhaustive;
+    }
   }
   ctx.restore();
 }
