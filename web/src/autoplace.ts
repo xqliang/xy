@@ -507,7 +507,28 @@ export function aiHeroPartnerAdjustPending(view: AutoPlaceView): boolean {
 
   if (familyUpgradePending(view)) return true;
   if (transitionMainUpgradePending(view)) return true;
+  if (boardPairOrphansPending(view)) return true;
 
+  return false;
+}
+
+/** 棋盘两孤儿字可移动相邻激活（含 1 阶新将） */
+function boardPairOrphansPending(view: AutoPlaceView): boolean {
+  const orphans = orphanWordsView(view);
+  for (let i = 0; i < orphans.length; i++) {
+    for (let j = i + 1; j < orphans.length; j++) {
+      const a = orphans[i]!;
+      const b = orphans[j]!;
+      if (trayHasPartnerForBoardOrphan(view, a) || trayHasPartnerForBoardOrphan(view, b)) continue;
+      const def = pairDefForChars(a.char, b.char);
+      if (!def) continue;
+      const left = a.char === def.chars[0] ? a : b.char === def.chars[0] ? b : null;
+      const right = a.char === def.chars[1] ? a : b.char === def.chars[1] ? b : null;
+      if (!left || !right) continue;
+      if (sameCell(right.cell, { c: left.cell.c + 1, r: left.cell.r })) continue;
+      return true;
+    }
+  }
   return false;
 }
 
@@ -518,31 +539,52 @@ function transitionMainUpgradePending(view: AutoPlaceView): boolean {
     for (const t of filledTrayTokens(view.tray())) {
       if (t.kind !== 'word') continue;
       if (!mainDef.chars.includes(t.char)) continue;
-      if (findTransitionReplaceTarget(view, t.char, mainDef)) return true;
+      if (findBestTransitionUpgrade(view, t.char)) return true;
     }
     for (const w of orphanWordsView(view)) {
       if (!mainDef.chars.includes(w.char)) continue;
-      if (findTransitionReplaceTarget(view, w.char, mainDef)) return true;
+      if (findBestTransitionUpgrade(view, w.char)) return true;
     }
   }
   return false;
 }
 
-/** 过渡将中应被主将侧字替换的那一格（如 牛郎的「郎」） */
-function findTransitionReplaceTarget(
-  view: AutoPlaceView,
-  mainChar: string,
-  mainDef: GeneralDef,
-): PlacedWordLite | null {
-  const anchor = mainDef.chars[0] === mainChar ? mainDef.chars[1]! : mainDef.chars[0]!;
-  if (pairDefForChars(anchor, mainChar)?.id !== mainDef.id) return null;
-  for (const p of scanActivePairs(view)) {
-    if (p.def.maxTier >= mainDef.maxTier) continue;
-    if (p.def.id === mainDef.id) continue;
-    if (p.left.char === anchor) return p.right;
-    if (p.right.char === anchor) return p.left;
+/** 过渡将中应被主将侧字替换的那一格，及对应激活阶（优先高阶过渡将） */
+type TransitionUpgradeCand = {
+  replace: PlacedWordLite;
+  activeTier: number;
+  mainDef: GeneralDef;
+};
+
+function transitionUpgradeScore(activeTier: number, mainDef: GeneralDef, sourceTier: number): number {
+  return activeTier * 10_000 + mainDef.maxTier * 100 + sourceTier;
+}
+
+function findBestTransitionUpgrade(view: AutoPlaceView, mainChar: string): TransitionUpgradeCand | null {
+  let best: TransitionUpgradeCand | null = null;
+  for (const mainDef of GENERALS) {
+    if (mainDef.maxTier !== 5) continue;
+    if (!mainDef.chars.includes(mainChar)) continue;
+    const anchor = mainDef.chars[0] === mainChar ? mainDef.chars[1]! : mainDef.chars[0]!;
+    if (pairDefForChars(anchor, mainChar)?.id !== mainDef.id) continue;
+    for (const p of scanActivePairs(view)) {
+      if (p.def.maxTier >= mainDef.maxTier) continue;
+      if (p.def.id === mainDef.id) continue;
+      let replace: PlacedWordLite | null = null;
+      if (p.left.char === anchor) replace = p.right;
+      else if (p.right.char === anchor) replace = p.left;
+      else continue;
+      const cand: TransitionUpgradeCand = { replace, activeTier: p.tier, mainDef };
+      if (
+        !best
+        || transitionUpgradeScore(cand.activeTier, cand.mainDef, 0)
+          > transitionUpgradeScore(best.activeTier, best.mainDef, 0)
+      ) {
+        best = cand;
+      }
+    }
   }
-  return null;
+  return best;
 }
 
 /** tray 满 5 侧字可替换已激活满 3 同门派武将的可换字（如 哪 换 金 → 哪吒） */
@@ -561,6 +603,7 @@ function findFamilyUpgradeTarget(view: AutoPlaceView, trayChar: string): PlacedW
   const transitDef = transitGeneralInFamily(mainDef.family);
   if (!transitDef) return null;
 
+  let best: { target: PlacedWordLite; activeTier: number } | null = null;
   for (const w of view.placedWords()) {
     const right = view.placedWords().find(
       (r) => r.cell.c === w.cell.c + 1 && r.cell.r === w.cell.r,
@@ -569,10 +612,14 @@ function findFamilyUpgradeTarget(view: AutoPlaceView, trayChar: string): PlacedW
     const active = matchGeneral(w.char, right.char);
     if (!active || active.id !== transitDef.id) continue;
     const replaceVariant = variantChar(transitDef);
-    if (w.char === replaceVariant) return w;
-    if (right.char === replaceVariant) return right;
+    let target: PlacedWordLite | null = null;
+    if (w.char === replaceVariant) target = w;
+    else if (right.char === replaceVariant) target = right;
+    else continue;
+    const activeTier = Math.min(wordTierOf(w), wordTierOf(right));
+    if (!best || activeTier > best.activeTier) best = { target, activeTier };
   }
-  return null;
+  return best?.target ?? null;
 }
 
 /** 同门派满5已激活时，其满3过渡侧字（如 梵）仍可组对，但优先级低于其它 tray 字 */
@@ -1393,6 +1440,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     // 1a+) 门派升级 / 过渡字替换 / tray 内成对 — 先于孤儿单字落位
     if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && tryUpgradeTransitionToMainHero()) { markHeroLayoutChanged(); return true; }
+    // 无 tray 字待凑对时：棋盘孤儿移动相邻激活（含 1 阶新将，如 牛+魔）
+    if (!subopt() && !trayWordAwaitingBoardMateActivation() && tryPairBoardOrphans()) {
+      markHeroLayoutChanged();
+      return true;
+    }
     if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
     if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
@@ -2253,45 +2305,57 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /**
    * 过渡将已激活 + tray/棋盘有主将侧字：替换过渡侧字（如 牛郎+魔→牛魔）。
-   * tray：place 异字交换；棋盘孤儿：swapWords 与过渡侧字互换。
+   * 优先替换激活阶更高的过渡将；tray 用 place，棋盘孤儿用 swapWords。
    */
   function tryUpgradeTransitionToMainHero(): boolean {
+    type Cand =
+      | { kind: 'tray'; index: number; upgrade: TransitionUpgradeCand; sourceTier: number }
+      | { kind: 'board'; orphan: PlacedWordLite; upgrade: TransitionUpgradeCand; sourceTier: number };
+    let best: Cand | null = null;
+
+    const consider = (mainChar: string, meta: Omit<Cand, 'upgrade' | 'sourceTier'> & { sourceTier: number }) => {
+      const upgrade = findBestTransitionUpgrade(view, mainChar);
+      if (!upgrade) return;
+      const cand = { ...meta, upgrade } as Cand;
+      const score = transitionUpgradeScore(cand.upgrade.activeTier, cand.upgrade.mainDef, cand.sourceTier);
+      if (
+        !best
+        || score
+          > transitionUpgradeScore(best.upgrade.activeTier, best.upgrade.mainDef, best.sourceTier)
+      ) {
+        best = cand;
+      }
+    };
+
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i];
       if (!t || t.kind !== 'word') continue;
-      for (const mainDef of GENERALS) {
-        if (mainDef.maxTier !== 5) continue;
-        if (!mainDef.chars.includes(t.char)) continue;
-        const replace = findTransitionReplaceTarget(view, t.char, mainDef);
-        if (replace && view.place(i, replace.cell)) return true;
-      }
+      consider(t.char, { kind: 'tray', index: i, sourceTier: t.tier });
     }
-    let best: { orphan: PlacedWordLite; replace: PlacedWordLite; mainDef: GeneralDef } | null = null;
     for (const w of orphanWords()) {
       if (view.isActiveHeroCell(w.cell)) continue;
-      for (const mainDef of GENERALS) {
-        if (mainDef.maxTier !== 5) continue;
-        if (!mainDef.chars.includes(w.char)) continue;
-        const replace = findTransitionReplaceTarget(view, w.char, mainDef);
-        if (!replace) continue;
-        if (
-          !best
-          || mainDef.maxTier > best.mainDef.maxTier
-          || (mainDef.maxTier === best.mainDef.maxTier && wordTier(w) > wordTier(best.orphan))
-        ) {
-          best = { orphan: w, replace, mainDef };
-        }
-      }
+      consider(w.char, { kind: 'board', orphan: w, sourceTier: wordTier(w) });
     }
-    if (best && view.swapWords(best.orphan.cell, best.replace.cell)) return true;
-    return false;
+
+    if (!best) return false;
+    if (best.kind === 'tray') {
+      return view.place(best.index, best.upgrade.replace.cell);
+    }
+    return view.swapWords(best.orphan.cell, best.upgrade.replace.cell);
   }
 
-  /** 棋盘上已有可配对两字但未相邻 → 迁到 pathCover 最高的左右邻格对（同覆盖偏好更高阶） */
+  /** 棋盘上已有可配对两字但未相邻 → 迁到 pathCover 最高的左右邻格对（优先满5组合，含 1 阶激活） */
   function tryPairBoardOrphans(): boolean {
     const orphans = orphanWords();
-    type Cand = { left: PlacedWordLite; right: PlacedWordLite; general: string; score: number; tierSum: number };
+    type Cand = {
+      left: PlacedWordLite;
+      right: PlacedWordLite;
+      general: string;
+      score: number;
+      tierSum: number;
+      maxTier: number;
+    };
     let best: Cand | null = null;
 
     for (let i = 0; i < orphans.length; i++) {
@@ -2311,8 +2375,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         if (pairs.length === 0) continue;
         const score = pairs[0]!.score;
         const tierSum = wordTier(left) + wordTier(right);
-        if (!best || score > best.score || (score === best.score && tierSum > best.tierSum)) {
-          best = { left, right, general: def.id, score, tierSum };
+        if (
+          !best
+          || def.maxTier > best.maxTier
+          || (def.maxTier === best.maxTier && score > best.score)
+          || (def.maxTier === best.maxTier && score === best.score && tierSum > best.tierSum)
+        ) {
+          best = { left, right, general: def.id, score, tierSum, maxTier: def.maxTier };
         }
       }
     }

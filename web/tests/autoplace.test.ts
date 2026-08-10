@@ -640,6 +640,58 @@ it('已激活牛郎时 tray 魔 替换郎 升牛魔', () => {
   expect(v.isActiveHeroCell(lang!.cell)).toBe(false);
 });
 
+it('已激活牛郎时棋盘孤儿魔 与郎交换 升牛魔', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }];
+  const v = new FakeView([], cells);
+  v.wordsMap.set('0,0', { char: '牛', general: 'niulang', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '郎', general: 'niulang', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,0', { char: '魔', general: 'niumowang', cell: { c: 2, r: 0 }, tier: 1 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  planAutoPlaceSteps(v, { rng, maxSteps: 5 });
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu?.cell).toEqual({ c: 0, r: 0 });
+  expect(mo?.cell).toEqual({ c: 1, r: 0 });
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+  const lang = v.placedWords().find((w) => w.char === '郎');
+  expect(lang?.cell).toEqual({ c: 2, r: 0 });
+  expect(v.isActiveHeroCell(lang!.cell)).toBe(false);
+});
+
+it('升主将时优先替换激活阶更高的过渡将', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 }, { c: 4, r: 0 }, { c: 5, r: 0 }];
+  const v = new FakeView([], cells);
+  v.wordsMap.set('0,0', { char: '牛', general: 'niulang', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '郎', general: 'niulang', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,0', { char: '红', general: 'hongpao', cell: { c: 2, r: 0 }, tier: 1 });
+  v.wordsMap.set('3,0', { char: '袍', general: 'hongpao', cell: { c: 3, r: 0 }, tier: 1 });
+  v.wordsMap.set('4,0', { char: '魔', general: 'niumowang', cell: { c: 4, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '孩', general: 'honghaier', cell: { c: 5, r: 0 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(mo?.cell).toEqual({ c: 1, r: 0 });
+  expect(matchGeneral('牛', mo!.char)?.id).toBe('niumowang');
+  expect(v.placedWords().find((w) => w.char === '孩')?.cell).toEqual({ c: 5, r: 0 });
+});
+
+it('棋盘孤儿牛+魔 可移动相邻激活 1 阶牛魔', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 2 }, { c: 1, r: 2 }, { c: 2, r: 2 }, { c: 3, r: 2 }];
+  const v = new FakeView([], cells);
+  v.wordsMap.set('0,2', { char: '牛', general: 'niumowang', cell: { c: 0, r: 2 }, tier: 1 });
+  v.wordsMap.set('3,2', { char: '魔', general: 'niumowang', cell: { c: 3, r: 2 }, tier: 1 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 10 });
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu).toBeDefined();
+  expect(mo).toBeDefined();
+  expect(Math.abs(niu!.cell.c - mo!.cell.c)).toBe(1);
+  expect(niu!.cell.r).toBe(mo!.cell.r);
+  expect(niu!.cell.c + 1).toBe(mo!.cell.c);
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+});
+
 it('满盘时 tray 兵种合成链后与棋盘同阶再合', () => {
   const v = new FakeView(
     [

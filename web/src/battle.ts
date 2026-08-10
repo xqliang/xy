@@ -4152,6 +4152,7 @@ export class Battle {
         return true;
       },
       swapUnitWord: (unitCell, wordCell) => this.swapUnitWord(unitCell, wordCell),
+      swapWords: (from, to) => this.dragWord(from, to),
       moveWord: (from, to) => {
         const kFrom = cellKey(from.c, from.r);
         const kTo = cellKey(to.c, to.r);
@@ -4163,7 +4164,6 @@ export class Battle {
         this.words.set(kTo, w);
         return true;
       },
-      swapWords: (from, to) => this.swapWords(from, to),
       displaceToTray: (cell) => this.displaceToTray(cell),
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
