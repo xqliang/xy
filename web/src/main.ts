@@ -361,7 +361,7 @@ function openHelpLink(id: HelpLinkId): void {
   }
 }
 let pausePhase: PausePhase = 'main';
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
+const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, passivePopupUntil: 0, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
 
 // —— 新手引导：首次触发时机 + 各锚点闭包（引用当前 battle/merchant，battle 会随 newGame() 重新赋值） —— //
 let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
@@ -682,6 +682,7 @@ function newGame() {
   ui.paused = false;
   pausePhase = 'main';
   ui.passivePopup = null;
+  ui.passivePopupUntil = 0;
   ui.activePopup = null;
   ui.aiItemPopup = null;
   pendingFirstSummonTutorial = false;
@@ -691,6 +692,7 @@ function abortBattleToMenu(): void {
   ui.paused = false;
   pausePhase = 'main';
   ui.passivePopup = null;
+  ui.passivePopupUntil = 0;
   ui.activePopup = null;
   ui.aiItemPopup = null;
   settleChange = null;
@@ -1091,6 +1093,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id.startsWith('pas')) {
         ui.aiItemPopup = null;
         ui.passivePopup = Number(btn.id.slice(3));
+        ui.passivePopupUntil = performance.now() + 2500;
       } // 点击被动图标看详情
       else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
       return true;
@@ -1209,8 +1212,7 @@ function onPointerDown(e: PointerEvent) {
     ui.trayDragStart = null;
     return;
   }
-  // 详情弹窗打开时：任意点击先关闭弹窗（消费本次点击）
-  if (ui.passivePopup !== null) { ui.passivePopup = null; return; }
+  // AI 道具详情弹窗：任意点击先关闭（消费本次点击）
   if (ui.aiItemPopup !== null) { ui.aiItemPopup = null; return; }
   const aiChip = hitAiItemChip(x, y, battle);
   if (aiChip !== null) {

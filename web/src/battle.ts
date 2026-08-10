@@ -439,7 +439,7 @@ export function peachTreeMergeBankNeed(level: number): number {
   return 1 << Math.max(0, level - 1);
 }
 
-export const PALM_PUSH_CELL_DUR = 0.1; // 如来神掌每格回推时长（秒）
+export const PALM_PUSH_DUR = 0.8; // 如来神掌回推特效时长（秒）
 
 // 如来神掌沿路回推动画：从最前怪沿路径逐格回推
 export interface PalmPushFx {
@@ -448,6 +448,14 @@ export interface PalmPushFx {
   cells: number;
   frontStartDist: number;
   snapshots: { id: number; startDist: number }[];
+}
+
+/** 紧箍咒爆发特效（玩家/AI 半场各可独立播放） */
+export interface JinguFx {
+  t: number;
+  dur: number;
+  c: number;
+  r: number;
 }
 
 // 武将的持续状态（按激活对格子 key 记录；拆分后该对进度清除，重组从 1 档重计）
@@ -621,6 +629,8 @@ export class Battle {
   private plantTimer = 0; // 距下次自动种树累积秒数
   private plantBank = 0; // 满格时蟠桃园累积的「虚拟树」，达阈值后合并升级
   palmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（渲染 + 逐帧位移）
+  jinguFx: JinguFx | null = null; // 玩家半场紧箍咒
+  aiJinguFx: JinguFx | null = null; // AI 半场紧箍咒
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
@@ -2457,7 +2467,7 @@ export class Battle {
     for (const m of this.monsters) if (m.dist > frontStartDist) frontStartDist = m.dist;
     this.palmPushFx = {
       t: 0,
-      dur: cells * PALM_PUSH_CELL_DUR,
+      dur: PALM_PUSH_DUR,
       cells,
       frontStartDist,
       snapshots: this.monsters.map((m) => ({ id: m.id, startDist: m.dist })),
@@ -2492,6 +2502,17 @@ export class Battle {
     const p = Math.min(1, fx.t / fx.dur);
     const eased = 1 - (1 - p) ** 2;
     return fx.frontStartDist - fx.cells * eased;
+  }
+
+  private updateJinguFx(dt: number): void {
+    if (this.jinguFx) {
+      this.jinguFx.t += dt;
+      if (this.jinguFx.t >= this.jinguFx.dur) this.jinguFx = null;
+    }
+    if (this.aiJinguFx) {
+      this.aiJinguFx.t += dt;
+      if (this.aiJinguFx.t >= this.aiJinguFx.dur) this.aiJinguFx = null;
+    }
   }
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
@@ -3887,6 +3908,7 @@ export class Battle {
       }
     }
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
+    this.aiJinguFx = { t: 0, dur: PALM_PUSH_DUR, c: center.c, r: center.r };
   }
 
   // 主动技能是否就绪（供渲染/交互判断）
@@ -3962,8 +3984,7 @@ export class Battle {
         this.hurtMonster(m, dmg, p, 0.15);
       }
     }
-    this.ultFlash = 0.6;
-    this.ultCenter = center;
+    this.jinguFx = { t: 0, dur: PALM_PUSH_DUR, c: center.c, r: center.r };
     this.bursts.push({ kind: 'death', c: center.c, r: center.r, ttl: 0.6, maxTtl: 0.6, big: true, color: '#ffdb4d' });
     this.message = '紧箍咒！金光横扫';
   }
@@ -4051,6 +4072,8 @@ export class Battle {
     this.ultFlash = 0;
     this.ultCenter = null;
     this.palmPushFx = null;
+    this.jinguFx = null;
+    this.aiJinguFx = null;
     for (const u of this.units.values()) {
       u.firePulse = 0;
       u.combo = 0;
@@ -4108,6 +4131,7 @@ export class Battle {
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
     this.updatePalmPush(dt);
+    this.updateJinguFx(dt);
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
     this.updateItemEffects(dt); // 被动道具收益（洛阳铲）在所有状态下持续

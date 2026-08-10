@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type JinguFx } from './battle';
 import { passiveById } from './passives';
 import { activeById } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -112,6 +112,8 @@ export function getButtons(b: Battle): Button[] {
   return btns;
 }
 
+const SKILL_TITLE_COLOR = '#e8c22c'; // 与神兵金阶同色
+
 export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
@@ -121,6 +123,7 @@ export interface UiState {
   selectedTrayIndex: number | null; // 点击选中的候选区字牌（查看武将信息）
   selectedMonster: { side: 'player' | 'ai'; id: number } | null; // 点击选中的妖怪（按 id，可跨格移动）
   passivePopup: number | null; // 点击的被动/强化道具下标（显示详情/进度弹窗）
+  passivePopupUntil: number; // 被动技能弹窗展示截止时间(performance.now ms)
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
   aiItemPopup: number | null; // 点击 HUD 右上角 AI 道具图标（aiPickedItems 下标）
@@ -759,8 +762,10 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawPalmPushFx(ctx, b);
+  drawJinguFx(ctx, b.jinguFx);
   if (b.endless) drawEndlessPanel(ctx, b);
   else drawAiSide(ctx, b);
+  drawJinguFx(ctx, b.aiJinguFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
   drawPeachTrees(ctx, b, ui);
@@ -2217,6 +2222,61 @@ function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.moveTo(x - palmR * 0.35, y - palmR * 0.05);
   ctx.quadraticCurveTo(x, y + palmR * 0.15, x + palmR * 0.35, y - palmR * 0.05);
   ctx.stroke();
+  ctx.restore();
+}
+
+/** 紧箍咒：金色箍环收缩 + 放射咒文光 */
+function drawJinguFx(ctx: CanvasRenderingContext2D, fx: JinguFx | null) {
+  if (!fx) return;
+  const prog = Math.min(1, fx.t / fx.dur);
+  const { x, y } = cellCenterPx(fx.c, fx.r);
+  const maxR = TUNING.aiClearRadius * CELL * 1.05;
+  const fade = prog < 0.15 ? prog / 0.15 : 1 - (prog - 0.15) / 0.85;
+  ctx.save();
+  // 外圈扩散闪
+  ctx.globalAlpha = fade * 0.35;
+  ctx.strokeStyle = '#ffe27a';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(x, y, maxR * (0.35 + prog * 0.85), 0, Math.PI * 2);
+  ctx.stroke();
+  // 多层箍环向内收紧
+  for (let i = 0; i < 4; i++) {
+    const ringP = Math.min(1, prog * 1.25 + i * 0.08);
+    const shrink = 1 - ringP * 0.72;
+    const r = maxR * shrink;
+    ctx.globalAlpha = fade * (0.55 - i * 0.1);
+    ctx.strokeStyle = i % 2 === 0 ? '#ffd23c' : '#fff3c4';
+    ctx.lineWidth = 3.5 - i * 0.4;
+    ctx.setLineDash(i === 1 ? [6, 5] : []);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // 中心「咒」字脉冲
+  ctx.globalAlpha = fade * 0.95;
+  ctx.fillStyle = '#ffd54a';
+  ctx.strokeStyle = '#fff8dc';
+  ctx.lineWidth = 2;
+  ctx.font = `bold ${Math.round(CELL * (0.38 + 0.08 * Math.sin(prog * Math.PI * 3)))}px "PingFang SC", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.strokeText('咒', x, y - 1);
+  ctx.fillText('咒', x, y - 1);
+  // 放射金线
+  ctx.globalAlpha = fade * 0.7;
+  ctx.strokeStyle = '#ffc830';
+  ctx.lineWidth = 2.5;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2 + prog * 1.2;
+    const r0 = CELL * 0.12;
+    const r1 = maxR * (0.25 + (1 - prog) * 0.55);
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+    ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -5281,9 +5341,9 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.stroke();
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = '#fff6e6';
+  ctx.fillStyle = SKILL_TITLE_COLOR;
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 12);
+  ctx.fillText(def.name, x + pad, y + 12);
   ctx.fillStyle = '#8fd3ff';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`冷却 ${def.cd}s · 冷却中 ${Math.ceil(slot.cd)}s`, x + pad, y + 40);
@@ -5297,9 +5357,9 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.restore();
 }
 
-// 被动/强化道具详情弹窗（点击图标后显示；点任意处关闭）
+// 被动/强化道具详情弹窗（点击图标后展示，定时自动淡出）
 function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  if (ui.passivePopup === null) return;
+  if (ui.passivePopup === null || performance.now() > ui.passivePopupUntil) return;
   const def = passiveById(b.pickedItems[ui.passivePopup] ?? '');
   if (!def) return;
   const w = 300, pad = 16, lineH = 18;
@@ -5317,9 +5377,9 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   ctx.stroke();
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = '#fff6e6';
+  ctx.fillStyle = SKILL_TITLE_COLOR;
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 14);
+  ctx.fillText(def.name, x + pad, y + 14);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
   let ty = y + 48;
@@ -5337,10 +5397,6 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
     ctx.font = '11px "PingFang SC", sans-serif';
     ctx.fillText(prog.text, x + pad, by - 13);
   }
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '11px "PingFang SC", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('点任意处关闭', x + w - 12, y + 16);
   ctx.restore();
 }
 
@@ -5373,9 +5429,9 @@ function drawAiItemPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.fillStyle = 'rgba(255,230,200,0.75)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`AI对手 · ${act ? '主动技能' : '被动技能'}`, x + pad, y + 12);
-  ctx.fillStyle = '#fff6e6';
+  ctx.fillStyle = SKILL_TITLE_COLOR;
   ctx.font = 'bold 18px "PingFang SC", sans-serif';
-  ctx.fillText(`${def.icon ?? ''} ${def.name}`, x + pad, y + 30);
+  ctx.fillText(def.name, x + pad, y + 30);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
   let ty = y + 56;
@@ -5392,10 +5448,6 @@ function drawAiItemPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
     ctx.fillText(ln, x + pad, ty);
     ty += lineH;
   }
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '11px "PingFang SC", sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('点任意处关闭', x + w - 12, y + 16);
   ctx.restore();
 }
 
