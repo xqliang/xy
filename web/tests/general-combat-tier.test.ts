@@ -111,8 +111,8 @@ describe('攻击升品质阶', () => {
   });
 
   it('combatExpFromHits：额外目标折计，避免 multi-target 刷经验', () => {
-    expect(Battle.combatExpFromHits(10, 1)).toBeCloseTo(0.42, 5);
-    expect(Battle.combatExpFromHits(10, 3)).toBeCloseTo(0.714, 5);
+    expect(Battle.combatExpFromHits(10, 1)).toBeCloseTo(0.36, 5);
+    expect(Battle.combatExpFromHits(10, 3)).toBeCloseTo(0.612, 5);
     expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
   });
 

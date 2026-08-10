@@ -758,6 +758,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSpawnDirectionHints(ctx, b);
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
+  drawPalmPushFx(ctx, b);
   if (b.endless) drawEndlessPanel(ctx, b);
   else drawAiSide(ctx, b);
   drawUnits(ctx, b, ui);
@@ -2254,22 +2255,24 @@ function drawStaffSpinGlyph(
   alpha: number,
   blur: number,
 ) {
-  const lw = (4 + tier * 1.1) * Math.max(0.35, len / (CELL * 0.34));
+  const tierCap = Math.min(tier, 4);
+  const lw = (4 + tierCap * 1.1) * Math.max(0.35, len / (CELL * 0.34));
+  const glowR = Math.min(len, CELL * (0.72 + tierCap * 0.07));
   ctx.save();
   ctx.lineCap = 'round';
   if (blur > 0.05) {
-    const grad = ctx.createRadialGradient(0, 0, len * 0.15, 0, 0, len);
+    const grad = ctx.createRadialGradient(0, 0, glowR * 0.15, 0, 0, glowR);
     grad.addColorStop(0, 'rgba(232,161,28,0.03)');
     grad.addColorStop(0.65, `rgba(232,161,28,${0.14 * blur})`);
     grad.addColorStop(1, `rgba(255,226,122,${0.4 * blur})`);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(0, 0, len, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = alpha * blur * 0.85;
     ctx.strokeStyle = '#fff3c4';
     ctx.lineWidth = lw;
-    ctx.beginPath(); ctx.arc(0, 0, len, spin - 0.6, spin + 0.15); ctx.stroke();
-    ctx.beginPath(); ctx.arc(0, 0, len, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, glowR, spin - 0.6, spin + 0.15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, glowR, spin + Math.PI - 0.6, spin + Math.PI + 0.15); ctx.stroke();
   }
   ctx.globalAlpha = alpha * (1 - 0.75 * blur);
   ctx.rotate(spin);
@@ -2280,7 +2283,7 @@ function drawStaffSpinGlyph(
   ctx.lineWidth = Math.max(1.5, lw * 0.45);
   ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(len, 0); ctx.stroke();
   ctx.fillStyle = '#ffe27a';
-  const cap = Math.max(1.5, (2 + tier * 0.8) * Math.max(0.35, len / (CELL * 0.34)));
+  const cap = Math.max(1.5, (2 + tierCap * 0.8) * Math.max(0.35, len / (CELL * 0.34)));
   ctx.beginPath(); ctx.arc(len, 0, cap, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(-len, 0, cap, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
@@ -2295,8 +2298,8 @@ function drawStaffBoomerang(
   tier: number,
   outFrac = 0.42,
 ) {
-  const turns = 2 + tier;
-  const lenBase = CELL * (0.24 + tier * 0.10) * 1.3; // 金箍棒普攻规模 ×1.3
+  const turns = 2 + Math.min(tier, 4);
+  const lenBase = CELL * (0.24 + tier * 0.085) * 1.15; // 高阶略收敛，避免 5 阶满屏
   let cx: number, cy: number, scale: number, alpha: number, spin: number, blur: number;
 
   if (prog < outFrac) {
@@ -2546,20 +2549,21 @@ function drawUltDasheng(
   const sweepP = hasOrigin ? (p - OUT) / (SWEEP_END - OUT) : p;
   const sweep = easeOut(Math.max(0, Math.min(1, sweepP)));
   const a0 = -Math.PI * 0.9, a1 = a0 + Math.PI * 1.8 * sweep;
-  const sweepRad = R * 0.9 * 0.8; // 大范围扫掠周长 ×0.8
+  // 扫掠半径随 rge 但封顶，避免 5 阶 + 金箍棒加射程时铺满屏
+  const sweepRad = Math.min(R * 0.58, CELL * (1.55 + tier * 0.05));
   ctx.globalAlpha = fade;
   // 扇形扫掠底
   const grad = ctx.createRadialGradient(x, y, sweepRad * 0.2, x, y, sweepRad);
   grad.addColorStop(0, 'rgba(255,243,196,0.05)');
-  grad.addColorStop(1, 'rgba(240,185,60,0.35)');
+  grad.addColorStop(1, 'rgba(240,185,60,0.28)');
   ctx.fillStyle = grad;
   ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, sweepRad, a0, a1); ctx.closePath(); ctx.fill();
-  // 金箍棒旋转残影（横扫段）：小特效 ×1.2
-  const turns = 2.2 + tier * 0.35;
+  // 金箍棒旋转残影：半长按阶封顶，不再随 R 线性放大
+  const turns = 2.2 + Math.min(tier, 4) * 0.28;
   const eio = sweepP < 0.5 ? 2 * sweepP * sweepP : 1 - Math.pow(-2 * sweepP + 2, 2) / 2;
   const spin = turns * Math.PI * 2 * eio;
-  const blur = Math.pow(Math.sin(Math.PI * sweepP), 3);
-  const len = R * 0.9 * (0.72 + tier * 0.04) * 1.2;
+  const blur = Math.pow(Math.sin(Math.PI * sweepP), 3) * (1 - tier * 0.04);
+  const len = Math.min(CELL * (0.46 + tier * 0.1), sweepRad * 0.72);
   ctx.save();
   ctx.translate(x, y);
   drawStaffSpinGlyph(ctx, spin, len, tier, fade, blur);

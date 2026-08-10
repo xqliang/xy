@@ -17,6 +17,7 @@ import {
   versusRubberBand,
 } from './ai-skill';
 import { RNG } from './rng';
+import { AI_ADJUST_INTERVAL_FAST_SCALE } from './autoplace';
 
 export const DEFAULT_SPEED_MUL = 10;
 export const DEFAULT_FPS = 30;
@@ -154,7 +155,7 @@ export function playVersusMatch(
   const lossStreak = loadPlayerLossStreak();
   const band = versusRubberBand(winStreak, lossStreak);
   const effective = effectiveAiSkill(matchAiSkill, band);
-  const battle = new Battle(seed, 1, undefined, undefined, {}, [], [], false, matchAiSkill);
+  const battle = new Battle(seed, 1, undefined, undefined, {}, [], [], false, matchAiSkill, AI_ADJUST_INTERVAL_FAST_SCALE);
   const dt = physDt(o);
   const steps = substeps(o);
   let frames = 0;

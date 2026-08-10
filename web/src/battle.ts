@@ -187,7 +187,7 @@ export const TUNING = {
   aiClearRadius: 2.5, // AI 清场 / 紧箍咒作用半径（格）
   aiClearDmgMul: 2.4, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
   // —— 主动技能数值 ——
-  palmPushCells: 7, // 如来神掌沿路击退格数（不再重置到 0）
+  palmPushCells: 6, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
   meteorRadius: 1.4, // 主动陨石半径
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
@@ -196,10 +196,10 @@ export const TUNING = {
   frqBuffMul: 1.3, // 主动风火轮攻速倍率
   freezeStunDur: 1.8, // 冰封定身时长
   // —— 武将大招控制分档 ——
-  heroStunDurMain: 2.0, // 满5 定身时长
-  heroStunDurTransit: 1.4, // 满3 定身时长
-  heroKnockPushMain: 2, // 满5 击退格数
-  heroKnockPushTransit: 1.5, // 满3 击退格数
+  heroStunDurMain: 1.5, // 满5 定身时长
+  heroStunDurTransit: 1.0, // 满3 定身时长
+  heroKnockPushMain: 1.5, // 满5 击退格数
+  heroKnockPushTransit: 1.0, // 满3 击退格数
   heroStunDmgMul: 0.8, // 定身附带轻伤（牛魔线另乘冲撞倍率）
   heroChargeStunDmgMul: 2.0, // 牛魔/青牛定身附带重创
   heroKnockDmgMul: 1.2, // 击退附带轻伤
@@ -434,6 +434,22 @@ export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
 export const PEACH_TREE_MAX_LEVEL = 5;
 export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
 
+/** 地图上全是 N 级树时，蟠桃园累计多少棵「虚拟树」才合并升级 1 棵（N→N+1） */
+export function peachTreeMergeBankNeed(level: number): number {
+  return 1 << Math.max(0, level - 1);
+}
+
+export const PALM_PUSH_CELL_DUR = 0.1; // 如来神掌每格回推时长（秒）
+
+// 如来神掌沿路回推动画：从最前怪沿路径逐格回推
+export interface PalmPushFx {
+  t: number;
+  dur: number;
+  cells: number;
+  frontStartDist: number;
+  snapshots: { id: number; startDist: number }[];
+}
+
 // 武将的持续状态（按激活对格子 key 记录；拆分后该对进度清除，重组从 1 档重计）
 // level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
 export interface GeneralState {
@@ -603,6 +619,8 @@ export class Battle {
   trees = new Map<string, PeachTree>(); // 蟠桃园桃树（各占一格未开垦地）
   gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
   private plantTimer = 0; // 距下次自动种树累积秒数
+  private plantBank = 0; // 满格时蟠桃园累积的「虚拟树」，达阈值后合并升级
+  palmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（渲染 + 逐帧位移）
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   monsters: Monster[] = [];
   fx: HitFx[] = [];
@@ -683,8 +701,9 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调整节流（兵器 0.1–0.25s / 补配对字 0.05–0.1s 随机）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.5–1s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
+  private aiAdjustIntervalScale = 1;        // versus-agent 10× 子步进时缩至 0.1
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
   /** 对战隐藏调节：抽字/道具概率，不在 UI 展示 */
   private versusBand = versusRubberBand(0, 0);
@@ -736,7 +755,8 @@ export class Battle {
   /** 本波按最优输出算出的压力方案（开波时刷新；供出怪血量/数量使用） */
   private wavePressure: PressurePlan | null = null;
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL) {
+  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL, aiAdjustIntervalScale = 1) {
+    this.aiAdjustIntervalScale = aiAdjustIntervalScale;
     this.versusBand = versusRubberBand(
       endless ? 0 : loadPlayerWinStreak(),
       endless ? 0 : loadPlayerLossStreak(),
@@ -820,7 +840,7 @@ export class Battle {
       }
       const knobs = skillToKnobs(effectiveSkill);
       this.aiSummonTimer = knobs.summonInterval * 0.5;
-      this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next());
+      this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next(), this.aiAdjustIntervalScale);
     }
     this.warmPathDistCaches();
   }
@@ -1985,7 +2005,7 @@ export class Battle {
         blockedPair: this.aiLastRepositionPair ?? undefined,
         heroLeveling: true,
       });
-      this.aiLastRepositionPair = r.ok && r.pair ? r.pair : null;
+      this.aiLastRepositionPair = r.ok && r.pair ? r.pair : this.aiLastRepositionPair;
       return r.ok ? 1 : 0;
     }
     if (this.units.size === 0) {
@@ -2007,7 +2027,11 @@ export class Battle {
     } else {
       this.tickBattleReposition('ai', 1);
     }
-    this.aiRepositionTimer = rollAiAdjustInterval(aiHeroPartnerAdjustPending(view), () => this.aiRng.next());
+    this.aiRepositionTimer = rollAiAdjustInterval(
+      aiHeroPartnerAdjustPending(view),
+      () => this.aiRng.next(),
+      this.aiAdjustIntervalScale,
+    );
   }
 
   private aiPathCoverAt(ax: number, ay: number, rge: number): number {
@@ -2426,9 +2450,48 @@ export class Battle {
     return posAtDistance(this.map, p * this.pathLen);
   }
 
-  // 把玩家场上所有妖怪沿路击退若干格（如来神掌；不再重置到起点）
-  private pushMonstersBack(cells: number): void {
-    for (const m of this.monsters) m.dist = Math.max(0, m.dist - cells);
+  // 如来神掌：从最前怪沿路径逐格回推（动画结束后各怪 dist 减 cells）
+  private startPalmPush(cells: number): void {
+    if (this.monsters.length === 0) return;
+    let frontStartDist = 0;
+    for (const m of this.monsters) if (m.dist > frontStartDist) frontStartDist = m.dist;
+    this.palmPushFx = {
+      t: 0,
+      dur: cells * PALM_PUSH_CELL_DUR,
+      cells,
+      frontStartDist,
+      snapshots: this.monsters.map((m) => ({ id: m.id, startDist: m.dist })),
+    };
+  }
+
+  private updatePalmPush(dt: number): void {
+    const fx = this.palmPushFx;
+    if (!fx) return;
+    fx.t += dt;
+    const p = Math.min(1, fx.t / fx.dur);
+    const eased = 1 - (1 - p) ** 2;
+    const pushed = fx.cells * eased;
+    const snapById = new Map(fx.snapshots.map((s) => [s.id, s.startDist]));
+    for (const m of this.monsters) {
+      const start = snapById.get(m.id);
+      if (start !== undefined) m.dist = Math.max(0, start - pushed);
+    }
+    if (p >= 1) {
+      for (const m of this.monsters) {
+        const start = snapById.get(m.id);
+        if (start !== undefined) m.dist = Math.max(0, start - fx.cells);
+      }
+      this.palmPushFx = null;
+    }
+  }
+
+  /** 回推波前位置（格），供渲染沿路径绘制掌印 */
+  palmPushWaveDist(): number | null {
+    const fx = this.palmPushFx;
+    if (!fx) return null;
+    const p = Math.min(1, fx.t / fx.dur);
+    const eased = 1 - (1 - p) ** 2;
+    return fx.frontStartDist - fx.cells * eased;
   }
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
@@ -2493,14 +2556,20 @@ export class Battle {
     }
   }
 
-  // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；每棵树按等级周期产桃。
+  // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；满格则尝试往已有桃树合并升级。
   // 仅在 status 为 playing/ready（对局进行中）推进，由 updateFx 调用。
   private updatePeachTrees(dt: number): void {
     if (this.gardenOn) {
       this.plantTimer += dt;
       if (this.plantTimer >= PEACH_TREE_PLANT_INTERVAL) {
-        if (this.plantTree()) this.plantTimer = 0;
-        else this.plantTimer = PEACH_TREE_PLANT_INTERVAL; // 无空地则封顶，等有空地立刻种
+        if (this.plantTree()) {
+          this.plantTimer = 0;
+          this.plantBank = 0;
+        } else if (this.tryAutoMergePlant()) {
+          this.plantTimer = 0;
+        } else {
+          this.plantTimer = PEACH_TREE_PLANT_INTERVAL; // 全 5 级：封顶不再合并
+        }
       }
     }
     for (const t of this.trees.values()) {
@@ -2522,6 +2591,43 @@ export class Battle {
     const spot = spots[this.rng.int(spots.length)]!;
     this.trees.set(cellKey(spot.c, spot.r), { level: 1, cell: { c: spot.c, r: spot.r }, growT: 0 });
     return true;
+  }
+
+  /** 满格时：虚拟新树合并进已有桃树；同级全满则按 2^(L-1) 棵累计后再升一级 */
+  private tryAutoMergePlant(): boolean {
+    const trees = [...this.trees.values()];
+    if (trees.length === 0) return false;
+    if (trees.every((t) => t.level >= PEACH_TREE_MAX_LEVEL)) return false;
+
+    const minLevel = Math.min(...trees.map((t) => t.level));
+    const allSame = trees.every((t) => t.level === minLevel);
+
+    if (!allSame) {
+      const target = trees.find((t) => t.level === minLevel);
+      if (!target || target.level >= PEACH_TREE_MAX_LEVEL) return false;
+      target.level += 1;
+      target.growT = 0;
+      this.burstTreeMerge(target.cell);
+      this.message = `蟠桃园：桃树升为 ${target.level} 级`;
+      return true;
+    }
+
+    const need = peachTreeMergeBankNeed(minLevel);
+    this.plantBank += 1;
+    if (this.plantBank < need) return true;
+
+    const target = trees[this.rng.int(trees.length)]!;
+    target.level = minLevel + 1;
+    target.growT = 0;
+    this.plantBank -= need;
+    this.burstTreeMerge(target.cell);
+    this.message = `蟠桃园：桃树升为 ${target.level} 级`;
+    return true;
+  }
+
+  private burstTreeMerge(cell: Cell): void {
+    this.bursts.push({ kind: 'merge', c: cell.c, r: cell.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#7ec46a' });
+    this.emit('merge');
   }
 
   // 距下次产桃剩余秒数（供 UI 进度条），无树返回 null
@@ -3079,13 +3185,14 @@ export class Battle {
         this.tickAiShovelReserve();
       }
     }
-    // 2) 战中调整：兵器调位 0.1–0.25s 随机；待补英雄配对字时 0.05–0.1s 单步布阵（与征兵同帧错开）
+    // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       if (aiPlacedThisFrame) {
         this.aiRepositionTimer = rollAiAdjustInterval(
           aiHeroPartnerAdjustPending(this.buildAiAutoView()),
           () => this.aiRng.next(),
+          this.aiAdjustIntervalScale,
         );
       } else {
         this.tickAiBattleAdjust(knobs.pSubOptimal);
@@ -3323,7 +3430,7 @@ export class Battle {
   static combatExpFromHits(dmg: number, hit: number): number {
     if (hit <= 0) return 0;
     const weightedHits = 1 + 0.35 * (hit - 1);
-    return dmg * weightedHits * 0.042;
+    return dmg * weightedHits * 0.036;
   }
   /** 大招命中转升阶经验（固定值，低于普攻累积） */
   static heroSkillExp = 1.5;
@@ -3803,10 +3910,8 @@ export class Battle {
     }
     switch (def.effect) {
       case 'palm':
-        // 推回前在每只妖怪处爆冲击环，让"推"看得见
-        for (const m of this.monsters) { const p = posAtDistance(this.map, m.dist); this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' }); }
-        this.pushMonstersBack(TUNING.palmPushCells);
-        this.message = `如来神掌！妖怪被击退 ${TUNING.palmPushCells} 格`;
+        this.startPalmPush(TUNING.palmPushCells);
+        this.message = `如来神掌！妖怪沿路回推 ${TUNING.palmPushCells} 格`;
         this.emit('palm');
         break;
       case 'meteor':
@@ -3909,7 +4014,7 @@ export class Battle {
       // 武将控制：定身期间不前进；减速减半、疾风加速
       if (m.stunT > 0) {
         m.stunT = Math.max(0, m.stunT - dt);
-      } else {
+      } else if (!this.palmPushFx) {
         const mudMul = this.monsterInMudZone(m) ? 0.82 : 1; // 淤泥：出怪口附近减速
         const slowMul = m.slowT > 0 ? 0.5 : 1;
         const hasteMul = m.hasteT > 0 ? TUNING.hasteSpdMul : 1;
@@ -3945,6 +4050,7 @@ export class Battle {
     this.damageFloats = [];
     this.ultFlash = 0;
     this.ultCenter = null;
+    this.palmPushFx = null;
     for (const u of this.units.values()) {
       u.firePulse = 0;
       u.combo = 0;
@@ -4001,6 +4107,7 @@ export class Battle {
     if (this.autoplaceFlash > 0) this.autoplaceFlash = Math.max(0, this.autoplaceFlash - dt * 2);
     if (this.summonAnimT < 2) this.summonAnimT += dt;
     if (this.ultFlash > 0) this.ultFlash = Math.max(0, this.ultFlash - dt); // 绝招特效衰减(在所有状态下都推进，避免波间卡住)
+    this.updatePalmPush(dt);
     if (this.spawnGateT > 0) this.spawnGateT = Math.max(0, this.spawnGateT - dt);
     if (this.aiSpawnGateT > 0) this.aiSpawnGateT = Math.max(0, this.aiSpawnGateT - dt);
     this.updateItemEffects(dt); // 被动道具收益（洛阳铲）在所有状态下持续

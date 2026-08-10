@@ -226,10 +226,10 @@ export function generalPOW(def: GeneralDef, tier: number): number {
   return s.atk * s.frq * s.rge * s.targets;
 }
 
-// 羁绊：大圣上场 → 全队攻击 +12%
+// 羁绊：大圣上场 → 全队攻击 +8%
 export const BOND_GENERAL = 'dasheng';
 export const BOND_NAME = '大圣护法';
-export const BOND_ATK_BONUS = 0.10;
+export const BOND_ATK_BONUS = 0.08;
 
 // 字牌掉落基础池（按 weight 展开）；实际抽字见 word-draw.ts（阶段权重 + 孤儿）
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>

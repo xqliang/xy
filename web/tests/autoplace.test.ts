@@ -1901,11 +1901,36 @@ it('AI 练级轮换：优先满5将再满3将', () => {
   expect(v.wordsMap.get('4,0')?.char).toBe('八');
 });
 
-it('rollAiAdjustInterval：兵器 0.1–0.25s、配对字 0.05–0.1s', () => {
+it('AI 练级轮换：同一对武将不能连续互换', () => {
+  const v = new FakeRepositionView();
+  v.monsterEngage = [{ dist: 2, hp: 20, maxHp: 20 }];
+  v.wordsMap.set('0,0', { char: '大', general: 'dasheng', cell: { c: 0, r: 0 }, tier: 5 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'dasheng', cell: { c: 1, r: 0 }, tier: 5 });
+  v.wordsMap.set('4,0', { char: '龙', general: 'long', cell: { c: 4, r: 0 }, tier: 3 });
+  v.wordsMap.set('5,0', { char: '王', general: 'long', cell: { c: 5, r: 0 }, tier: 3 });
+  v.heroCells.add('0,0'); v.heroCells.add('1,0'); v.heroCells.add('4,0'); v.heroCells.add('5,0');
+  v.heroPairs = [
+    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'dasheng', tier: 5, maxTier: 5 },
+    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'long', tier: 3, maxTier: 5 },
+  ];
+  v.free = [{ c: 2, r: 0 }, { c: 3, r: 0 }];
+  const r1 = planBattleReposition(v, { heroLeveling: true });
+  expect(r1.ok).toBe(true);
+  expect(r1.pair).toBeDefined();
+  const r2 = planBattleReposition(v, { heroLeveling: true, blockedPair: r1.pair });
+  expect(r2.ok).toBe(false);
+});
+
+it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.5–1s', () => {
   expect(rollAiAdjustInterval(false, () => 0)).toBe(AI_WEAPON_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
   expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(true, () => 1)).toBe(AI_PARTNER_ADJUST_INTERVAL_MAX);
+});
+
+it('rollAiAdjustInterval：versus-agent 缩放', () => {
+  expect(rollAiAdjustInterval(false, () => 0, 0.1)).toBeCloseTo(0.1, 5);
+  expect(rollAiAdjustInterval(false, () => 1, 0.1)).toBeCloseTo(0.25, 5);
 });
 
 it('boardMatePreferScore：铁优先配扇(满5)而非更高阶背(满3)', () => {

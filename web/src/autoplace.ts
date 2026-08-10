@@ -150,17 +150,24 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位：普通兵器 0.1–0.25s；待补英雄配对字 0.05–0.1s */
-export const AI_WEAPON_ADJUST_INTERVAL_MIN = 0.1;
-export const AI_WEAPON_ADJUST_INTERVAL_MAX = 0.25;
-export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.05;
-export const AI_PARTNER_ADJUST_INTERVAL_MAX = 0.1;
+/** AI 战中调位（正常对局）：兵器 1–2.5s；待补英雄配对字 0.5–1s */
+export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1;
+export const AI_WEAPON_ADJUST_INTERVAL_MAX = 2.5;
+export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.5;
+export const AI_PARTNER_ADJUST_INTERVAL_MAX = 1;
+/** versus-agent 10× 物理子步进时传给 Battle 的间隔缩放（1–2.5s × 0.1 ≈ 旧快放体感） */
+export const AI_ADJUST_INTERVAL_FAST_SCALE = 0.1;
 
-export function rollAiAdjustInterval(partnerPending: boolean, rng: () => number): number {
+export function rollAiAdjustInterval(
+  partnerPending: boolean,
+  rng: () => number,
+  scale = 1,
+): number {
   const r = rng();
-  return partnerPending
+  const base = partnerPending
     ? AI_PARTNER_ADJUST_INTERVAL_MIN + r * (AI_PARTNER_ADJUST_INTERVAL_MAX - AI_PARTNER_ADJUST_INTERVAL_MIN)
     : AI_WEAPON_ADJUST_INTERVAL_MIN + r * (AI_WEAPON_ADJUST_INTERVAL_MAX - AI_WEAPON_ADJUST_INTERVAL_MIN);
+  return base * scale;
 }
 
 /**
@@ -2914,9 +2921,14 @@ function sameHeroPair(a: BattleRepositionHeroPair, b: BattleRepositionHeroPair):
   return sameCell(a.left, b.left) && sameCell(a.right, b.right);
 }
 
+export type RepositionStepResult = { ok: boolean; pair?: { a: Cell; b: Cell } };
+
 /** 全部满级后：按 heroEngageScore / 出口距离微调座位 */
-function tryHeroCoverageReposition(view: BattleRepositionView): boolean {
-  if (!view.activeHeroPairs || !view.heroEngageScore || !view.moveHeroPair) return false;
+function tryHeroCoverageReposition(
+  view: BattleRepositionView,
+  opts?: BattleRepositionOpts,
+): RepositionStepResult {
+  if (!view.activeHeroPairs || !view.heroEngageScore || !view.moveHeroPair) return { ok: false };
   const MIN_GAIN = 0.12;
   let best: {
     fromLeft: Cell;
@@ -2929,6 +2941,7 @@ function tryHeroCoverageReposition(view: BattleRepositionView): boolean {
     const cur = view.heroEngageScore(pair.left, pair.right, pair.general, pair.tier);
     for (const cand of enumerateHeroPairSeats(view)) {
       if (sameCell(cand.left, pair.left) && sameCell(cand.right, pair.right)) continue;
+      if (isBlockedPair(pair.left, cand.left, opts?.blockedPair)) continue;
       const next = view.heroEngageScore(cand.left, cand.right, pair.general, pair.tier);
       const gain = next - cur;
       if (gain < MIN_GAIN) continue;
@@ -2943,22 +2956,27 @@ function tryHeroCoverageReposition(view: BattleRepositionView): boolean {
       }
     }
   }
-  if (!best) return false;
-  return view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight);
+  if (!best) return { ok: false };
+  if (!view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight)) return { ok: false };
+  return { ok: true, pair: { a: best.fromLeft, b: best.toLeft } };
 }
 
 /**
  * AI 练级轮换：怪物口满级将让位给优先更高的未封顶将；全部满级后做射程微调。
  */
-function tryHeroExpFarmRotation(view: BattleRepositionView): boolean {
+function tryHeroExpFarmRotation(
+  view: BattleRepositionView,
+  opts?: BattleRepositionOpts,
+): RepositionStepResult {
   const pairs = view.activeHeroPairs?.() ?? [];
-  if (pairs.length === 0) return false;
+  if (pairs.length === 0) return { ok: false };
   if (view.monstersPresent && !view.monstersPresent()) {
-    return pairs.every(isHeroPairMaxed) && tryHeroCoverageReposition(view);
+    if (!pairs.every(isHeroPairMaxed)) return { ok: false };
+    return tryHeroCoverageReposition(view, opts);
   }
 
   const growing = pairs.filter((p) => !isHeroPairMaxed(p));
-  if (growing.length === 0) return tryHeroCoverageReposition(view);
+  if (growing.length === 0) return tryHeroCoverageReposition(view, opts);
 
   const entrance = pairs.reduce((best, p) =>
     heroPairExitDist(view, p.left, p.right) < heroPairExitDist(view, best.left, best.right) ? p : best,
@@ -2967,14 +2985,16 @@ function tryHeroExpFarmRotation(view: BattleRepositionView): boolean {
     heroFarmPriority(p) > heroFarmPriority(best) ? p : best,
   );
 
-  if (sameHeroPair(entrance, desired)) return false;
+  if (sameHeroPair(entrance, desired)) return { ok: false };
 
   const shouldSwap =
     isHeroPairMaxed(entrance)
     || heroFarmPriority(desired) > heroFarmPriority(entrance) + 50;
 
-  if (!shouldSwap || !view.swapHeroPairs) return false;
-  return view.swapHeroPairs(entrance.left, entrance.right, desired.left, desired.right);
+  if (!shouldSwap || !view.swapHeroPairs) return { ok: false };
+  if (isBlockedPair(entrance.left, desired.left, opts?.blockedPair)) return { ok: false };
+  if (!view.swapHeroPairs(entrance.left, entrance.right, desired.left, desired.right)) return { ok: false };
+  return { ok: true, pair: { a: entrance.left, b: desired.left } };
 }
 
 function enumerateHeroPairSeats(view: BattleRepositionView): { left: Cell; right: Cell }[] {
@@ -2995,9 +3015,12 @@ function enumerateHeroPairSeats(view: BattleRepositionView): { left: Cell; right
 }
 
 /** 危险时：把远程/武将挪到能打到残血怪的位置 */
-function tryDangerHeroReposition(view: BattleRepositionView): boolean {
+function tryDangerHeroReposition(
+  view: BattleRepositionView,
+  opts?: BattleRepositionOpts,
+): RepositionStepResult {
   if (!view.dangerNear() || !view.activeHeroPairs || !view.heroEngageScore || !view.moveHeroPair) {
-    return false;
+    return { ok: false };
   }
   const MIN_GAIN = 0.12;
   let best: {
@@ -3011,6 +3034,7 @@ function tryDangerHeroReposition(view: BattleRepositionView): boolean {
     const cur = view.heroEngageScore(pair.left, pair.right, pair.general, pair.tier);
     for (const cand of enumerateHeroPairSeats(view)) {
       if (sameCell(cand.left, pair.left) && sameCell(cand.right, pair.right)) continue;
+      if (isBlockedPair(pair.left, cand.left, opts?.blockedPair)) continue;
       const next = view.heroEngageScore(cand.left, cand.right, pair.general, pair.tier);
       const gain = next - cur;
       if (gain < MIN_GAIN) continue;
@@ -3025,25 +3049,32 @@ function tryDangerHeroReposition(view: BattleRepositionView): boolean {
       }
     }
   }
-  if (!best) return false;
-  return view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight);
+  if (!best) return { ok: false };
+  if (!view.moveHeroPair(best.fromLeft, best.fromRight, best.toLeft, best.toRight)) return { ok: false };
+  return { ok: true, pair: { a: best.fromLeft, b: best.toLeft } };
 }
 
 /**
  * 战中调位：前排高级武器够不着怪时，与后方低阶互换或挪到空位；
  * 亦可与未激活孤儿字换位（字牌不输出，让出攻位）。
  * 危险时优先把「打不到」的兵换到能打到怪的座位；禁止仅因贴路启发在两格间来回抖。
- * 每次调用至多成功一次 move/swap；AI 侧兵器调位 0.1–0.25s 随机节流。
+ * 每次调用至多成功一次 move/swap；AI 侧兵器调位 1–2.5s 随机节流（versus-agent 可缩放）。
  */
 export function planBattleReposition(
   view: BattleRepositionView,
   opts?: BattleRepositionOpts,
-): { ok: boolean; pair?: { a: Cell; b: Cell } } {
-  if (opts?.heroLeveling && tryHeroExpFarmRotation(view)) return { ok: true };
+): RepositionStepResult {
+  if (opts?.heroLeveling) {
+    const hero = tryHeroExpFarmRotation(view, opts);
+    if (hero.ok) return hero;
+  }
 
   const units = view.placedUnits();
   if (units.length === 0) {
-    if (view.dangerNear() && tryDangerHeroReposition(view)) return { ok: true };
+    if (view.dangerNear()) {
+      const hero = tryDangerHeroReposition(view, opts);
+      if (hero.ok) return hero;
+    }
     return { ok: false };
   }
 
@@ -3164,7 +3195,10 @@ export function planBattleReposition(
   }
 
   if (!bestAction) {
-    if (danger && tryDangerHeroReposition(view)) return { ok: true };
+    if (danger) {
+      const hero = tryDangerHeroReposition(view, opts);
+      if (hero.ok) return hero;
+    }
     return { ok: false };
   }
   if (!bestAction()) return { ok: false };
