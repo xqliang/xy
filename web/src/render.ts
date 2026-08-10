@@ -2171,6 +2171,55 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 如来神掌：从最前怪沿取经路逐格回推的金色掌印波
+function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const fx = b.palmPushFx;
+  const waveDist = b.palmPushWaveDist();
+  if (!fx || waveDist === null) return;
+
+  const tailDist = fx.frontStartDist;
+  const lo = Math.min(tailDist, waveDist);
+  const hi = Math.max(tailDist, waveDist);
+  const span = Math.max(0.01, hi - lo);
+  ctx.save();
+  for (let d = lo; d <= hi + 0.01; d += 0.32) {
+    const p = posAtDistance(b.map, d);
+    const { x, y } = cellCenterPx(p.c, p.r);
+    const t = (d - lo) / span;
+    ctx.globalAlpha = 0.2 + 0.5 * t;
+    ctx.fillStyle = '#ffe8a0';
+    ctx.beginPath();
+    ctx.arc(x, y, 4 + t * 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,210,90,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 + t * 14, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  const wp = posAtDistance(b.map, waveDist);
+  const { x, y } = cellCenterPx(wp.c, wp.r);
+  const prog = Math.min(1, fx.t / fx.dur);
+  const palmR = CELL * (0.34 + 0.06 * Math.sin(prog * Math.PI));
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = '#ffd54a';
+  ctx.strokeStyle = '#fff8dc';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y - palmR * 0.12, palmR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // 掌纹
+  ctx.strokeStyle = 'rgba(180,120,20,0.65)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - palmR * 0.35, y - palmR * 0.05);
+  ctx.quadraticCurveTo(x, y + palmR * 0.15, x + palmR * 0.35, y - palmR * 0.05);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
 function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number; t: number }[]) {
   const spr = sprite('item-shovel');

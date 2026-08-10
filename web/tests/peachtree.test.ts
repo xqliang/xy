@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, PEACH_TREE_INTERVALS } from '../src/battle';
+import { Battle, PEACH_TREE_INTERVALS, PEACH_TREE_PLANT_INTERVAL, peachTreeMergeBankNeed } from '../src/battle';
 
 // 桃树系统：产桃间隔、倒计时、拖动合并/移动、铲子限制。
 // 说明：种树/产桃只在 status 为 playing/ready 时推进；用开局 intro(ready, <6s) 窗口做产桃计时测试。
@@ -70,5 +70,51 @@ describe('铲子不能开垦有桃树的格', () => {
     b.shovels = 3;
     expect(b.useShovelOn(cell)).toBe(false);
     expect(b.trees.has(`${cell.c},${cell.r}`)).toBe(true);
+  });
+});
+
+function fillAllLockedWithTrees(b: Battle, level: number): void {
+  for (const c of b.lockedCells()) {
+    b.trees.set(`${c.c},${c.r}`, { level, cell: c, growT: 0 });
+  }
+}
+
+function triggerPlantTimer(b: Battle): void {
+  (b as unknown as { plantTimer: number }).plantTimer = PEACH_TREE_PLANT_INTERVAL;
+  b.step(1 / 60);
+}
+
+describe('蟠桃园满格自动合并', () => {
+  it('合并阈值：1级需1棵、2级需2棵、3级需4棵', () => {
+    expect(peachTreeMergeBankNeed(1)).toBe(1);
+    expect(peachTreeMergeBankNeed(2)).toBe(2);
+    expect(peachTreeMergeBankNeed(3)).toBe(4);
+    expect(peachTreeMergeBankNeed(4)).toBe(8);
+  });
+
+  it('满格全1级：定时触发后有一棵升为2级', () => {
+    const b = fresh();
+    fillAllLockedWithTrees(b, 1);
+    const n = b.trees.size;
+    triggerPlantTimer(b);
+    const levels = [...b.trees.values()].map((t) => t.level);
+    expect(levels.filter((l) => l === 2).length).toBe(1);
+    expect(b.trees.size).toBe(n);
+  });
+
+  it('满格全2级：需累计2次才有一棵升为3级', () => {
+    const b = fresh();
+    fillAllLockedWithTrees(b, 2);
+    triggerPlantTimer(b);
+    expect([...b.trees.values()].every((t) => t.level === 2)).toBe(true);
+    triggerPlantTimer(b);
+    expect([...b.trees.values()].filter((t) => t.level === 3).length).toBe(1);
+  });
+
+  it('满格全5级：不再合并升级', () => {
+    const b = fresh();
+    fillAllLockedWithTrees(b, 5);
+    triggerPlantTimer(b);
+    expect([...b.trees.values()].every((t) => t.level === 5)).toBe(true);
   });
 });
