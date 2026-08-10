@@ -364,6 +364,34 @@ export type TrayToken =
   | { kind: 'word'; char: string; general: string; tier: number }
   | { kind: 'tree'; level: number; growT: number };
 
+/** 候选区有效令牌（clearTraySlot 用 delete 留空洞，遍历须跳过） */
+export function trayTokens(tray: readonly (TrayToken | undefined)[]): TrayToken[] {
+  const out: TrayToken[] = [];
+  for (let i = 0; i < tray.length; i++) {
+    const t = tray[i];
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+export function findTrayIndex(
+  tray: readonly (TrayToken | undefined)[],
+  pred: (t: TrayToken) => boolean,
+): number {
+  for (let i = 0; i < tray.length; i++) {
+    const t = tray[i];
+    if (t && pred(t)) return i;
+  }
+  return -1;
+}
+
+export function traySome(
+  tray: readonly (TrayToken | undefined)[],
+  pred: (t: TrayToken) => boolean,
+): boolean {
+  return findTrayIndex(tray, pred) >= 0;
+}
+
 export type Status = 'ready' | 'playing' | 'won' | 'lost';
 
 export interface PlacedUnit {
@@ -1210,7 +1238,9 @@ export class Battle {
       for (const c of g.cells) activeKeys.add(cellKey(c.c, c.r));
     }
     const board = [...this.words.entries()].map(([k, w]) => ({ char: w.char, cellKey: k }));
-    const trayChars = this.tray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word').map((t) => t.char);
+    const trayChars = trayTokens(this.tray)
+      .filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word')
+      .map((t) => t.char);
     return collectOrphanChars(board, trayChars, activeKeys);
   }
 

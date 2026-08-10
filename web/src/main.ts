@@ -1,5 +1,5 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
-import { Battle, TUNING } from './battle';
+import { Battle, TUNING, findTrayIndex, traySome } from './battle';
 import { canMerge } from '@core';
 import type { UnitType } from '@core';
 import {
@@ -423,7 +423,7 @@ function firstSummonSequence(): TutorialSequence {
         title: '部署到地图',
         text: '把候选区里的令牌拖到下方绿色格子上即可放置。',
         getAnchor: () => {
-          const i = battle.tray.findIndex((t) => t.kind === 'unit' || t.kind === 'word');
+          const i = findTrayIndex(battle.tray, (t) => t.kind === 'unit' || t.kind === 'word');
           return i >= 0 ? trayTokenRect(i) : trayRowRect();
         },
       },
@@ -460,7 +460,7 @@ function firstPlacementSequence(): TutorialSequence {
 }
 
 function firstHeroWordAnchor(): { x: number; y: number; w: number; h: number } | null {
-  const i = battle.tray.findIndex((t) => t.kind === 'word');
+  const i = findTrayIndex(battle.tray, (t) => t.kind === 'word');
   return i >= 0 ? trayTokenRect(i) : null;
 }
 
@@ -479,7 +479,7 @@ function firstHeroWordSequence(): TutorialSequence {
 }
 
 function firstShovelAnchor(): { x: number; y: number; w: number; h: number } | null {
-  const i = battle.tray.findIndex((t) => t.kind === 'shovel');
+  const i = findTrayIndex(battle.tray, (t) => t.kind === 'shovel');
   return i >= 0 ? trayTokenRect(i) : null;
 }
 
@@ -656,13 +656,13 @@ function checkBattleTutorials(): void {
   }
   if (tutorialOverlay) return;
   // 同理需等候选令牌落位动画结束，避免铲子还在飞入时就弹引导
-  if (summonAnimDone(battle) && battle.tray.some((t) => t.kind === 'shovel')) {
+  if (summonAnimDone(battle) && traySome(battle.tray, (t) => t.kind === 'shovel')) {
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstShovelSequence());
   }
   if (tutorialOverlay) return;
   // 英雄字牌需等该槽飞入动画结束再弹引导，避免指向空槽或丝带
   {
-    const heroTrayIdx = battle.tray.findIndex((t) => t.kind === 'word');
+    const heroTrayIdx = findTrayIndex(battle.tray, (t) => t.kind === 'word');
     if (heroTrayIdx >= 0 && traySlotAnimDone(battle, heroTrayIdx)) {
       tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstHeroWordSequence());
     }
