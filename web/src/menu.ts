@@ -13,6 +13,7 @@ import {
   inkCheckboxCenteredLayout,
   menuInteract,
   applyMenuInteract,
+  type MenuInteract,
 } from './menu-ui';
 
 export interface MenuButton {
@@ -122,6 +123,7 @@ export function menuButtons(): MenuButton[] {
   return [
     { id: 'settings', ...SIDE_BTN, y: SIDE_Y0 },
     { id: 'codex', ...SIDE_BTN, y: SIDE_Y0 + SIDE + SIDE_GAP },
+    { id: 'help', ...SIDE_BTN, y: SIDE_Y0 + (SIDE + SIDE_GAP) * 2 },
     { id: 'staminaPlus', ...STAMINA_PLUS_BTN },
     { id: 'mapPick', ...MAP_PICK_BTN },
     { id: 'endless', ...ENDLESS_HIT },
@@ -136,6 +138,34 @@ export function menuButtonAt(x: number, y: number): string | null {
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b.id;
   }
   return null;
+}
+
+/** 首页「说明」侧栏按钮：无底板，仅问号徽记 */
+function drawHelpMenuButton(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  interact: MenuInteract,
+): void {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  ctx.save();
+  applyMenuInteract(ctx, rect, interact);
+
+  const badgeR = 22;
+  ctx.beginPath();
+  ctx.arc(cx, cy, badgeR, 0, Math.PI * 2);
+  ctx.fillStyle =
+    interact === 'pressed' ? 'rgba(160,70,50,0.95)' : interact === 'hover' ? 'rgba(190,100,75,0.95)' : 'rgba(180,90,70,0.9)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(90,48,20,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#fff8ee';
+  ctx.font = 'bold 26px "Songti SC", "STSong", "PingFang SC", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('?', cx, cy + 1);
+  ctx.restore();
 }
 
 function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
@@ -272,6 +302,10 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     }
     if (b.id === 'codex') {
       drawMenuSpriteButton(ctx, sprite('menu-btn-codex'), b, interact, 'none', '图鉴', 'secondary', 'cover');
+      continue;
+    }
+    if (b.id === 'help') {
+      drawHelpMenuButton(ctx, b, interact);
       continue;
     }
     if (b.id === 'rank') {

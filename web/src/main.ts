@@ -93,6 +93,12 @@ import {
   settingsSfxVolumeFromX,
 } from './menu-popups';
 import {
+  drawHelpPopup,
+  helpPopupHitAt,
+  helpMaxScroll,
+  type HelpLinkId,
+} from './menu-help';
+import {
   merchantClosed,
   openMerchant,
   drawMerchant,
@@ -251,10 +257,56 @@ try {
   gameSettings = resetSettings();
   syncAudioFromSettings();
 }
-type MenuPopup = 'none' | 'settings' | 'stamina' | 'map';
+type MenuPopup = 'none' | 'settings' | 'stamina' | 'map' | 'help';
 let menuPopup: MenuPopup = 'none';
 let staminaPopupToast = '';
 let menuSliderDrag: 'music' | 'sfx' | null = null;
+let helpScrollY = 0;
+let helpPointerActive = false;
+let helpDragged = false;
+let helpDownX = 0;
+let helpDownY = 0;
+let helpDownScroll = 0;
+
+function openHelpLink(id: HelpLinkId): void {
+  menuPopup = 'none';
+  helpScrollY = 0;
+  helpPointerActive = false;
+  helpDragged = false;
+  playSfx('click');
+  switch (id) {
+    case 'codex-unit':
+      resetCodex('unit');
+      screen = 'codex';
+      return;
+    case 'codex-hero':
+      resetCodex('hero');
+      screen = 'codex';
+      return;
+    case 'codex-monster':
+      resetCodex('monster');
+      screen = 'codex';
+      return;
+    case 'codex-skill':
+      resetCodex('skill');
+      screen = 'codex';
+      return;
+    case 'bag':
+      bagToast = '';
+      bagPopup = null;
+      bagScrollY = 0;
+      screen = 'bag';
+      return;
+    case 'stamina':
+      staminaPopupToast = '';
+      menuPopup = 'stamina';
+      return;
+    default: {
+      const _exhaustive: never = id;
+      void _exhaustive;
+    }
+  }
+}
 let pausePhase: PausePhase = 'main';
 const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
 
@@ -286,6 +338,11 @@ function handleMenu(id: string) {
   playSfx('click');
   if (id === 'settings') {
     menuPopup = 'settings';
+    return;
+  }
+  if (id === 'help') {
+    helpScrollY = 0;
+    menuPopup = 'help';
     return;
   }
   if (id === 'staminaPlus') {
@@ -377,6 +434,25 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       syncAudioFromSettings();
       return true;
     }
+    return true;
+  }
+  if (menuPopup === 'help') {
+    const hit = helpPopupHitAt(x, y, helpScrollY, ctx);
+    if (hit === null) return true;
+    if (hit.kind === 'close') {
+      playSfx('click');
+      menuPopup = 'none';
+      helpScrollY = 0;
+      helpPointerActive = false;
+      helpDragged = false;
+      return true;
+    }
+    // 面板内：交给拖动滚动；轻点链接在 pointerup 处理
+    helpPointerActive = true;
+    helpDragged = false;
+    helpDownX = x;
+    helpDownY = y;
+    helpDownScroll = helpScrollY;
     return true;
   }
   if (menuPopup === 'map') {
@@ -660,7 +736,7 @@ function onPointerDown(e: PointerEvent) {
   if (screen === 'menu') {
     if (handleMerchantPointer(x, y)) return;
     if (handleMenuPopupPointer(x, y)) {
-      if (menuSliderDrag) canvas.setPointerCapture(e.pointerId);
+      if (menuSliderDrag || helpPointerActive) canvas.setPointerCapture(e.pointerId);
       return;
     }
     menuDownId = menuButtonAt(x, y);
@@ -825,6 +901,13 @@ function onPointerMove(e: PointerEvent) {
       handleMenuPopupDrag(x);
       return;
     }
+    if (helpPointerActive && menuPopup === 'help') {
+      const dy = y - helpDownY;
+      if (Math.abs(dy) > 6) helpDragged = true;
+      helpScrollY = Math.max(0, Math.min(helpMaxScroll(ctx), helpDownScroll - dy));
+      scheduleFrame();
+      return;
+    }
     if (menuDownId) {
       const next = menuButtonAt(x, y) === menuDownId ? menuDownId : null;
       if (next !== menuPressedId) {
@@ -874,6 +957,18 @@ function onPointerMove(e: PointerEvent) {
 function onPointerUp(e?: PointerEvent, cancelled = false) {
   if (screen === 'menu') {
     menuSliderDrag = null;
+    if (helpPointerActive) {
+      const upX = e && !cancelled ? toLogical(e.clientX, e.clientY).x : helpDownX;
+      const upY = e && !cancelled ? toLogical(e.clientX, e.clientY).y : helpDownY;
+      const wasDrag = helpDragged;
+      helpPointerActive = false;
+      helpDragged = false;
+      if (!cancelled && !wasDrag) {
+        const hit = helpPopupHitAt(upX, upY, helpScrollY, ctx);
+        if (hit?.kind === 'link') openHelpLink(hit.id);
+      }
+      return;
+    }
   }
   if (screen === 'menu' && menuDownId) {
     const id = menuDownId;
@@ -960,6 +1055,12 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
 
 // 桌面端滚轮滚动商城
 canvas.addEventListener('wheel', (e) => {
+  if (screen === 'menu' && menuPopup === 'help') {
+    e.preventDefault();
+    helpScrollY = Math.max(0, Math.min(helpMaxScroll(ctx), helpScrollY + e.deltaY));
+    scheduleFrame();
+    return;
+  }
   if (screen === 'shop') {
     e.preventDefault();
     shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
@@ -1029,6 +1130,7 @@ function frame(now: number): void {
     if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings, loadUserId());
     else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
+    else if (menuPopup === 'help') drawHelpPopup(ctx, helpScrollY);
     if (merchant.open) {
       updateMerchantFloatToasts(dt);
       drawMerchant(ctx, merchant, loadout, merit);

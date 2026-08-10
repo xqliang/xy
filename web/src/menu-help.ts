@@ -1,0 +1,412 @@
+// 首页「操作说明」弹窗：水墨卷轴风，分区短文 + 可滚动，面向新手。
+import { VIEW_W, VIEW_H } from './render';
+import { drawInkPopupFrame, inkPopupCloseRect, roundRect } from './menu-ui';
+import { STAMINA_COST } from './stamina';
+
+function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const ch of text) {
+    if (ch === '\n') {
+      lines.push(line);
+      line = '';
+      continue;
+    }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxW) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+const HELP_PW = 440;
+const HELP_PH = 640;
+const HELP_PX = (VIEW_W - HELP_PW) / 2;
+const HELP_PY = (VIEW_H - HELP_PH) / 2;
+const HELP_PAD = 22;
+const HELP_CLOSE = inkPopupCloseRect(HELP_PX, HELP_PY);
+/** 标题栏下：固定滚动提示条高度 */
+const HELP_HINT_H = 28;
+const HELP_BODY_TOP = HELP_PY + 58 + HELP_HINT_H;
+const HELP_BODY_BOTTOM = HELP_PY + HELP_PH - 18;
+const HELP_VIEW_H = HELP_BODY_BOTTOM - HELP_BODY_TOP;
+const HELP_TEXT_W = HELP_PW - HELP_PAD * 2;
+
+type HelpBlock =
+  | { kind: 'title'; text: string }
+  | { kind: 'body'; text: string }
+  | { kind: 'step'; n: number; text: string }
+  | { kind: 'link'; id: HelpLinkId; text: string }
+  | { kind: 'gap'; h: number };
+
+/** 说明内跳转目标：图鉴 Tab / 神兵背包 */
+export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'bag' | 'stamina';
+
+/** 新手操作说明正文（固定文案，便于排版与单测） */
+export const HELP_BLOCKS: HelpBlock[] = [
+  { kind: 'title', text: '游戏目标' },
+  {
+    kind: 'body',
+    text: '地图分为上下两半：你守护下半场唐僧，上半场是对称的 AI 对手。妖怪沿路推进，别让它们撞上唐僧——任一方唐僧倒下，本局结束。',
+  },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '三步上手' },
+  { kind: 'step', n: 1, text: '点「征兵」花蟠桃，下方候选区会出现兵、铲子或武将字牌。' },
+  { kind: 'step', n: 2, text: '把它们拖到棋盘绿色格子上摆好。铲子拖到未开垦格，可开辟新阵位。' },
+  { kind: 'step', n: 3, text: '同种类、同等级的两个兵叠在一起或拖到一起，即可合成升阶（最高 5 阶）。' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '常用操作' },
+  {
+    kind: 'body',
+    text: '· 拖：候选区 → 棋盘摆放；棋盘上拖动可换位或合成；拖回空候选格可收回。',
+  },
+  {
+    kind: 'body',
+    text: '· 「布阵」：一键把候选区自动摆到合适位置，省去逐个拖放。建议先点布阵，再手动微调站位与合成。',
+  },
+  { kind: 'body', text: '· 轻点单位 / 妖怪 / 唐僧：查看信息与攻击范围。' },
+  { kind: 'body', text: '· 主动技能：征兵旁的技能按钮，冷却好了再点即可释放。' },
+  { kind: 'body', text: '· 左上角暂停：可继续或终止本局（终止不保留进度）。' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '兵器' },
+  {
+    kind: 'body',
+    text: '征兵得到的兵就是兵器：棍猴（刀）、枪天兵（枪）、天马骑兵（骑）、神箭手（弓）。它们是守路的主力，摆在妖怪必经之路上持续输出。',
+  },
+  {
+    kind: 'body',
+    text: '同种类、同等级可合成升阶（最高 5 阶），阶越高越强。铲子用来开垦未解锁格子，扩充可摆阵位。',
+  },
+  { kind: 'link', id: 'codex-unit', text: '打开兵器图鉴 ›' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '武将（英雄）' },
+  {
+    kind: 'body',
+    text: '征兵有时会出武将字牌。把同一武将的两个字左右紧邻摆放，就会金框激活，成为场上强力输出，并自带技能。悟空（大圣）在场时，还能触发羁绊给全队增伤。',
+  },
+  {
+    kind: 'body',
+    text: '武将靠输出与技能在局内成长升阶；拆开双字或中间隔空会失效。',
+  },
+  { kind: 'link', id: 'codex-hero', text: '打开英雄图鉴 ›' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '神兵（武器）' },
+  {
+    kind: 'body',
+    text: '每位武将有一件专属神兵。对局中武将攻击有机会掉落碎片，集齐后激活；重复获得可提升品质（白→金），提供攻击、攻速或范围加成。',
+  },
+  {
+    kind: 'body',
+    text: '在首页「神兵背包」装备神兵（最多 3 件），下一局开局即生效。未装备的神兵不会带入对局。',
+  },
+  { kind: 'link', id: 'bag', text: '打开神兵背包 ›' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '蟠桃从哪来' },
+  {
+    kind: 'body',
+    text: '击杀妖怪得蟠桃；唐僧掉血也会补偿一些。装备被动技能后还能额外产桃，例如「蟠桃园」自动种桃树、「聚宝盆」击杀多给、「摸金校尉」挖地额外得桃等。',
+  },
+  {
+    kind: 'body',
+    text: '征兵费用会越来越高，记得边打边合、把兵摆在妖怪必经之路上。',
+  },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '体力' },
+  {
+    kind: 'body',
+    text: `开始游戏消耗 ${STAMINA_COST} 点体力。体力不足时，可点顶栏「+」看广告或分享好友补充；未满时也会随时间自动恢复。`,
+  },
+  { kind: 'link', id: 'stamina', text: '获取体力 ›' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '局外成长' },
+  { kind: 'body', text: '· 结算获得功德，神秘商人可购买永久主动 / 被动技能。' },
+  { kind: 'body', text: '· 勾选「无尽模式」可挑战不限波次、难度渐增的持久战。' },
+  { kind: 'gap', h: 10 },
+
+  { kind: 'title', text: '相关页面' },
+  { kind: 'link', id: 'codex-unit', text: '兵器图鉴 ›' },
+  { kind: 'link', id: 'codex-hero', text: '英雄图鉴 ›' },
+  { kind: 'link', id: 'bag', text: '神兵背包 ›' },
+  { kind: 'link', id: 'codex-monster', text: '妖怪图鉴 ›' },
+  { kind: 'link', id: 'codex-skill', text: '技能图鉴 ›' },
+  { kind: 'link', id: 'stamina', text: '获取体力 ›' },
+];
+
+type LaidLine =
+  | { kind: 'title'; text: string; y: number }
+  | { kind: 'body'; text: string; y: number }
+  | { kind: 'step'; n: number; text: string; y: number }
+  | { kind: 'link'; id: HelpLinkId; text: string; y: number; textW: number };
+
+let cachedLayout: { lines: LaidLine[]; contentH: number } | null = null;
+
+function measureLayout(ctx: CanvasRenderingContext2D): { lines: LaidLine[]; contentH: number } {
+  if (cachedLayout) return cachedLayout;
+  const lines: LaidLine[] = [];
+  let y = 0;
+  const titleLh = 28;
+  const bodyLh = 22;
+  const stepLh = 22;
+  const linkLh = 26;
+
+  for (const block of HELP_BLOCKS) {
+    if (block.kind === 'gap') {
+      y += block.h;
+      continue;
+    }
+    if (block.kind === 'title') {
+      lines.push({ kind: 'title', text: block.text, y });
+      y += titleLh + 4;
+      continue;
+    }
+    if (block.kind === 'link') {
+      ctx.font = 'bold 14px "PingFang SC", serif';
+      const textW = ctx.measureText(block.text).width;
+      lines.push({ kind: 'link', id: block.id, text: block.text, y, textW });
+      y += linkLh;
+      continue;
+    }
+    if (block.kind === 'step') {
+      ctx.font = '14px "PingFang SC", serif';
+      const indent = 28;
+      const wrapped = wrapText(ctx, block.text, HELP_TEXT_W - indent);
+      for (let i = 0; i < wrapped.length; i++) {
+        lines.push({
+          kind: 'step',
+          n: i === 0 ? block.n : 0,
+          text: wrapped[i]!,
+          y,
+        });
+        y += stepLh;
+      }
+      y += 6;
+      continue;
+    }
+    ctx.font = '14px "PingFang SC", serif';
+    const wrapped = wrapText(ctx, block.text, HELP_TEXT_W);
+    for (const ln of wrapped) {
+      lines.push({ kind: 'body', text: ln, y });
+      y += bodyLh;
+    }
+    y += 4;
+  }
+
+  cachedLayout = { lines, contentH: y + 8 };
+  return cachedLayout;
+}
+
+export function helpContentHeight(ctx: CanvasRenderingContext2D): number {
+  return measureLayout(ctx).contentH;
+}
+
+export function helpMaxScroll(ctx: CanvasRenderingContext2D): number {
+  return Math.max(0, helpContentHeight(ctx) - HELP_VIEW_H);
+}
+
+export function helpPopupBounds(): { x: number; y: number; w: number; h: number } {
+  return { x: HELP_PX, y: HELP_PY, w: HELP_PW, h: HELP_PH };
+}
+
+export function helpScrollArea(): { x: number; y: number; w: number; h: number } {
+  return {
+    x: HELP_PX + HELP_PAD,
+    y: HELP_BODY_TOP,
+    w: HELP_TEXT_W,
+    h: HELP_VIEW_H,
+  };
+}
+
+export type HelpPopupHit =
+  | { kind: 'close' }
+  | { kind: 'scroll' }
+  | { kind: 'link'; id: HelpLinkId }
+  | null;
+
+function linkHitRect(
+  ln: Extract<LaidLine, { kind: 'link' }>,
+  scrollY: number,
+): { x: number; y: number; w: number; h: number } {
+  const x0 = HELP_PX + HELP_PAD;
+  const drawY = HELP_BODY_TOP + ln.y - scrollY;
+  return { x: x0 - 4, y: drawY - 4, w: Math.min(HELP_TEXT_W + 8, ln.textW + 16), h: 28 };
+}
+
+export function helpPopupHitAt(x: number, y: number, scrollY = 0, ctx?: CanvasRenderingContext2D): HelpPopupHit {
+  if (inRect(x, y, HELP_CLOSE)) return { kind: 'close' };
+  if (x < HELP_PX || x > HELP_PX + HELP_PW || y < HELP_PY || y > HELP_PY + HELP_PH) {
+    return { kind: 'close' };
+  }
+  // 内容区内优先检测链接（需已布局）
+  if (ctx && y >= HELP_BODY_TOP && y <= HELP_BODY_BOTTOM) {
+    const layout = measureLayout(ctx);
+    const maxScroll = Math.max(0, layout.contentH - HELP_VIEW_H);
+    const sy = Math.max(0, Math.min(maxScroll, scrollY));
+    for (const ln of layout.lines) {
+      if (ln.kind !== 'link') continue;
+      const r = linkHitRect(ln, sy);
+      if (r.y + r.h < HELP_BODY_TOP || r.y > HELP_BODY_BOTTOM) continue;
+      if (inRect(x, y, r)) return { kind: 'link', id: ln.id };
+    }
+  }
+  return { kind: 'scroll' };
+}
+
+function drawScrollTrack(ctx: CanvasRenderingContext2D, scrollY: number, maxScroll: number): void {
+  if (maxScroll <= 0) return;
+  const trackX = HELP_PX + HELP_PW - 10;
+  const trackY = HELP_BODY_TOP + 4;
+  const trackH = HELP_VIEW_H - 8;
+  const thumbH = Math.max(28, (HELP_VIEW_H / (HELP_VIEW_H + maxScroll)) * trackH);
+  const thumbY = trackY + (scrollY / maxScroll) * (trackH - thumbH);
+  ctx.fillStyle = 'rgba(90,60,30,0.18)';
+  roundRect(ctx, trackX, trackY, 4, trackH, 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(138,64,32,0.55)';
+  roundRect(ctx, trackX, thumbY, 4, thumbH, 2);
+  ctx.fill();
+}
+
+/** 标题栏下方固定提示：一打开就能看到「可上滑」 */
+function drawPinnedScrollHint(
+  ctx: CanvasRenderingContext2D,
+  scrollY: number,
+  maxScroll: number,
+): void {
+  const y0 = HELP_PY + 58;
+  const cx = HELP_PX + HELP_PW / 2;
+  ctx.fillStyle = 'rgba(180,90,70,0.12)';
+  ctx.fillRect(HELP_PX + 8, y0, HELP_PW - 16, HELP_HINT_H - 2);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '13px "PingFang SC", serif';
+
+  if (maxScroll <= 0) {
+    ctx.fillStyle = '#8a6030';
+    ctx.fillText('以下为完整操作说明', cx, y0 + (HELP_HINT_H - 2) / 2);
+    return;
+  }
+
+  const canDown = scrollY < maxScroll - 2;
+  const canUp = scrollY > 2;
+  let tip = '上下滑动查看更多';
+  if (canDown && !canUp) tip = '↑ 上滑继续阅读 ↓';
+  else if (canUp && canDown) tip = '↑ 继续滑动 ↓';
+  else if (canUp && !canDown) tip = '已到文末 · 可下滑回顶';
+
+  ctx.fillStyle = '#8a4020';
+  ctx.fillText(tip, cx, y0 + (HELP_HINT_H - 2) / 2);
+}
+
+export function drawHelpPopup(ctx: CanvasRenderingContext2D, scrollY: number): void {
+  drawInkPopupFrame(ctx, HELP_PX, HELP_PY, HELP_PW, HELP_PH, '操作说明', HELP_CLOSE);
+  const layout = measureLayout(ctx);
+  const maxScroll = Math.max(0, layout.contentH - HELP_VIEW_H);
+  const sy = Math.max(0, Math.min(maxScroll, scrollY));
+
+  drawPinnedScrollHint(ctx, sy, maxScroll);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(HELP_PX + 10, HELP_BODY_TOP, HELP_PW - 20, HELP_VIEW_H);
+  ctx.clip();
+
+  const x0 = HELP_PX + HELP_PAD;
+  for (const ln of layout.lines) {
+    const drawY = HELP_BODY_TOP + ln.y - sy;
+    if (drawY + 28 < HELP_BODY_TOP || drawY > HELP_BODY_BOTTOM) continue;
+
+    if (ln.kind === 'title') {
+      // 小节标题左侧朱红短竖
+      ctx.fillStyle = '#8a4020';
+      roundRect(ctx, x0, drawY + 4, 4, 16, 2);
+      ctx.fill();
+      ctx.fillStyle = '#5a3a12';
+      ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(ln.text, x0 + 12, drawY + 2);
+      continue;
+    }
+
+    if (ln.kind === 'step') {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      if (ln.n > 0) {
+        const badge = { x: x0, y: drawY + 1, w: 18, h: 18 };
+        roundRect(ctx, badge.x, badge.y, badge.w, badge.h, 9);
+        ctx.fillStyle = 'rgba(180,90,70,0.85)';
+        ctx.fill();
+        ctx.fillStyle = '#fff8ee';
+        ctx.font = 'bold 12px "PingFang SC", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(ln.n), badge.x + badge.w / 2, badge.y + badge.h / 2 + 0.5);
+      }
+      ctx.fillStyle = '#5a3a12';
+      ctx.font = '14px "PingFang SC", serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(ln.text, x0 + 28, drawY);
+      continue;
+    }
+
+    if (ln.kind === 'link') {
+      ctx.fillStyle = '#8a4020';
+      ctx.font = 'bold 14px "PingFang SC", serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(ln.text, x0, drawY);
+      // 下划线提示可点
+      ctx.strokeStyle = 'rgba(138,64,32,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x0, drawY + 16);
+      ctx.lineTo(x0 + ln.textW, drawY + 16);
+      ctx.stroke();
+      continue;
+    }
+
+    ctx.fillStyle = '#6a4a22';
+    ctx.font = '14px "PingFang SC", serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(ln.text, x0, drawY);
+  }
+  ctx.restore();
+
+  // 内容区上下淡出，配合固定提示条
+  if (sy > 2) {
+    const fade = ctx.createLinearGradient(0, HELP_BODY_TOP, 0, HELP_BODY_TOP + 16);
+    fade.addColorStop(0, 'rgba(240,230,208,0.95)');
+    fade.addColorStop(1, 'rgba(240,230,208,0)');
+    ctx.fillStyle = fade;
+    ctx.fillRect(HELP_PX + 10, HELP_BODY_TOP, HELP_PW - 20, 16);
+  }
+  if (sy < maxScroll - 2) {
+    const fade = ctx.createLinearGradient(0, HELP_BODY_BOTTOM - 16, 0, HELP_BODY_BOTTOM);
+    fade.addColorStop(0, 'rgba(220,201,164,0)');
+    fade.addColorStop(1, 'rgba(220,201,164,0.95)');
+    ctx.fillStyle = fade;
+    ctx.fillRect(HELP_PX + 10, HELP_BODY_BOTTOM - 16, HELP_PW - 20, 16);
+  }
+
+  drawScrollTrack(ctx, sy, maxScroll);
+}

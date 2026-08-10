@@ -202,8 +202,8 @@ export function codexMaxScroll(): number {
   return Math.max(0, codexContentHeight(codexTab) - CONTENT_H);
 }
 
-export function resetCodex(): void {
-  codexTab = 'unit';
+export function resetCodex(tab: CodexTab = 'unit'): void {
+  codexTab = tab;
   codexScrollY = 0;
   codexPointerActive = false;
   codexDragged = false;
