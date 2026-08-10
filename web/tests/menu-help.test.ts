@@ -26,6 +26,7 @@ describe('操作说明弹窗', () => {
       '兵器',
       '武将（英雄）',
       '神兵（武器）',
+      '主动与被动技能',
       '蟠桃从哪来',
       '体力',
       '局外成长',
@@ -64,10 +65,35 @@ describe('操作说明弹窗', () => {
     expect(auto && auto.kind === 'body' ? auto.text : '').toMatch(/手动微调/);
   });
 
-  it('武将介绍包含字牌激活与羁绊', () => {
-    const hero = HELP_BLOCKS.filter((b) => b.kind === 'body' && (b.text.includes('字牌') || b.text.includes('羁绊')));
-    expect(hero.length).toBeGreaterThan(0);
-    expect(hero.some((b) => b.kind === 'body' && /左右紧邻/.test(b.text))).toBe(true);
+  it('武将介绍包含字牌激活、满级差、继承与分类', () => {
+    const heroBodies = HELP_BLOCKS.filter((b) => b.kind === 'body').map((b) =>
+      b.kind === 'body' ? b.text : '',
+    );
+    const joined = heroBodies.join('\n');
+    expect(joined).toMatch(/左右紧邻/);
+    expect(joined).toMatch(/满 3/);
+    expect(joined).toMatch(/满 5/);
+    expect(joined).toMatch(/继承|对齐/);
+    expect(joined).toMatch(/输出/);
+    expect(joined).toMatch(/控制/);
+    expect(joined).toMatch(/辅助/);
+    expect(joined).toMatch(/过渡/);
+  });
+
+  it('技能说明包含主动被动装配与日重置', () => {
+    const skillTitle = HELP_BLOCKS.find((b) => b.kind === 'title' && b.text === '主动与被动技能');
+    expect(skillTitle).toBeTruthy();
+    const joined = HELP_BLOCKS.filter((b) => b.kind === 'body')
+      .map((b) => (b.kind === 'body' ? b.text : ''))
+      .join('\n');
+    expect(joined).toMatch(/神秘商人/);
+    expect(joined).toMatch(/结算.*首页|回首页/);
+    expect(joined).toMatch(/主动技能/);
+    expect(joined).toMatch(/被动技能/);
+    expect(joined).toMatch(/自然日|每日|跨天/);
+    expect(joined).toMatch(/最多装备 2/);
+    expect(joined).toMatch(/最多装备 6/);
+    expect(joined).toMatch(/技能图鉴.*卸下|卸下\/重装|本页不能购买/);
   });
 
   it('神兵介绍包含掉落与装备上限', () => {

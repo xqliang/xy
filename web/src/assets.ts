@@ -55,15 +55,29 @@ export type AssetKey =
   | 'menu-btn-stamina-ad'
   | 'menu-btn-stamina-share'
   | 'rank-star-on'
-  | 'rank-star-off';
+  | 'rank-star-off'
+  | 'icon-merit'
+  | 'icon-stamina'
+  | `skill-${string}`;
 
-const cache: Partial<Record<AssetKey, HTMLImageElement>> = {};
+const cache: Partial<Record<string, HTMLImageElement>> = {};
 let ready = false;
 export function assetsReady(): boolean {
   return ready;
 }
 
-function loadOne(key: AssetKey): Promise<void> {
+export type AssetLoadPhase = 'images' | 'audio' | 'done';
+export interface AssetLoadProgress {
+  loaded: number;
+  total: number;
+  phase: AssetLoadPhase;
+  /** 当前刚完成的资源 key（可选，便于调试） */
+  key?: string;
+}
+
+export type AssetLoadProgressCb = (p: AssetLoadProgress) => void;
+
+function loadOne(key: string): Promise<void> {
   return new Promise((resolve) => {
     const url = ASSET_URLS[key];
     if (!url) { resolve(); return; }
@@ -77,15 +91,36 @@ function loadOne(key: AssetKey): Promise<void> {
   });
 }
 
-export async function loadAssets(): Promise<void> {
-  // 只预载图片素材；bgm-* 等音频资源不走 <img>，由 sfx 模块按需 fetch+decode。
-  const imgKeys = (Object.keys(ASSET_URLS) as AssetKey[]).filter((k) => !k.startsWith('bgm-'));
-  await Promise.all(imgKeys.map(loadOne));
-  ready = true;
-  (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
+/** 图片类资源 key（不含 bgm-*） */
+export function imageAssetKeys(): string[] {
+  return Object.keys(ASSET_URLS).filter((k) => !k.startsWith('bgm-'));
 }
 
-export function sprite(key: AssetKey): HTMLImageElement | undefined {
+/**
+ * 预载全部图片素材；可通过 onProgress 驱动加载页。
+ * bgm-* 不走 <img>，由 sfx 模块按需 fetch+decode（加载页可单独标 phase='audio'）。
+ */
+export async function loadAssets(onProgress?: AssetLoadProgressCb): Promise<void> {
+  const imgKeys = imageAssetKeys();
+  const total = imgKeys.length;
+  let loaded = 0;
+  onProgress?.({ loaded: 0, total, phase: 'images' });
+
+  await Promise.all(imgKeys.map(async (key) => {
+    await loadOne(key);
+    loaded += 1;
+    onProgress?.({ loaded, total, phase: 'images', key });
+  }));
+
+  // 货币桃图标与被动「蟠桃园」同图，避免重复打包
+  if (cache['skill-pas-pantao']) cache.peach = cache['skill-pas-pantao'];
+
+  ready = true;
+  (window as unknown as { __assetsReady: boolean }).__assetsReady = true;
+  onProgress?.({ loaded: total, total, phase: 'done' });
+}
+
+export function sprite(key: AssetKey | string): HTMLImageElement | undefined {
   return cache[key];
 }
 

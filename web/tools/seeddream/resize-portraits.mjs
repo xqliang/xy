@@ -46,12 +46,37 @@ const TARGET = {
   'menu-btn-rank.png': 786, // max(262, 98)
   'menu-btn-bag.png': 276, // 92
   'menu-btn-start.png': 1116, // 372
-  'menu-btn-stamina-plus.png': 78, // PLUS 26
+  'menu-btn-stamina-plus.png': 96, // PLUS 32
   'menu-btn-map.png': 792, // max(264, 40)
   'menu-btn-stamina-ad.png': 1056, // max(352, 62)
   'menu-btn-stamina-share.png': 1056,
-  'rank-star-on.png': 66, // 22
-  'rank-star-off.png': 66,
+  'rank-star-on.png': 153, // settle 星 44 × 动画放大 1.16 ×3
+  'rank-star-off.png': 153,
+  // 功德/体力图标：显示尺寸见 MERIT_ICON_PAGE_DISPLAY / STAMINA_ICON_PAGE_DISPLAY ×3
+  'icon-merit.png': 108, // 商店 36
+  'icon-stamina.png': 252, // 体力弹窗主图 84
+  // 技能图标：战斗主动圆 ACT_D=60（drawSkillGlyph 内图约 48）×3；兼作蟠桃 UI（PEACH_UI_ICON_SIZE=39）
+  'skill-act-palm.png': 180,
+  'skill-act-meteor.png': 180,
+  'skill-act-atk.png': 180,
+  'skill-act-frq.png': 180,
+  'skill-act-freeze.png': 180,
+  'skill-act-jinggu.png': 180,
+  'skill-pas-pantao.png': 180,
+  'skill-pas-xiandan.png': 180,
+  'skill-pas-fenghuolun.png': 180,
+  'skill-pas-fabaofu.png': 180,
+  'skill-pas-zhaoxian.png': 180,
+  'skill-pas-mojin.png': 180,
+  'skill-pas-luoyangchan.png': 180,
+  'skill-pas-yunshi.png': 180,
+  'skill-pas-yuni.png': 180,
+  'skill-pas-xianyuan.png': 180,
+  'skill-pas-jubaopen.png': 180,
+  'skill-pas-hushen.png': 180,
+  'skill-pas-zhuwang.png': 180,
+  'skill-pas-tongxin.png': 180,
+  'skill-pas-dinghai.png': 180,
   'menu-home.png': 3132, // max(VIEW_W, VIEW_H) cover 背景
   'merchant-peddler.png': 216, // PEDDLER_BOX 72
 };

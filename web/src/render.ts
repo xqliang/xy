@@ -24,6 +24,11 @@ import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
 import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
+import { drawSkillGlyph } from './skill-icon';
+import { drawPeachIcon } from './peach-icon';
+
+/** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
+export const PEACH_UI_ICON_SIZE = Math.round(26 * 1.5 * 0.7);
 
 export const VIEW_W = 560;
 export const HUD_H = 72;
@@ -49,6 +54,11 @@ const UNIT_LABEL: Record<UnitType, string> = {
 
 export function cellCenterPx(c: number, r: number): { x: number; y: number } {
   return { x: BOARD_X + c * CELL + CELL / 2, y: BOARD_Y + r * CELL + CELL / 2 };
+}
+
+/** 单格矩形（新手引导高亮出怪口/唐僧格等用） */
+export function cellRect(c: number, r: number): { x: number; y: number; w: number; h: number } {
+  return { x: BOARD_X + c * CELL, y: BOARD_Y + r * CELL, w: CELL, h: CELL };
 }
 
 export function pxToCell(x: number, y: number): Cell | null {
@@ -788,6 +798,17 @@ export function trayIndexAt(x: number, y: number): number | null {
   const i = Math.floor((x - TRAY_LEFT) / TRAY_SLOT);
   if (i < 0 || i >= TUNING.traySize) return null;
   return i;
+}
+
+/** 候选区第 i 槽的可视内框（新手引导高亮令牌用，与 drawTrayToken 的凹槽同尺寸） */
+export function trayTokenRect(i: number): { x: number; y: number; w: number; h: number } {
+  const cx = TRAY_LEFT + i * TRAY_SLOT;
+  return { x: cx + 3, y: TRAY_Y + 5, w: TRAY_SLOT - 6, h: TRAY_H - 10 };
+}
+
+/** 候选区整行范围（新手引导高亮兵种介绍用） */
+export function trayRowRect(): { x: number; y: number; w: number; h: number } {
+  return { x: TRAY_LEFT, y: TRAY_Y, w: TUNING.traySize * TRAY_SLOT, h: TRAY_H };
 }
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
@@ -3095,36 +3116,32 @@ function drawUltBailong(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
   }
 }
 
-// 击杀蟠桃飘字：头上 🍑+N（+N 字号更小），升空不透明，过顶后按下落进度淡出
+// 击杀蟠桃飘字：头上 桃图+N（+N 字号更小），升空不透明，过顶后按下落进度淡出
 function drawPeachFloats(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const p of b.peachFloats) {
     const { x, y: cy } = cellCenterPx(p.c, p.r);
     const y = cy + p.y * CELL;
     const fallProgress = p.y >= p.peakY ? (p.y - p.peakY) / PEACH_FLOAT_FALL : 0;
     const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
-    const peach = '🍑';
     const num = `+${p.amount}`;
-    const peachPx = Math.round(CELL * 0.42);
+    const peachSize = Math.round(CELL * 0.42);
     const numPx = Math.round(CELL * 0.28);
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textBaseline = 'middle';
-    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
-    const peachW = ctx.measureText(peach).width;
     ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
     const numW = ctx.measureText(num).width;
-    const totalW = peachW + numW;
+    const gap = 2;
+    const totalW = peachSize + gap + numW;
     const left = x - totalW / 2;
+    drawPeachIcon(ctx, left + peachSize / 2, y, peachSize);
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(20,16,12,0.85)';
     ctx.fillStyle = '#fffef6';
     ctx.textAlign = 'left';
-    ctx.font = `bold ${peachPx}px "PingFang SC", sans-serif`;
-    ctx.strokeText(peach, left, y);
-    ctx.fillText(peach, left, y);
     ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
-    ctx.strokeText(num, left + peachW, y);
-    ctx.fillText(num, left + peachW, y);
+    ctx.strokeText(num, left + peachSize + gap, y);
+    ctx.fillText(num, left + peachSize + gap, y);
     ctx.restore();
   }
 }
@@ -3721,7 +3738,7 @@ function drawPeachTrees(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
-// 单棵桃树矢量图标（自包含，无需外部图片素材）：越高级树冠越大、桃子越多、颜色越艳
+// 单棵桃树：树干+树冠矢量，桃子用生成的桃图；越高级树冠越大、桃子越多
 function drawPeachTree(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, level: number) {
   const s = size;
   ctx.save();
@@ -3736,17 +3753,14 @@ function drawPeachTree(ctx: CanvasRenderingContext2D, x: number, y: number, size
   for (const [dx, dy] of canopy) { ctx.beginPath(); ctx.arc(x + dx, y + dy - s * 0.02, r, 0, Math.PI * 2); ctx.fill(); }
   ctx.fillStyle = '#49a24e'; // 高光团
   ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.35 - s * 0.02, r * 0.7, 0, Math.PI * 2); ctx.fill();
-  // 桃子：数量 = 等级（1..5），粉色带小尖
+  // 桃子：数量 = 等级（1..5），用生成的桃图
   const peachN = Math.min(level, PEACH_TREE_MAX_LEVEL);
-  const pr = s * 0.075;
+  const pr = s * 0.16;
   for (let i = 0; i < peachN; i++) {
     const a = -Math.PI / 2 + (i - (peachN - 1) / 2) * 0.7;
     const px = x + Math.cos(a) * r * 0.8;
     const py = y + Math.sin(a) * r * 0.8 - s * 0.04;
-    ctx.fillStyle = '#ff8fa8';
-    ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e0577a';
-    ctx.beginPath(); ctx.arc(px + pr * 0.35, py, pr * 0.55, 0, Math.PI * 2); ctx.fill();
+    drawPeachIcon(ctx, px, py, pr * 2);
   }
   // 等级角标
   ctx.fillStyle = 'rgba(20,16,10,0.7)';
@@ -4916,12 +4930,15 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillRect(0, HUD_H - 2, VIEW_W, 2);
   // 蟠桃在暂停钮右侧，避免与 ‖ 重叠
   const pauseR = pauseBtnRect();
+  const peachIconSize = PEACH_UI_ICON_SIZE;
   const peachX = pauseR.x + pauseR.w + 10;
+  const peachCy = HUD_H / 2;
+  drawPeachIcon(ctx, peachX + peachIconSize / 2, peachCy, peachIconSize);
   ctx.fillStyle = '#7a3b12';
   ctx.font = 'bold 24px "PingFang SC", sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`🍑 ${b.peach}`, peachX, HUD_H / 2);
+  ctx.fillText(String(b.peach), peachX + peachIconSize + 6, peachCy);
   // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
@@ -5032,21 +5049,20 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       // 征兵/布阵：浅字 + 深描边，在进度填充与深底上都能读清（四图统一）
       if (btn.id === 'summon') {
         // 文字与桃子分开画：留间距；不可征兵时桃子变灰
-        const peach = '🍑';
-        const gap = 12;
+        const peachSize = PEACH_UI_ICON_SIZE;
+        const gap = 10;
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
         ctx.lineWidth = 4;
         ctx.strokeStyle = 'rgba(20,14,8,0.92)';
         const textW = ctx.measureText(btn.label).width;
-        const peachW = ctx.measureText(peach).width;
-        const totalW = textW + gap + peachW;
+        const totalW = textW + gap + peachSize;
         const textX = tx - totalW / 2 + textW / 2;
-        const peachX = tx - totalW / 2 + textW + gap + peachW / 2;
+        const peachX = tx - totalW / 2 + textW + gap + peachSize / 2;
         ctx.strokeText(btn.label, textX, ty);
         ctx.fillStyle = btn.enabled ? '#fff8e8' : '#fff3d6';
         ctx.fillText(btn.label, textX, ty);
-        ctx.fillText(peach, peachX, ty);
+        drawPeachIcon(ctx, peachX, ty, peachSize, { gray: !btn.enabled });
       } else if (btn.id === 'autoplace') {
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
@@ -5102,17 +5118,7 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
     const def = activeById(slot.id);
     const cx = btn.x + btn.w / 2, cy = btn.y + btn.h / 2;
     const r = btn.w / 2;
-    // 圆形底
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = slot.ready ? '#b5762a' : '#4a3f30';
-    ctx.fill();
-    // 图标字形
-    ctx.fillStyle = slot.ready ? '#fff6e6' : '#c9bfae';
-    ctx.font = `${Math.round(btn.w * 0.5)}px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(def?.icon ?? '?', cx, cy);
+    drawSkillGlyph(ctx, cx, cy, r - 1, def?.icon ?? '?', '#b5762a', slot.ready, slot.id);
     if (!slot.ready) {
       // 剩余冷却扇形（从 12 点方向顺时针覆盖，比例=剩余CD），半径与圆一致
       const frac = slot.cdMax > 0 ? slot.cd / slot.cdMax : 0;
@@ -5126,6 +5132,8 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.restore();
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 16px "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.fillText(String(Math.ceil(slot.cd)), cx, cy);
     } else {
       // 就绪：与征兵提示同色系、更慢更淡的金边脉冲
@@ -5167,11 +5175,16 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = '#6ab07a';
     ctx.stroke();
-    ctx.fillStyle = '#fff6e6';
-    ctx.font = `${Math.round(btn.w * 0.5)}px "PingFang SC", sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(def.icon ?? def.name[0]!, btn.x + btn.w / 2, btn.y + btn.h / 2);
+    drawSkillGlyph(
+      ctx,
+      btn.x + btn.w / 2,
+      btn.y + btn.h / 2 - (b.passiveProgress(def.id) ? 2 : 0),
+      Math.min(btn.w, btn.h) * 0.38,
+      def.icon ?? def.name[0]!,
+      '#6ab07a',
+      true,
+      def.id,
+    );
     const prog = b.passiveProgress(def.id);
     if (prog) {
       const by = btn.y + btn.h - 5;

@@ -29,6 +29,7 @@ import {
 import type { MeritState } from './merit';
 import { spendMerit } from './merit';
 import { clearMerchantFloatToasts, pushMerchantFloatToast } from './merchant-toast';
+import { drawSkillGlyph } from './skill-icon';
 
 export type SkillKind = 'active' | 'passive';
 
@@ -470,6 +471,20 @@ function passiveSlotRects(loadout: LoadoutState): EquipSlotRect[] {
   }));
 }
 
+/** 「主动」装备行整体范围（新手引导高亮用，坐标固定，不依赖 loadout） */
+export function merchantActiveRowRect(): { x: number; y: number; w: number; h: number } {
+  const pitch = ACT_SLOT + 10;
+  const startX = equipGridStartX(MAX_EQUIPPED_ACTIVES, ACT_SLOT, pitch);
+  return { x: startX, y: ACT_ROW_Y, w: MAX_EQUIPPED_ACTIVES * pitch - (pitch - ACT_SLOT), h: ACT_SLOT };
+}
+
+/** 「被动」装备行整体范围（新手引导高亮用，坐标固定，不依赖 loadout） */
+export function merchantPassiveRowRect(): { x: number; y: number; w: number; h: number } {
+  const pitch = PAS_SLOT + 6;
+  const startX = equipGridStartX(MAX_EQUIPPED_PASSIVES, PAS_SLOT, pitch);
+  return { x: startX, y: PAS_ROW_Y, w: MAX_EQUIPPED_PASSIVES * pitch - (pitch - PAS_SLOT), h: PAS_SLOT };
+}
+
 function unequipBtnRect(slot: { x: number; y: number; w: number; h: number }) {
   return { x: slot.x + slot.w - 15, y: slot.y + 3, w: 15, h: 15 };
 }
@@ -678,18 +693,7 @@ function drawOfferCard(
   const iconR = 22;
   const iconCx = r.x + 36;
   const iconCy = blockTop + blockH / 2;
-  ctx.beginPath();
-  ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(48,28,12,0.12)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,30,0.45)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = '#3a2208';
-  ctx.font = '26px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(def.icon, iconCx, iconCy);
+  drawSkillGlyph(ctx, iconCx, iconCy, iconR, def.icon, rarity.color, true, offer.id);
 
   const textY = blockTop;
   const by = blockTop + (blockH - OFFER_BTN_H) / 2;
@@ -740,14 +744,11 @@ function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): voi
       if (preview) {
         const def = preview.kind === 'active' ? activeById(preview.id) : passiveById(preview.id);
         if (def) {
-          ctx.font = '26px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = '#000';
-          ctx.fillText(def.icon, cell.x + cell.w / 2, cell.y + cell.h / 2 - 12);
           const kindMeta = skillKindMeta(preview.kind);
+          drawSkillGlyph(ctx, cell.x + cell.w / 2, cell.y + cell.h / 2 - 14, 18, def.icon, kindMeta.color, true, preview.id);
           ctx.fillStyle = kindMeta.color;
           ctx.font = 'bold 10px "PingFang SC", "STKaiti", serif';
+          ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
           ctx.fillText(kindMeta.label, cell.x + cell.w / 2, cell.y + cell.h - 22);
           ctx.fillStyle = '#4a2808';
@@ -922,7 +923,7 @@ export function drawMerchant(
   drawInkTab(ctx, TAB_SHOP, '商店', m.tab === 'shop');
   drawInkTab(ctx, TAB_LOTTERY, '抽奖', m.tab === 'lottery');
 
-  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit));
+  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit), 0, 'icon-merit');
 
   if (m.tab === 'shop') {
     for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, loadout, merit, i);

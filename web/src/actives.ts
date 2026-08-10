@@ -15,7 +15,8 @@ export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' 
 export interface ActiveSkillDef {
   id: string; // 稳定 id（与被动技能 id 刻意区分，两套系统互不查表）
   name: string;
-  icon: string; // 图标（emoji 或 1 个汉字，Canvas fillText 渲染）
+  /** 图标：优先单字汉字（跨端清晰）；避免细线 emoji 在深色底看不清 */
+  icon: string;
   cd: number; // 冷却秒数
   cost: number; // 购买消耗功德
   effect: ActiveEffect;
@@ -29,17 +30,17 @@ export const MAX_EQUIPPED_ACTIVES = 2;
 
 // 主动技能池（数值经平衡修订：压掌/陨石节奏，统一大招缩放）
 export const ACTIVE_SKILLS: ActiveSkillDef[] = [
-  { id: 'act_palm', name: '如来神掌', icon: '🖐', cd: 75, cost: 65, effect: 'palm',
+  { id: 'act_palm', name: '如来神掌', icon: '掌', cd: 75, cost: 65, effect: 'palm',
     desc: '把场上所有妖怪沿路击退 7 格（绝境续命，不再重置到起点）' },
-  { id: 'act_meteor', name: '天降陨石', icon: '☄', cd: 28, cost: 60, effect: 'meteor',
+  { id: 'act_meteor', name: '天降陨石', icon: '陨', cd: 28, cost: 60, effect: 'meteor',
     desc: '对最前方妖怪群砸下波血×2.2 的伤害（半径 1.4）' },
-  { id: 'act_atk', name: '仙丹', icon: '🔴', cd: 22, cost: 50, effect: 'atkBuff',
+  { id: 'act_atk', name: '仙丹', icon: '丹', cd: 22, cost: 50, effect: 'atkBuff',
     desc: '5 秒内全体攻击 +30%' },
-  { id: 'act_frq', name: '风火轮', icon: '🔥', cd: 22, cost: 50, effect: 'frqBuff',
+  { id: 'act_frq', name: '风火轮', icon: '轮', cd: 22, cost: 50, effect: 'frqBuff',
     desc: '5 秒内全体攻速 +30%' },
-  { id: 'act_freeze', name: '冰封定身', icon: '❄', cd: 24, cost: 70, effect: 'freeze',
+  { id: 'act_freeze', name: '冰封定身', icon: '冰', cd: 24, cost: 70, effect: 'freeze',
     desc: '全体妖怪定身 1.8 秒' },
-  { id: 'act_jinggu', name: '紧箍咒', icon: '💫', cd: 55, cost: 70, effect: 'jinggu',
+  { id: 'act_jinggu', name: '紧箍咒', icon: '咒', cd: 55, cost: 70, effect: 'jinggu',
     desc: '以最前妖怪为中心大范围爆发（波血×2.4，半径 2.5）' },
 ];
 

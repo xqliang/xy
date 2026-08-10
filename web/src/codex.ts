@@ -9,6 +9,14 @@ import { enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import { skillRarityColor } from './merchant';
 import { drawInkActionButton, roundRect } from './menu-ui';
+import { drawSkillGlyph } from './skill-icon';
+import {
+  isEquipped,
+  isOwnedActive,
+  isOwnedPassive,
+  isPassiveEquipped,
+  type LoadoutState,
+} from './loadout';
 
 export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill';
 
@@ -41,10 +49,14 @@ const MAP_NAME_W = 72;
 const EXAMPLE_WAVE = 5;
 const GRID_LEFT = (VIEW_W - (CARD_W * 2 + UNIT_GAP)) / 2;
 const GRID_W = CARD_W * 2 + UNIT_GAP;
-const SKILL_CARD_H = 94;
+const SKILL_CARD_H = 108;
 const SKILL_CARD_GAP = 6;
 const SKILL_ACTIVE_COLOR = '#6ab0ff';
 const SKILL_PASSIVE_COLOR = '#7ec46a';
+const SKILL_ACTION_W = 76;
+const SKILL_ACTION_H = 32;
+const SKILL_HINT_H = 44;
+const SKILL_SECTION_H = 22;
 
 const SKILL_DESC: Record<MonsterSkill, string> = {
   stun: '定身范围内兵器，暂停攻击',
@@ -120,8 +132,11 @@ let codexTab: CodexTab = 'unit';
 let codexScrollY = 0;
 let codexPointerActive = false;
 let codexDownY = 0;
+let codexDownX = 0;
 let codexDownScroll = 0;
 let codexDragged = false;
+let codexToast = '';
+let codexToastUntil = 0;
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -174,9 +189,9 @@ function skillContentHeight(): number {
   const actives = enabledActives();
   const passives = enabledPassives();
   return (
-    28
-    + 22 + actives.length * (SKILL_CARD_H + SKILL_CARD_GAP)
-    + 18 + 22 + passives.length * (SKILL_CARD_H + SKILL_CARD_GAP)
+    SKILL_HINT_H
+    + SKILL_SECTION_H + actives.length * (SKILL_CARD_H + SKILL_CARD_GAP)
+    + 14 + SKILL_SECTION_H + passives.length * (SKILL_CARD_H + SKILL_CARD_GAP)
     + 8
   );
 }
@@ -207,6 +222,17 @@ export function resetCodex(tab: CodexTab = 'unit'): void {
   codexScrollY = 0;
   codexPointerActive = false;
   codexDragged = false;
+  codexToast = '';
+  codexToastUntil = 0;
+}
+
+export function setCodexToast(msg: string, ms = 2200): void {
+  codexToast = msg;
+  codexToastUntil = performance.now() + ms;
+}
+
+export function codexNeedsAnim(): boolean {
+  return !!codexToast && performance.now() < codexToastUntil;
 }
 
 export function codexHitBack(x: number, y: number): boolean {
@@ -218,6 +244,93 @@ function codexTabAt(x: number, y: number): CodexTab | null {
   if (inRect(x, y, TAB_HERO)) return 'hero';
   if (inRect(x, y, TAB_MONSTER)) return 'monster';
   if (inRect(x, y, TAB_SKILL)) return 'skill';
+  return null;
+}
+
+export type CodexSkillAction =
+  | { kind: 'equip'; skillKind: 'active' | 'passive'; id: string }
+  | { kind: 'unequip'; skillKind: 'active' | 'passive'; id: string };
+
+type SkillCardAction = 'equip' | 'unequip' | 'none';
+
+type SkillCardLayout = {
+  skillKind: 'active' | 'passive';
+  id: string;
+  cardY: number; // content-space y (unscrolled)
+  action: SkillCardAction;
+  actionRect: { x: number; y: number; w: number; h: number }; // content-space
+};
+
+function skillActionFor(
+  loadout: LoadoutState,
+  skillKind: 'active' | 'passive',
+  id: string,
+): SkillCardAction {
+  if (skillKind === 'active') {
+    if (isEquipped(loadout, id)) return 'unequip';
+    if (isOwnedActive(loadout, id)) return 'equip';
+    return 'none';
+  }
+  if (isPassiveEquipped(loadout, id)) return 'unequip';
+  if (isOwnedPassive(loadout, id)) return 'equip';
+  return 'none';
+}
+
+function buildSkillLayouts(loadout: LoadoutState): SkillCardLayout[] {
+  const layouts: SkillCardLayout[] = [];
+  let y = SKILL_HINT_H + SKILL_SECTION_H;
+  for (const skill of enabledActives()) {
+    const action = skillActionFor(loadout, 'active', skill.id);
+    layouts.push({
+      skillKind: 'active',
+      id: skill.id,
+      cardY: y,
+      action,
+      actionRect: {
+        x: GRID_LEFT + GRID_W - SKILL_ACTION_W - 12,
+        y: y + (SKILL_CARD_H - SKILL_ACTION_H) / 2,
+        w: SKILL_ACTION_W,
+        h: SKILL_ACTION_H,
+      },
+    });
+    y += SKILL_CARD_H + SKILL_CARD_GAP;
+  }
+  y += 14 + SKILL_SECTION_H;
+  for (const skill of enabledPassives()) {
+    const action = skillActionFor(loadout, 'passive', skill.id);
+    layouts.push({
+      skillKind: 'passive',
+      id: skill.id,
+      cardY: y,
+      action,
+      actionRect: {
+        x: GRID_LEFT + GRID_W - SKILL_ACTION_W - 12,
+        y: y + (SKILL_CARD_H - SKILL_ACTION_H) / 2,
+        w: SKILL_ACTION_W,
+        h: SKILL_ACTION_H,
+      },
+    });
+    y += SKILL_CARD_H + SKILL_CARD_GAP;
+  }
+  return layouts;
+}
+
+/** 屏幕坐标 → 技能操作（仅技能 Tab；content 区） */
+export function codexSkillActionAt(
+  x: number,
+  y: number,
+  loadout: LoadoutState,
+): CodexSkillAction | null {
+  if (codexTab !== 'skill') return null;
+  if (y < CONTENT_TOP || y > CONTENT_TOP + CONTENT_H) return null;
+  const contentY = y - CONTENT_TOP + codexScrollY;
+  for (const layout of buildSkillLayouts(loadout)) {
+    if (layout.action === 'none') continue;
+    const r = layout.actionRect;
+    if (x >= r.x && x <= r.x + r.w && contentY >= r.y && contentY <= r.y + r.h) {
+      return { kind: layout.action, skillKind: layout.skillKind, id: layout.id };
+    }
+  }
   return null;
 }
 
@@ -233,6 +346,7 @@ export function codexPointerDown(x: number, y: number): boolean {
   if (y < CONTENT_TOP) return false;
   codexPointerActive = true;
   codexDragged = false;
+  codexDownX = x;
   codexDownY = y;
   codexDownScroll = codexScrollY;
   return true;
@@ -246,8 +360,17 @@ export function codexPointerMove(x: number, y: number): void {
   codexScrollY = Math.max(0, Math.min(codexMaxScroll(), codexDownScroll - dy));
 }
 
-export function codexPointerUp(): void {
+/** 若未拖动且点在技能按钮上，返回装备操作；否则 null */
+export function codexPointerUp(x?: number, y?: number, loadout?: LoadoutState): CodexSkillAction | null {
+  const dragged = codexDragged;
+  const downX = codexDownX;
+  const downY = codexDownY;
   codexPointerActive = false;
+  codexDragged = false;
+  if (dragged || x === undefined || y === undefined || !loadout) return null;
+  // 用抬起点；若偏离按下过远也视为未点中按钮
+  if (Math.hypot(x - downX, y - downY) > 12) return null;
+  return codexSkillActionAt(x, y, loadout);
 }
 
 export function codexWheel(deltaY: number): void {
@@ -532,19 +655,22 @@ function drawSkillCard(
   y: number,
   w: number,
   h: number,
+  skillId: string,
   icon: string,
   name: string,
   sub: string,
   desc: string,
   accent: string,
   cost: number,
+  action: SkillCardAction,
+  statusLabel: string,
 ): void {
   const rarity = skillRarityColor(cost);
   roundRect(ctx, x, y, w, h, 10);
   ctx.fillStyle = '#241f16';
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = accent;
+  ctx.strokeStyle = action === 'unequip' ? '#ffd76a' : accent;
   ctx.stroke();
   roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 8);
   ctx.fillStyle = rarity.ink;
@@ -552,97 +678,121 @@ function drawSkillCard(
 
   const iconCx = x + 36;
   const iconCy = y + h / 2;
-  ctx.beginPath();
-  ctx.arc(iconCx, iconCy, 22, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(48,28,12,0.12)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,30,0.45)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = '#3a2208';
-  ctx.font = '24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(icon, iconCx, iconCy);
+  drawSkillGlyph(ctx, iconCx, iconCy, 22, icon, accent, true, skillId);
 
   const textX = x + 68;
-  const textW = w - 80;
+  const hasBtn = action === 'equip' || action === 'unequip';
+  const textW = w - 80 - (hasBtn ? SKILL_ACTION_W + 8 : 0);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = rarity.color;
   ctx.font = 'bold 11px "PingFang SC", serif';
-  ctx.fillText(rarity.label, textX, y + 10);
+  ctx.fillText(
+    statusLabel ? `${rarity.label} · ${statusLabel}` : rarity.label,
+    textX,
+    y + 10,
+  );
   ctx.fillStyle = '#fff6e6';
   ctx.font = 'bold 16px "PingFang SC", sans-serif';
-  ctx.fillText(name, textX, y + 24);
+  ctx.fillText(name, textX, y + 26);
   ctx.fillStyle = accent;
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(truncate(ctx, sub, textW), textX, y + 44);
+  ctx.fillText(truncate(ctx, sub, textW), textX, y + 48);
   ctx.fillStyle = 'rgba(255,240,210,0.78)';
   ctx.font = '12px "PingFang SC", sans-serif';
   const descLines = fitTextLines(ctx, desc, textW, 2);
-  const descY = y + 58;
+  const descY = y + 66;
   descLines.forEach((line, i) => {
     ctx.fillText(line, textX, descY + i * 15);
   });
+
+  if (!hasBtn) return;
+
+  const btn = {
+    x: x + w - SKILL_ACTION_W - 12,
+    y: y + (h - SKILL_ACTION_H) / 2,
+    w: SKILL_ACTION_W,
+    h: SKILL_ACTION_H,
+  };
+  if (action === 'unequip') {
+    drawInkActionButton(ctx, btn, '卸下', false, 'secondary');
+  } else {
+    drawInkActionButton(ctx, btn, '装备', false, 'primary');
+  }
 }
 
-function drawSkillTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
+function drawSkillTab(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState): void {
   const y0 = CONTENT_TOP - scrollY;
+  const equippedA = loadout.equipped.length;
+  const equippedP = loadout.passives.length;
+
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(255,240,210,0.65)';
+  ctx.fillStyle = 'rgba(255,240,210,0.72)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText('神秘商人 / 功德商店购买 · 道具仅当天有效', GRID_LEFT, y0 + 4);
+  ctx.fillText('每日重置 · 本页可卸下/重装今日已购技能', GRID_LEFT, y0 + 4);
+  ctx.fillText('购买仅神秘商人出现时可用（本页不能买）', GRID_LEFT, y0 + 22);
 
-  let y = y0 + 28;
+  let y = y0 + SKILL_HINT_H;
   ctx.fillStyle = SKILL_ACTIVE_COLOR;
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText(`主动技能（最多装备 ${MAX_EQUIPPED_ACTIVES} 个）`, GRID_LEFT, y);
-  y += 22;
+  ctx.fillText(`主动技能（已装 ${equippedA}/${MAX_EQUIPPED_ACTIVES}）`, GRID_LEFT, y);
+  y += SKILL_SECTION_H;
 
   for (const skill of enabledActives()) {
+    const action = skillActionFor(loadout, 'active', skill.id);
+    const status =
+      action === 'unequip' ? '已装备' : action === 'equip' ? '今日已购' : '';
     drawSkillCard(
       ctx,
       GRID_LEFT,
       y,
       GRID_W,
       SKILL_CARD_H,
+      skill.id,
       skill.icon,
       skill.name,
       `CD ${skill.cd}s · ${skill.cost} 功德 · 战斗中手动释放`,
       skill.desc,
       SKILL_ACTIVE_COLOR,
       skill.cost,
+      action,
+      status,
     );
     y += SKILL_CARD_H + SKILL_CARD_GAP;
   }
 
-  y += 12;
+  y += 14;
   ctx.fillStyle = SKILL_PASSIVE_COLOR;
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
-  ctx.fillText(`被动技能（最多生效 ${MAX_EQUIPPED_PASSIVES} 个）`, GRID_LEFT, y);
-  y += 22;
+  ctx.fillText(`被动技能（已装 ${equippedP}/${MAX_EQUIPPED_PASSIVES}）`, GRID_LEFT, y);
+  y += SKILL_SECTION_H;
 
   for (const skill of enabledPassives()) {
+    const action = skillActionFor(loadout, 'passive', skill.id);
+    const status =
+      action === 'unequip' ? '已装备' : action === 'equip' ? '今日已购' : '';
     drawSkillCard(
       ctx,
       GRID_LEFT,
       y,
       GRID_W,
       SKILL_CARD_H,
+      skill.id,
       skill.icon,
       skill.name,
       `${skill.cost} 功德 · 开局自动注入本局`,
       skill.desc,
       SKILL_PASSIVE_COLOR,
       skill.cost,
+      action,
+      status,
     );
     y += SKILL_CARD_H + SKILL_CARD_GAP;
   }
 }
 
-function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number): void {
+function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState): void {
   switch (codexTab) {
     case 'unit':
       drawUnitTab(ctx, scrollY);
@@ -654,7 +804,7 @@ function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number): void 
       drawMonsterTab(ctx, scrollY);
       break;
     case 'skill':
-      drawSkillTab(ctx, scrollY);
+      drawSkillTab(ctx, scrollY, loadout);
       break;
     default: {
       const _exhaustive: never = codexTab;
@@ -663,7 +813,7 @@ function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number): void 
   }
 }
 
-export function drawCodex(ctx: CanvasRenderingContext2D): void {
+export function drawCodex(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
   bg.addColorStop(0, '#2a2418');
   bg.addColorStop(1, '#3a3222');
@@ -689,10 +839,21 @@ export function drawCodex(ctx: CanvasRenderingContext2D): void {
   ctx.beginPath();
   ctx.rect(0, CONTENT_TOP, VIEW_W, CONTENT_H);
   ctx.clip();
-  drawCodexContent(ctx, codexScrollY);
+  drawCodexContent(ctx, codexScrollY, loadout);
   ctx.restore();
 
   ctx.fillStyle = 'rgba(42,36,24,0.92)';
   ctx.fillRect(0, CONTENT_TOP - 1, VIEW_W, 1);
   drawScrollFade(ctx);
+
+  if (codexToast && performance.now() < codexToastUntil) {
+    ctx.fillStyle = 'rgba(28,22,16,0.82)';
+    roundRect(ctx, 40, VIEW_H - 56, VIEW_W - 80, 36, 10);
+    ctx.fill();
+    ctx.fillStyle = '#ffe8c0';
+    ctx.font = '14px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(codexToast, VIEW_W / 2, VIEW_H - 38);
+  }
 }

@@ -47,6 +47,6 @@ open -a wechatwebdevtools                  # 启动，微信扫码登录
   触摸事件转成 canvas 事件；若未触发，需要在 main.ts 增加 `wx.onTouchStart/Move/End` → 逻辑坐标的桥接。
 - **音频**：`sfx.ts` 用 `platform.createAudioContext()`（微信=`wx.createWebAudioContext()`）。若合成音异常，
   退化为预渲染短 buffer。
-- **资源**：`assetUrl()` 已把 `/assets/..` 转为包内相对 `assets/..`；确认图片能加载。
+- **资源**：`asset-manifest.wx.ts` 指向包内 `assets/…`；启动走与 Web 相同的**加载页**（`loading-screen.ts`），预载图片后再进首页。确认 `./start.sh wx` 后 `wechat/assets/` 与清单一致。
 - **广告位**：在 `web/src/ads.ts` 的 `AD_UNITS` 填入正式激励视频/插屏广告位 id。
-- **包体**：素材较大，若主包超 4MB 需改用分包加载（`game.json` subpackages）。
+- **包体**：素材较大，若主包超 4MB 需改用分包加载（`game.json` subpackages），加载页可挂 `wx.loadSubpackage` 进度。

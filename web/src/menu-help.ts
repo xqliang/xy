@@ -2,6 +2,8 @@
 import { VIEW_W, VIEW_H } from './render';
 import { drawInkPopupFrame, inkPopupCloseRect, roundRect } from './menu-ui';
 import { STAMINA_COST } from './stamina';
+import { MAX_EQUIPPED_ACTIVES } from './actives';
+import { MAX_EQUIPPED_PASSIVES } from './passives';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -95,11 +97,35 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'title', text: '武将（英雄）' },
   {
     kind: 'body',
-    text: '征兵有时会出武将字牌。把同一武将的两个字左右紧邻摆放，就会金框激活，成为场上强力输出，并自带技能。悟空（大圣）在场时，还能触发羁绊给全队增伤。',
+    text: '征兵有时会出武将字牌。把同一武将的两个字左右紧邻摆放，就会金框激活，成为场上强力单位，并自带技能。悟空（大圣）在场时，还能触发羁绊给全队增伤。',
   },
   {
     kind: 'body',
-    text: '武将靠输出与技能在局内成长升阶；拆开双字或中间隔空会失效。',
+    text: '武将分满 3 与满 5：满 3 是前期过渡将，更容易抽到，最高升到 3 阶；满 5 是核心主将，更强但更稀有，最高可升到 5 阶。',
+  },
+  {
+    kind: 'body',
+    text: '同门派共享一字（如「郎」）。可先练满 3 过渡将拉高字牌阶，再换成同门派满 5 主将——激活时两边字牌会按较高阶对齐继承（只升不降，受该武将满级封顶）。',
+  },
+  {
+    kind: 'body',
+    text: '· 输出：主力伤害（大圣、哪吒、二郎等）',
+  },
+  {
+    kind: 'body',
+    text: '· 控制：定身、击退等控场（八戒、牛魔、铁扇等）',
+  },
+  {
+    kind: 'body',
+    text: '· 辅助：续命、减速等支援（观音等）',
+  },
+  {
+    kind: 'body',
+    text: '· 过渡：同门派的满 3 弱将，前期先用，后期交给满 5 主将继承等级。',
+  },
+  {
+    kind: 'body',
+    text: '武将还可靠输出、技能与喂同将字牌在局内升阶；拆开双字或中间隔空会失效。',
   },
   { kind: 'link', id: 'codex-hero', text: '打开英雄图鉴 ›' },
   { kind: 'gap', h: 14 },
@@ -114,6 +140,30 @@ export const HELP_BLOCKS: HelpBlock[] = [
     text: '在首页「神兵背包」装备神兵（最多 3 件），下一局开局即生效。未装备的神兵不会带入对局。',
   },
   { kind: 'link', id: 'bag', text: '打开神兵背包 ›' },
+  { kind: 'gap', h: 14 },
+
+  { kind: 'title', text: '主动与被动技能' },
+  {
+    kind: 'body',
+    text: '每局战斗结算回到首页后，神秘商人会自动出现一次（关闭后本局不再有入口，需再打一局才会再来）。用结算获得的功德购买并装配技能，开局带入本局。',
+  },
+  {
+    kind: 'body',
+    text: '购买按自然日重置：跨天后拥有与装配都会清空，需重新购买。今日买过的可在本页卸下/再装备，不扣功德。',
+  },
+  {
+    kind: 'body',
+    text: `· 主动技能：战斗中手动释放，冷却好了再点。征兵旁最多装备 ${MAX_EQUIPPED_ACTIVES} 个，例如如来神掌退敌、仙丹/风火轮短时强化、冰封定身等。`,
+  },
+  {
+    kind: 'body',
+    text: `· 被动技能：整场自动生效，无需点击。最多装备 ${MAX_EQUIPPED_PASSIVES} 个，例如蟠桃园产桃、聚宝盆击杀多桃、护身金光加唐僧血量、招贤榜提高字牌掉率等。`,
+  },
+  {
+    kind: 'body',
+    text: '技能图鉴可查看并管理今日装配（卸下/重装）；本页不能购买，只有神秘商人出现时才能买。',
+  },
+  { kind: 'link', id: 'codex-skill', text: '打开技能图鉴 ›' },
   { kind: 'gap', h: 14 },
 
   { kind: 'title', text: '蟠桃从哪来' },
@@ -136,7 +186,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'gap', h: 14 },
 
   { kind: 'title', text: '局外成长' },
-  { kind: 'body', text: '· 结算获得功德，神秘商人可购买永久主动 / 被动技能。' },
+  { kind: 'body', text: '· 结算获得功德；回首页时神秘商人自动出现，可购买并装配今日主动 / 被动技能。' },
   { kind: 'body', text: '· 勾选「无尽模式」可挑战不限波次、难度渐增的持久战。' },
   { kind: 'gap', h: 10 },
 

@@ -275,12 +275,33 @@ export function drawInkSlider(
   ctx.stroke();
 }
 
+/** 资源条图标显示边长（素材按 ×3 生成，见 resize-portraits TARGET） */
+export const MERIT_ICON_DISPLAY = 24;
+export const STAMINA_ICON_DISPLAY = 24;
+/** 功德商店标题旁 / 体力弹窗主图 */
+export const MERIT_ICON_PAGE_DISPLAY = 36;
+export const STAMINA_ICON_PAGE_DISPLAY = 84;
+
+export function drawUiIcon(
+  ctx: CanvasRenderingContext2D,
+  key: 'icon-merit' | 'icon-stamina',
+  cx: number,
+  cy: number,
+  size: number,
+): boolean {
+  const img = sprite(key);
+  if (!img) return false;
+  ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+  return true;
+}
+
 export function drawInkResourceBar(
   ctx: CanvasRenderingContext2D,
   rect: { x: number; y: number; w: number; h: number },
   tag: string,
   text: string,
   rightPad = 0,
+  icon?: 'icon-merit' | 'icon-stamina',
 ): void {
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
   ctx.fillStyle = 'rgba(48,28,12,0.62)';
@@ -288,24 +309,34 @@ export function drawInkResourceBar(
   ctx.strokeStyle = 'rgba(255,220,160,0.45)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  const padX = Math.round(rect.h * 0.35);
-  const tagPx = Math.max(13, Math.round(rect.h * 0.42));
+  const padX = Math.round(rect.h * 0.28);
+  const iconSize = Math.min(
+    rect.h - 6,
+    icon === 'icon-stamina' ? STAMINA_ICON_DISPLAY : MERIT_ICON_DISPLAY,
+  );
+  const cy = rect.y + rect.h / 2;
+  let cursor = rect.x + padX;
+  if (icon && drawUiIcon(ctx, icon, cursor + iconSize / 2, cy, iconSize)) {
+    cursor += iconSize + Math.round(rect.h * 0.18);
+  } else {
+    const tagPx = Math.max(13, Math.round(rect.h * 0.42));
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e0c080';
+    ctx.font = `bold ${tagPx}px "PingFang SC", "STKaiti", serif`;
+    ctx.fillText(tag, cursor, cy);
+    cursor += ctx.measureText(tag).width + Math.round(rect.h * 0.22);
+  }
   const numPx = Math.max(15, Math.round(rect.h * 0.5));
+  const textMaxW = rect.x + rect.w - cursor - padX - rightPad;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#e0c080';
-  ctx.font = `bold ${tagPx}px "PingFang SC", "STKaiti", serif`;
-  ctx.fillText(tag, rect.x + padX, rect.y + rect.h / 2);
-  const tagW = ctx.measureText(tag).width;
-  const textOffset = padX + tagW + Math.round(rect.h * 0.22);
-  const textX = rect.x + textOffset;
-  const textMaxW = rect.w - textOffset - padX - rightPad;
   ctx.fillStyle = '#fff6e6';
   ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
   let shown = text;
   while (shown.length > 1 && ctx.measureText(shown).width > textMaxW) shown = shown.slice(0, -1);
   if (shown !== text && shown.length > 0) shown += '…';
-  ctx.fillText(shown, textX, rect.y + rect.h / 2);
+  ctx.fillText(shown, cursor, cy);
 }
 
 export function drawInkPlusButton(

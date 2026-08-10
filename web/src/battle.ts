@@ -307,10 +307,10 @@ export function inAttackRange(ax: number, ay: number, rgeCells: number, p: { c: 
 // 怪物技能：对附近武将施加的减益类型
 export type MonsterSkill = 'stun' | 'slow' | 'weaken' | 'webbind';
 export const SKILL_META: Record<MonsterSkill, { name: string; color: string; icon: string }> = {
-  stun: { name: '定身', color: '#ffd34d', icon: '💫' },
-  slow: { name: '迟滞', color: '#5bd1ff', icon: '🐌' },
-  weaken: { name: '弱身', color: '#c77dff', icon: '⬇' },
-  webbind: { name: '缠丝', color: '#b76bd6', icon: '🕸' },
+  stun: { name: '定身', color: '#ffd34d', icon: '定' },
+  slow: { name: '迟滞', color: '#5bd1ff', icon: '迟' },
+  weaken: { name: '弱身', color: '#c77dff', icon: '弱' },
+  webbind: { name: '缠丝', color: '#b76bd6', icon: '网' },
 };
 
 // 小 Boss 种类（跨地图通用，与地图专属精英/妖王技能独立）
@@ -320,11 +320,11 @@ export const MINI_BOSS_META: Record<
   MiniBossKind,
   { name: string; skillName: string; color: string; icon: string; desc: string }
 > = {
-  frost: { name: '霜魄妖', skillName: '霜缚', color: '#7ec8ff', icon: '❄', desc: '范围内兵器攻速↓' },
-  blight: { name: '蚀甲妖', skillName: '蚀甲', color: '#c77dff', icon: '☠', desc: '范围内兵器伤害↓' },
-  quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '💥', desc: '范围内兵器倒下' },
-  gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '💨', desc: '周围妖怪加速' },
-  blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '🩸', desc: '周围妖怪少量回血' },
+  frost: { name: '霜魄妖', skillName: '霜缚', color: '#7ec8ff', icon: '霜', desc: '范围内兵器攻速↓' },
+  blight: { name: '蚀甲妖', skillName: '蚀甲', color: '#c77dff', icon: '蚀', desc: '范围内兵器伤害↓' },
+  quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '震', desc: '范围内兵器倒下' },
+  gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '风', desc: '周围妖怪加速' },
+  blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '血', desc: '周围妖怪少量回血' },
 };
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
@@ -2096,7 +2096,7 @@ export class Battle {
       this.clearTraySlot(index);
       this.peach += this.mods.shovelPeach; // 摸金校尉
       this.emit('shovel');
-      this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}🍑）` : '铲子挖开了新阵位';
+      this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}桃）` : '铲子挖开了新阵位';
       return true;
     }
     if (token.kind === 'tree') {

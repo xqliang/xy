@@ -33,7 +33,6 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
 }
 
 const BACK = { x: 18, y: 26, w: 88, h: 38 };
-const TITLE_X = (BACK.x + BACK.w + VIEW_W - 18) / 2;
 const TITLE_Y = BACK.y + BACK.h / 2;
 const SUBTITLE_TOP = BACK.y + BACK.h + 10;
 const ROW_H = 62;
@@ -42,7 +41,7 @@ const LIST_TOP = 128;
 const LIST_BOTTOM_PAD = 40;
 const LEFT = 24;
 const ROW_W = VIEW_W - 48;
-const HEADER_H = SUBTITLE_TOP + 36;
+const HEADER_H = SUBTITLE_TOP + 48;
 
 /** 已装备（最近在前）→ 已获得未装备 → 未获得，各段内按 WEAPONS 自然顺序 */
 export function bagDisplayOrder(bag: BagState): string[] {
@@ -193,15 +192,18 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
 
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 26px "PingFang SC", sans-serif';
-  ctx.fillText('武器背包', TITLE_X, TITLE_Y);
+  ctx.fillText('武器背包', VIEW_W / 2, TITLE_Y);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#d8c8a0';
   ctx.font = '11px "PingFang SC", sans-serif';
-  const sub = `武将攻击10%掉碎片·每局最多1次·左下角领取 · 低1/普2/中3/高4片激活 · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`;
+  // 稀有度=激活所需碎片；品质阶=已激活后白→金升阶（与行内「白阶」等一致）
+  const sub =
+    `武将攻击掉碎片·左下角领取 · 低1/普2/中3/高4片激活 · ` +
+    `品质白→绿→蓝→紫→金（重复掉落升阶） · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`;
   let sy = SUBTITLE_TOP;
-  for (const ln of wrapText(ctx, sub, VIEW_W - 36).slice(0, 2)) {
+  for (const ln of wrapText(ctx, sub, VIEW_W - 36).slice(0, 3)) {
     ctx.fillText(ln, VIEW_W / 2, sy);
     sy += 15;
   }

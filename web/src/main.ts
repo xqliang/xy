@@ -18,7 +18,8 @@ import {
 import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS } from './board';
 import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
-import { loadAssets } from './assets';
+import { loadAssets, type AssetLoadProgress } from './assets';
+import { drawLoadingScreen, drawLoadingBackdrop } from './loading-screen';
 import {
   pushMenuFloatToast,
   updateMenuFloatToasts,
@@ -62,6 +63,8 @@ import {
   codexPointerMove,
   codexPointerUp,
   codexWheel,
+  setCodexToast,
+  codexNeedsAnim,
 } from './codex';
 import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
 import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
@@ -164,11 +167,11 @@ const MIN_FRAME_MS = 1000 / 60 - 4;
 onAppHide(() => pauseLoop());
 onAppShow(() => resumeLoop());
 
-// 异步加载 Seedream 立绘（加载完成后重绘一帧用上新立绘；静态界面此时循环可能已停，需主动唤醒）
-void loadAssets().then(() => {
-  void prefetchMenuBgm().then(() => bootstrapMenuMusic());
-  scheduleFrame();
-});
+let loadProgress: AssetLoadProgress = { loaded: 0, total: 1, phase: 'images' };
+/** 资源已在加载，但进度页延迟显示，避免本地缓存命中时闪一下 */
+let loadingUiVisible = false;
+/** 超过该时间仍未进首页，才展示进度页 */
+const LOADING_UI_DELAY_MS = 200;
 
 const params = new URLSearchParams(location.search);
 // ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
@@ -178,7 +181,7 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag' | 'settle';
+type Screen = 'loading' | 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag' | 'settle';
 
 function usesMenuMusic(s: Screen): boolean {
   return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag';
@@ -197,7 +200,33 @@ function safePersisted<T>(load: () => T, fallback: T): T {
   }
 }
 
-let screen: Screen = 'menu';
+let screen: Screen = 'loading';
+
+// 先加载资源，再进首页；进度页延迟 LOADING_UI_DELAY_MS，缓存秒进则不闪进度 UI
+void (async () => {
+  const showUiTimer = window.setTimeout(() => {
+    if (screen !== 'loading') return;
+    loadingUiVisible = true;
+    scheduleFrame();
+  }, LOADING_UI_DELAY_MS);
+
+  try {
+    await loadAssets((p) => {
+      loadProgress = p;
+      if (loadingUiVisible) scheduleFrame();
+    });
+    loadProgress = { loaded: loadProgress.total, total: loadProgress.total, phase: 'audio' };
+    if (loadingUiVisible) scheduleFrame();
+    await prefetchMenuBgm();
+    loadProgress = { ...loadProgress, phase: 'done' };
+    bootstrapMenuMusic();
+    screen = 'menu';
+  } finally {
+    window.clearTimeout(showUiTimer);
+  }
+  scheduleFrame();
+})();
+
 let rank: RankState = safePersisted(loadRank, { level: 0, stars: 0, difficulty: 1 });
 let stamina: Stamina = safePersisted(loadStamina, { value: STAMINA_MAX, lastTick: Date.now() });
 let merit: MeritState = safePersisted(loadMerit, { merit: 0, levels: {} });
@@ -731,6 +760,7 @@ function handleButton(x: number, y: number): boolean {
 
 function onPointerDown(e: PointerEvent) {
   e.preventDefault();
+  if (screen === 'loading') return; // 加载中不响应点击（BGM 仍可在进首页后由首次手势唤醒）
   resumeAudioAfterGesture(audioScreenKind(screen), currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
   if (screen === 'menu') {
@@ -1007,7 +1037,27 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     return;
   }
   if (screen === 'codex') {
-    codexPointerUp();
+    if (e && !cancelled) {
+      const { x, y } = toLogical(e.clientX, e.clientY);
+      const action = codexPointerUp(x, y, loadout);
+      if (action) {
+        playSfx('click');
+        if (action.kind === 'unequip') {
+          loadout = action.skillKind === 'active'
+            ? unequipActive(loadout, action.id)
+            : unequipPassive(loadout, action.id);
+          setCodexToast('已卸下');
+        } else {
+          const res = action.skillKind === 'active'
+            ? equipActive(loadout, action.id)
+            : equipPassive(loadout, action.id);
+          loadout = res.loadout;
+          setCodexToast(res.ok ? '已装备' : (res.reason ?? (action.skillKind === 'active' ? ACTIVE_FULL_HINT : PASSIVE_FULL_HINT)));
+        }
+      }
+    } else {
+      codexPointerUp();
+    }
     return;
   }
   if (ui.dragPos) {
@@ -1092,8 +1142,10 @@ function scheduleFrame(): void {
 
 // 当前界面是否需要连续动画：战斗一直跑；结算星级动画期间跑；菜单大圣待机动画需持续重绘。
 function needsContinuousLoop(): boolean {
+  if (screen === 'loading') return loadingUiVisible;
   if (screen === 'menu') return true;
   if (screen === 'battle') return !ui.paused;
+  if (screen === 'codex') return codexNeedsAnim();
   if (screen === 'settle') return !isSettleAnimDone(performance.now() - settleStart) || visibleWeaponPickups().length > 0;
   return false;
 }
@@ -1112,7 +1164,10 @@ function frame(now: number): void {
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
-  if (screen === 'menu') {
+  if (screen === 'loading') {
+    if (loadingUiVisible) drawLoadingScreen(ctx, loadProgress, now);
+    else drawLoadingBackdrop(ctx);
+  } else if (screen === 'menu') {
     updateMenuFloatToasts(dt);
     stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
     drawMenu(ctx, {
@@ -1141,7 +1196,7 @@ function frame(now: number): void {
     drawShop(ctx, merit, loadout, shopToast, shopScrollY);
     if (shopPopup) drawShopPopup(ctx, shopPopup, merit, loadout);
   } else if (screen === 'codex') {
-    drawCodex(ctx);
+    drawCodex(ctx, loadout);
   } else if (screen === 'rank') {
     drawLeaderboard(ctx, rank.level);
   } else if (screen === 'bag') {

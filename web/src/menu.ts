@@ -182,7 +182,7 @@ function drawMenuBackground(ctx: CanvasRenderingContext2D): void {
 }
 
 /** 首页主标题：深色描边 + 金字渐变，避免水墨背景上发飘 */
-function drawMenuTitle(ctx: CanvasRenderingContext2D, text: string, cx: number, baselineY: number): void {
+export function drawMenuTitle(ctx: CanvasRenderingContext2D, text: string, cx: number, baselineY: number): void {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -223,13 +223,14 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.drawImage(av, AVATAR.x + 4, AVATAR.y + 4, av.width * scale, av.height * scale);
   }
 
-  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(info.merit));
+  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(info.merit), 0, 'icon-merit');
   drawInkResourceBar(
     ctx,
     STAMINA_BAR,
     '体力',
     `${info.stamina}/${STAMINA_MAX}`,
     STAMINA_PLUS_BTN.w + STAMINA_PLUS_INSET + 6,
+    'icon-stamina',
   );
   drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'), 'inset');
 

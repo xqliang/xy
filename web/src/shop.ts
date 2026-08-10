@@ -10,6 +10,7 @@ import {
   isOwnedPassive,
   type LoadoutState,
 } from './loadout';
+import { drawUiIcon, MERIT_ICON_PAGE_DISPLAY } from './menu-ui';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -301,14 +302,24 @@ export function drawShop(ctx: CanvasRenderingContext2D, merit: MeritState, loado
   ctx.textBaseline = 'middle';
   ctx.fillText('‹ 返回', BACK.x + BACK.w / 2, BACK.y + BACK.h / 2);
 
-  // 标题 + 功德余额
+  // 标题 + 功德余额（图标 + 数字）
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 30px "PingFang SC", sans-serif';
   ctx.fillText('神秘商人', VIEW_W / 2, 56);
-  ctx.fillStyle = '#e0c8ff';
+  const meritLabel = String(merit.merit);
   ctx.font = 'bold 20px "PingFang SC", sans-serif';
-  ctx.fillText(`功德 ${merit.merit}`, VIEW_W / 2, 92);
+  const numW = ctx.measureText(meritLabel).width;
+  const iconS = MERIT_ICON_PAGE_DISPLAY;
+  const gap = 8;
+  const totalW = iconS + gap + numW;
+  const left = VIEW_W / 2 - totalW / 2;
+  const meritY = 92;
+  drawUiIcon(ctx, 'icon-merit', left + iconS / 2, meritY, iconS);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e0c8ff';
+  ctx.fillText(meritLabel, left + iconS + gap, meritY);
 
   // 提示（贴底显示，避免遮住被动技能卡片）
   if (toast) {

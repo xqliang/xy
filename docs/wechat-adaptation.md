@@ -78,6 +78,23 @@ open -a wechatwebdevtools                  # 启动；首次需用微信扫码�
 - 音频：微信对 WebAudio 支持随版本差异，若合成音频异常，退化为「预渲染短音效 buffer」。
 - 包体：立绘/地图 PNG 较大，超 4MB 主包需用**分包加载**。
 
+## 六½、资源加载页（Web / 微信共用）
+
+启动时 `screen='loading'`，`loadAssets(onProgress)` 预载全部图片（不含 `bgm-*`），再 `prefetchMenuBgm`（**微信端跳过文件 BGM**），完成后进首页。
+
+| | Web | 微信小游戏 |
+|---|---|---|
+| 清单 | `asset-manifest.web.ts`（Vite 哈希 URL） | `asset-manifest.wx.ts`（包内 `assets/…`） |
+| 图片对象 | `new Image()` | `wx.createImage()`（`platform.createImage`） |
+| 预载 | 同一套 `assets.ts` + 加载页 `loading-screen.ts` | 同左；本地包解码仍可能卡顿，加载页同样有用 |
+| SFX | WebAudio 程序合成 | `wx.createWebAudioContext()` |
+| 文件 BGM | fetch + decode | 当前禁用；以后可用 `InnerAudioContext` / 读包 |
+| 包体策略 | CDN/HTTP 缓存 | 主包 4MB 限制 → `game.json` subpackages + `wx.loadSubpackage`，加载页可挂分包进度 |
+
+**是否需要加载页？** 需要。微信与 Web 共用同一套入口；微信本地资源虽不必「下载」，但解码大图仍异步，没有加载页会先闪程序化回退 UI。若日后分包，加载页更应展示分包进度。
+
+相关：`web/src/assets.ts`、`loading-screen.ts`、`main.ts`（`screen='loading'`）、`./start.sh wx` 同步 `wechat/assets/`。
+
 ## 七、部署与发布（IAA 上线）
 
 微信小游戏**不走服务器部署**（与 ecs:8082 的 Web 部署无关），而是「构建产物 → 微信开发者工具上传 →

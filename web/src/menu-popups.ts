@@ -11,6 +11,9 @@ import {
   drawInkCheckbox,
   drawInkActionButton,
   inkPopupCloseRect,
+  drawUiIcon,
+  STAMINA_ICON_PAGE_DISPLAY,
+  STAMINA_ICON_DISPLAY,
 } from './menu-ui';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
@@ -317,24 +320,41 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#5a3a12';
+  const label = `${stamina} / ${STAMINA_MAX}`;
   ctx.font = 'bold 18px "PingFang SC", serif';
-  ctx.fillText(`当前体力  ${stamina} / ${STAMINA_MAX}`, STA_PX + STA_PW / 2, STA_LABEL_Y);
+  const numW = ctx.measureText(label).width;
+  const tip = '当前体力';
+  ctx.font = 'bold 16px "PingFang SC", serif';
+  const tipW = ctx.measureText(tip).width;
+  const iconS = STAMINA_ICON_DISPLAY + 4;
+  const gap = 8;
+  const rowW = tipW + gap + iconS + gap + numW;
+  const rowLeft = STA_PX + STA_PW / 2 - rowW / 2;
+  ctx.fillStyle = '#5a3a12';
+  ctx.textAlign = 'left';
+  ctx.fillText(tip, rowLeft, STA_LABEL_Y);
+  drawUiIcon(ctx, 'icon-stamina', rowLeft + tipW + gap + iconS / 2, STA_LABEL_Y, iconS);
+  ctx.font = 'bold 18px "PingFang SC", serif';
+  ctx.fillText(label, rowLeft + tipW + gap + iconS + gap, STA_LABEL_Y);
 
-  const spr = sprite('hero-bajie');
   const cx = STA_PX + STA_PW / 2;
-  if (spr) {
-    const s = STA_HERO_SIZE;
-    const scale = Math.min(s / spr.width, s / spr.height);
-    ctx.drawImage(
-      spr,
-      cx - (spr.width * scale) / 2,
-      STA_HERO_CY - s / 2,
-      spr.width * scale,
-      spr.height * scale,
-    );
+  const pageIcon = STAMINA_ICON_PAGE_DISPLAY;
+  if (!drawUiIcon(ctx, 'icon-stamina', cx, STA_HERO_CY, pageIcon)) {
+    const spr = sprite('hero-bajie');
+    if (spr) {
+      const s = STA_HERO_SIZE;
+      const scale = Math.min(s / spr.width, s / spr.height);
+      ctx.drawImage(
+        spr,
+        cx - (spr.width * scale) / 2,
+        STA_HERO_CY - s / 2,
+        spr.width * scale,
+        spr.height * scale,
+      );
+    }
   }
 
+  ctx.textAlign = 'center';
   ctx.fillStyle = stamina >= STAMINA_MAX ? '#8a6020' : '#8a3010';
   ctx.font = '15px "PingFang SC", serif';
   ctx.fillText(stamina >= STAMINA_MAX ? '体力已满' : '体力不足，请选择补充方式', cx, STA_HINT_Y);
