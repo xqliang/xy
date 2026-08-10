@@ -39,7 +39,7 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
   { id: 'act_frq', name: '风火轮', icon: '轮', cd: 22, cost: 50, effect: 'frqBuff',
     desc: '5 秒内全体攻速 +30%' },
   { id: 'act_freeze', name: '冰封定身', icon: '冰', cd: 24, cost: 70, effect: 'freeze',
-    desc: '全体妖怪定身 1.8 秒' },
+    desc: '全体妖怪定身 2.5 秒' },
   { id: 'act_jinggu', name: '紧箍咒', icon: '咒', cd: 55, cost: 70, effect: 'jinggu',
     desc: '以最前妖怪为中心大范围爆发（波血×2.4，半径 2.5）' },
 ];

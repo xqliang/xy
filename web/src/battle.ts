@@ -194,7 +194,7 @@ export const TUNING = {
   jingguDmgMul: 2.4, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
   atkBuffMul: 1.3, // 主动仙丹攻击倍率（与风火轮对齐，收窄叠乘峰值）
   frqBuffMul: 1.3, // 主动风火轮攻速倍率
-  freezeStunDur: 1.8, // 冰封定身时长
+  freezeStunDur: 2.5, // 冰封定身时长（全场；CD 24s）
   // —— 武将大招控制分档 ——
   heroStunDurMain: 1.5, // 满5 定身时长
   heroStunDurTransit: 1.0, // 满3 定身时长

@@ -24,6 +24,8 @@ import {
   lowHpEngageMul,
   engageThreatAt,
   boardMatePreferScore,
+  canUseCellForMax5HeroPlacement,
+  isEvictableMaxTier3HeroCell,
   entrancePathSeatBonus,
   frontMonsterEngageWeight,
   type AutoPlaceView,
@@ -690,6 +692,99 @@ it('棋盘孤儿牛+魔 可移动相邻激活 1 阶牛魔', () => {
   expect(niu!.cell.c + 1).toBe(mo!.cell.c);
   expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
   expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+});
+
+it('满盘 tray 牛+魔 可替换满3铁背激活牛魔', () => {
+  const cells = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '牛', general: 'niumowang', tier: 1 },
+      { kind: 'word', char: '魔', general: 'niumowang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordsMap.set('0,0', { char: '铁', general: 'tiebei', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '背', general: 'tiebei', cell: { c: 1, r: 0 }, tier: 3 });
+  v.wordsMap.set('2,0', { char: '梵', general: 'fanyin', cell: { c: 2, r: 0 }, tier: 3 });
+  v.wordsMap.set('3,0', { char: '音', general: 'fanyin', cell: { c: 3, r: 0 }, tier: 3 });
+  v.wordsMap.set('4,0', { char: '大', general: 'dasheng', cell: { c: 4, r: 0 }, tier: 5 });
+  v.wordsMap.set('5,0', { char: '圣', general: 'dasheng', cell: { c: 5, r: 0 }, tier: 5 });
+  v.wordsMap.set('6,0', { char: '金', general: 'jinzha', cell: { c: 6, r: 0 }, tier: 3 });
+  v.wordsMap.set('7,0', { char: '吒', general: 'jinzha', cell: { c: 7, r: 0 }, tier: 3 });
+  planAutoPlaceSteps(v, { rng, maxSteps: 20 });
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu).toBeDefined();
+  expect(mo).toBeDefined();
+  expect(Math.abs(niu!.cell.c - mo!.cell.c)).toBe(1);
+  expect(niu!.cell.r).toBe(mo!.cell.r);
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+  expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
+});
+
+it('有空位时 tray 牛+魔 优先落空格不替换满3铁背', () => {
+  const cells = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '牛', general: 'niumowang', tier: 1 },
+      { kind: 'word', char: '魔', general: 'niumowang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordsMap.set('0,0', { char: '铁', general: 'tiebei', cell: { c: 0, r: 0 }, tier: 2 });
+  v.wordsMap.set('1,0', { char: '背', general: 'tiebei', cell: { c: 1, r: 0 }, tier: 2 });
+  v.unitsMap.set('2,0', { type: 'dao', tier: 1, cell: { c: 2, r: 0 } });
+  v.unitsMap.set('3,0', { type: 'dao', tier: 1, cell: { c: 3, r: 0 } });
+  v.unitsMap.set('4,0', { type: 'dao', tier: 1, cell: { c: 4, r: 0 } });
+  v.unitsMap.set('5,0', { type: 'dao', tier: 1, cell: { c: 5, r: 0 } });
+  planAutoPlaceSteps(v, { rng, maxSteps: 20 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu).toBeDefined();
+  expect(mo).toBeDefined();
+  expect(niu!.cell.c).not.toBe(0);
+  expect(mo!.cell.c).not.toBe(1);
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+});
+
+it('满盘无空格时可与兵器格交换，不拆满3', () => {
+  const cells = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '牛', general: 'niumowang', tier: 1 },
+      { kind: 'word', char: '魔', general: 'niumowang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordsMap.set('0,0', { char: '铁', general: 'tiebei', cell: { c: 0, r: 0 }, tier: 2 });
+  v.wordsMap.set('1,0', { char: '背', general: 'tiebei', cell: { c: 1, r: 0 }, tier: 2 });
+  for (let c = 2; c < 8; c++) {
+    v.unitsMap.set(`${c},0`, { type: 'dao', tier: 1, cell: { c, r: 0 } });
+  }
+  planAutoPlaceSteps(v, { rng, maxSteps: 20 });
+  expect(v.isActiveHeroCell({ c: 0, r: 0 })).toBe(true);
+  const niu = v.placedWords().find((w) => w.char === '牛');
+  const mo = v.placedWords().find((w) => w.char === '魔');
+  expect(niu).toBeDefined();
+  expect(mo).toBeDefined();
+  expect(niu!.cell.c).toBeGreaterThanOrEqual(2);
+  expect(matchGeneral(niu!.char, mo!.char)?.id).toBe('niumowang');
+});
+
+it('isEvictableMaxTier3HeroCell：满3过渡将不论阶数均可替换', () => {
+  const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }];
+  const v = new FakeView([], cells);
+  v.wordsMap.set('0,0', { char: '铁', general: 'tiebei', cell: { c: 0, r: 0 }, tier: 3 });
+  v.wordsMap.set('1,0', { char: '背', general: 'tiebei', cell: { c: 1, r: 0 }, tier: 3 });
+  expect(isEvictableMaxTier3HeroCell(v, { c: 0, r: 0 })).toBe(true);
+  v.wordsMap.set('0,0', { char: '铁', general: 'tiebei', cell: { c: 0, r: 0 }, tier: 2 });
+  v.wordsMap.set('1,0', { char: '背', general: 'tiebei', cell: { c: 1, r: 0 }, tier: 2 });
+  expect(isEvictableMaxTier3HeroCell(v, { c: 0, r: 0 })).toBe(true);
+  v.wordsMap.set('0,0', { char: '大', general: 'dasheng', cell: { c: 0, r: 0 }, tier: 5 });
+  v.wordsMap.set('1,0', { char: '圣', general: 'dasheng', cell: { c: 1, r: 0 }, tier: 5 });
+  expect(isEvictableMaxTier3HeroCell(v, { c: 0, r: 0 })).toBe(false);
+  expect(canUseCellForMax5HeroPlacement(v, { c: 4, r: 0 })).toBe(true);
 });
 
 it('满盘时 tray 兵种合成链后与棋盘同阶再合', () => {

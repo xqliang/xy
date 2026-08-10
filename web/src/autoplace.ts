@@ -19,6 +19,7 @@ import { posAlong } from './board';
 import {
   GENERALS,
   matchGeneral,
+  generalById,
   mainGeneralForVariantChar,
   transitGeneralInFamily,
   variantChar,
@@ -789,6 +790,33 @@ function scanActivePairs(view: AutoPlaceView): ActivePair[] {
 
 function isHeroMaxed(pair: ActivePair): boolean {
   return pair.tier >= pair.def.maxTier;
+}
+
+/** 该格所属的已激活武将（若有） */
+export function activePairAtCell(view: AutoPlaceView, cell: Cell): ActivePair | null {
+  for (const p of scanActivePairs(view)) {
+    if (sameCell(p.left.cell, cell) || sameCell(p.right.cell, cell)) return p;
+  }
+  return null;
+}
+
+/** 满3过渡将格（不论是否已封顶）：可被满5主将落子交换腾位 */
+export function isEvictableMaxTier3HeroCell(view: AutoPlaceView, cell: Cell): boolean {
+  const pair = activePairAtCell(view, cell);
+  if (!pair) return false;
+  return pair.def.maxTier === 3;
+}
+
+/** 激活满5武将时该格是否可用（空位 / 非激活 / 可换下的满3） */
+export function canUseCellForMax5HeroPlacement(view: AutoPlaceView, cell: Cell): boolean {
+  if (!view.isActiveHeroCell(cell)) return true;
+  return isEvictableMaxTier3HeroCell(view, cell);
+}
+
+function heroPlacementCellOk(view: AutoPlaceView, cell: Cell, allowReplaceMax3: boolean): boolean {
+  if (!view.isActiveHeroCell(cell)) return true;
+  if (!allowReplaceMax3) return false;
+  return isEvictableMaxTier3HeroCell(view, cell);
 }
 
 /** tray 字与棋盘伴侣凑对所需落点被占（常见：金吒占骨左侧） */
@@ -2034,12 +2062,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     reserved: Set<string>,
     allowMate: PlacedWordLite | null,
     extraFree: Cell[] = [],
+    allowReplaceMax3 = false,
   ): boolean {
     const w = wordAt(cell);
     if (w) {
       // 仅当目标格上就是指定伴侣实例时保留（避免重复同字误判）
       if (allowMate && sameCell(cell, allowMate.cell)) return true;
-      if (view.isActiveHeroCell(cell)) return false;
+      if (view.isActiveHeroCell(cell)) {
+        if (allowReplaceMax3 && isEvictableMaxTier3HeroCell(view, cell)) return true;
+        return false;
+      }
       if (clearOrphanWordFrom(cell, reserved, extraFree)) return true;
       return view.displaceToTray(cell);
     }
@@ -2410,24 +2442,32 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   function moveBoardPairToActivate(leftW: PlacedWordLite, rightW: PlacedWordLite, general: string): boolean {
     const tier = Math.max(wordTier(leftW), wordTier(rightW));
-    for (const { left, right } of rankedHeroPairs(general, tier)) {
-      if (view.isActiveHeroCell(left) || view.isActiveHeroCell(right)) continue;
-      const reserved = new Set([cellKey(left), cellKey(right)]);
+    const formingMax5 = generalById(general)?.maxTier === 5;
+    const passes = formingMax5 ? [false, true] : [false];
+    for (const wantReplaceMax3 of passes) {
+      if (wantReplaceMax3 && view.freeCells().length > 0) continue;
+      const allowReplaceMax3 = wantReplaceMax3;
+      for (const { left, right } of rankedHeroPairs(general, tier)) {
+        if (!heroPlacementCellOk(view, left, allowReplaceMax3) || !heroPlacementCellOk(view, right, allowReplaceMax3)) {
+          continue;
+        }
+        const reserved = new Set([cellKey(left), cellKey(right)]);
 
-      const lw0 = resolveTrackedWord(leftW);
-      const rw0 = resolveTrackedWord(rightW);
-      if (!lw0 || !rw0) return false;
-      if (!clearForHero(left, reserved, sameCell(lw0.cell, left) ? lw0 : null)) continue;
-      if (!clearForHero(right, reserved, sameCell(rw0.cell, right) ? rw0 : null)) continue;
+        const lw0 = resolveTrackedWord(leftW);
+        const rw0 = resolveTrackedWord(rightW);
+        if (!lw0 || !rw0) return false;
+        if (!clearForHero(left, reserved, sameCell(lw0.cell, left) ? lw0 : null, [], allowReplaceMax3)) continue;
+        if (!clearForHero(right, reserved, sameCell(rw0.cell, right) ? rw0 : null, [], allowReplaceMax3)) continue;
 
-      const lw = resolveTrackedWord(leftW);
-      const rw = resolveTrackedWord(rightW);
-      if (!lw || !rw) continue;
-      if (!sameCell(lw.cell, left) && !view.moveWord(lw.cell, left)) continue;
-      const rw2 = resolveTrackedWord(rightW);
-      if (!rw2) continue;
-      if (!sameCell(rw2.cell, right) && !view.moveWord(rw2.cell, right)) continue;
-      return true;
+        const lw = resolveTrackedWord(leftW);
+        const rw = resolveTrackedWord(rightW);
+        if (!lw || !rw) continue;
+        if (!sameCell(lw.cell, left) && !view.moveWord(lw.cell, left)) continue;
+        const rw2 = resolveTrackedWord(rightW);
+        if (!rw2) continue;
+        if (!sameCell(rw2.cell, right) && !view.moveWord(rw2.cell, right)) continue;
+        return true;
+      }
     }
     return false;
   }
@@ -2560,100 +2600,110 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     partnerJ: number,
   ): boolean {
     const tier = Math.max(t.tier, boardMate?.tier ?? t.tier);
-    let pairs = rankedHeroPairs(general, tier);
-    // 棋盘伴侣已在最优对位时优先原地凑对；否则允许迁伴侣到更高分对（如 大@差位 + tray圣）
-    if (boardMate) {
-      const mateIsLeftChar = boardMate.char === chars[0];
-      if (pairs.length > 0) {
-        const best = pairs[0]!;
-        const mateSlot = mateIsLeftChar ? best.left : best.right;
-        const traySlot = mateIsLeftChar ? best.right : best.left;
-        const onBest =
-          sameCell(mateSlot, boardMate.cell)
-          && view.freeCells().some((c) => sameCell(c, traySlot));
-        if (onBest) {
-          pairs = pairs.filter((p) =>
-            sameCell(mateIsLeftChar ? p.left : p.right, boardMate.cell),
-          );
-        }
-      }
-      if (pairs.length > 0) {
-        pairs.sort((a, b) => {
-          const scoreDiff = b.score - a.score;
-          if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
-          const fit = (p: { left: Cell; right: Cell }) =>
-            sameCell(boardMate.cell, mateIsLeftChar ? p.left : p.right) ? 1 : 0;
-          return fit(b) - fit(a);
-        });
-      }
-    }
-
-    for (const { left, right } of pairs) {
-      // —— 候选区已有配对字：两字一起落到最优对 ——
-      if (!boardMate && partnerJ >= 0) {
-        const reserved = new Set([cellKey(left), cellKey(right)]);
-        if (view.isActiveHeroCell(left) || view.isActiveHeroCell(right)) continue;
-        clearForHero(left, reserved, null);
-        clearForHero(right, reserved, null);
-        const leftChar = chars[0];
-        const rightChar = chars[1];
-        const trayNow = view.tray();
-        const leftIdx = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === leftChar);
-        const rightIdx0 = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === rightChar);
-        if (leftIdx < 0 || rightIdx0 < 0) continue;
-        if (!view.place(leftIdx, left)) continue;
-        const trayAfter = view.tray();
-        const rightIdx = trayFindIndex(trayAfter, (x) => x.kind === 'word' && x.char === rightChar);
-        if (rightIdx < 0) return true;
-        if (view.place(rightIdx, right)) return true;
-        return true;
-      }
-
-      // —— 棋盘已有伴侣：迁到评分最高的对位（不拆其他英雄），再落 tray 字 ——
+    const formingMax5 = (generalById(general)?.maxTier ?? 0) === 5;
+    const passes = formingMax5 ? [false, true] : [false];
+    for (const wantReplaceMax3 of passes) {
+      if (wantReplaceMax3 && view.freeCells().length > 0) continue;
+      const allowReplaceMax3 = wantReplaceMax3;
+      let pairs = rankedHeroPairs(general, tier);
+      // 棋盘伴侣已在最优对位时优先原地凑对；否则允许迁伴侣到更高分对（如 大@差位 + tray圣）
       if (boardMate) {
         const mateIsLeftChar = boardMate.char === chars[0];
-        if (mateIsLeftChar && t.char !== chars[1]) continue;
-        if (!mateIsLeftChar && t.char !== chars[0]) continue;
-        const needMate = mateIsLeftChar ? left : right;
-        const needTray = mateIsLeftChar ? right : left;
+        if (pairs.length > 0) {
+          const best = pairs[0]!;
+          const mateSlot = mateIsLeftChar ? best.left : best.right;
+          const traySlot = mateIsLeftChar ? best.right : best.left;
+          const onBest =
+            sameCell(mateSlot, boardMate.cell)
+            && view.freeCells().some((c) => sameCell(c, traySlot));
+          if (onBest) {
+            pairs = pairs.filter((p) =>
+              sameCell(mateIsLeftChar ? p.left : p.right, boardMate.cell),
+            );
+          }
+        }
+        if (pairs.length > 0) {
+          pairs.sort((a, b) => {
+            const scoreDiff = b.score - a.score;
+            if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+            const fit = (p: { left: Cell; right: Cell }) =>
+              sameCell(boardMate.cell, mateIsLeftChar ? p.left : p.right) ? 1 : 0;
+            return fit(b) - fit(a);
+          });
+        }
+      }
 
-        // 目标伴侣格已被其他字占据（如 背@3,0 但选定伴侣是 扇）→ 跳过，避免 tray 铁 误配铁背
-        const occupantAtMate = wordAt(needMate);
-        if (occupantAtMate && !sameCell(occupantAtMate.cell, boardMate.cell)) continue;
-
-        const mateAtNeed = sameCell(boardMate.cell, needMate);
-        const mateAtTray = sameCell(boardMate.cell, needTray);
-
-        if (view.isActiveHeroCell(needTray)) continue;
-        if (view.isActiveHeroCell(needMate) && !mateAtNeed) continue;
-
-        const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
-        const mateOld = { ...boardMate.cell };
-
-        // 1) 伴侣归位：左字→needMate，右字→needTray；亦支持从第三格迁来（非仅已在位/白龙式）
-        if (mateIsLeftChar && mateAtTray && !mateAtNeed) {
-          if (!clearForHero(needMate, reserved, null)) continue;
-          const mateNow = resolveTrackedWord(boardMate);
-          if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
-        } else if (!mateIsLeftChar && mateAtTray && !mateAtNeed) {
-          if (!clearForHero(needMate, reserved, null)) continue;
-          const mateNow = resolveTrackedWord(boardMate);
-          if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
-        } else if (!mateAtNeed && !mateAtTray) {
-          const target = mateIsLeftChar ? needMate : needTray;
-          if (!clearForHero(target, reserved, null)) continue;
-          const mateNow = resolveTrackedWord(boardMate);
-          if (!mateNow || !view.moveWord(mateNow.cell, target)) continue;
+      for (const { left, right } of pairs) {
+        // —— 候选区已有配对字：两字一起落到最优对 ——
+        if (!boardMate && partnerJ >= 0) {
+          const reserved = new Set([cellKey(left), cellKey(right)]);
+          if (!heroPlacementCellOk(view, left, allowReplaceMax3) || !heroPlacementCellOk(view, right, allowReplaceMax3)) {
+            continue;
+          }
+          clearForHero(left, reserved, null, [], allowReplaceMax3);
+          clearForHero(right, reserved, null, [], allowReplaceMax3);
+          const leftChar = chars[0];
+          const rightChar = chars[1];
+          const trayNow = view.tray();
+          const leftIdx = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === leftChar);
+          const rightIdx0 = trayFindIndex(trayNow, (x) => x.kind === 'word' && x.char === rightChar);
+          if (leftIdx < 0 || rightIdx0 < 0) continue;
+          if (!view.place(leftIdx, left)) continue;
+          const trayAfter = view.tray();
+          const rightIdx = trayFindIndex(trayAfter, (x) => x.kind === 'word' && x.char === rightChar);
+          if (rightIdx < 0) return true;
+          if (view.place(rightIdx, right)) return true;
+          return true;
         }
 
-        // 2) 落 tray 字：优先挪开占位，满盘挪不开时直接 place（与孤儿/兵交换）
-        clearForHero(needTray, reserved, null, [mateOld]);
-        const idx = trayFindIndex(
-          view.tray(),
-          (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
-        );
-        if (idx < 0) continue;
-        if (view.place(idx, needTray)) return true;
+        // —— 棋盘已有伴侣：迁到评分最高的对位（不拆其他英雄），再落 tray 字 ——
+        if (boardMate) {
+          const mateIsLeftChar = boardMate.char === chars[0];
+          if (mateIsLeftChar && t.char !== chars[1]) continue;
+          if (!mateIsLeftChar && t.char !== chars[0]) continue;
+          const needMate = mateIsLeftChar ? left : right;
+          const needTray = mateIsLeftChar ? right : left;
+
+          // 目标伴侣格已被其他字占据（如 背@3,0 但选定伴侣是 扇）→ 跳过，避免 tray 铁 误配铁背
+          const occupantAtMate = wordAt(needMate);
+          if (occupantAtMate && !sameCell(occupantAtMate.cell, boardMate.cell)) continue;
+
+          const mateAtNeed = sameCell(boardMate.cell, needMate);
+          const mateAtTray = sameCell(boardMate.cell, needTray);
+
+          if (!heroPlacementCellOk(view, needTray, allowReplaceMax3)) continue;
+          if (view.isActiveHeroCell(needMate) && !mateAtNeed && !heroPlacementCellOk(view, needMate, allowReplaceMax3)) {
+            continue;
+          }
+
+          const reserved = new Set([cellKey(needMate), cellKey(needTray)]);
+          const mateOld = { ...boardMate.cell };
+
+          // 1) 伴侣归位：左字→needMate，右字→needTray；亦支持从第三格迁来（非仅已在位/白龙式）
+          if (mateIsLeftChar && mateAtTray && !mateAtNeed) {
+            if (!clearForHero(needMate, reserved, null, [], allowReplaceMax3)) continue;
+            const mateNow = resolveTrackedWord(boardMate);
+            if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
+          } else if (!mateIsLeftChar && mateAtTray && !mateAtNeed) {
+            if (!clearForHero(needMate, reserved, null, [], allowReplaceMax3)) continue;
+            const mateNow = resolveTrackedWord(boardMate);
+            if (!mateNow || !view.moveWord(mateNow.cell, needMate)) continue;
+          } else if (!mateAtNeed && !mateAtTray) {
+            const target = mateIsLeftChar ? needMate : needTray;
+            if (!clearForHero(target, reserved, null, [], allowReplaceMax3)) continue;
+            const mateNow = resolveTrackedWord(boardMate);
+            if (!mateNow || !view.moveWord(mateNow.cell, target)) continue;
+          }
+
+          // 2) 落 tray 字：优先挪开占位，满盘挪不开时直接 place（与孤儿/兵交换）
+          clearForHero(needTray, reserved, null, [mateOld], allowReplaceMax3);
+          const idx = trayFindIndex(
+            view.tray(),
+            (x) => x.kind === 'word' && x.char === t.char && x.tier === t.tier,
+          );
+          if (idx < 0) continue;
+          if (view.place(idx, needTray)) return true;
+        }
       }
     }
     return false;
