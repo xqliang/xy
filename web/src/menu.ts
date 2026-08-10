@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_COST } from './stamina';
 import { STARS_PER_TIER } from './rank';
+import { APP_VERSION } from './version';
 import {
   roundRect,
   drawInkResourceBar,
@@ -343,4 +344,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(info.toast, VIEW_W / 2, VIEW_H - 20);
   }
+
+  // 右下角版本号（发版脚本写入 APP_VERSION）
+  ctx.fillStyle = 'rgba(70,48,24,0.42)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(`v${APP_VERSION}`, VIEW_W - 14, VIEW_H - 12);
 }

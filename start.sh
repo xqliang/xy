@@ -17,6 +17,8 @@
 #   ./start.sh rollback list      # 列出所有可回滚发布（标出当前）
 #   ./start.sh rollback <rel|时间戳>  # 回滚到指定发布（可传时间戳子串）
 #   ./start.sh wx         # 构建微信小游戏 bundle 到 wechat/（独立于 web，不影响 dev/deploy）
+#   ./start.sh release [patch|minor|major|x.y.z]  # 发版：Claude 分组 CHANGELOG、写版本号、commit 并打 v* tag
+#   ./start.sh release dry|raw [..]               # dry=仅预览；raw=跳过 Claude 用原始 git log
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,6 +50,234 @@ free_port() {
 }
 
 need_node
+
+# —— 发版：根据上次 tag 以来的 git log 写 CHANGELOG，更新版本号，commit 后打 tag ——
+# 用法：
+#   ./start.sh release              # patch 自增（默认）
+#   ./start.sh release minor|major  # 次/主版本自增
+#   ./start.sh release 1.2.3        # 指定版本号（不要带 v）
+#   ./start.sh release dry [..]     # 只预览 changelog / 新版本，不写文件、不提交
+#   ./start.sh release raw [..]     # 跳过 Claude，直接用原始 git log
+# 说明：拿到提交列表后默认调用 `claude -p` 做中文分组总结再写入 CHANGELOG.md；
+#       无 claude CLI / 调用失败时回退为原始列表。也可用环境变量 RELEASE_SKIP_CLAUDE=1 跳过。
+bump_semver() {
+  local ver="$1" kind="$2"
+  local major minor patch
+  IFS=. read -r major minor patch <<<"$ver"
+  major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
+  case "$kind" in
+    major) echo "$((major + 1)).0.0" ;;
+    minor) echo "${major}.$((minor + 1)).0" ;;
+    patch) echo "${major}.${minor}.$((patch + 1))" ;;
+    *) echo "❌ 未知 bump 类型：$kind" >&2; return 1 ;;
+  esac
+}
+
+# 用 Claude 把原始 commit 列表总结分组；失败则原样返回。
+summarize_changelog_with_claude() {
+  local raw="$1"
+  local ver="$2"
+  local skip="${3:-0}"
+
+  if [ "$skip" = 1 ] || [ "${RELEASE_SKIP_CLAUDE:-0}" = 1 ]; then
+    echo "$raw"
+    return 0
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "⚠️  未找到 claude CLI，CHANGELOG 使用原始 git log" >&2
+    echo "$raw"
+    return 0
+  fi
+
+  echo "🤖 正在用 Claude 汇总分组 changelog…" >&2
+  local prompt system_prompt out
+  system_prompt='你是发版编辑。把 git 提交列表整理成面向玩家/开发者的中文 CHANGELOG 正文。只输出 Markdown 正文，不要包裹代码围栏，不要输出版本标题（不要 ## [x.y.z]）。按实际内容选用分组小标题（有则写、无则省略），推荐：### 新功能、### 修复、### 平衡调整、### 体验与 UI、### 文档、### 其他。每条用 "- " 开头，合并重复/琐碎提交，保留关键信息，去掉无意义的 chore/格式化噪音。语言简洁。'
+
+  prompt="$(cat <<EOF
+请整理版本 v${ver} 的 CHANGELOG 正文。
+
+原始提交：
+${raw}
+EOF
+)"
+
+  # --bare：纯文本推理，不读写仓库；失败则回退原始列表
+  if ! out="$(
+    claude -p --bare --output-format text --no-session-persistence \
+      --system-prompt "$system_prompt" \
+      "$prompt" 2>/dev/null
+  )"; then
+    echo "⚠️  Claude 调用失败，CHANGELOG 使用原始 git log" >&2
+    echo "$raw"
+    return 0
+  fi
+
+  # 去掉偶发的代码围栏与首尾空行
+  out="$(printf '%s\n' "$out" | sed '/^```/d')"
+  out="$(printf '%s\n' "$out" | awk '
+    NF { started=1 }
+    started { lines[++n]=$0 }
+    END {
+      while (n>0 && lines[n] ~ /^[[:space:]]*$/) n--
+      for (i=1; i<=n; i++) print lines[i]
+    }
+  ')"
+
+  if [ -z "$out" ]; then
+    echo "⚠️  Claude 返回为空，CHANGELOG 使用原始 git log" >&2
+    echo "$raw"
+    return 0
+  fi
+  echo "$out"
+}
+
+do_release() {
+  local dry=0
+  local skip_claude=0
+  local spec=""
+  local a
+  for a in "$@"; do
+    case "$a" in
+      dry|--dry-run|-n) dry=1 ;;
+      raw|--no-claude|--skip-claude) skip_claude=1 ;;
+      *)
+        if [ -z "$spec" ]; then spec="$a"; fi
+        ;;
+    esac
+  done
+  spec="${spec:-patch}"
+
+  if [ "$dry" != 1 ]; then
+    if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+      echo "❌ 工作区有未提交改动，请先提交或暂存后再发版"
+      git -C "$ROOT" status -sb
+      exit 1
+    fi
+  fi
+
+  local last_tag
+  last_tag="$(git -C "$ROOT" tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+  local range_desc log_range base_ver
+  if [ -n "$last_tag" ]; then
+    range_desc="自 ${last_tag} 以来"
+    log_range="${last_tag}..HEAD"
+    base_ver="${last_tag#v}"
+  else
+    range_desc="全部提交（尚无 v* tag）"
+    log_range=""
+    base_ver="$(node -p "require('${ROOT}/web/package.json').version" 2>/dev/null || echo "0.1.0")"
+  fi
+
+  local new_ver
+  case "$spec" in
+    major|minor|patch)
+      if [ -n "$last_tag" ]; then
+        new_ver="$(bump_semver "$base_ver" "$spec")"
+      else
+        # 无 tag 时：patch=沿用 package 当前版本作为首发；minor/major 再 bump
+        if [ "$spec" = patch ]; then new_ver="$base_ver"
+        else new_ver="$(bump_semver "$base_ver" "$spec")"
+        fi
+      fi
+      ;;
+    *)
+      if [[ "$spec" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        new_ver="$spec"
+      else
+        echo "❌ 版本参数无效：$spec（可用 patch|minor|major 或 1.2.3）"
+        exit 1
+      fi
+      ;;
+  esac
+
+  if [ -n "$last_tag" ] && [ "$new_ver" = "$base_ver" ]; then
+    echo "❌ 新版本与上一 tag 相同：v${new_ver}"
+    exit 1
+  fi
+  if git -C "$ROOT" rev-parse "v${new_ver}" >/dev/null 2>&1; then
+    echo "❌ tag 已存在：v${new_ver}"
+    exit 1
+  fi
+
+  local raw_changes
+  if [ -n "$log_range" ]; then
+    raw_changes="$(git -C "$ROOT" log --no-merges --pretty=format:'- %s (%h)' "$log_range" | grep -vE '^- chore\(release\)' || true)"
+  else
+    raw_changes="$(git -C "$ROOT" log --no-merges --pretty=format:'- %s (%h)' | grep -vE '^- chore\(release\)' || true)"
+  fi
+  if [ -z "$raw_changes" ]; then
+    echo "❌ ${range_desc}没有可写入 changelog 的提交"
+    exit 1
+  fi
+
+  local changes
+  changes="$(summarize_changelog_with_claude "$raw_changes" "$new_ver" "$skip_claude")"
+
+  local today
+  today="$(date +%Y-%m-%d)"
+  local section
+  section="$(cat <<EOF
+## [${new_ver}] - ${today}
+
+${changes}
+EOF
+)"
+
+  echo "📦 发版预览"
+  echo "   上一版本：${last_tag:-（无）}"
+  echo "   新版本  ：v${new_ver}"
+  echo "   范围    ：${range_desc}"
+  echo ""
+  echo "$section"
+  echo ""
+
+  if [ "$dry" = 1 ]; then
+    echo "（dry-run：未写入文件、未提交、未打 tag）"
+    return 0
+  fi
+
+  local changelog="$ROOT/CHANGELOG.md"
+  local tmp
+  tmp="$(mktemp)"
+  {
+    echo "# Changelog"
+    echo ""
+    echo "$section"
+    echo ""
+    if [ -f "$changelog" ]; then
+      # 去掉旧文件开头的标题与紧随空行，避免重复
+      awk '
+        NR==1 && $0=="# Changelog" { next }
+        NR==2 && $0=="" && !seen { next }
+        { seen=1; print }
+      ' "$changelog"
+    fi
+  } >"$tmp"
+  mv "$tmp" "$changelog"
+
+  cat >"$ROOT/web/src/version.ts" <<EOF
+/** 应用版本号：由 \`./start.sh release\` 写入，请勿手改。 */
+export const APP_VERSION = '${new_ver}';
+EOF
+
+  node -e "
+    const fs = require('fs');
+    const p = '${ROOT}/web/package.json';
+    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+    j.version = '${new_ver}';
+    fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+  "
+
+  git -C "$ROOT" add CHANGELOG.md web/src/version.ts web/package.json
+  git -C "$ROOT" commit -m "$(cat <<EOF
+chore(release): v${new_ver}
+
+EOF
+)"
+  git -C "$ROOT" tag -a "v${new_ver}" -m "Release v${new_ver}"
+  echo "✅ 已提交并打 tag：v${new_ver}"
+  echo "   推送：git push && git push origin v${new_ver}"
+}
 
 case "$CMD" in
   dev)
@@ -209,9 +439,12 @@ echo \"   若页面仍不对，请强刷或清缓存（index.html 可能被浏�
       echo "🔎 健康检查 ${ECS_URL} → HTTP ${code}"
     fi
     ;;
+  release)
+    do_release "${@:2}"
+    ;;
   *)
     echo "未知命令：$CMD"
-    echo "可用：dev | bg | stop | logs | build | preview | test | versus-agent | check | deploy | rollback | wx"
+    echo "可用：dev | bg | stop | logs | build | preview | test | versus-agent | check | deploy | rollback | wx | release"
     exit 1
     ;;
 esac
