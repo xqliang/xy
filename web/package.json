@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview --port 5180",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "versus-agent": "vitest run tests/versus-user-agent.test.ts --reporter=verbose"
   },
   "devDependencies": {
     "puppeteer-core": "^23.11.1",
