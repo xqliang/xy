@@ -32,11 +32,6 @@ const info = await page.evaluate(() => {
 await sleep(60);
 await page.screenshot({ path: path.join(OUT, 'peach-board.png') });
 
-// 商店：被动技能区
-await page.evaluate(() => window.__game.openShop());
-await sleep(60);
-await page.screenshot({ path: path.join(OUT, 'peach-shop.png') });
-
 console.log('info:', JSON.stringify(info));
 console.log('errors:', logs.join('\n') || '(none)');
 await browser.close();

@@ -49,11 +49,9 @@ import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type E
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
-import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
+import { loadMerit, metaBonuses, meritReward, addMerit, type MeritState } from './merit';
 import {
   loadLoadout,
-  buyActive,
-  buyPassive,
   equipActive,
   equipPassive,
   unequipActive,
@@ -64,20 +62,7 @@ import {
   PASSIVE_FULL_HINT,
   type LoadoutState,
 } from './loadout';
-import { drawShop, shopHitAt, SHOP_MAX_SCROLL, drawShopPopup, shopPopupHitAt, type ShopPopupState } from './shop';
-import {
-  drawCodex,
-  codexHitBack,
-  resetCodex,
-  codexPointerDown,
-  codexPointerMove,
-  codexPointerUp,
-  codexWheel,
-  setCodexToast,
-  codexNeedsAnim,
-} from './codex';
-import { drawLeaderboard, leaderboardHitBack } from './leaderboard';
-import { drawBag, bagHitAt, drawBagPopup, bagPopupHitAt, bagMaxScroll } from './bag';
+import type { CodexTab } from './codex';
 import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weaponPickup';
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
@@ -95,36 +80,8 @@ import {
   setSfxVolume,
   type GameSettings,
 } from './settings';
-import {
-  drawSettingsPopup,
-  drawStaminaPopup,
-  drawMapPopup,
-  settingsHitAt,
-  staminaPopupHitAt,
-  mapPopupHitAt,
-  settingsMusicVolumeFromX,
-  settingsSfxVolumeFromX,
-} from './menu-popups';
-import {
-  drawHelpPopup,
-  helpPopupHitAt,
-  helpMaxScroll,
-  type HelpLinkId,
-} from './menu-help';
-import {
-  merchantClosed,
-  openMerchant,
-  drawMerchant,
-  merchantHitAt,
-  merchantMaxScroll,
-  merchantScrollViewportContains,
-  merchantTestScrollAreaContains,
-  merchantApplyWheel,
-  applyMerchantHitFull,
-  merchantActiveRowRect,
-  merchantPassiveRowRect,
-  type MerchantUiState,
-} from './merchant';
+import type { HelpLinkId } from './menu-help';
+import type { MerchantUiState } from './merchant';
 import {
   loadTutorialState,
   maybeStartTutorial,
@@ -137,7 +94,7 @@ import {
   type TutorialSequence,
   type TutorialStep,
 } from './tutorial';
-import { openDevTools, type ApplyUserResult } from './devtools';
+import type { ApplyUserResult } from './devtools';
 
 /** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
 function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
@@ -210,7 +167,7 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'loading' | 'menu' | 'battle' | 'shop' | 'codex' | 'rank' | 'bag';
+type Screen = 'loading' | 'menu' | 'battle' | 'codex' | 'rank' | 'bag';
 
 function usesMenuMusic(s: Screen): boolean {
   return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag';
@@ -230,6 +187,59 @@ function safePersisted<T>(load: () => T, fallback: T): T {
 }
 
 let screen: Screen = 'loading';
+
+// —— 非战斗核心屏幕/弹窗懒加载：各自独立分包，减小首屏主包体积 —— //
+// ensure()：确保模块已加载后再执行回调（用于"进入该屏幕/弹窗"的入口，需先加载完成才能改 screen/弹窗态，
+//   保证一旦 screen 切到目标值，对应模块必已加载，故其余使用处可用 get()! 免判空）。
+// prefetch()：不阻塞地提前触发加载（用于"几乎必然很快会用到"的模块，如结算后必弹的神秘商人）。
+function lazyModule<M>(loader: () => Promise<M>) {
+  let mod: M | null = null;
+  let pending: Promise<M> | null = null;
+  const prefetch = (): Promise<M> => (pending ??= loader().then((m) => { mod = m; return m; }));
+  return {
+    get: () => mod,
+    ensure: (cb: (m: M) => void): void => { if (mod) { cb(mod); return; } void prefetch().then(cb); },
+    prefetch,
+  };
+}
+const codexLazy = lazyModule(() => import('./codex'));
+const bagLazy = lazyModule(() => import('./bag'));
+const leaderboardLazy = lazyModule(() => import('./leaderboard'));
+const menuHelpLazy = lazyModule(() => import('./menu-help'));
+const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
+const merchantLazy = lazyModule(() => import('./merchant'));
+
+function enterCodex(tab?: CodexTab): void {
+  codexLazy.ensure((m) => {
+    m.resetCodex(tab);
+    screen = 'codex';
+    scheduleFrame();
+  });
+}
+function enterBag(): void {
+  bagLazy.ensure(() => {
+    bagToast = '';
+    bagPopup = null;
+    bagScrollY = 0;
+    screen = 'bag';
+    scheduleFrame();
+  });
+}
+function enterRank(): void {
+  leaderboardLazy.ensure(() => {
+    screen = 'rank';
+    scheduleFrame();
+  });
+}
+function openSettingsPopup(): void {
+  menuPopupsLazy.ensure(() => { menuPopup = 'settings'; scheduleFrame(); });
+}
+function openStaminaPopup(): void {
+  menuPopupsLazy.ensure(() => { staminaPopupToast = ''; menuPopup = 'stamina'; scheduleFrame(); });
+}
+function openMapPopup(): void {
+  menuPopupsLazy.ensure(() => { menuPopup = 'map'; scheduleFrame(); });
+}
 
 // 先加载资源，再进首页；进度页延迟 LOADING_UI_DELAY_MS，缓存秒进则不闪进度 UI
 void (async () => {
@@ -254,6 +264,10 @@ void (async () => {
     window.clearTimeout(showUiTimer);
   }
   scheduleFrame();
+  // 神秘商人几乎每局结算后必弹出：首屏就绪后空闲预取分包，避免结算时才现拉取造成等待。
+  const prefetchMerchantChunk = (): void => { void merchantLazy.prefetch(); };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(prefetchMerchantChunk, { timeout: 4000 });
+  else window.setTimeout(prefetchMerchantChunk, 1500);
 })();
 
 let rank: RankState = safePersisted(loadRank, { level: 0, stars: 0, difficulty: 1 });
@@ -285,12 +299,6 @@ let merchantDragged = false;
 let merchantDownX = 0;
 let merchantDownY = 0;
 let merchantDownScroll = 0;
-let shopToast = '';
-let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗（null=未开）
-// 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
-let shopScrollY = 0;
-let shopPointerActive = false;
-let shopDownX = 0, shopDownY = 0, shopDownScroll = 0, shopDragged = false;
 let bagScrollY = 0;
 let bagPointerActive = false;
 let bagDownX = 0, bagDownY = 0, bagDownScroll = 0, bagDragged = false;
@@ -310,7 +318,19 @@ let settleStart = 0; // 打开结算弹层的时间戳（performance.now）
 let endlessOn = safePersisted(loadEndlessEnabled, false); // 开局前无尽勾选（持久化）
 let endlessResult: EndlessResult | null = null; // 无尽局结束展示数据
 let pendingMerchant = false; // 本局已结算，回首页时弹出神秘商人
-let merchant: MerchantUiState = merchantClosed();
+// 关闭态字面量与 merchant.ts 的 merchantClosed() 保持一致：避免首屏同步依赖该分包模块。
+let merchant: MerchantUiState = {
+  open: false,
+  tab: 'shop',
+  offers: [],
+  lotteryPreview: [],
+  toast: '',
+  confirmOffer: null,
+  confirmUnequip: null,
+  skillInfo: null,
+  testMode: false,
+  scrollY: 0,
+};
 let gameSettings: GameSettings = safePersisted(getSettings, resetSettings());
 
 function isSettleOpen(): boolean {
@@ -349,30 +369,22 @@ function openHelpLink(id: HelpLinkId): void {
   playSfx('click');
   switch (id) {
     case 'codex-unit':
-      resetCodex('unit');
-      screen = 'codex';
+      enterCodex('unit');
       return;
     case 'codex-hero':
-      resetCodex('hero');
-      screen = 'codex';
+      enterCodex('hero');
       return;
     case 'codex-monster':
-      resetCodex('monster');
-      screen = 'codex';
+      enterCodex('monster');
       return;
     case 'codex-skill':
-      resetCodex('skill');
-      screen = 'codex';
+      enterCodex('skill');
       return;
     case 'bag':
-      bagToast = '';
-      bagPopup = null;
-      bagScrollY = 0;
-      screen = 'bag';
+      enterBag();
       return;
     case 'stamina':
-      staminaPopupToast = '';
-      menuPopup = 'stamina';
+      openStaminaPopup();
       return;
     default: {
       const _exhaustive: never = id;
@@ -658,13 +670,13 @@ function merchantFirstOpenSequence(): TutorialSequence {
         id: 'activeSkill',
         title: '主动技能是什么',
         text: '主动技能需要在局内手动点击释放，有冷却时间，能造成爆发效果。',
-        getAnchor: () => merchantActiveRowRect(),
+        getAnchor: () => merchantLazy.get()!.merchantActiveRowRect(),
       },
       {
         id: 'passiveSkill',
         title: '被动技能是什么',
         text: '被动技能装备后全程自动生效，无需手动操作。',
-        getAnchor: () => merchantPassiveRowRect(),
+        getAnchor: () => merchantLazy.get()!.merchantPassiveRowRect(),
       },
     ],
   };
@@ -766,11 +778,12 @@ function handleVersionSecretTap(): void {
   if (versionTapCount < VERSION_SECRET_TAPS) return;
   versionTapCount = 0;
   playSfx('click');
-  openDevTools({
-    onUserApplied: applyDevUserResult,
+  // DevTools 面板体积较大且仅调试用，动态导入让它独立分包，不进主包体积（非循环依赖规避，纯代码分割）
+  void import('./devtools').then(({ openDevTools }) => {
+    openDevTools({ onUserApplied: applyDevUserResult });
+    menuToast = '已打开 DevTools';
+    scheduleFrame();
   });
-  menuToast = '已打开 DevTools';
-  scheduleFrame();
 }
 
 function applyDevUserResult(r: ApplyUserResult): void {
@@ -787,21 +800,23 @@ function applyDevUserResult(r: ApplyUserResult): void {
 function handleMenu(id: string) {
   playSfx('click');
   if (id === 'settings') {
-    menuPopup = 'settings';
+    openSettingsPopup();
     return;
   }
   if (id === 'help') {
-    helpScrollY = 0;
-    menuPopup = 'help';
+    menuHelpLazy.ensure(() => {
+      helpScrollY = 0;
+      menuPopup = 'help';
+      scheduleFrame();
+    });
     return;
   }
   if (id === 'staminaPlus') {
-    staminaPopupToast = '';
-    menuPopup = 'stamina';
+    openStaminaPopup();
     return;
   }
   if (id === 'mapPick') {
-    menuPopup = 'map';
+    openMapPopup();
     return;
   }
   if (id === 'endless') {
@@ -824,15 +839,11 @@ function handleMenu(id: string) {
     screen = 'battle';
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
   } else if (id === 'codex') {
-    resetCodex();
-    screen = 'codex';
+    enterCodex();
   } else if (id === 'rank') {
-    screen = 'rank';
+    enterRank();
   } else if (id === 'bag') {
-    bagToast = '';
-    bagPopup = null;
-    bagScrollY = 0;
-    screen = 'bag';
+    enterBag();
   } else {
     menuToast = '该功能开发中…';
   }
@@ -841,7 +852,8 @@ function handleMenu(id: string) {
 function handleMenuPopupPointer(x: number, y: number): boolean {
   if (menuPopup === 'none') return false;
   if (menuPopup === 'settings') {
-    const hit = settingsHitAt(x, y, gameSettings, loadUserId());
+    const pop = menuPopupsLazy.get()!;
+    const hit = pop.settingsHitAt(x, y, gameSettings, loadUserId());
     if (hit === null) return true;
     playSfx('click');
     if (hit.kind === 'close') {
@@ -876,20 +888,20 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     }
     if (hit.kind === 'musicKnob') {
       menuSliderDrag = 'music';
-      gameSettings = setMusicVolume(gameSettings, settingsMusicVolumeFromX(x, loadUserId()));
+      gameSettings = setMusicVolume(gameSettings, pop.settingsMusicVolumeFromX(x, loadUserId()));
       syncAudioFromSettings();
       return true;
     }
     if (hit.kind === 'sfxKnob') {
       menuSliderDrag = 'sfx';
-      gameSettings = setSfxVolume(gameSettings, settingsSfxVolumeFromX(x, loadUserId()));
+      gameSettings = setSfxVolume(gameSettings, pop.settingsSfxVolumeFromX(x, loadUserId()));
       syncAudioFromSettings();
       return true;
     }
     return true;
   }
   if (menuPopup === 'help') {
-    const hit = helpPopupHitAt(x, y, helpScrollY, ctx);
+    const hit = menuHelpLazy.get()!.helpPopupHitAt(x, y, helpScrollY, ctx);
     if (hit === null) return true;
     if (hit.kind === 'close') {
       playSfx('click');
@@ -908,7 +920,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     return true;
   }
   if (menuPopup === 'map') {
-    const hit = mapPopupHitAt(x, y);
+    const hit = menuPopupsLazy.get()!.mapPopupHitAt(x, y);
     if (hit === null) return true;
     playSfx('click');
     if (hit.kind === 'close') {
@@ -931,7 +943,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     }
     return true;
   }
-  const hit = staminaPopupHitAt(x, y);
+  const hit = menuPopupsLazy.get()!.staminaPopupHitAt(x, y);
   if (hit === null) return true;
   playSfx('click');
   if (hit.kind === 'close') {
@@ -963,7 +975,8 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
 function handleMenuPopupDrag(x: number): void {
   if (menuPopup !== 'settings' || !menuSliderDrag) return;
   const uid = loadUserId();
-  const v = menuSliderDrag === 'music' ? settingsMusicVolumeFromX(x, uid) : settingsSfxVolumeFromX(x, uid);
+  const pop = menuPopupsLazy.get()!;
+  const v = menuSliderDrag === 'music' ? pop.settingsMusicVolumeFromX(x, uid) : pop.settingsSfxVolumeFromX(x, uid);
   if (menuSliderDrag === 'music') {
     gameSettings = setMusicVolume(gameSettings, v);
   } else {
@@ -975,13 +988,14 @@ function handleMenuPopupDrag(x: number): void {
 
 function handleMerchantPointer(x: number, y: number): boolean {
   if (!merchant.open) return false;
-  const hit = merchantHitAt(x, y, merchant, loadout);
+  const mc = merchantLazy.get()!;
+  const hit = mc.merchantHitAt(x, y, merchant, loadout);
   if (hit === null) {
-    if (merchant.testMode && merchantTestScrollAreaContains(x, y)) return false;
+    if (merchant.testMode && mc.merchantTestScrollAreaContains(x, y)) return false;
     return true;
   }
   playSfx('click');
-  const res = applyMerchantHitFull(hit, merchant, loadout, merit);
+  const res = mc.applyMerchantHitFull(hit, merchant, loadout, merit);
   merchant = res.merchant;
   loadout = res.loadout;
   merit = res.merit;
@@ -989,10 +1003,11 @@ function handleMerchantPointer(x: number, y: number): boolean {
 }
 
 function applyMerchantHitAt(x: number, y: number): void {
-  const hit = merchantHitAt(x, y, merchant, loadout);
+  const mc = merchantLazy.get()!;
+  const hit = mc.merchantHitAt(x, y, merchant, loadout);
   if (!hit) return;
   playSfx('click');
-  const res = applyMerchantHitFull(hit, merchant, loadout, merit);
+  const res = mc.applyMerchantHitFull(hit, merchant, loadout, merit);
   merchant = res.merchant;
   loadout = res.loadout;
   merit = res.merit;
@@ -1025,86 +1040,14 @@ function leaveSettleToMenu(): void {
   endlessResult = null;
   screen = 'menu';
   if (pendingMerchant) {
-    merchant = openMerchant(loadout);
     pendingMerchant = false;
-    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, merchantFirstOpenSequence());
+    // 通常已被空闲预取加载完毕，ensure() 同步回调；极端情况下（战斗结算过快）在此兜底等待分包加载。
+    merchantLazy.ensure((m) => {
+      merchant = m.openMerchant(loadout);
+      tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, merchantFirstOpenSequence());
+      scheduleFrame();
+    });
   }
-}
-
-function handleShop(x: number, y: number) {
-  const hit = shopHitAt(x, y, shopScrollY);
-  if (!hit) return;
-  if (hit.kind === 'back') {
-    screen = 'menu';
-    return;
-  }
-  // 点击商品卡片：打开详情 tips 弹窗（购买改到弹窗内二次确认）
-  if (hit.id) shopPopup = { kind: hit.kind, id: hit.id, phase: 'detail' };
-}
-
-// 处理商品弹窗：卸下/装备立即生效；未购买点「购买」→ confirm 才扣费。
-function handleShopPopup(x: number, y: number) {
-  if (!shopPopup) return;
-  const r = shopPopupHitAt(x, y, shopPopup);
-  if (r === 'close' || r === 'outside') { shopPopup = null; return; }
-  if (r === 'action') {
-    const { kind, id } = shopPopup;
-    if (kind === 'buyActive') {
-      if (loadout.equipped.includes(id)) {
-        loadout = unequipActive(loadout, id);
-        shopToast = '已卸下（今日仍可再装备）';
-        shopPopup = null;
-        return;
-      }
-      if (isOwnedActive(loadout, id)) {
-        const res = equipActive(loadout, id);
-        loadout = res.loadout;
-        shopToast = res.ok ? '已装备' : res.reason ?? ACTIVE_FULL_HINT;
-        shopPopup = null;
-        return;
-      }
-    }
-    if (kind === 'buyPassive') {
-      if (loadout.passives.includes(id)) {
-        loadout = unequipPassive(loadout, id);
-        shopToast = '已卸下（今日仍可再装备）';
-        shopPopup = null;
-        return;
-      }
-      if (isOwnedPassive(loadout, id)) {
-        const res = equipPassive(loadout, id);
-        loadout = res.loadout;
-        shopToast = res.ok ? '已装备' : res.reason ?? PASSIVE_FULL_HINT;
-        shopPopup = null;
-        return;
-      }
-    }
-    shopPopup = { ...shopPopup, phase: 'confirm' };
-    return;
-  }
-  if (r === 'cancel') { shopPopup = { ...shopPopup, phase: 'detail' }; return; }
-  if (r === 'confirm') {
-    const { kind, id } = shopPopup;
-    if (kind === 'buy') {
-      const res = buyUpgrade(merit, id);
-      merit = res.state;
-      shopToast = res.ok ? '购买成功！' : res.reason ?? '无法购买';
-    } else if (kind === 'buyActive') {
-      const res = buyActive(loadout, merit, id);
-      loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok
-        ? (loadout.equipped.includes(id) ? '已购买并装备（今日有效）' : '已购买（槽满，卸下其他后可装备）')
-        : res.reason ?? '无法购买';
-    } else {
-      const res = buyPassive(loadout, merit, id);
-      loadout = res.loadout; merit = res.merit;
-      shopToast = res.ok
-        ? (loadout.passives.includes(id) ? '已购买并装备（今日有效）' : '已购买（槽满，卸下其他后可装备）')
-        : res.reason ?? '无法购买';
-    }
-    shopPopup = null;
-  }
-  // r === null：点在弹窗内非按钮区，吞掉本次点击（不关闭）
 }
 
 // —— 画布尺寸 / DPR —— //
@@ -1256,7 +1199,7 @@ function onPointerDown(e: PointerEvent) {
   }
   if (screen === 'menu') {
     if (merchant.open && merchant.testMode) {
-      const hit = merchantHitAt(x, y, merchant, loadout);
+      const hit = merchantLazy.get()!.merchantHitAt(x, y, merchant, loadout);
       if (
         hit &&
         (hit.kind === 'close' ||
@@ -1269,7 +1212,7 @@ function onPointerDown(e: PointerEvent) {
         applyMerchantHitAt(x, y);
         return;
       }
-      if (merchantTestScrollAreaContains(x, y)) {
+      if (merchantLazy.get()!.merchantTestScrollAreaContains(x, y)) {
         merchantPointerActive = true;
         merchantDragged = false;
         merchantDownX = x;
@@ -1296,34 +1239,25 @@ function onPointerDown(e: PointerEvent) {
     if (menuDownId) canvas.setPointerCapture(e.pointerId);
     return;
   }
-  if (screen === 'shop') {
-    // 弹窗打开时：点击即处理弹窗按钮/关闭，不进入卡片滚动逻辑
-    if (shopPopup) { handleShopPopup(x, y); return; }
-    // 按下只记录起点；购买延迟到 pointerup 且未拖动时（拖动=滚动）
-    shopPointerActive = true;
-    shopDragged = false;
-    shopDownX = x; shopDownY = y; shopDownScroll = shopScrollY;
-    canvas.setPointerCapture(e.pointerId);
-    return;
-  }
   if (screen === 'codex') {
-    if (codexHitBack(x, y)) {
+    const cx = codexLazy.get()!;
+    if (cx.codexHitBack(x, y)) {
       screen = 'menu';
       return;
     }
-    if (codexPointerDown(x, y)) {
+    if (cx.codexPointerDown(x, y)) {
       canvas.setPointerCapture(e.pointerId);
       scheduleFrame();
     }
     return;
   }
   if (screen === 'rank') {
-    if (leaderboardHitBack(x, y)) screen = 'menu';
+    if (leaderboardLazy.get()!.leaderboardHitBack(x, y)) screen = 'menu';
     return;
   }
   if (screen === 'bag') {
     if (bagPopup) {
-      const r = bagPopupHitAt(x, y);
+      const r = bagLazy.get()!.bagPopupHitAt(x, y);
       if (r === 'close' || r === 'outside') bagPopup = null;
       else if (r === 'toggle') {
         const res = toggleEquip(bag, bagPopup);
@@ -1457,7 +1391,7 @@ function onPointerMove(e: PointerEvent) {
     if (helpPointerActive && menuPopup === 'help') {
       const dy = y - helpDownY;
       if (Math.abs(dy) > 6) helpDragged = true;
-      helpScrollY = Math.max(0, Math.min(helpMaxScroll(ctx), helpDownScroll - dy));
+      helpScrollY = Math.max(0, Math.min(menuHelpLazy.get()!.helpMaxScroll(ctx), helpDownScroll - dy));
       scheduleFrame();
       return;
     }
@@ -1472,7 +1406,7 @@ function onPointerMove(e: PointerEvent) {
     if (merchantPointerActive && merchant.open && merchant.testMode) {
       const dy = y - merchantDownY;
       if (Math.abs(dy) > 6) merchantDragged = true;
-      const max = merchantMaxScroll(merchant);
+      const max = merchantLazy.get()!.merchantMaxScroll(merchant);
       merchant = { ...merchant, scrollY: Math.max(0, Math.min(max, merchantDownScroll - dy)) };
       scheduleFrame();
       return;
@@ -1488,26 +1422,17 @@ function onPointerMove(e: PointerEvent) {
       scheduleFrame();
     }
   }
-  if (screen === 'shop') {
-    if (!shopPointerActive) return;
-    const { y } = toLogical(e.clientX, e.clientY);
-    const dy = y - shopDownY;
-    if (Math.abs(dy) > 6) shopDragged = true;
-    shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopDownScroll - dy));
-    scheduleFrame(); // 按需重绘：拖动滚动商城时重画
-    return;
-  }
   if (screen === 'bag' && bagPointerActive && !bagPopup) {
     const { y } = toLogical(e.clientX, e.clientY);
     const dy = y - bagDownY;
     if (Math.abs(dy) > 6) bagDragged = true;
-    bagScrollY = Math.max(0, Math.min(bagMaxScroll(), bagDownScroll - dy));
+    bagScrollY = Math.max(0, Math.min(bagLazy.get()!.bagMaxScroll(), bagDownScroll - dy));
     scheduleFrame();
     return;
   }
   if (screen === 'codex') {
     const { x, y } = toLogical(e.clientX, e.clientY);
-    codexPointerMove(x, y);
+    codexLazy.get()!.codexPointerMove(x, y);
     scheduleFrame();
     return;
   }
@@ -1542,7 +1467,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       helpPointerActive = false;
       helpDragged = false;
       if (!cancelled && !wasDrag) {
-        const hit = helpPopupHitAt(upX, upY, helpScrollY, ctx);
+        const hit = menuHelpLazy.get()!.helpPopupHitAt(upX, upY, helpScrollY, ctx);
         if (hit?.kind === 'link') openHelpLink(hit.id);
       }
       return;
@@ -1569,15 +1494,9 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     if (stillOn) handleMenu(id);
     return;
   }
-  if (screen === 'shop') {
-    // 轻点(未拖动)才触发购买；拖动只滚动
-    if (shopPointerActive && !shopDragged) handleShop(shopDownX, shopDownY);
-    shopPointerActive = false;
-    return;
-  }
   if (screen === 'bag') {
     if (bagPointerActive && !bagDragged && !bagPopup) {
-      const hit = bagHitAt(bagDownX, bagDownY, bag, bagScrollY);
+      const hit = bagLazy.get()!.bagHitAt(bagDownX, bagDownY, bag, bagScrollY);
       if (hit?.kind === 'back') screen = 'menu';
       else if (hit?.kind === 'toggle') bagPopup = hit.id;
     }
@@ -1585,26 +1504,27 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     return;
   }
   if (screen === 'codex') {
+    const cx = codexLazy.get()!;
     if (e && !cancelled) {
       const { x, y } = toLogical(e.clientX, e.clientY);
-      const action = codexPointerUp(x, y, loadout);
+      const action = cx.codexPointerUp(x, y, loadout);
       if (action) {
         playSfx('click');
         if (action.kind === 'unequip') {
           loadout = action.skillKind === 'active'
             ? unequipActive(loadout, action.id)
             : unequipPassive(loadout, action.id);
-          setCodexToast('已卸下');
+          cx.setCodexToast('已卸下');
         } else {
           const res = action.skillKind === 'active'
             ? equipActive(loadout, action.id)
             : equipPassive(loadout, action.id);
           loadout = res.loadout;
-          setCodexToast(res.ok ? '已装备' : (res.reason ?? (action.skillKind === 'active' ? ACTIVE_FULL_HINT : PASSIVE_FULL_HINT)));
+          cx.setCodexToast(res.ok ? '已装备' : (res.reason ?? (action.skillKind === 'active' ? ACTIVE_FULL_HINT : PASSIVE_FULL_HINT)));
         }
       }
     } else {
-      codexPointerUp();
+      cx.codexPointerUp();
     }
     return;
   }
@@ -1666,31 +1586,25 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
 canvas.addEventListener('wheel', (e) => {
   if (screen === 'menu' && merchant.open && merchant.testMode) {
     e.preventDefault();
-    merchant = merchantApplyWheel(merchant, e.deltaY);
+    merchant = merchantLazy.get()!.merchantApplyWheel(merchant, e.deltaY);
     scheduleFrame();
     return;
   }
   if (screen === 'menu' && menuPopup === 'help') {
     e.preventDefault();
-    helpScrollY = Math.max(0, Math.min(helpMaxScroll(ctx), helpScrollY + e.deltaY));
+    helpScrollY = Math.max(0, Math.min(menuHelpLazy.get()!.helpMaxScroll(ctx), helpScrollY + e.deltaY));
     scheduleFrame();
-    return;
-  }
-  if (screen === 'shop') {
-    e.preventDefault();
-    shopScrollY = Math.max(0, Math.min(SHOP_MAX_SCROLL(), shopScrollY + e.deltaY));
-    scheduleFrame(); // 按需重绘：滚轮滚动后重画商城
     return;
   }
   if (screen === 'bag' && !bagPopup) {
     e.preventDefault();
-    bagScrollY = Math.max(0, Math.min(bagMaxScroll(), bagScrollY + e.deltaY));
+    bagScrollY = Math.max(0, Math.min(bagLazy.get()!.bagMaxScroll(), bagScrollY + e.deltaY));
     scheduleFrame();
     return;
   }
   if (screen === 'codex') {
     e.preventDefault();
-    codexWheel(e.deltaY);
+    codexLazy.get()!.codexWheel(e.deltaY);
     scheduleFrame();
   }
 }, { passive: false });
@@ -1715,7 +1629,7 @@ function needsContinuousLoop(): boolean {
     }
     return !ui.paused;
   }
-  if (screen === 'codex') return codexNeedsAnim();
+  if (screen === 'codex') return codexLazy.get()?.codexNeedsAnim() ?? false;
   return false;
 }
 
@@ -1751,28 +1665,25 @@ function frame(now: number): void {
       pressedId: menuPressedId,
       hoverId: menuHoverId,
     });
-    if (menuPopup === 'settings') drawSettingsPopup(ctx, gameSettings, loadUserId());
-    else if (menuPopup === 'stamina') drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
-    else if (menuPopup === 'map') drawMapPopup(ctx, mapSelection, pickDailyMap().name);
-    else if (menuPopup === 'help') drawHelpPopup(ctx, helpScrollY);
+    if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings, loadUserId());
+    else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
+    else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name);
+    else if (menuPopup === 'help') menuHelpLazy.get()!.drawHelpPopup(ctx, helpScrollY);
     if (merchant.open) {
       updateMerchantFloatToasts(dt);
-      drawMerchant(ctx, merchant, loadout, merit, {
+      merchantLazy.get()!.drawMerchant(ctx, merchant, loadout, merit, {
         equipTutorialPreview: tutorialOverlay?.sequenceId === 'merchantFirstOpen',
       });
       drawMerchantFloatToasts(ctx);
     }
     drawMenuFloatToasts(ctx);
-  } else if (screen === 'shop') {
-    drawShop(ctx, merit, loadout, shopToast, shopScrollY);
-    if (shopPopup) drawShopPopup(ctx, shopPopup, merit, loadout);
   } else if (screen === 'codex') {
-    drawCodex(ctx, loadout);
+    codexLazy.get()!.drawCodex(ctx, loadout);
   } else if (screen === 'rank') {
-    drawLeaderboard(ctx, rank.level);
+    leaderboardLazy.get()!.drawLeaderboard(ctx, rank.level);
   } else if (screen === 'bag') {
-    drawBag(ctx, bag, bagToast, bagScrollY);
-    if (bagPopup) drawBagPopup(ctx, bag, bagPopup);
+    bagLazy.get()!.drawBag(ctx, bag, bagToast, bagScrollY);
+    if (bagPopup) bagLazy.get()!.drawBagPopup(ctx, bag, bagPopup);
   } else {
     // —— 战斗（含局内结算弹层） —— //
     // 新手引导展示期间强制唐僧渲染于归位点，避免引导指向的格子里唐僧还没走到（不影响 introT 计时）
@@ -1866,7 +1777,6 @@ interface GameHook {
   autoPlace: () => void;
   select: (cell: Cell | null) => void;
   enterBattle: () => void;
-  openShop: () => void;
   openCodex: () => void;
   openRank: () => void;
   openBag: () => void;
@@ -1908,14 +1818,15 @@ const hook: GameHook = {
     draw(ctx, battle, ui);
   },
   enterBattle: () => { screen = 'battle'; scheduleFrame(); },
-  openShop: () => { shopScrollY = 0; shopPopup = null; screen = 'shop'; scheduleFrame(); },
-  openCodex: () => { resetCodex(); screen = 'codex'; scheduleFrame(); },
-  openRank: () => { screen = 'rank'; scheduleFrame(); },
-  openBag: () => { bagPopup = null; bagScrollY = 0; screen = 'bag'; scheduleFrame(); },
+  openCodex: () => enterCodex(),
+  openRank: () => enterRank(),
+  openBag: () => enterBag(),
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
-  openDevTools: () => openDevTools({ onUserApplied: applyDevUserResult }),
+  openDevTools: () => {
+    void import('./devtools').then(({ openDevTools }) => openDevTools({ onUserApplied: applyDevUserResult }));
+  },
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill());
     bindBattleWeaponPickup();
