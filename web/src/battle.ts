@@ -35,7 +35,16 @@ import {
   CRIT_MULT,
   type GeneralDef,
 } from './generals';
-import { collectOrphanChars, countChars, pickWordChar, PAIR_PITY_AFTER } from './word-draw';
+import {
+  activeHeroCharsFromPairs,
+  collectOrphanChars,
+  computeSummonWordPolicy,
+  countChars,
+  pickWordChar,
+  PAIR_PITY_AFTER,
+  type SummonWordPolicy,
+  type SummonWordPolicyInput,
+} from './word-draw';
 import {
   rollWeaponDrop,
   weaponById,
@@ -624,6 +633,24 @@ export const DAMAGE_FLOAT_VX = 0.72; // 左右抛物线初速（格/秒）
 export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
 export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
+export const PLACE_DROP_DUR = 0.24; // 自动/AI 布阵落子：自上方快速掉落的时长（秒）
+
+/** 棋盘落子掉落动效（AI 布阵与用户点「布阵」） */
+export interface PlaceDropFx {
+  side: 'player' | 'ai';
+  c: number;
+  r: number;
+  t: number;
+  kind: 'unit' | 'word';
+  isMerge: boolean;
+  sfx: 'place' | 'merge' | 'general';
+  landed: boolean;
+  playSfx?: boolean;
+  unitType?: UnitType;
+  unitTier?: number;
+  char?: string;
+  wordTier?: number;
+}
 
 interface Modifiers {
   atkMul: number;
@@ -683,9 +710,11 @@ export class Battle {
   damageFloats: DamageFloat[] = []; // 受击伤害飘字
   digFx: { c: number; r: number; t: number }[] = []; // 铲子挖坑动画(来回两下)，t 累积秒数
   aiDigFx: { c: number; r: number; t: number }[] = []; // AI 侧挖坑动画（对称展示，见 render）
+  placeDropFx: PlaceDropFx[] = []; // 布阵/AI 落子：自上方快速掉落的动效
   // 自动布阵对"刚挖开、开格动画未完"的格做的延迟落子：先预占该格，动画结束后由 updateFx 真正落子。
-  private pendingPlace: { token: TrayToken; c: number; r: number }[] = [];
+  private pendingPlace: { token: TrayToken; c: number; r: number; dropAnim: boolean }[] = [];
   private aiPendingPlace: { token: TrayToken; c: number; r: number }[] = [];
+  private placeDropAnimDepth = 0; // >0 时玩家侧落子也播掉落动效（一键布阵）
   summonFlash = 0; // 征兵闪光(1→0)
   autoplaceFlash = 0; // 布阵闪光(1→0)
   /** 上次一键布阵前的局面指纹（含兵器+字牌+候选）；跨点击阻止 A↔B 对抖 */
@@ -773,8 +802,53 @@ export class Battle {
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
   private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
-  healUsedThisWave = false; // 观音甘露每波限回一次
+
+  private beginPlaceDropAnim(): void { this.placeDropAnimDepth += 1; }
+  private endPlaceDropAnim(): void { this.placeDropAnimDepth = Math.max(0, this.placeDropAnimDepth - 1); }
+
+  /** 落子/合成：AI 或一键布阵时播掉落动效并在着地时发声；手动拖拽仍即时发声 */
+  private spawnPlaceDropFx(
+    side: 'player' | 'ai',
+    cell: Cell,
+    opts: {
+      kind: 'unit' | 'word';
+      isMerge: boolean;
+      sfx: 'place' | 'merge' | 'general';
+      unitType?: UnitType;
+      unitTier?: number;
+      char?: string;
+      wordTier?: number;
+      playSfx?: boolean;
+    },
+  ): void {
+    if (side === 'player' && this.placeDropAnimDepth <= 0) {
+      this.emit(opts.sfx);
+      return;
+    }
+    this.placeDropFx.push({
+      side,
+      c: cell.c,
+      r: cell.r,
+      t: 0,
+      landed: false,
+      ...opts,
+    });
+  }
+
+  private playerWordPlaceSfx(cell: Cell): 'place' | 'general' {
+    return this.activeGenerals().some((g) => g.cells.some((cc) => cc.c === cell.c && cc.r === cell.r))
+      ? 'general'
+      : 'place';
+  }
+
+  private aiWordPlaceSfx(cell: Cell): 'place' | 'general' {
+    return this.aiActiveGenerals().some((g) => g.cells.some((cc) => cc.c === cell.c && cc.r === cell.r))
+      ? 'general'
+      : 'place';
+  }
+
   tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
+  healUsedThisWave = false; // 观音甘露每波限回一次
 
   // —— 主动技能（功德购买、每日装备，最多 2 个；CD 制、手动触发）——
   // 每个装备的技能一个运行时槽：独立冷却计时。
@@ -1103,10 +1177,20 @@ export class Battle {
     const ownedBoard = this.boardWordCharsNow();
     const fieldCharCounts = this.boardFieldCharCounts();
     const activeMax5Families = this.activeMax5FamiliesNow();
-    const forcePartner = !firstSummon && orphansBefore.length > 0 && this.summonsSincePair >= TUNING.pairPityAfter;
+    const wordPolicy = this.summonWordPolicyNow();
+    const forcePartner = wordPolicy.allowForcePartner
+      && !firstSummon
+      && orphansBefore.length > 0
+      && this.summonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
+    const wordDrawChance =
+      (TUNING.wordDrawChance + this.mods.wordRateBonus + this.versusBand.playerWordDrawBonus)
+      * wordPolicy.wordSlotChanceMul;
     const drawOneWord = (forcePair: boolean) => {
+      if (trayWordsSoFar.length >= wordPolicy.maxWordSlots) {
+        return null;
+      }
       const w = pickWordChar(
         this.rng,
         Math.max(1, this.wave),
@@ -1119,26 +1203,48 @@ export class Battle {
           tier5BiasMul: this.versusBand.playerWordTier5Bias,
           fieldCharCounts,
           activeMax5Families,
+          tier5CapableOnly: wordPolicy.tier5CapableOnly,
+          excludeChars: wordPolicy.excludeChars,
+          preferRoles: wordPolicy.preferRoles,
         },
       );
       trayWordsSoFar.push(w.char);
       this.bumpWordCharCount(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
-      return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
+      return { kind: 'word' as const, char: w.char, general: w.general, tier: wordPolicy.wordTier };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.rng.next() < TUNING.wordDrawChance + this.mods.wordRateBonus + this.versusBand.playerWordDrawBonus) {
+      if (
+        tok.kind === 'unit'
+        && !firstSummon
+        && wordPolicy.wordSlotChanceMul > 0
+        && trayWordsSoFar.length < wordPolicy.maxWordSlots
+        && this.rng.next() < wordDrawChance
+      ) {
         const useForce = forcePartner && !partnerForced;
-        return drawOneWord(useForce);
+        const word = drawOneWord(useForce);
+        if (word) return word;
       }
       return tok;
     });
-    if (forceWord && !draws.some((t) => t.kind === 'word')) {
+    if (
+      wordPolicy.allowForceWord
+      && forceWord
+      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && !draws.some((t) => t.kind === 'word')
+    ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
-      if (idx >= 0) draws[idx] = drawOneWord(forcePartner);
-    } else if (forcePartner && !partnerForced) {
+      const word = idx >= 0 ? drawOneWord(forcePartner) : null;
+      if (word) draws[idx] = word;
+    } else if (
+      wordPolicy.allowForcePartner
+      && forcePartner
+      && !partnerForced
+      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+    ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
-      if (idx >= 0) draws[idx] = drawOneWord(true);
+      const word = idx >= 0 ? drawOneWord(true) : null;
+      if (word) draws[idx] = word;
     }
     this.tray = draws;
     if (draws.some((t) => t.kind === 'word')) this.summonsSinceWord = 0;
@@ -1361,6 +1467,61 @@ export class Battle {
       if (g.def.maxTier === 5) families.add(g.def.family);
     }
     return families;
+  }
+
+  /** 满盘且场上激活将均为满5 → 征兵不再产字，布阵优先用兵器替换孤儿单字 */
+  isHeroRosterComplete(): boolean {
+    return this.summonWordPolicyNow().maxWordSlots === 0;
+  }
+
+  private summonWordPolicyInput(active: ActiveGeneral[], freeCellCount: number): SummonWordPolicyInput {
+    const pairs: { left: string; right: string }[] = [];
+    for (const g of active) {
+      const wa = this.wordAt(g.cells[0].c, g.cells[0].r);
+      const wb = this.wordAt(g.cells[1].c, g.cells[1].r);
+      if (wa && wb) pairs.push({ left: wa.char, right: wb.char });
+    }
+    return {
+      wave: Math.max(1, this.wave),
+      freeCellCount,
+      activeGenerals: active.map((g) => ({
+        role: g.def.role,
+        maxTier: g.def.maxTier,
+        tier: g.tier,
+      })),
+      activeHeroChars: activeHeroCharsFromPairs(pairs),
+    };
+  }
+
+  private summonWordPolicyNow(): SummonWordPolicy {
+    const active = this.activeGenerals();
+    const freeCellCount = this.unlockedCells().filter((c) => this.cellFree(c.c, c.r)).length;
+    return computeSummonWordPolicy(this.summonWordPolicyInput(active, freeCellCount));
+  }
+
+  private aiSummonWordPolicyNow(): SummonWordPolicy {
+    const active = this.aiActiveGenerals();
+    const freeCellCount = this.aiUnlockedCells().filter((c) => this.aiCellFree(c.c, c.r)).length;
+    return computeSummonWordPolicy(this.summonWordPolicyInputForAi(active, freeCellCount));
+  }
+
+  private summonWordPolicyInputForAi(active: ActiveGeneral[], freeCellCount: number): SummonWordPolicyInput {
+    const pairs: { left: string; right: string }[] = [];
+    for (const g of active) {
+      const wa = this.aiWords.get(cellKey(g.cells[0].c, g.cells[0].r));
+      const wb = this.aiWords.get(cellKey(g.cells[1].c, g.cells[1].r));
+      if (wa && wb) pairs.push({ left: wa.char, right: wb.char });
+    }
+    return {
+      wave: Math.max(1, this.wave),
+      freeCellCount,
+      activeGenerals: active.map((g) => ({
+        role: g.def.role,
+        maxTier: g.def.maxTier,
+        tier: g.tier,
+      })),
+      activeHeroChars: activeHeroCharsFromPairs(pairs),
+    };
   }
 
   private aiBoardFieldCharCounts(): Map<string, number> {
@@ -1609,15 +1770,49 @@ export class Battle {
       if (!this.aiCellFree(to.c, to.r)) return false;
       this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
       this.aiTray.splice(index, 1);
+      this.spawnPlaceDropFx('ai', to, {
+        kind: 'word',
+        isMerge: false,
+        sfx: this.aiWordPlaceSfx(to),
+        char: token.char,
+        wordTier: token.tier,
+      });
       return true;
     }
+    if (token.kind !== 'unit') return false;
     // unit
+    const wOnCell = this.aiWords.get(k);
+    if (wOnCell) {
+      if (this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === to.c && c.r === to.r))) return false;
+      this.aiWords.delete(k);
+      this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate(true)));
+      if (!this.aiSummonWordPolicyNow().maxWordSlots) {
+        this.aiTray.splice(index, 1);
+      } else {
+        this.aiTray[index] = { kind: 'word', char: wOnCell.char, general: wOnCell.general, tier: wOnCell.tier };
+      }
+      this.spawnPlaceDropFx('ai', to, {
+        kind: 'unit',
+        isMerge: false,
+        sfx: 'place',
+        unitType: token.type,
+        unitTier: token.tier,
+      });
+      return true;
+    }
     const ex = this.aiUnits.find((u) => u.cell.c === to.c && u.cell.r === to.r);
     if (ex) {
       if (canMerge({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier })) {
         const m = mergeUnits({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier });
         ex.type = m.type; ex.tier = m.tier; ex.cooldown = 0;
         this.aiTray.splice(index, 1);
+        this.spawnPlaceDropFx('ai', to, {
+          kind: 'unit',
+          isMerge: true,
+          sfx: 'merge',
+          unitType: m.type,
+          unitTier: m.tier,
+        });
         return true;
       }
       return false;
@@ -1625,6 +1820,13 @@ export class Battle {
     if (!this.aiCellFree(to.c, to.r)) return false;
     this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate(true)));
     this.aiTray.splice(index, 1);
+    this.spawnPlaceDropFx('ai', to, {
+      kind: 'unit',
+      isMerge: false,
+      sfx: 'place',
+      unitType: token.type,
+      unitTier: token.tier,
+    });
     return true;
   }
 
@@ -1671,10 +1873,20 @@ export class Battle {
     const ownedBoard = this.aiBoardWordCharsNow();
     const fieldCharCounts = this.aiBoardFieldCharCounts();
     const activeMax5Families = this.aiActiveMax5FamiliesNow();
-    const forcePartner = !firstSummon && orphansBefore.length > 0 && this.aiSummonsSincePair >= TUNING.pairPityAfter;
+    const wordPolicy = this.aiSummonWordPolicyNow();
+    const forcePartner = wordPolicy.allowForcePartner
+      && !firstSummon
+      && orphansBefore.length > 0
+      && this.aiSummonsSincePair >= TUNING.pairPityAfter;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
+    const wordDrawChance =
+      (TUNING.wordDrawChance + this.aiMods.wordRateBonus + this.versusBand.aiWordDrawBonus)
+      * wordPolicy.wordSlotChanceMul;
     const drawOneWord = (forcePair: boolean) => {
+      if (trayWordsSoFar.length >= wordPolicy.maxWordSlots) {
+        return null;
+      }
       const w = pickWordChar(
         this.aiRng,
         Math.max(1, this.wave),
@@ -1687,25 +1899,46 @@ export class Battle {
           tier5BiasMul: this.versusBand.aiWordTier5Bias,
           fieldCharCounts,
           activeMax5Families,
+          tier5CapableOnly: wordPolicy.tier5CapableOnly,
+          excludeChars: wordPolicy.excludeChars,
+          preferRoles: wordPolicy.preferRoles,
         },
       );
       trayWordsSoFar.push(w.char);
       this.bumpAiWordCharCount(w.char);
       if (forcePair || orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
-      return { kind: 'word' as const, char: w.char, general: w.general, tier: 1 };
+      return { kind: 'word' as const, char: w.char, general: w.general, tier: wordPolicy.wordTier };
     };
     const draws: TrayToken[] = base.map((tok) => {
-      if (tok.kind === 'unit' && !firstSummon && this.aiRng.next() < TUNING.wordDrawChance + this.aiMods.wordRateBonus + this.versusBand.aiWordDrawBonus) {
-        return drawOneWord(forcePartner && !partnerForced);
+      if (
+        tok.kind === 'unit'
+        && !firstSummon
+        && wordPolicy.wordSlotChanceMul > 0
+        && trayWordsSoFar.length < wordPolicy.maxWordSlots
+        && this.aiRng.next() < wordDrawChance
+      ) {
+        return drawOneWord(forcePartner && !partnerForced) ?? tok;
       }
       return tok;
     });
-    if (forceWord && !draws.some((t) => t.kind === 'word')) {
+    if (
+      wordPolicy.allowForceWord
+      && forceWord
+      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && !draws.some((t) => t.kind === 'word')
+    ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
-      if (idx >= 0) draws[idx] = drawOneWord(forcePartner);
-    } else if (forcePartner && !partnerForced) {
+      const word = idx >= 0 ? drawOneWord(forcePartner) : null;
+      if (word) draws[idx] = word;
+    } else if (
+      wordPolicy.allowForcePartner
+      && forcePartner
+      && !partnerForced
+      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+    ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
-      if (idx >= 0) draws[idx] = drawOneWord(true);
+      const word = idx >= 0 ? drawOneWord(true) : null;
+      if (word) draws[idx] = word;
     }
     this.aiTray = draws;
     if (draws.some((t) => t.kind === 'word')) this.aiSummonsSinceWord = 0;
@@ -1807,6 +2040,7 @@ export class Battle {
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
       monstersPresent: () => this.aiMonsters.length > 0,
+      heroRosterComplete: () => this.aiSummonWordPolicyNow().maxWordSlots === 0,
       unitEngageScore: (cell, type, tier) =>
         this.aiMonsters.length > 0
           ? this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear())
@@ -2234,6 +2468,13 @@ export class Battle {
     b.tier = merged.tier;
     b.cooldown = 0;
     this.aiUnits.splice(ai, 1);
+    this.spawnPlaceDropFx('ai', to, {
+      kind: 'unit',
+      isMerge: true,
+      sfx: 'merge',
+      unitType: merged.type,
+      unitTier: merged.tier,
+    });
     return true;
   }
 
@@ -2312,7 +2553,17 @@ export class Battle {
           this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
           this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
           this.message = `${g.def.name} 升为 ${wa.tier} 阶`;
-          this.emit('merge');
+          for (let i = 0; i < g.cells.length; i++) {
+            const cc = g.cells[i]!;
+            this.spawnPlaceDropFx('player', cc, {
+              kind: 'word',
+              isMerge: true,
+              sfx: 'merge',
+              char: cc.c === g.cells[0].c ? wa.char : wb.char,
+              wordTier: wa.tier,
+              playSfx: i === 0,
+            });
+          }
           return true;
         }
       }
@@ -2341,9 +2592,15 @@ export class Battle {
       }
       this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
       this.clearTraySlot(index);
-      const activated = this.activeGenerals().find((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r));
-      this.emit(activated ? 'general' : 'place');
-      if (activated) {
+      this.spawnPlaceDropFx('player', to, {
+        kind: 'word',
+        isMerge: false,
+        sfx: this.playerWordPlaceSfx(to),
+        char: token.char,
+        wordTier: token.tier,
+      });
+      if (this.activeGenerals().some((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r))) {
+        const activated = this.activeGenerals().find((ag) => ag.cells.some((cc) => cc.c === to.c && cc.r === to.r))!;
         this.message = this.generalActivateMessage(activated.def.name, activated.def.id);
       } else {
         const mates = partnerChars(token.char).join('/');
@@ -2357,7 +2614,11 @@ export class Battle {
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
       this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
-      this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
+      if (this.isHeroRosterComplete()) {
+        this.clearTraySlot(index);
+      } else {
+        this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
+      }
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
     }
@@ -2369,7 +2630,13 @@ export class Battle {
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.clearTraySlot(index);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
-        this.emit('merge');
+        this.spawnPlaceDropFx('player', to, {
+          kind: 'unit',
+          isMerge: true,
+          sfx: 'merge',
+          unitType: merged.type,
+          unitTier: merged.tier,
+        });
         return true;
       }
       // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
@@ -2381,7 +2648,13 @@ export class Battle {
     this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
     this.clearTraySlot(index);
     this.message = `布置了 ${UNITS[token.type].name}`;
-    this.emit('place');
+    this.spawnPlaceDropFx('player', to, {
+      kind: 'unit',
+      isMerge: false,
+      sfx: 'place',
+      unitType: token.type,
+      unitTier: token.tier,
+    });
     return true;
   }
 
@@ -4546,7 +4819,7 @@ export class Battle {
     if (!token) return false;
     const animating = this.digFx.some((d) => d.c === cell.c && d.r === cell.r);
     if (token.kind !== 'shovel' && animating && this.isUnlocked(cell.c, cell.r) && this.cellFree(cell.c, cell.r)) {
-      this.pendingPlace.push({ token, c: cell.c, r: cell.r }); // 预占：cellFree 此后视其为占用
+      this.pendingPlace.push({ token, c: cell.c, r: cell.r, dropAnim: this.placeDropAnimDepth > 0 }); // 预占：cellFree 此后视其为占用
       this.tray.splice(index, 1);
       return true;
     }
@@ -4562,11 +4835,31 @@ export class Battle {
         const cell = { c: p.c, r: p.r };
         if (p.token.kind === 'unit') {
           this.units.set(cellKey(p.c, p.r), makePlacedUnit(p.token.type, p.token.tier, cell, this.unitFaceGate()));
-          this.emit('place');
+          if (p.dropAnim) {
+            this.spawnPlaceDropFx('player', cell, {
+              kind: 'unit',
+              isMerge: false,
+              sfx: 'place',
+              unitType: p.token.type,
+              unitTier: p.token.tier,
+            });
+          } else {
+            this.emit('place');
+          }
         } else if (p.token.kind === 'word') {
           const w = p.token;
           this.words.set(cellKey(p.c, p.r), { char: w.char, general: w.general, tier: w.tier, cell });
-          this.emit(this.activeGenerals().some((g) => g.def.id === w.general) ? 'general' : 'place');
+          if (p.dropAnim) {
+            this.spawnPlaceDropFx('player', cell, {
+              kind: 'word',
+              isMerge: false,
+              sfx: this.playerWordPlaceSfx(cell),
+              char: w.char,
+              wordTier: w.tier,
+            });
+          } else {
+            this.emit(this.playerWordPlaceSfx(cell));
+          }
         }
       }
       this.pendingPlace = still;
@@ -4578,8 +4871,22 @@ export class Battle {
         const cell = { c: p.c, r: p.r };
         if (p.token.kind === 'unit') {
           this.aiUnits.push(makePlacedUnit(p.token.type, p.token.tier, cell, this.unitFaceGate(true)));
+          this.spawnPlaceDropFx('ai', cell, {
+            kind: 'unit',
+            isMerge: false,
+            sfx: 'place',
+            unitType: p.token.type,
+            unitTier: p.token.tier,
+          });
         } else if (p.token.kind === 'word') {
           this.aiWords.set(cellKey(p.c, p.r), { char: p.token.char, general: p.token.general, tier: p.token.tier, cell });
+          this.spawnPlaceDropFx('ai', cell, {
+            kind: 'word',
+            isMerge: false,
+            sfx: this.aiWordPlaceSfx(cell),
+            char: p.token.char,
+            wordTier: p.token.tier,
+          });
         }
       }
       this.aiPendingPlace = still;
@@ -4671,6 +4978,7 @@ export class Battle {
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
       monstersPresent: () => this.monsters.length > 0,
+      heroRosterComplete: () => this.isHeroRosterComplete(),
       mergeTray: (from, to) => this.mergeTrayTokens(from, to),
       mergeBoard: (from, to) => {
         const a = this.units.get(cellKey(from.c, from.r));

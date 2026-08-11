@@ -5,11 +5,18 @@ import {
   GENERALS,
   charHeroCapacity,
   hintGeneralForChar,
+  maxTierForChar,
   partnerChars,
   type GeneralDef,
+  type GeneralRole,
 } from './generals';
 
 export const PAIR_PITY_AFTER = 4;
+export const SUMMON_MAX_WORD_SLOTS_GROWING = 4;
+/** 缺角色时抽字加权（输出/控制/辅助） */
+export const ROLE_DIVERSITY_BOOST = 2.8;
+
+export const CORE_HERO_ROLES: GeneralRole[] = ['输出', '控制', '辅助'];
 
 /** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
@@ -114,32 +121,40 @@ function buildWeightedEntries(
   tier5BiasMul = 1,
   fieldCharCounts?: ReadonlyMap<string, number>,
   activeMax5Families?: ReadonlySet<string>,
+  tier5CapableOnly = false,
+  excludeChars: readonly string[] = [],
+  preferRoles: readonly GeneralRole[] = [],
 ): { char: string; general: string; w: number }[] {
   const needed = new Set(pendingPartnerChars(orphanChars, trayCharsAlready));
   const owned = new Set([...ownedChars, ...orphanChars, ...trayCharsAlready]);
+  const exclude = new Set(excludeChars);
+  const roleBoost = new Set(preferRoles);
 
   const entries: { char: string; general: string; w: number }[] = [];
   const seen = new Set<string>();
 
   for (const g of GENERALS) {
+    if (tier5CapableOnly && g.maxTier < 5) continue;
     const pw = phaseWeight(wave, g.maxTier);
     let familyPenalty = 1;
     if (g.maxTier === 3 && activeMax5Families?.has(g.family)) {
       familyPenalty = FAMILY_MAX5_ACTIVE_T3_PENALTY;
     }
     for (const c of g.chars) {
+      if (tier5CapableOnly && maxTierForChar(c) < 5) continue;
       if (isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts)) continue;
-      const base = g.weight * pw;
       const isPartner = needed.has(c);
+      if (!isPartner && exclude.has(c)) continue;
+      const base = g.weight * pw;
       // 配对最优先；无配对时偏向满5 高级字
       let mult = isPartner ? PARTNER_BOOST : g.maxTier === 5 ? HIGH_TIER_BIAS * tier5BiasMul : LOW_TIER_BIAS;
       const count = charCountOf(charCounts, c);
       if (!isPartner && count > 0) {
-        // 出现次数越多，后续再抽到的概率越低
         mult *= OCCURRENCE_DECAY ** count;
       } else if (owned.has(c) && !isPartner) {
         mult *= DUP_WEIGHT;
       }
+      if (g.role !== '过渡' && roleBoost.has(g.role)) mult *= ROLE_DIVERSITY_BOOST;
       mult *= familyPenalty;
       const w = base * mult;
       if (!seen.has(c)) {
@@ -175,6 +190,102 @@ export interface WordPickOpts {
   fieldCharCounts?: ReadonlyMap<string, number>;
   /** 已激活满5 武将的门派 family 集合 */
   activeMax5Families?: ReadonlySet<string>;
+  /** 只抽可升到 5 阶的字（排除满3过渡字） */
+  tier5CapableOnly?: boolean;
+  /** 已在激活武将上的字（非配对缺口时不抽） */
+  excludeChars?: readonly string[];
+  /** 优先补齐的角色 */
+  preferRoles?: readonly GeneralRole[];
+}
+
+/** 激活武将已占用的字 */
+export function activeHeroCharsFromPairs(
+  pairs: readonly { left: string; right: string }[],
+): string[] {
+  const out: string[] = [];
+  for (const p of pairs) {
+    out.push(p.left, p.right);
+  }
+  return out;
+}
+
+/** 场上仍缺的核心角色（输出/控制/辅助，不含过渡） */
+export function missingHeroRoles(
+  active: readonly { role: GeneralRole; maxTier: number; tier: number }[],
+): GeneralRole[] {
+  const present = new Set<GeneralRole>();
+  for (const g of active) {
+    if (g.role === '过渡') continue;
+    if (g.tier >= g.maxTier || g.maxTier === 5) present.add(g.role);
+    else present.add(g.role); // 未升满仍算已有该路线
+  }
+  return CORE_HERO_ROLES.filter((r) => !present.has(r));
+}
+
+export interface SummonWordPolicyInput {
+  wave: number;
+  freeCellCount: number;
+  activeGenerals: readonly { role: GeneralRole; maxTier: number; tier: number }[];
+  activeHeroChars: readonly string[];
+}
+
+export interface SummonWordPolicy {
+  wordSlotChanceMul: number;
+  allowForceWord: boolean;
+  allowForcePartner: boolean;
+  maxWordSlots: number;
+  wordTier: number;
+  tier5CapableOnly: boolean;
+  excludeChars: readonly string[];
+  preferRoles: readonly GeneralRole[];
+}
+
+/** 依棋盘武将饱和度决定本盘征兵字牌策略 */
+export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWordPolicy {
+  const { activeGenerals, freeCellCount, activeHeroChars } = input;
+  const preferRoles = missingHeroRoles(activeGenerals);
+  const allMax5 =
+    activeGenerals.length > 0
+    && activeGenerals.every((g) => g.maxTier === 5 && g.tier >= 5);
+  const boardFull = freeCellCount === 0;
+  const hasGrowing = activeGenerals.some((g) => g.tier < 5);
+
+  if (boardFull && allMax5) {
+    return {
+      wordSlotChanceMul: 0,
+      allowForceWord: false,
+      allowForcePartner: false,
+      maxWordSlots: 0,
+      wordTier: 5,
+      tier5CapableOnly: true,
+      excludeChars: activeHeroChars,
+      preferRoles,
+    };
+  }
+
+  if (hasGrowing || (activeGenerals.length > 0 && !allMax5)) {
+    return {
+      wordSlotChanceMul: 1,
+      allowForceWord: true,
+      allowForcePartner: true,
+      maxWordSlots: SUMMON_MAX_WORD_SLOTS_GROWING,
+      wordTier: 5,
+      tier5CapableOnly: true,
+      excludeChars: activeHeroChars,
+      preferRoles,
+    };
+  }
+
+  return {
+    wordSlotChanceMul: 1,
+    allowForceWord: true,
+    allowForcePartner: true,
+    maxWordSlots: 5,
+    wordTier: 1,
+    tier5CapableOnly: false,
+    excludeChars: activeHeroChars,
+    preferRoles,
+  };
 }
 
 /** 测试/诊断：当前抽字权重表 */
@@ -195,6 +306,9 @@ export function wordDrawEntries(
     opts?.tier5BiasMul ?? 1,
     opts?.fieldCharCounts,
     opts?.activeMax5Families,
+    opts?.tier5CapableOnly ?? false,
+    opts?.excludeChars ?? [],
+    opts?.preferRoles ?? [],
   );
 }
 
@@ -219,6 +333,9 @@ export function pickWordChar(
   const tier5BiasMul = opts?.tier5BiasMul ?? 1;
   const fieldCharCounts = opts?.fieldCharCounts;
   const activeMax5Families = opts?.activeMax5Families;
+  const tier5CapableOnly = opts?.tier5CapableOnly ?? false;
+  const excludeChars = opts?.excludeChars ?? [];
+  const preferRoles = opts?.preferRoles ?? [];
   if (forcePartner) {
     const need = pendingPartnerChars(orphanChars, trayCharsAlready).filter(
       (c) => !isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts),
@@ -239,6 +356,9 @@ export function pickWordChar(
       tier5BiasMul,
       fieldCharCounts,
       activeMax5Families,
+      tier5CapableOnly,
+      excludeChars,
+      preferRoles,
     ),
   );
 }

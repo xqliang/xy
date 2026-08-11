@@ -120,6 +120,8 @@ export interface AutoPlaceView {
   dangerNear(): boolean;
   /** 场上是否有怪；无怪时不做「互换座位」类微调（防来回切） */
   monstersPresent?(): boolean;
+  /** 满盘且激活将均为满5：不再部署新字，优先用兵器替换孤儿单字 */
+  heroRosterComplete?(): boolean;
   /** 格对「怪物即将路过」路段的贴近分（越高越好；无怪时为 0） */
   imminentPathScore(cell: Cell): number;
   /**
@@ -1244,8 +1246,13 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return traySome(view.tray(), (t) => t.kind === 'word');
   }
 
+  function heroRosterComplete(): boolean {
+    return view.heroRosterComplete?.() ?? false;
+  }
+
   /** 有空格时 tray 不得留字/兵（铲子除外） */
   function mustEmptyTray(): boolean {
+    if (heroRosterComplete() && trayHasWords()) return false;
     return hasFreeCells() && (trayHasWords() || trayUnitEntries().length > 0);
   }
 
@@ -1257,6 +1264,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** 有空格且 tray 仍有字 → 必须先处理字（单字落位或凑对激活） */
   function pendingTrayWordDeploy(): boolean {
+    if (heroRosterComplete()) return false;
     return hasFreeCells() && trayHasWords();
   }
 
@@ -1278,6 +1286,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
 
   /** tray 字有棋盘伴侣待凑对激活（仍应先于兵器微调/短兵换座） */
   function trayWordAwaitingBoardMateActivation(): boolean {
+    if (heroRosterComplete()) return false;
     for (const t of filledTrayTokens(view.tray())) {
       if (t.kind !== 'word') continue;
       if (shouldSkipTrayWordActivation(view, t)) continue;
@@ -1322,6 +1331,22 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       );
     }
     return s;
+  }
+
+  /** 满编满星：tray 兵器直接占孤儿单字格（宿主会丢弃被顶掉的字） */
+  function tryReplaceOrphansWithTrayWeapons(): boolean {
+    if (!heroRosterComplete()) return false;
+    for (const { t, i } of trayUnitEntries()) {
+      let best: { orphan: PlacedWordLite; score: number } | null = null;
+      for (const w of orphanWordsView(view)) {
+        if (view.isActiveHeroCell(w.cell)) continue;
+        if (!canUnitCoverPath(w.cell, t.type, t.tier)) continue;
+        const sc = placementCellScore(w.cell, t.type, t.tier);
+        if (!best || sc > best.score) best = { orphan: w, score: sc };
+      }
+      if (best && view.place(i, best.orphan.cell)) return true;
+    }
+    return false;
   }
 
   /** 攻击圆能覆盖路径（比欧氏离路距更准，避免流沙河等地图误判） */
@@ -1544,25 +1569,27 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     // 1a) 地图挤回 tray 的待处理兵：换棋盘更低阶武器上板
     if (!subopt() && tryRedeployDisplacedTrayUnits()) return true;
+    // 满编满星：优先用 tray 兵器替换孤儿单字
+    if (!subopt() && tryReplaceOrphansWithTrayWeapons()) return true;
     // 1a+) tray 有放不下项：棋盘同级合并腾位再放 tray（先于调位，避免空转）
     if (!subopt() && trayHasUnplaceablePending() && tryBoardMergeThenPlace()) return true;
     // 1a+) 门派升级 / 过渡字替换 / tray 内成对 — 先于孤儿单字落位
-    if (!subopt() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
-    if (!subopt() && tryUpgradeTransitionToMainHero()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && !heroRosterComplete() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && !heroRosterComplete() && tryUpgradeTransitionToMainHero()) { markHeroLayoutChanged(); return true; }
     // 无 tray 字待凑对时：棋盘孤儿移动相邻激活（含 1 阶新将，如 牛+魔）
-    if (!subopt() && !trayWordAwaitingBoardMateActivation() && tryPairBoardOrphans()) {
+    if (!subopt() && !heroRosterComplete() && !trayWordAwaitingBoardMateActivation() && tryPairBoardOrphans()) {
       markHeroLayoutChanged();
       return true;
     }
-    if (!subopt() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
+    if (!subopt() && !heroRosterComplete() && tryActivateTrayMainPair()) { markHeroLayoutChanged(); return true; }
     // 1b) tray 仅兵种 + 有空格：最优先落子（截图类局面：白/郎/二等凑字不能挡住 tray 填格）
-    if (trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
+    if (!heroRosterComplete() && trayUnitsOnlyPending() && tryDeployTrayUnits()) return true;
     // 1b+) 邻格已空可凑对（金+吒）→ 先激活
     if (tryPrioritizeTrayBoardMateActivation()) return true;
     // 1b++) tray 字待伴侣、仍有 tray 兵 → 先落兵（白+龙 待激活时先上弓）
     if (trayUnitsWhileWordsActivateOnly() && tryDeployTrayUnits()) return true;
     // 1c) 有空格：无 tray/棋盘伴侣的 tray 字先上板（不抢先拆 tray 内成对字）
-    if (tryEarlyTrayOrphanWords()) { markHeroLayoutChanged(); return true; }
+    if (!heroRosterComplete() && tryEarlyTrayOrphanWords()) { markHeroLayoutChanged(); return true; }
     // 2a-0b) tray 伴侣所需格被占（金吒挡骨左格等）→ 先整行左移插入
     if (!subopt() && blockedTrayHeroNeedCells(view).length > 0) {
       if (tryTrayHeroInsertByRowShift(view)) return true;

@@ -9,6 +9,9 @@ import {
   wordDrawEntries,
   FAMILY_MAX5_ACTIVE_T3_PENALTY,
   isCharAtFieldCapacity,
+  computeSummonWordPolicy,
+  SUMMON_MAX_WORD_SLOTS_GROWING,
+  missingHeroRoles,
 } from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
 import { hintGeneralForChar, charHeroCapacity } from '../src/generals';
@@ -142,5 +145,58 @@ describe('半对保底 N=4', () => {
     expect(words.length).toBeGreaterThanOrEqual(1);
     const chars = words.map((t) => (t.kind === 'word' ? t.char : ''));
     expect(chars.some((c) => c === '圣' || c === '蟒')).toBe(true);
+  });
+});
+
+describe('征兵字牌策略', () => {
+  it('满盘且激活将均为满5 → 不出字牌', () => {
+    const policy = computeSummonWordPolicy({
+      wave: 8,
+      freeCellCount: 0,
+      activeGenerals: [
+        { role: '输出', maxTier: 5, tier: 5 },
+        { role: '控制', maxTier: 5, tier: 5 },
+      ],
+      activeHeroChars: ['哪', '吒', '铁', '扇'],
+    });
+    expect(policy.maxWordSlots).toBe(0);
+    expect(policy.wordSlotChanceMul).toBe(0);
+    expect(policy.allowForceWord).toBe(false);
+  });
+
+  it('有未升满将 → 最多4张满5字，排除已在将上的字', () => {
+    const policy = computeSummonWordPolicy({
+      wave: 6,
+      freeCellCount: 2,
+      activeGenerals: [{ role: '输出', maxTier: 5, tier: 3 }],
+      activeHeroChars: ['哪', '吒'],
+    });
+    expect(policy.maxWordSlots).toBe(SUMMON_MAX_WORD_SLOTS_GROWING);
+    expect(policy.wordTier).toBe(5);
+    expect(policy.tier5CapableOnly).toBe(true);
+    expect(policy.excludeChars).toEqual(['哪', '吒']);
+  });
+
+  it('缺控制/辅助时 preferRoles 含缺失角色', () => {
+    const missing = missingHeroRoles([{ role: '输出', maxTier: 5, tier: 5 }]);
+    expect(missing).toEqual(expect.arrayContaining(['控制', '辅助']));
+  });
+
+  it('tier5CapableOnly 时不抽满3过渡字', () => {
+    let qing = 0;
+    for (let i = 0; i < 300; i++) {
+      const rng = new FakeRng([i / 300, 0.2]);
+      const pick = pickWordChar(rng, 5, [], [], false, [], undefined, { tier5CapableOnly: true });
+      if (pick.char === '青') qing++;
+    }
+    expect(qing).toBe(0);
+  });
+
+  it('excludeChars 排除非配对缺口字', () => {
+    for (let i = 0; i < 200; i++) {
+      const rng = new FakeRng([i / 200, 0.3]);
+      const pick = pickWordChar(rng, 5, [], [], false, [], undefined, { excludeChars: ['哪'] });
+      expect(pick.char).not.toBe('哪');
+    }
   });
 });
