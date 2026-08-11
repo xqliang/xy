@@ -13,8 +13,11 @@ export function drawSummonTray(opts: {
   maxPerKey: number;
   firstSummon: boolean;
   forceShovel?: boolean;
+  /** 本盘铲子硬上限（如前期累计配额剩余）；未设则只受 maxPerKey */
+  maxShovels?: number;
 }): SummonToken[] {
   const { rng, unitTypes, draws, shovelChance, maxPerKey, firstSummon, forceShovel } = opts;
+  const maxShovels = opts.maxShovels ?? maxPerKey;
   const counts = new Map<string, number>();
   const out: SummonToken[] = [];
   const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
@@ -28,6 +31,7 @@ export function drawSummonTray(opts: {
     const needUnits = firstSummon ? Math.max(0, 4 - unitsSoFar) : 0;
     const allowShovel =
       under('shovel') &&
+      shovelsSoFar < maxShovels &&
       (!firstSummon || (shovelsSoFar < 1 && slotsLeft - 1 >= needUnits && unitsSoFar + (slotsLeft - 1) >= 4));
 
     let pickShovel = allowShovel && rng.next() < shovelChance;
@@ -47,7 +51,12 @@ export function drawSummonTray(opts: {
   }
 
   // 铲子保底：要求强制出铲但本盘一把都没出 → 把最后一个兵槽替换为铲子
-  if (forceShovel && !out.some((t) => t.kind === 'shovel')) {
+  if (
+    forceShovel
+    && maxShovels > 0
+    && out.filter((t) => t.kind === 'shovel').length < maxShovels
+    && !out.some((t) => t.kind === 'shovel')
+  ) {
     const lastUnit = out.map((t) => t.kind).lastIndexOf('unit');
     if (lastUnit >= 0) out[lastUnit] = { kind: 'shovel' };
   }

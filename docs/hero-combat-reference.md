@@ -185,12 +185,27 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ---
 
-## 7. 相关文件
+## 7. 征兵前期字/铲配额（`TUNING`，2026-08-11）
+
+字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定。另有连续无字/无铲/半对保底。
+
+| 常量 | 值 | 含义 |
+|------|----|------|
+| `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
+| `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 5 / 1 | 第 5 波征兵时若仍无字则强制 1 字 |
+| `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
+
+实现：`summon-early.ts` → `Battle.summon` / `aiSummon`。
+
+---
+
+## 8. 相关文件
 
 | 用途 | 路径 |
 |------|------|
 | 武将表 | `web/src/generals.ts` |
 | 战斗结算 | `web/src/battle.ts` |
+| 征兵前期配额 | `web/src/summon-early.ts`、`web/src/summon-draw.ts`、`web/src/word-draw.ts` |
 | 大招动画 | `web/src/render.ts`（`drawHeroUlt` / `drawUltDasheng` 等） |
 | 门派与满阶设计 | `docs/superpowers/specs/2026-08-07-general-family-max-tier-design.md` |
 | 辅助武将设计 | `docs/superpowers/specs/2026-08-11-support-heroes-laojun-wenshu-design.md` |

@@ -58,4 +58,20 @@ describe('drawSummonTray', () => {
       for (const n of counts(tray).values()) expect(n).toBeLessThanOrEqual(3);
     }
   });
+
+  it('respects maxShovels even when chance and force are high', () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const tray = drawSummonTray({
+        rng: new RNG(seed),
+        unitTypes: types,
+        draws: 5,
+        shovelChance: 1,
+        maxPerKey: 3,
+        firstSummon: false,
+        forceShovel: true,
+        maxShovels: 1,
+      });
+      expect(tray.filter((t) => t.kind === 'shovel')).toHaveLength(1);
+    }
+  });
 });

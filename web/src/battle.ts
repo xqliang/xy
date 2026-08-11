@@ -45,6 +45,7 @@ import {
   type WeaponBonuses,
 } from './weapons';
 import { drawSummonTray } from './summon-draw';
+import { earlySummonGates } from './summon-early';
 import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
@@ -146,6 +147,14 @@ export const TUNING = {
   wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
+  // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
+  earlyWordCapWave: 3, // 前 N 波字牌累计上限窗口
+  earlyWordCap: 1, // 上限窗口内最多出几个字
+  earlyWordGuaranteeWave: 5, // 到该波仍无字则强制出字
+  earlyWordGuarantee: 1, // 前 earlyWordGuaranteeWave 波至少出几个字
+  earlyShovelWave: 3, // 前 N 波铲子累计配额窗口
+  earlyShovelMin: 1, // 窗口内至少出几把铲
+  earlyShovelMax: 3, // 窗口内最多出几把铲
   summonMaxPerKey: 3, // 单次征兵同 key（兵种/铲）上限
   summonMaxPerKeyAllOpen: 5, // 阵位全开后：铲子无用，放宽同兵种上限到 5（更快堆同型合成）
   traySize: 5, // 候选区容量
@@ -756,6 +765,12 @@ export class Battle {
   private summonsSinceShovel = 0; // 距上次出铲经过的征兵次数（铲子保底计数）
   private summonsSinceWord = 0; // 距上次出字经过的征兵次数（字牌保底计数）
   private summonsSincePair = 0; // 距上次补上孤儿配对经过的征兵次数（半对保底）
+  /** 波 ≤ earlyWordCapWave 征兵抽出的字牌累计 */
+  private earlySummonWordsCap = 0;
+  /** 波 ≤ earlyWordGuaranteeWave 征兵抽出的字牌累计 */
+  private earlySummonWordsGuarantee = 0;
+  /** 波 ≤ earlyShovelWave 征兵抽出的铲子累计（不含开局赠铲） */
+  private earlySummonShovels = 0;
   /** 本局各字累计出现次数（棋盘实例 + 历次征兵抽字），用于后续抽字概率打压 */
   private wordCharCounts = new Map<string, number>();
 
@@ -1476,6 +1491,9 @@ export class Battle {
   private aiSummonsSinceShovel = 0;
   private aiSummonsSinceWord = 0; // AI 字牌保底计数（镜像 summonsSinceWord）
   private aiSummonsSincePair = 0;
+  private aiEarlySummonWordsCap = 0;
+  private aiEarlySummonWordsGuarantee = 0;
+  private aiEarlySummonShovels = 0;
   private aiWordCharCounts = new Map<string, number>(); // AI 字出现次数（抽字打压）
   private aiSummonCount = 0;
   private aiGeneralStates = new Map<string, GeneralState>();
@@ -1729,41 +1747,52 @@ export class Battle {
     const firstSummon = this.summonCount === 0;
     // 阵位是否已全部挖开：全开后铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
     const allOpen = this.lockedCells().length === 0;
-    // 铲子保底：连续 shovelPityAfter 次没出铲则本次强制出铲——仅在仍有未挖格(空位)时才生效
-    const forceShovel = !allOpen && this.summonsSinceShovel >= TUNING.shovelPityAfter;
+    const early = earlySummonGates(this.wave, {
+      wordsInCapWindow: this.earlySummonWordsCap,
+      wordsInGuaranteeWindow: this.earlySummonWordsGuarantee,
+      shovelsInWindow: this.earlySummonShovels,
+    }, TUNING);
+    // 铲子保底 / 前期下限：仅在仍有未挖格时生效；前期上限用 maxShovels 卡住
+    const forceShovel = !allOpen
+      && (this.summonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel)
+      && (early.maxShovels === null || early.maxShovels > 0);
     // 兵/铲分布：受约束（同 key ≤ 上限，首次保底≥4兵，可选强制出铲）
     const base = drawSummonTray({
       rng: this.rng,
       unitTypes: types,
       draws: avail,
-      shovelChance: allOpen ? 0 : TUNING.shovelDrawChance, // 全开后不再产铲
+      shovelChance: allOpen ? 0 : (early.maxShovels === 0 ? 0 : TUNING.shovelDrawChance),
       maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
       firstSummon,
       forceShovel,
+      maxShovels: allOpen ? 0 : (early.maxShovels ?? undefined),
     });
     this.summonCount += 1;
     // 铲子保底计数：本盘出铲则清零，否则累加
     if (base.some((t) => t.kind === 'shovel')) this.summonsSinceShovel = 0;
     else this.summonsSinceShovel += 1;
     // 非首次征兵：按字牌掉率把部分「兵」槽转成武将字牌（首次保底不转，维持≥4兵）
-    const forceWord = !firstSummon && this.summonsSinceWord >= TUNING.wordPityAfter;
+    const forceWordPity = !firstSummon && this.summonsSinceWord >= TUNING.wordPityAfter;
+    const forceWord = !firstSummon && (forceWordPity || early.forceWord) && early.maxWords > 0;
     // 配对/去重只看棋盘（旧 tray 整盘替换，不计入孤儿与已拥有）
     const orphansBefore = this.boardOrphanCharsNow();
     const ownedBoard = this.boardWordCharsNow();
     const fieldCharCounts = this.boardFieldCharCounts();
     const activeMax5Families = this.activeMax5FamiliesNow();
     const wordPolicy = this.summonWordPolicyNow();
+    const wordSlotsCap = Math.min(wordPolicy.maxWordSlots, early.maxWords);
     const forcePartner = wordPolicy.allowForcePartner
       && !firstSummon
       && orphansBefore.length > 0
-      && this.summonsSincePair >= TUNING.pairPityAfter;
+      && this.summonsSincePair >= TUNING.pairPityAfter
+      && wordSlotsCap > 0;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
     const wordDrawChance =
       (TUNING.wordDrawChance + this.mods.wordRateBonus + this.versusBand.playerWordDrawBonus)
       * wordPolicy.wordSlotChanceMul;
     const drawOneWord = (forcePair: boolean) => {
-      if (trayWordsSoFar.length >= wordPolicy.maxWordSlots) {
+      if (trayWordsSoFar.length >= wordSlotsCap) {
         return null;
       }
       const w = pickWordChar(
@@ -1793,7 +1822,7 @@ export class Battle {
         tok.kind === 'unit'
         && !firstSummon
         && wordPolicy.wordSlotChanceMul > 0
-        && trayWordsSoFar.length < wordPolicy.maxWordSlots
+        && trayWordsSoFar.length < wordSlotsCap
         && this.rng.next() < wordDrawChance
       ) {
         const useForce = forcePartner && !partnerForced;
@@ -1805,7 +1834,7 @@ export class Battle {
     if (
       wordPolicy.allowForceWord
       && forceWord
-      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && trayWordsSoFar.length < wordSlotsCap
       && !draws.some((t) => t.kind === 'word')
     ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
@@ -1815,13 +1844,19 @@ export class Battle {
       wordPolicy.allowForcePartner
       && forcePartner
       && !partnerForced
-      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && trayWordsSoFar.length < wordSlotsCap
     ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
       const word = idx >= 0 ? drawOneWord(true) : null;
       if (word) draws[idx] = word;
     }
     this.tray = draws;
+    const waveNow = Math.max(1, this.wave);
+    const shovelN = base.filter((t) => t.kind === 'shovel').length;
+    const wordN = draws.filter((t) => t.kind === 'word').length;
+    if (waveNow <= TUNING.earlyShovelWave) this.earlySummonShovels += shovelN;
+    if (waveNow <= TUNING.earlyWordCapWave) this.earlySummonWordsCap += wordN;
+    if (waveNow <= TUNING.earlyWordGuaranteeWave) this.earlySummonWordsGuarantee += wordN;
     if (draws.some((t) => t.kind === 'word')) this.summonsSinceWord = 0;
     else if (!firstSummon) this.summonsSinceWord += 1; // 首次征兵不计入保底 streak
     // 半对保底：有孤儿时，本盘若抽出了可补缺字则清零，否则累加
@@ -2002,6 +2037,18 @@ export class Battle {
   forceShovelPityForTest(): void { this.summonsSinceShovel = TUNING.shovelPityAfter; }
   /** 测试钩子：将半对保底计数设为阈值 */
   forcePairPityForTest(): void { this.summonsSincePair = TUNING.pairPityAfter; }
+  setWaveForTest(wave: number): void { this.wave = Math.max(0, wave); }
+  earlySummonStatsForTest(): {
+    wordsCap: number;
+    wordsGuarantee: number;
+    shovels: number;
+  } {
+    return {
+      wordsCap: this.earlySummonWordsCap,
+      wordsGuarantee: this.earlySummonWordsGuarantee,
+      shovels: this.earlySummonShovels,
+    };
+  }
 
   /** 当前孤儿字（棋盘未激活 + tray） */
   orphanCharsNow(): string[] {
@@ -2441,34 +2488,45 @@ export class Battle {
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.aiSummonCount === 0;
     const allOpen = this.aiLockedCells().length === 0;
-    const forceShovel = !allOpen && this.aiSummonsSinceShovel >= TUNING.shovelPityAfter;
+    const early = earlySummonGates(this.wave, {
+      wordsInCapWindow: this.aiEarlySummonWordsCap,
+      wordsInGuaranteeWindow: this.aiEarlySummonWordsGuarantee,
+      shovelsInWindow: this.aiEarlySummonShovels,
+    }, TUNING);
+    const forceShovel = !allOpen
+      && (this.aiSummonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel)
+      && (early.maxShovels === null || early.maxShovels > 0);
     const base = drawSummonTray({
       rng: this.aiRng, unitTypes: types, draws: TUNING.traySize,
-      shovelChance: allOpen ? 0 : TUNING.shovelDrawChance,
+      shovelChance: allOpen ? 0 : (early.maxShovels === 0 ? 0 : TUNING.shovelDrawChance),
       maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
       firstSummon, forceShovel,
+      maxShovels: allOpen ? 0 : (early.maxShovels ?? undefined),
     });
     this.aiSummonCount += 1;
     if (base.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0; else this.aiSummonsSinceShovel += 1;
     this.clearAiAutoPlaceLayoutMemory();
-    // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对（无玩家 mods.wordRateBonus）
-    const forceWord = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
+    // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对 + 前期配额
+    const forceWordPity = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
+    const forceWord = !firstSummon && (forceWordPity || early.forceWord) && early.maxWords > 0;
     const orphansBefore = this.aiBoardOrphanCharsNow();
     const ownedBoard = this.aiBoardWordCharsNow();
     const fieldCharCounts = this.aiBoardFieldCharCounts();
     const activeMax5Families = this.aiActiveMax5FamiliesNow();
     const wordPolicy = this.aiSummonWordPolicyNow();
+    const wordSlotsCap = Math.min(wordPolicy.maxWordSlots, early.maxWords);
     const forcePartner = wordPolicy.allowForcePartner
       && !firstSummon
       && orphansBefore.length > 0
-      && this.aiSummonsSincePair >= TUNING.pairPityAfter;
+      && this.aiSummonsSincePair >= TUNING.pairPityAfter
+      && wordSlotsCap > 0;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
     const wordDrawChance =
       (TUNING.wordDrawChance + this.aiMods.wordRateBonus + this.versusBand.aiWordDrawBonus)
       * wordPolicy.wordSlotChanceMul;
     const drawOneWord = (forcePair: boolean) => {
-      if (trayWordsSoFar.length >= wordPolicy.maxWordSlots) {
+      if (trayWordsSoFar.length >= wordSlotsCap) {
         return null;
       }
       const w = pickWordChar(
@@ -2498,7 +2556,7 @@ export class Battle {
         tok.kind === 'unit'
         && !firstSummon
         && wordPolicy.wordSlotChanceMul > 0
-        && trayWordsSoFar.length < wordPolicy.maxWordSlots
+        && trayWordsSoFar.length < wordSlotsCap
         && this.aiRng.next() < wordDrawChance
       ) {
         return drawOneWord(forcePartner && !partnerForced) ?? tok;
@@ -2508,7 +2566,7 @@ export class Battle {
     if (
       wordPolicy.allowForceWord
       && forceWord
-      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && trayWordsSoFar.length < wordSlotsCap
       && !draws.some((t) => t.kind === 'word')
     ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
@@ -2518,13 +2576,19 @@ export class Battle {
       wordPolicy.allowForcePartner
       && forcePartner
       && !partnerForced
-      && trayWordsSoFar.length < wordPolicy.maxWordSlots
+      && trayWordsSoFar.length < wordSlotsCap
     ) {
       const idx = draws.findIndex((t) => t.kind === 'unit');
       const word = idx >= 0 ? drawOneWord(true) : null;
       if (word) draws[idx] = word;
     }
     this.aiTray = draws;
+    const waveNow = Math.max(1, this.wave);
+    const shovelN = base.filter((t) => t.kind === 'shovel').length;
+    const wordN = draws.filter((t) => t.kind === 'word').length;
+    if (waveNow <= TUNING.earlyShovelWave) this.aiEarlySummonShovels += shovelN;
+    if (waveNow <= TUNING.earlyWordCapWave) this.aiEarlySummonWordsCap += wordN;
+    if (waveNow <= TUNING.earlyWordGuaranteeWave) this.aiEarlySummonWordsGuarantee += wordN;
     if (draws.some((t) => t.kind === 'word')) this.aiSummonsSinceWord = 0;
     else if (!firstSummon) this.aiSummonsSinceWord += 1;
     if (firstSummon || orphansBefore.length === 0) this.aiSummonsSincePair = 0;

@@ -127,6 +127,8 @@ export const TUNING_MONSTER_KEYS = new Set([
 export const TUNING_SYSTEM_KEYS = new Set([
   'summonCostStart', 'summonCostStep', 'summonDraws',
   'shovelDrawChance', 'shovelPityAfter', 'wordDrawChance', 'wordPityAfter', 'pairPityAfter',
+  'earlyWordCapWave', 'earlyWordCap', 'earlyWordGuaranteeWave', 'earlyWordGuarantee',
+  'earlyShovelWave', 'earlyShovelMin', 'earlyShovelMax',
   'summonMaxPerKey', 'summonMaxPerKeyAllOpen', 'traySize', 'initialShovels', 'initialOpenSlots',
   'aiDpsBase', 'aiDpsPerWave', 'aiClearChargeTime', 'aiClearRadius', 'aiClearDmgMul',
   'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
