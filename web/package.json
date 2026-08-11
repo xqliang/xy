@@ -1,6 +1,6 @@
 {
   "name": "dasheng-web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "《大圣与唐僧》Web 可玩原型（复用 game-core 数值内核）",
