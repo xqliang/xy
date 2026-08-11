@@ -165,14 +165,14 @@ describe('planSpawnInterval', () => {
     const itv3 = planSpawnInterval({
       wave: 3,
       baseInterval: base,
-      monsterSpd: 0.68,
+      monsterSpd: 0.6,
       normalHp: 80,
       entranceDps: 0,
     });
     const itv8 = planSpawnInterval({
       wave: 8,
       baseInterval: base,
-      monsterSpd: 0.68,
+      monsterSpd: 0.6,
       normalHp: 200,
       entranceDps: 0,
     });
@@ -181,7 +181,7 @@ describe('planSpawnInterval', () => {
   });
 
   it('门口 DPS 能秒杀时进一步压间隔，且不低于下限', () => {
-    const spd = 0.68;
+    const spd = 0.6;
     const itv = planSpawnInterval({
       wave: 4,
       baseInterval: base,
@@ -204,7 +204,7 @@ describe('planWavePressure', () => {
     coverageTotal: 20,
   };
   const spawnOpts = {
-    monsterSpd: 0.68,
+    monsterSpd: 0.6,
     baseSpawnInterval: 1.25,
   };
 
@@ -363,8 +363,7 @@ describe('Battle 接入压力规划', () => {
     (b as unknown as { status: string }).status = 'ready';
     expect(b.startNextWave()).toBe(true);
     expect(b.wave).toBe(4);
-    const baseline =
-      9 + 4 + 0; // monstersInWave(4)=13；波4无后期加成/前期减量 → 13
+    const baseline = 10 + 4 - 1; // wave4=13
     // 强阵预算可能抬升
     expect(b.snapshot().waveCount).toBeGreaterThanOrEqual(baseline);
     expect(b.snapshot().optimalDps).toBeGreaterThan(0);

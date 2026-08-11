@@ -80,6 +80,26 @@ describe('攻击升品质阶', () => {
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(2);
   });
 
+  it('法宝符：拆开收回候选区再合并不重复升阶', () => {
+    const b = new Battle(1, 1, undefined, undefined, undefined, [], ['fabaofu']);
+    const { a, right } = placeErlang(b, 1, 1);
+    b.activeGenerals();
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(2);
+
+    const empty = b.unlockedCells().find((c) => !b.words.has(`${c.c},${c.r}`))!;
+    b.dragWord(a, empty);
+    expect(b.recallToTray(empty, 0)).toBe(true);
+    expect(b.recallToTray(right, 1)).toBe(true);
+    expect(b.tray[0]?.fabaofuBoosted).toBe(true);
+    expect(b.tray[1]?.fabaofuBoosted).toBe(true);
+
+    expect(b.placeFromTray(0, a)).toBe(true);
+    expect(b.placeFromTray(1, right)).toBe(true);
+    b.activeGenerals();
+    expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(2);
+    expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(2);
+  });
+
   it('generalAtk 不再吃 level 系数', () => {
     const b = new Battle(1);
     placeErlang(b, 2, 2);

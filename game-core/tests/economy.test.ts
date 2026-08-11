@@ -19,7 +19,7 @@ describe('蟠桃经济常量（照搬原作）', () => {
 });
 
 describe('波次产耗曲线（照搬原作表格）', () => {
-  it('第 n 波怪物数 = 9 + n', () => {
+  it('第 n 波怪物数 = 10 + n - 1', () => {
     expect(monstersInWave(1)).toBe(10);
     expect(monstersInWave(2)).toBe(11);
     expect(monstersInWave(10)).toBe(19);

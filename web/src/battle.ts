@@ -93,7 +93,7 @@ import {
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 export const TUNING = {
-  monsterSpd: 0.68, // 格/秒（略快：更早触发危险、利好高RGE兵，符合文章"高速利远程"）
+  monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
   monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
   monsterHpStep: 16,
@@ -120,7 +120,7 @@ export const TUNING = {
   cavalryRatioWaveDiv: 100,
   cavalryRatioMaxSpread: 0.2, // 上界 = min(cap, 下界 + spread)，开波时在 [下界, 上界] 随机
   cavalryRatioCap: 0.7,
-  cavalrySpdMul: 2, // 骑兵移速倍率：比普通妖快一倍
+  cavalrySpdMul: 1.5, // 骑兵移速倍率：比普通妖快 50%
   cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
@@ -144,13 +144,13 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
   shovelPityAfter: 2, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
-  wordDrawChance: 0.14, // 候选中出现武将字牌的概率（凑双字召唤武将）
+  wordDrawChance: 0.10, // 候选中出现武将字牌的概率（每兵槽独立判定）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
   earlyWordCapWave: 3, // 前 N 波字牌累计上限窗口
   earlyWordCap: 1, // 上限窗口内最多出几个字
-  earlyWordGuaranteeWave: 5, // 到该波仍无字则强制出字
+  earlyWordGuaranteeWave: 6, // 到该波仍无字则强制出字
   earlyWordGuarantee: 1, // 前 earlyWordGuaranteeWave 波至少出几个字
   earlyShovelWave: 3, // 前 N 波铲子累计配额窗口
   earlyShovelMin: 1, // 窗口内至少出几把铲
@@ -388,7 +388,7 @@ export const MAP_SKILL: Record<string, MonsterSkill> = {
 export type TrayToken =
   | { kind: 'unit'; type: UnitType; tier: number; /** 地图挤回候选区，布阵待换低阶上板 */ displaced?: boolean }
   | { kind: 'shovel' }
-  | { kind: 'word'; char: string; general: string; tier: number }
+  | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean }
   | { kind: 'tree'; level: number; growT: number };
 
 /** 候选区有效令牌（clearTraySlot 用 delete 留空洞，遍历须跳过） */
@@ -480,6 +480,28 @@ export interface PlacedWord {
   general: string; // 所属武将 id
   tier: number;
   cell: Cell;
+  fabaofuBoosted?: boolean; // 法宝符：该字牌已参与过首次激活升阶
+}
+
+function placedWordFromTray(token: Extract<TrayToken, { kind: 'word' }>, cell: Cell): PlacedWord {
+  return {
+    char: token.char,
+    general: token.general,
+    tier: token.tier,
+    cell,
+    ...(token.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
+  };
+}
+
+function trayWordFromPlaced(w: PlacedWord, extra?: { displaced?: boolean }): Extract<TrayToken, { kind: 'word' }> {
+  return {
+    kind: 'word',
+    char: w.char,
+    general: w.general,
+    tier: w.tier,
+    ...(w.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
+    ...extra,
+  };
 }
 
 // 蟠桃园桃树：种在「未开垦」空地上，按等级周期产桃，同级可拖动合并升级（最高 5 级）。
@@ -1020,7 +1042,7 @@ export class Battle {
       case 'placeWord': {
         const t = d.token;
         if (t.kind !== 'word') break;
-        this.words.set(k, { char: t.char, general: t.general, tier: t.tier, cell });
+        this.words.set(k, placedWordFromTray(t, cell));
         break;
       }
       case 'mergeUnit': {
@@ -1140,7 +1162,7 @@ export class Battle {
       case 'unit':
         return { kind: 'unit', type: t.type, tier: t.tier, ...(t.displaced ? { displaced: true } : {}) };
       case 'word':
-        return { kind: 'word', char: t.char, general: t.general, tier: t.tier };
+        return { kind: 'word', char: t.char, general: t.general, tier: t.tier, ...(t.fabaofuBoosted ? { fabaofuBoosted: true } : {}), ...(t.displaced ? { displaced: true } : {}) };
       case 'shovel':
         return { kind: 'shovel' };
       case 'tree':
@@ -1471,7 +1493,6 @@ export class Battle {
   /** 攻击型主动技能(陨石/紧箍咒)：距离条件达成后的随机延迟倒计时（秒）；undefined=未解锁 */
   private aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu', number>> = {};
   private aiShovelTimer = 0;
-  private aiTierBoosted = new Set<string>();
   private aiMeteorPending = false;
   aiPickedItems: string[] = []; // HUD 右上角展示
   aiMonsters: Monster[] = [];
@@ -1523,7 +1544,6 @@ export class Battle {
   weaponPickupVisible: (id: string) => boolean = () => true;
   pickedItems: string[] = [];
 
-  private tierBoosted = new Set<string>(); // 法宝符：已应用首次激活升阶的格子对 key
   private rng: RNG;
   readonly map: GameMap;
   readonly pathLen: number;
@@ -1910,7 +1930,7 @@ export class Battle {
     const w = this.words.get(k);
     if (w) {
       this.words.delete(k);
-      this.tray[slot] = { kind: 'word', char: w.char, general: w.general, tier: w.tier };
+      this.tray[slot] = trayWordFromPlaced(w);
       this.message = `字牌「${w.char}」已收回候选区`;
       return true;
     }
@@ -1946,7 +1966,7 @@ export class Battle {
       const slot = this.firstEmptyTraySlot();
       if (slot === null) return false;
       this.words.delete(k);
-      this.tray[slot] = { kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true };
+      this.tray[slot] = trayWordFromPlaced(w, { displaced: true });
       return true;
     }
     const u = this.units.get(k);
@@ -1967,7 +1987,7 @@ export class Battle {
     if (w) {
       if (this.aiTray.length >= TUNING.traySize) return false;
       this.aiWords.delete(k);
-      this.aiTray.push({ kind: 'word', char: w.char, general: w.general, tier: w.tier, displaced: true });
+      this.aiTray.push(trayWordFromPlaced(w, { displaced: true }));
       return true;
     }
     const ui = this.aiUnits.findIndex((x) => x.cell.c === cell.c && x.cell.r === cell.r);
@@ -2276,8 +2296,9 @@ export class Battle {
       const cells: [Cell, Cell] = [w.cell, right.cell];
       const pairKey = Battle.heroPairKey(cells[0], cells[1]);
       activePairKeys.add(pairKey);
-      if (this.mods.generalTierDelta > 0 && !this.tierBoosted.has(pairKey)) {
-        this.tierBoosted.add(pairKey);
+      if (this.mods.generalTierDelta > 0 && !w.fabaofuBoosted && !right.fabaofuBoosted) {
+        w.fabaofuBoosted = true;
+        right.fabaofuBoosted = true;
         for (let i = 0; i < this.mods.generalTierDelta; i++) {
           if (w.tier < cap) w.tier += 1;
           if (right.tier < cap) right.tier += 1;
@@ -2294,9 +2315,6 @@ export class Battle {
       });
     }
     this.pruneHeroStates(activePairKeys, this.generalStates);
-    for (const k of [...this.tierBoosted]) {
-      if (!activePairKeys.has(k)) this.tierBoosted.delete(k);
-    }
     return out;
   }
 
@@ -2332,8 +2350,9 @@ export class Battle {
       const cells: [Cell, Cell] = [w.cell, right.cell];
       const pairKey = Battle.heroPairKey(cells[0], cells[1]);
       activePairKeys.add(pairKey);
-      if (this.aiMods.generalTierDelta > 0 && !this.aiTierBoosted.has(pairKey)) {
-        this.aiTierBoosted.add(pairKey);
+      if (this.aiMods.generalTierDelta > 0 && !w.fabaofuBoosted && !right.fabaofuBoosted) {
+        w.fabaofuBoosted = true;
+        right.fabaofuBoosted = true;
         for (let i = 0; i < this.aiMods.generalTierDelta; i++) {
           if (w.tier < cap) w.tier += 1;
           if (right.tier < cap) right.tier += 1;
@@ -2350,9 +2369,6 @@ export class Battle {
       });
     }
     this.pruneHeroStates(activePairKeys, this.aiGeneralStates);
-    for (const k of [...this.aiTierBoosted]) {
-      if (!activePairKeys.has(k)) this.aiTierBoosted.delete(k);
-    }
     return out;
   }
 
@@ -2397,12 +2413,12 @@ export class Battle {
       if (exist) {
         // 与玩家一致：同字同阶不可合并；同字异阶或异字 → 交换
         if (exist.char === token.char && exist.tier === token.tier) return false;
-        this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
-        this.aiTray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
+        this.aiWords.set(k, placedWordFromTray(token, { c: to.c, r: to.r }));
+        this.aiTray[index] = trayWordFromPlaced(exist);
         return true;
       }
       if (!this.aiCellFree(to.c, to.r)) return false;
-      this.aiWords.set(k, { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+      this.aiWords.set(k, placedWordFromTray(token, { c: to.c, r: to.r }));
       this.aiTray.splice(index, 1);
       this.spawnPlaceDropFx('ai', to, {
         kind: 'word',
@@ -2423,7 +2439,7 @@ export class Battle {
       if (!this.aiSummonWordPolicyNow().maxWordSlots) {
         this.aiTray.splice(index, 1);
       } else {
-        this.aiTray[index] = { kind: 'word', char: wOnCell.char, general: wOnCell.general, tier: wOnCell.tier };
+        this.aiTray[index] = trayWordFromPlaced(wOnCell);
       }
       this.spawnPlaceDropFx('ai', to, {
         kind: 'unit',
@@ -3276,8 +3292,8 @@ export class Battle {
           this.message = '单字不可合并，需凑对激活后升阶';
           return false;
         }
-        this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
-        this.tray[index] = { kind: 'word', char: exist.char, general: exist.general, tier: exist.tier };
+        this.words.set(cellKey(to.c, to.r), placedWordFromTray(token, { c: to.c, r: to.r }));
+        this.tray[index] = trayWordFromPlaced(exist);
         this.message = exist.char === token.char
           ? `「${token.char}」${token.tier} 阶与棋盘 ${exist.tier} 阶交换`
           : `与字牌「${exist.char}」交换`;
@@ -3287,7 +3303,7 @@ export class Battle {
       const uexist = this.units.get(cellKey(to.c, to.r));
       if (uexist) {
         this.units.delete(cellKey(to.c, to.r));
-        this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+        this.words.set(cellKey(to.c, to.r), placedWordFromTray(token, { c: to.c, r: to.r }));
         this.tray[index] = { kind: 'unit', type: uexist.type, tier: uexist.tier };
         this.message = `与 ${UNITS[uexist.type].name} 交换`;
         return true;
@@ -3295,7 +3311,7 @@ export class Battle {
       if (this.playerUseAutoPlaceDrag()) {
         return this.queueAutoPlaceDrag(index, to, token, 'placeWord', this.playerWordPlaceSfx(to));
       }
-      this.words.set(cellKey(to.c, to.r), { char: token.char, general: token.general, tier: token.tier, cell: { c: to.c, r: to.r } });
+      this.words.set(cellKey(to.c, to.r), placedWordFromTray(token, { c: to.c, r: to.r }));
       this.clearTraySlot(index);
       this.spawnPlaceDropFx('player', to, {
         kind: 'word',
@@ -3322,7 +3338,7 @@ export class Battle {
       if (this.isHeroRosterComplete()) {
         this.clearTraySlot(index);
       } else {
-        this.tray[index] = { kind: 'word', char: wexist.char, general: wexist.general, tier: wexist.tier };
+        this.tray[index] = trayWordFromPlaced(wexist);
       }
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
@@ -3988,22 +4004,10 @@ export class Battle {
     return this.bossWaves.has(wave);
   }
 
-  // 本波出怪总数基准：经济基准(9+n，同时决定掉落) + 后期堆量。
-  // 只在 battle 层叠加，不改 game-core 的 monstersInWave，保持"第5波蟠桃转负"的经济不变量与测试。
+  // 本波出怪总数基准：10 + 波次 - 1（wave1=10 …）；经济掉落与 game-core monstersInWave 对齐。
   // 第 PRESSURE_FROM_WAVE 波起还会按最优输出抬升（见 computeWavePressure），本函数结果作为最低保底。
   private baselineWaveSpawnCount(wave: number): number {
-    const base = monstersInWave(wave); // 9 + n
-    const extra =
-      wave >= TUNING.lateWaveFrom
-        ? (wave - (TUNING.lateWaveFrom - 1)) * TUNING.lateWaveExtraPerWave
-        : 0;
-    // 前期减量：波1=7, 波2=9（降低上手压力，不影响经济曲线）
-    const early =
-      wave <= TUNING.earlyWaveTo
-        ? (TUNING.earlyWaveTo - wave + 1) * TUNING.earlyWaveReduce
-        : 0;
-    const bonus = wave === 1 ? TUNING.wave1Bonus : 0;
-    return Math.max(TUNING.minWaveMonsters, base + extra - early + bonus);
+    return monstersInWave(wave);
   }
 
   /** 普通怪基础血量（含境界/分圈系数、前3波减量与波>10 加成，不含 Boss/精英倍乘） */
@@ -5713,7 +5717,7 @@ export class Battle {
           }
         } else if (p.token.kind === 'word') {
           const w = p.token;
-          this.words.set(cellKey(p.c, p.r), { char: w.char, general: w.general, tier: w.tier, cell });
+          this.words.set(cellKey(p.c, p.r), placedWordFromTray(w, cell));
           if (p.dropAnim) {
             this.spawnPlaceDropFx('player', cell, {
               kind: 'word',
@@ -5744,7 +5748,7 @@ export class Battle {
             unitTier: p.token.tier,
           });
         } else if (p.token.kind === 'word') {
-          this.aiWords.set(cellKey(p.c, p.r), { char: p.token.char, general: p.token.general, tier: p.token.tier, cell });
+          this.aiWords.set(cellKey(p.c, p.r), placedWordFromTray(p.token, cell));
           this.spawnPlaceDropFx('ai', cell, {
             kind: 'word',
             isMerge: false,

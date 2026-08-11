@@ -9,7 +9,7 @@ export const ECONOMY = {
   PEACH_PER_MINI_BOSS: 6, // 击杀小 Boss 6 桃
   PEACH_PER_BOSS: 10, // 击杀大 Boss 10 桃
   TANGSENG_INITIAL_HP: 3, // 唐僧初始 3 滴血（道具可拉高）
-  /** 第 n 波怪物数 = MONSTER_BASE + n */
+  /** 第 n 波怪物数 = 10 + n - 1 */
   MONSTER_BASE: 9,
   /** 抽卡成本：cost(n) = PEACH_COST_BASE + PEACH_COST_STEP × n */
   PEACH_COST_BASE: 8,

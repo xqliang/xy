@@ -1,8 +1,8 @@
 import { ECONOMY } from '../config/economy';
 
-// 第 n 波怪物数 = 9 + n（wave1=10 … wave10=19）
+// 第 n 波怪物数 = 10 + n - 1（wave1=10 … wave10=19）
 export function monstersInWave(n: number): number {
-  return ECONOMY.MONSTER_BASE + n;
+  return 10 + n - 1;
 }
 
 // 第 n 波掉落蟠桃 = 怪物数 × 每只桃（全部击杀）

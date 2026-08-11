@@ -114,15 +114,15 @@ describe('征兵阶段权重', () => {
   });
 });
 
-describe('半对保底 N=4', () => {
+describe('半对保底 N=6', () => {
   const origWord = TUNING.wordDrawChance;
   afterEach(() => {
     TUNING.wordDrawChance = origWord;
   });
 
-  it('PAIR_PITY_AFTER 为 4', () => {
-    expect(PAIR_PITY_AFTER).toBe(4);
-    expect(TUNING.pairPityAfter).toBe(4);
+  it('PAIR_PITY_AFTER 为 6', () => {
+    expect(PAIR_PITY_AFTER).toBe(6);
+    expect(TUNING.pairPityAfter).toBe(6);
   });
 
   it('有孤儿且连续未补满 pairPityAfter 次后强制出配对字', () => {

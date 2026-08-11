@@ -5,7 +5,7 @@ import { Battle, TUNING } from '../src/battle';
 const T = {
   earlyWordCapWave: 3,
   earlyWordCap: 1,
-  earlyWordGuaranteeWave: 5,
+  earlyWordGuaranteeWave: 6,
   earlyWordGuarantee: 1,
   earlyShovelWave: 3,
   earlyShovelMin: 1,
@@ -26,8 +26,8 @@ describe('earlySummonGates', () => {
     expect(gCap.forceShovel).toBe(false);
   });
 
-  it('第 5 波仍无字则强制出字', () => {
-    const g = earlySummonGates(5, { wordsInCapWindow: 0, wordsInGuaranteeWindow: 0, shovelsInWindow: 0 }, T);
+  it('第 6 波仍无字则强制出字', () => {
+    const g = earlySummonGates(6, { wordsInCapWindow: 0, wordsInGuaranteeWindow: 0, shovelsInWindow: 0 }, T);
     expect(g.forceWord).toBe(true);
     expect(g.maxWords).toBeGreaterThan(0);
   });
@@ -59,14 +59,14 @@ describe('征兵前期配额（Battle.summon）', () => {
     expect(b.earlySummonStatsForTest().wordsCap).toBeLessThanOrEqual(1);
   });
 
-  it('第 5 波仍无字时强制至少 1 字', () => {
+  it('第 6 波仍无字时强制至少 1 字', () => {
     TUNING.wordDrawChance = 0;
     TUNING.shovelDrawChance = 0;
     const b = new Battle(11);
     b.grantPeach(10_000);
     b.setWaveForTest(1);
     expect(b.summon()).toBe(true); // 首次
-    b.setWaveForTest(5);
+    b.setWaveForTest(6);
     expect(b.summon()).toBe(true);
     expect(b.tray.some((t) => t.kind === 'word')).toBe(true);
     expect(b.earlySummonStatsForTest().wordsGuarantee).toBeGreaterThanOrEqual(1);
