@@ -57,6 +57,7 @@ import {
   planWavePressure,
   pressureRatioForWave,
   spawnBatchCap,
+  monsterHpFromBoardPower,
   BOARD_POWER,
   type BoardPowerResult,
   type PressurePlan,
@@ -4037,8 +4038,19 @@ export class Battle {
 
   /** 普通怪基础血量（含境界/分圈系数、前3波减量与波>10 加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
-    const base = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
-    return base * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
+    const staticBase =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
+    const staticHp = staticBase * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
+    if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE) return staticHp;
+    const powerBase = monsterHpFromBoardPower(
+      wave,
+      this.estimateOptimalPower().optimalDps,
+      pressureRatioForWave(wave),
+    );
+    if (powerBase <= 0) return staticHp;
+    const powerHp =
+      powerBase * this.effectiveDifficulty(wave) * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
+    return Math.max(staticHp, powerHp);
   }
 
   /** 某波普通怪基础移速（固定 TUNING.monsterSpd；不含被动减速、Boss/骑兵倍乘） */

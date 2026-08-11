@@ -226,12 +226,15 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 | 机制 | 说明 |
 |------|------|
+| **小怪血量（波 ≥2）** | `monsterHpFromBoardPower`：`max(静态公式, 最优 DPS × MONSTER_HP_KILL_SEC × 压力比)`，再乘境界/前期软血/波>10；空板仍用静态保底 |
 | **出怪总量** | `planWavePressure`：按战场最优 DPS × 压力比（60%→90%）规划本波小怪总血预算，数量不低于 `monstersInWave(wave)`（10+n−1） |
 | **同批叠怪** | `spawnBatchCap(wave)`：单次出怪随机 1..N 只（波 6 起 N≥2，约波 22 封顶 10） |
 
+常量（`BOARD_POWER`）：`MONSTER_HP_FROM_WAVE = 2`，`MONSTER_HP_KILL_SEC = 3`。
+
 出怪**间隔**不再随难度缩短（`difficultySpawnFactor = 1`）；仅保留基础 `spawnInterval` 与门口防秒杀压间隔。
 
-血量仍受境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）、前期软血等影响。
+第 1 波血量仍仅走静态公式（`monsterHpBase + monsterHpStep × wave`）；第 2 波起与武器攻击挂钩时，仍叠加境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）、前期软血等。
 
 ---
 

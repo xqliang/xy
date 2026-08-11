@@ -14,6 +14,9 @@ import {
   PRESSURE_FROM_WAVE,
   SPAWN_INTERVAL_MIN,
   SPAWN_BATCH_CAP_MAX,
+  MONSTER_HP_FROM_WAVE,
+  MONSTER_HP_KILL_SEC,
+  monsterHpFromBoardPower,
   ENTRANCE_ZONE_LEN,
 } from '../src/board-power';
 import { Battle, TUNING } from '../src/battle';
@@ -320,6 +323,20 @@ describe('planWavePressure', () => {
   });
 });
 
+describe('monsterHpFromBoardPower', () => {
+  it('波 < MONSTER_HP_FROM_WAVE 或 DPS=0 时返回 0', () => {
+    expect(monsterHpFromBoardPower(1, 100)).toBe(0);
+    expect(monsterHpFromBoardPower(MONSTER_HP_FROM_WAVE, 0)).toBe(0);
+  });
+
+  it('波 ≥2 时 HP = optimalDps × 击杀时长 × 压力比', () => {
+    const dps = 50;
+    const wave = MONSTER_HP_FROM_WAVE;
+    const ratio = pressureRatioForWave(wave);
+    expect(monsterHpFromBoardPower(wave, dps)).toBeCloseTo(dps * MONSTER_HP_KILL_SEC * ratio, 5);
+  });
+});
+
 describe('Battle 接入压力规划', () => {
   it('软血阶梯：1–3×0.6，4×0.7，5×0.8，6×0.9，7×0.95，8+满血', () => {
     const b = new Battle(1);
@@ -330,6 +347,46 @@ describe('Battle 接入压力规划', () => {
     expect(b.earlyWaveHpMul(6)).toBe(0.9);
     expect(b.earlyWaveHpMul(7)).toBe(0.95);
     expect(b.earlyWaveHpMul(8)).toBe(1);
+  });
+
+  it('第 1 波血量仅用静态公式', () => {
+    const b = new Battle(1);
+    const staticHp =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * b.effectiveDifficulty(1) * b.earlyWaveHpMul(1);
+    const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(1);
+    expect(hp).toBeCloseTo(staticHp, 5);
+  });
+
+  it('第 2 波空板仍用静态保底', () => {
+    const b = new Battle(2);
+    const staticHp =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 2) * b.effectiveDifficulty(2) * b.earlyWaveHpMul(2);
+    const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(2);
+    expect(hp).toBeCloseTo(staticHp, 5);
+    expect(b.estimateOptimalPower().optimalDps).toBe(0);
+  });
+
+  it('第 2 波强阵按武器攻击抬高小怪血量', () => {
+    const b = new Battle(3, 1, MAPS[0]!, undefined, {}, [], ['fenghuolun', 'xiandan']);
+    const cells = b.unlockedCells();
+    for (let i = 0; i < cells.length; i++) {
+      b.tray = [{ kind: 'unit', type: 'archer', tier: 5 }];
+      b.placeFromTray(0, cells[i]!);
+    }
+    const power = b.estimateOptimalPower();
+    expect(power.optimalDps).toBeGreaterThan(50);
+    const wave = MONSTER_HP_FROM_WAVE;
+    const staticHp =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) *
+      b.effectiveDifficulty(wave) *
+      b.earlyWaveHpMul(wave);
+    const powerHp =
+      monsterHpFromBoardPower(wave, power.optimalDps, pressureRatioForWave(wave)) *
+      b.effectiveDifficulty(wave) *
+      b.earlyWaveHpMul(wave);
+    expect(powerHp).toBeGreaterThan(staticHp);
+    const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(wave);
+    expect(hp).toBeCloseTo(powerHp, 5);
   });
 
   it('空板开波：数量=保底，Boss 血不低于普通怪', () => {

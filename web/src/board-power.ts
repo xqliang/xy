@@ -27,6 +27,10 @@ export const BOARD_POWER = {
   SPAWN_DIST_JITTER: 0.5,
   /** 单次出怪批次上限封顶 */
   SPAWN_BATCH_CAP_MAX: 10,
+  /** 第几波起小怪血量按战场最优 DPS（武器攻击×攻速×目标）缩放 */
+  MONSTER_HP_FROM_WAVE: 2,
+  /** 单怪参考击杀时长（秒）：HP ≈ optimalDps × 该值 × 压力比 */
+  MONSTER_HP_KILL_SEC: 3,
 };
 
 /** @deprecated 快照；运行时请读 BOARD_POWER.* */
@@ -40,6 +44,22 @@ export const SPAWN_INTERVAL_MIN = BOARD_POWER.SPAWN_INTERVAL_MIN;
 export const GATE_WIPE_HP_RATIO = BOARD_POWER.GATE_WIPE_HP_RATIO;
 export const SPAWN_DIST_JITTER = BOARD_POWER.SPAWN_DIST_JITTER;
 export const SPAWN_BATCH_CAP_MAX = BOARD_POWER.SPAWN_BATCH_CAP_MAX;
+export const MONSTER_HP_FROM_WAVE = BOARD_POWER.MONSTER_HP_FROM_WAVE;
+export const MONSTER_HP_KILL_SEC = BOARD_POWER.MONSTER_HP_KILL_SEC;
+
+/**
+ * 第 MONSTER_HP_FROM_WAVE 波起：按战场最优 DPS × 参考击杀时长 × 压力比估算单怪 HP。
+ * 空板或弱阵时由调用方与静态公式取 max。
+ */
+export function monsterHpFromBoardPower(
+  wave: number,
+  optimalDps: number,
+  pressureRatio?: number,
+): number {
+  if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE || optimalDps <= 0) return 0;
+  const ratio = pressureRatio ?? pressureRatioForWave(wave);
+  return optimalDps * BOARD_POWER.MONSTER_HP_KILL_SEC * ratio;
+}
 
 /**
  * 随波次升高的压力比：波 6 ≈ 60% → 波 16+ ≈ 90%（线性）。

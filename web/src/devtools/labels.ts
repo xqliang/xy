@@ -24,6 +24,8 @@ export const PARAM_ZH: Record<string, string> = {
   GATE_WIPE_HP_RATIO: '门口秒杀血量比',
   SPAWN_DIST_JITTER: '同批出怪沿路抖动（格）',
   SPAWN_BATCH_CAP_MAX: '单次出怪批次上限',
+  MONSTER_HP_FROM_WAVE: '按武器攻击缩放血量起始波次',
+  MONSTER_HP_KILL_SEC: '单怪参考击杀时长（秒）',
 
   // PLACE_TIMING
   digDur: '挖坑动画时长（秒）',
