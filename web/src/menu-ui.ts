@@ -305,9 +305,13 @@ export function drawInkResourceBar(
   icon?: 'icon-merit' | 'icon-stamina',
 ): void {
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
-  ctx.fillStyle = 'rgba(48,28,12,0.62)';
+  // 暖琥珀釉面：贴合首页宣纸底，避免冷灰半透明条
+  const barBg = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
+  barBg.addColorStop(0, 'rgba(255,236,200,0.88)');
+  barBg.addColorStop(1, 'rgba(230,180,110,0.9)');
+  ctx.fillStyle = barBg;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,220,160,0.45)';
+  ctx.strokeStyle = 'rgba(160,100,40,0.55)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
   const padX = Math.round(rect.h * 0.28);
@@ -323,7 +327,7 @@ export function drawInkResourceBar(
     const tagPx = Math.max(13, Math.round(rect.h * 0.42));
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#e0c080';
+    ctx.fillStyle = '#8a5520';
     ctx.font = `bold ${tagPx}px "PingFang SC", "STKaiti", serif`;
     ctx.fillText(tag, cursor, cy);
     cursor += ctx.measureText(tag).width + Math.round(rect.h * 0.22);
@@ -332,7 +336,7 @@ export function drawInkResourceBar(
   const textMaxW = rect.x + rect.w - cursor - padX - rightPad;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff6e6';
+  ctx.fillStyle = '#5a3010';
   ctx.font = `bold ${numPx}px "PingFang SC", sans-serif`;
   let shown = text;
   while (shown.length > 1 && ctx.measureText(shown).width > textMaxW) shown = shown.slice(0, -1);

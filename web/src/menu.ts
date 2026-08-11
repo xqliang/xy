@@ -46,7 +46,7 @@ const HEADER_BLOCK_H = BAR_H * 2 + BAR_GAP;
 const AVATAR_SIZE = 70;
 const AVATAR = { x: 16, y: TOP + (HEADER_BLOCK_H - AVATAR_SIZE) / 2, w: AVATAR_SIZE, h: AVATAR_SIZE };
 const BAR_X = AVATAR.x + AVATAR_SIZE + 10;
-const BAR_W = 228;
+const BAR_W = 150; // 功德/体力条宽度（原 228）
 const MERIT_BAR = { x: BAR_X, y: TOP, w: BAR_W, h: BAR_H };
 const STAMINA_BAR = { x: BAR_X, y: TOP + BAR_H + BAR_GAP, w: BAR_W, h: BAR_H };
 const STAMINA_PLUS_SIZE = 32;
@@ -213,9 +213,13 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   drawMenuBackground(ctx);
 
   roundRect(ctx, AVATAR.x, AVATAR.y, AVATAR.w, AVATAR.h, 12);
-  ctx.fillStyle = 'rgba(40,25,10,0.5)';
+  // 暖玉色底板，贴合首页宣纸/金色调（避免冷灰）
+  const avBg = ctx.createLinearGradient(AVATAR.x, AVATAR.y, AVATAR.x, AVATAR.y + AVATAR.h);
+  avBg.addColorStop(0, 'rgba(255,236,196,0.92)');
+  avBg.addColorStop(1, 'rgba(220,170,100,0.88)');
+  ctx.fillStyle = avBg;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,220,160,0.5)';
+  ctx.strokeStyle = 'rgba(170,110,40,0.65)';
   ctx.lineWidth = 2;
   ctx.stroke();
   const av = sprite('hero-wukong');

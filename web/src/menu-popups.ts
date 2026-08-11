@@ -2,7 +2,17 @@
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_REGEN_MS } from './stamina';
-import { MAPS } from './board';
+import {
+  MAPS,
+  COLS,
+  ROWS,
+  FENCE_ROW,
+  mapById,
+  isEitherPathCell,
+  isPlayerCell,
+  baigulingFenceRow,
+  type GameMap,
+} from './board';
 import type { GameSettings } from './settings';
 import type { MapSelection } from './map-select';
 import {
@@ -376,15 +386,16 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
 
 // —— 选择关卡弹窗 —— //
 const MAP_PW = 420;
-const MAP_PH = 480;
+const MAP_PH = 560;
 const MAP_PX = (VIEW_W - MAP_PW) / 2;
 const MAP_PY = (VIEW_H - MAP_PH) / 2 - 8;
 const MAP_CLOSE = inkPopupCloseRect(MAP_PX, MAP_PY);
 const MAP_DAILY = { x: MAP_PX + 24, y: MAP_PY + 58, w: MAP_PW - 48, h: 44 };
 const MAP_CARD_W = (MAP_PW - 60) / 2;
-const MAP_CARD_H = 100;
+const MAP_CARD_H = 148;
 const MAP_CARD_GAP = 12;
 const MAP_GRID_TOP = MAP_PY + 112;
+const MAP_LABEL_H = 24;
 
 function mapCardRect(index: number): { x: number; y: number; w: number; h: number } {
   const col = index % 2;
@@ -414,23 +425,144 @@ export function mapPopupHitAt(x: number, y: number): MapPopupHit {
   return { kind: 'close' };
 }
 
+/** 关卡卡预览：主题底图 + 迷你棋盘（路径/半场/唐僧位），不只是风景背景 */
 function drawMapThumb(ctx: CanvasRenderingContext2D, mapId: string, r: { x: number; y: number; w: number; h: number }): void {
-  const img = sprite(`map-${mapId}` as Parameters<typeof sprite>[0]);
-  roundRect(ctx, r.x, r.y, r.w, r.h - 26, 8);
+  const map = mapById(mapId);
+  const thumbH = r.h - MAP_LABEL_H;
+  roundRect(ctx, r.x, r.y, r.w, thumbH, 8);
   ctx.save();
   ctx.clip();
+
+  // 主题底色 / 风景图（淡化，突出棋盘）
+  const th = map.theme;
+  const bg = ctx.createLinearGradient(r.x, r.y, r.x, r.y + thumbH);
+  bg.addColorStop(0, th.bg0);
+  bg.addColorStop(1, th.bg1);
+  ctx.fillStyle = bg;
+  ctx.fillRect(r.x, r.y, r.w, thumbH);
+  const img = sprite(`map-${mapId}` as Parameters<typeof sprite>[0]);
   if (img) {
-    const scale = Math.max(r.w / img.width, (r.h - 26) / img.height);
+    const scale = Math.max(r.w / img.width, thumbH / img.height);
     const dw = img.width * scale;
     const dh = img.height * scale;
-    ctx.drawImage(img, r.x + (r.w - dw) / 2, r.y + (r.h - 26 - dh) / 2, dw, dh);
-    ctx.fillStyle = 'rgba(240,233,220,0.4)';
-    ctx.fillRect(r.x, r.y, r.w, r.h - 26);
-  } else {
-    ctx.fillStyle = '#d8ccb0';
-    ctx.fillRect(r.x, r.y, r.w, r.h - 26);
+    ctx.globalAlpha = 0.35;
+    ctx.drawImage(img, r.x + (r.w - dw) / 2, r.y + (thumbH - dh) / 2, dw, dh);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(245,236,220,0.28)';
+    ctx.fillRect(r.x, r.y, r.w, thumbH);
   }
+
+  drawMiniMapBoard(ctx, map, r.x + 8, r.y + 6, r.w - 16, thumbH - 12);
   ctx.restore();
+}
+
+function drawMiniMapBoard(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const cell = Math.min(w / COLS, h / ROWS);
+  const bw = cell * COLS;
+  const bh = cell * ROWS;
+  const ox = x + (w - bw) / 2;
+  const oy = y + (h - bh) / 2;
+  const th = map.theme;
+  const initial = new Set((map.initialBlock ?? []).map((c) => `${c.c},${c.r}`));
+
+  // 棋盘底
+  roundRect(ctx, ox - 1, oy - 1, bw + 2, bh + 2, 3);
+  ctx.fillStyle = 'rgba(40,28,14,0.18)';
+  ctx.fill();
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const cx = ox + col * cell;
+      const cy = oy + row * cell;
+      const onPath = isEitherPathCell(map, col, row);
+      const player = isPlayerCell(map, col, row);
+      roundRect(ctx, cx + 0.4, cy + 0.4, cell - 0.8, cell - 0.8, 1.2);
+      if (onPath) {
+        ctx.fillStyle = th.path;
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,248,230,0.28)';
+        ctx.fill();
+      } else if (player && initial.has(`${col},${row}`)) {
+        ctx.fillStyle = th.cellUnlocked;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(90,60,30,0.35)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      } else if (player) {
+        ctx.fillStyle = th.cellLocked;
+        ctx.fill();
+        ctx.fillStyle = 'rgba(40,28,14,0.22)';
+        ctx.fill();
+      } else {
+        // AI 半场：略深一档，便于分辨上下场
+        ctx.fillStyle = th.cellLocked;
+        ctx.fill();
+        ctx.fillStyle = 'rgba(30,24,18,0.32)';
+        ctx.fill();
+      }
+    }
+  }
+
+  // 半场分界（白骨岭用台阶线）
+  ctx.strokeStyle = 'rgba(70,48,24,0.55)';
+  ctx.lineWidth = Math.max(1, cell * 0.12);
+  ctx.beginPath();
+  if (map.id === 'baiguling') {
+    for (let col = 0; col < COLS; col++) {
+      const fr = baigulingFenceRow(col);
+      const fx0 = ox + col * cell;
+      const fy = oy + (fr + 1) * cell;
+      if (col === 0) ctx.moveTo(fx0, fy);
+      ctx.lineTo(fx0 + cell, fy);
+    }
+  } else {
+    const fy = oy + FENCE_ROW * cell;
+    ctx.moveTo(ox, fy);
+    ctx.lineTo(ox + bw, fy);
+  }
+  ctx.stroke();
+
+  // 路径中线（把蛇形走道连起来）
+  const pathPts = map.path.filter((p) => p.c >= 0 && p.c < COLS && p.r >= 0 && p.r < ROWS);
+  if (pathPts.length > 1) {
+    ctx.strokeStyle = 'rgba(255,245,220,0.65)';
+    ctx.lineWidth = Math.max(1.2, cell * 0.22);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    pathPts.forEach((p, i) => {
+      const px = ox + (p.c + 0.5) * cell;
+      const py = oy + (p.r + 0.5) * cell;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+  }
+
+  // 唐僧位小点
+  const t = map.tangseng;
+  const tx = ox + (t.c + 0.5) * cell;
+  const ty = oy + (t.r + 0.5) * cell;
+  ctx.fillStyle = '#c04030';
+  ctx.beginPath();
+  ctx.arc(tx, ty, Math.max(1.6, cell * 0.22), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,240,220,0.85)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // 外框
+  ctx.strokeStyle = 'rgba(40,28,14,0.55)';
+  ctx.lineWidth = 1.4;
+  roundRect(ctx, ox, oy, bw, bh, 2);
+  ctx.stroke();
 }
 
 export function drawMapPopup(
@@ -468,6 +600,6 @@ export function drawMapPopup(
     ctx.fillStyle = '#5a3a12';
     ctx.font = 'bold 14px "PingFang SC", serif';
     ctx.textAlign = 'center';
-    ctx.fillText(map.name, r.x + r.w / 2, r.y + r.h - 10);
+    ctx.fillText(map.name, r.x + r.w / 2, r.y + r.h - MAP_LABEL_H / 2 + 1);
   }
 }
