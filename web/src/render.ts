@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, PLACE_DROP_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, PLACE_DROP_DUR, PLACE_DRAG_DUR, placeDragEase, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
 import { passiveById } from './passives';
 import { activeById, isPillActiveEffect } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -810,6 +810,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActivePopup(ctx, b, ui);
   drawAiItemPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
+  drawAutoPlaceDrag(ctx, b);
   drawBanner(ctx, b);
 }
 
@@ -1100,7 +1101,8 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       ctx.restore();
     }
     const token = b.tray[i];
-    if (token && ui.dragTrayIndex !== i) {
+    const autoDragTray = b.autoPlaceDragFx[0]?.trayIndex ?? null;
+    if (token && ui.dragTrayIndex !== i && autoDragTray !== i) {
       const c = traySlotCenter(i);
       const extendAt = i * EXTEND_STAGGER;
       const fullAt = extendAt + EXTEND_DUR;
@@ -1126,7 +1128,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
         drawTrayToken(ctx, token, c.x, c.y, tokenSize);
       }
     }
-    if (ui.selectedTrayIndex === i && token) {
+    if ((ui.selectedTrayIndex === i || autoDragTray === i) && token) {
       ctx.save();
       ctx.lineWidth = 3;
       ctx.strokeStyle = '#ffe08a';
@@ -2007,11 +2009,11 @@ function placeDropStartDy(side: 'player' | 'ai', r: number): number {
   return halfTopCy - targetCy;
 }
 
-function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number): { dy: number; scale: number } {
+function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number): { dy: number; scale: number; visible: boolean } {
   const fx = b.placeDropFx.find((d) => d.side === side && d.c === c && d.r === r);
-  if (!fx) return { dy: 0, scale: 1 };
+  if (!fx) return { dy: 0, scale: 1, visible: true };
   const startDy = placeDropStartDy(side, r);
-  if (fx.delay > 0) return { dy: startDy, scale: 0.76 };
+  if (fx.delay > 0) return { dy: startDy, scale: 0.76, visible: false };
   const p = Math.min(1, fx.t / PLACE_DROP_DUR);
   const eased = p ** 2.6; // 重力加速
   const dy = startDy * (1 - eased);
@@ -2019,9 +2021,9 @@ function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number)
   if (fx.isMerge && p > 0.72) {
     const bounce = Math.sin(((p - 0.72) / 0.28) * Math.PI) * 0.07;
     scale += bounce;
-    return { dy: dy - bounce * CELL * 0.28, scale };
+    return { dy: dy - bounce * CELL * 0.28, scale, visible: true };
   }
-  return { dy, scale };
+  return { dy, scale, visible: true };
 }
 
 // 地面椭圆阴影（怪物/武器/字牌共用：贴脚底、略扁）
@@ -3624,6 +3626,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const drop = placeDropMotion(b, 'player', u.cell.c, u.cell.r);
+    if (!drop.visible) continue;
     const fallen = u.knockdownT > 0;
     // 地面阴影（贴格底略偏前，不随 bob/开火上跳，与怪物同风格）
     drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, fallen ? 0.18 : 0.28);
@@ -4325,6 +4328,7 @@ function drawActiveGeneralGroup(
   for (const c of g.cells) {
     const { x, y } = cellCenterPx(c.c, c.r);
     const drop = placeDropMotion(b, side, c.c, c.r);
+    if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.32, 0.26);
   }
 
@@ -4340,6 +4344,7 @@ function drawActiveGeneralGroup(
     if (!w) continue;
     const { x, y } = cellCenterPx(c.c, c.r);
     const drop = placeDropMotion(b, side, c.c, c.r);
+    if (!drop.visible) continue;
     drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, false, g.tier);
   }
 
@@ -4395,6 +4400,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     if (qTier > 0) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
     const drop = placeDropMotion(b, 'player', w.cell.c, w.cell.r);
+    if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
     drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
     drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
@@ -5090,6 +5096,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const drop = placeDropMotion(b, 'ai', u.cell.c, u.cell.r);
+    if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, 0.28);
     const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     const pulse = u.firePulse;
@@ -5129,6 +5136,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     if (qTier > 0) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
     const drop = placeDropMotion(b, 'ai', w.cell.c, w.cell.r);
+    if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
     drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
     drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
@@ -6193,6 +6201,65 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.globalAlpha = 0.9;
   ghost();
   ctx.globalAlpha = 1;
+}
+
+/** 玩家一键布阵：模拟选中候选槽 + 虚线拖向目标格（与手动拖拽视觉一致） */
+function drawAutoPlaceDrag(ctx: CanvasRenderingContext2D, b: Battle) {
+  const d = b.autoPlaceDragFx[0];
+  if (!d) return;
+  const p = d.t / PLACE_DRAG_DUR;
+  const eased = placeDragEase(p);
+  const src = traySlotCenter(d.trayIndex);
+  const dst = cellCenterPx(d.c, d.r);
+  const gx = src.x + (dst.x - src.x) * eased;
+  const gy = src.y + (dst.y - src.y) * eased;
+
+  const tx = BOARD_X + d.c * CELL;
+  const ty = BOARD_Y + d.r * CELL;
+  drawAimReticle(ctx, tx, ty, CELL, CELL, {
+    plus: d.commit === 'placeUnit' || d.commit === 'placeWord' || d.commit === 'digShovel',
+    fill: true,
+  });
+  roundRect(ctx, tx + 2, ty + 2, CELL - 4, CELL - 4, 8);
+  ctx.strokeStyle = '#e8a13c';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  {
+    const cx = TRAY_LEFT + d.trayIndex * TRAY_SLOT;
+    const x = cx + 3;
+    const y = TRAY_Y + 5;
+    const w = TRAY_SLOT - 6;
+    const h = TRAY_H - 10;
+    ctx.save();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * 0.48, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(120,90,40,0.8)';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([8, 8]);
+  ctx.beginPath();
+  ctx.moveTo(src.x, src.y);
+  ctx.lineTo(gx, gy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  const tokenSize = d.token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+  ctx.globalAlpha = 0.9;
+  drawTrayToken(ctx, d.token, gx, gy, tokenSize);
+  ctx.globalAlpha = 1;
+
+  if (d.token.kind === 'unit') {
+    const stat = getUnitStat(d.token.type, d.token.tier);
+    drawRangeRing(ctx, dst.x, dst.y, stat.rge);
+  }
 }
 
 function drawBanner(ctx: CanvasRenderingContext2D, b: Battle) {
