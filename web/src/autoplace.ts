@@ -305,11 +305,13 @@ export function playerBoardCenterDist(ax: number, ay: number): number {
 export function wideRangeHeroSeatScore(
   pathCover: number,
   centerDist: number,
+  ax: number,
   pathDist = 0,
   firstEngage = 0,
 ): number {
   return pathCover
-    - 0.35 * centerDist
+    - 0.4 * centerDist
+    - 0.85 * Math.abs(ax - PLAYER_BOARD_CENTER.x)
     - 0.03 * Math.max(0, pathDist)
     - 0.35 * Math.max(0, firstEngage);
 }
@@ -356,7 +358,7 @@ export function heroPairPlacementScore(
   const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
   const firstEngage = view.pathFirstEngageAt(ax, ay, rge);
   if (isWideRangeMaxHero(def, tier)) {
-    return wideRangeHeroSeatScore(cover, playerBoardCenterDist(ax, ay), pathD, firstEngage);
+    return wideRangeHeroSeatScore(cover, playerBoardCenterDist(ax, ay), ax, pathD, firstEngage);
   }
   const exitD = (view.exitDist(left) + view.exitDist(right)) / 2;
   const coverEarly = view.pathCoverEarlyAt(ax, ay, rge);

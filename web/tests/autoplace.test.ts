@@ -451,31 +451,44 @@ it('singleWordScore：远路近唐僧分更高', () => {
   expect(singleWordScore(2, 1)).toBeGreaterThan(singleWordScore(2, 4));
 });
 
-it('heroSeatScore：覆盖更高优先，不因贴出口加分', () => {
+it('heroSeatScore：覆盖更高优先（通用兜底）', () => {
   expect(heroSeatScore(5, 1)).toBeGreaterThan(heroSeatScore(3, 0));
-  // 同覆盖时略偏好离路更近；与 exit 无关（无 exit 参数）
   expect(heroSeatScore(4, 0)).toBeGreaterThan(heroSeatScore(4, 2));
 });
 
-it('激活武将：宁可覆盖高的中段，不追贴出口列', () => {
-  // FakeView：exitDist=c，pathCover 随 ay 降、随 ax 略降。
-  // (0,0)-(1,0) 贴口但 cover 高；(5,0)-(6,0) 离口远、cover 略低。
-  // 旧 seatScore 会强烈偏好 c=0；新规则 cover 接近时不应只因贴口选左对。
-  // 这里造 cover 相同（同 ay）、右对 cover 因 ax 略低 → 仍选左对因 cover；
-  // 另测：左对 r=1 cover 更低、右对 r=0 cover 更高 → 选右对（不贴口列也能赢）。
+it('满5远距武将：优先落棋盘中部覆盖全图', () => {
   const v = new FakeView(
     [
-      { kind: 'word', char: '大', general: 'g', tier: 1 },
-      { kind: 'word', char: '圣', general: 'g', tier: 1 },
+      { kind: 'word', char: '大', general: 'dasheng', tier: 5 },
+      { kind: 'word', char: '圣', general: 'dasheng', tier: 5 },
     ],
-    [{ c: 0, r: 1 }, { c: 1, r: 1 }, { c: 5, r: 0 }, { c: 6, r: 0 }],
+    [
+      { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
+      { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 }, { c: 7, r: 0 },
+    ],
   );
+  v.generalRgeVal = 2.5;
   planAutoPlace(v, { rng });
   const words = v.placedWords();
   expect(words).toHaveLength(2);
-  // r=0 覆盖更高，应落在 (5,0)-(6,0) 而非贴口的 r=1
-  expect(words.every((w) => w.cell.r === 0)).toBe(true);
-  expect(words.every((w) => w.cell.c >= 5)).toBe(true);
+  const avgC = words.reduce((s, w) => s + w.cell.c, 0) / 2;
+  expect(avgC).toBeGreaterThanOrEqual(2.5);
+  expect(avgC).toBeLessThanOrEqual(4.5);
+});
+
+it('满5控制武将：优先贴近怪物出口', () => {
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '八', general: 'bajie', tier: 5 },
+      { kind: 'word', char: '戒', general: 'bajie', tier: 5 },
+    ],
+    [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 }],
+  );
+  v.generalRgeVal = 2;
+  planAutoPlace(v, { rng });
+  const words = v.placedWords();
+  expect(words).toHaveLength(2);
+  expect(words.every((w) => w.cell.c <= 1)).toBe(true);
 });
 
 it('激活武将：邻格被武器占时可挪开再落字', () => {
@@ -1960,22 +1973,22 @@ it('危险时：已激活武将整体挪位以打到残血怪', () => {
   expect(v.wordsMap.get('5,0')?.char).toBe('骨');
 });
 
-it('AI 练级轮换：怪物口满5将让位给未封顶满5将', () => {
+it('AI 练级轮换：怪物口满5控制将让位给未封顶满5将', () => {
   const v = new FakeRepositionView();
   v.monsterEngage = [{ dist: 2, hp: 20, maxHp: 20 }];
-  v.wordsMap.set('0,0', { char: '大', general: 'dasheng', cell: { c: 0, r: 0 }, tier: 5 });
-  v.wordsMap.set('1,0', { char: '圣', general: 'dasheng', cell: { c: 1, r: 0 }, tier: 5 });
-  v.wordsMap.set('4,0', { char: '龙', general: 'long', cell: { c: 4, r: 0 }, tier: 3 });
-  v.wordsMap.set('5,0', { char: '王', general: 'long', cell: { c: 5, r: 0 }, tier: 3 });
+  v.wordsMap.set('0,0', { char: '八', general: 'bajie', cell: { c: 0, r: 0 }, tier: 5 });
+  v.wordsMap.set('1,0', { char: '戒', general: 'bajie', cell: { c: 1, r: 0 }, tier: 5 });
+  v.wordsMap.set('4,0', { char: '铁', general: 'tieshan', cell: { c: 4, r: 0 }, tier: 3 });
+  v.wordsMap.set('5,0', { char: '扇', general: 'tieshan', cell: { c: 5, r: 0 }, tier: 3 });
   v.heroCells.add('0,0'); v.heroCells.add('1,0'); v.heroCells.add('4,0'); v.heroCells.add('5,0');
   v.heroPairs = [
-    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'dasheng', tier: 5, maxTier: 5 },
-    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'long', tier: 3, maxTier: 5 },
+    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'bajie', tier: 5, maxTier: 5 },
+    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'tieshan', tier: 3, maxTier: 5 },
   ];
   v.free = [{ c: 2, r: 0 }, { c: 3, r: 0 }];
   expect(planBattleReposition(v, { heroLeveling: true }).ok).toBe(true);
-  expect(v.wordsMap.get('0,0')?.char).toBe('龙');
-  expect(v.wordsMap.get('4,0')?.char).toBe('大');
+  expect(v.wordsMap.get('0,0')?.char).toBe('铁');
+  expect(v.wordsMap.get('4,0')?.char).toBe('八');
 });
 
 it('AI 练级轮换：优先满5将再满3将', () => {
@@ -1999,14 +2012,14 @@ it('AI 练级轮换：优先满5将再满3将', () => {
 it('AI 练级轮换：同一对武将不能连续互换', () => {
   const v = new FakeRepositionView();
   v.monsterEngage = [{ dist: 2, hp: 20, maxHp: 20 }];
-  v.wordsMap.set('0,0', { char: '大', general: 'dasheng', cell: { c: 0, r: 0 }, tier: 5 });
-  v.wordsMap.set('1,0', { char: '圣', general: 'dasheng', cell: { c: 1, r: 0 }, tier: 5 });
-  v.wordsMap.set('4,0', { char: '龙', general: 'long', cell: { c: 4, r: 0 }, tier: 3 });
-  v.wordsMap.set('5,0', { char: '王', general: 'long', cell: { c: 5, r: 0 }, tier: 3 });
+  v.wordsMap.set('0,0', { char: '八', general: 'bajie', cell: { c: 0, r: 0 }, tier: 5 });
+  v.wordsMap.set('1,0', { char: '戒', general: 'bajie', cell: { c: 1, r: 0 }, tier: 5 });
+  v.wordsMap.set('4,0', { char: '铁', general: 'tieshan', cell: { c: 4, r: 0 }, tier: 3 });
+  v.wordsMap.set('5,0', { char: '扇', general: 'tieshan', cell: { c: 5, r: 0 }, tier: 3 });
   v.heroCells.add('0,0'); v.heroCells.add('1,0'); v.heroCells.add('4,0'); v.heroCells.add('5,0');
   v.heroPairs = [
-    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'dasheng', tier: 5, maxTier: 5 },
-    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'long', tier: 3, maxTier: 5 },
+    { left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'bajie', tier: 5, maxTier: 5 },
+    { left: { c: 4, r: 0 }, right: { c: 5, r: 0 }, general: 'tieshan', tier: 3, maxTier: 5 },
   ];
   v.free = [{ c: 2, r: 0 }, { c: 3, r: 0 }];
   const r1 = planBattleReposition(v, { heroLeveling: true });

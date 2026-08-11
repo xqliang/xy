@@ -23,6 +23,8 @@ function pairFirstEngage(b: Battle, left: { c: number; r: number }, right: { c: 
 describe('白骨岭 · 已激活白骨布阵覆盖', () => {
   it('孤儿凑对后微调 coverage（偏右散字 → 左移贴路）', () => {
     const b = new Battle(20260809, 1, mapById('baiguling'));
+    const unlocked = (b as unknown as { unlocked: Set<string> }).unlocked;
+    unlocked.clear();
     unlockCells(
       b,
       [
