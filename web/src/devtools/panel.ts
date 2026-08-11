@@ -42,6 +42,7 @@ import { UNITS } from '@core';
 import type { UnitType } from '@core';
 import { LADDER_LEN, STARS_PER_TIER } from '../rank';
 import { STAMINA_MAX } from '../stamina';
+import { MERIT_MAX } from '../merit';
 import { playDevFxPreview, type DevFxPreviewSpec } from '../render';
 import {
   AI_TARGET_WINRATE,
@@ -489,7 +490,7 @@ export class DevToolsPanel {
     }, '1'), `0–${STAMINA_MAX}`));
     body.appendChild(fieldRow('功德', numInput(snap.merit, (n) => {
       this.host.onUserApplied(applyUserSnapshot({ merit: n }));
-    }, '1')));
+    }, '1'), `0–${MERIT_MAX}`));
     body.appendChild(fieldRow('段位 level', numInput(snap.rankLevel, (n) => {
       this.host.onUserApplied(applyUserSnapshot({ rankLevel: Math.max(0, Math.min(LADDER_LEN - 1, Math.floor(n))) }));
       this.renderBody();

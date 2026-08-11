@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { meritReward, setMerit } from '../src/merit';
+import { meritReward, setMerit, addMerit, MERIT_MAX } from '../src/merit';
 import { menuVersionHitAt, VERSION_HIT } from '../src/menu';
 
 describe('meritReward', () => {
@@ -19,11 +19,30 @@ describe('meritReward', () => {
 });
 
 describe('setMerit', () => {
-  it('将功德设为指定值且不为负', () => {
-    const next = setMerit({ merit: 12, levels: { foo: 1 } }, 500);
-    expect(next.merit).toBe(500);
+  it('将功德设为指定值且不为负，且不超过上限 300', () => {
+    const next = setMerit({ merit: 12, levels: { foo: 1 } }, 100);
+    expect(next.merit).toBe(100);
     expect(next.levels).toEqual({ foo: 1 });
     expect(setMerit(next, -3).merit).toBe(0);
+  });
+
+  it('设为超过 300 的值会被封顶', () => {
+    expect(setMerit({ merit: 0, levels: {} }, 500).merit).toBe(MERIT_MAX);
+  });
+});
+
+describe('addMerit 功德上限', () => {
+  it('获得功德累计不超过 300', () => {
+    const s1 = addMerit({ merit: 0, levels: {} }, 250);
+    expect(s1.merit).toBe(250);
+    const s2 = addMerit(s1, 100);
+    expect(s2.merit).toBe(MERIT_MAX);
+  });
+
+  it('扣费只做下限保护，不因起始余额（如测试用的超额值）额外截断', () => {
+    const s = addMerit({ merit: 9999, levels: {} }, -50);
+    expect(s.merit).toBe(9949);
+    expect(addMerit({ merit: 10, levels: {} }, -50).merit).toBe(0);
   });
 });
 

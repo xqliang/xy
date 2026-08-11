@@ -3,7 +3,7 @@ import { PASSIVE_SKILLS } from '../passives';
 import { WEAPONS, type BagState } from '../weapons';
 import { loadBag, saveBag } from '../weapons';
 import { loadLoadout, writeLoadout, type LoadoutState } from '../loadout';
-import { loadMerit, setMerit, type MeritState } from '../merit';
+import { loadMerit, setMerit, MERIT_MAX, type MeritState } from '../merit';
 import { loadRank, saveRank, type RankState } from '../rank';
 import { loadStamina, setStaminaValue, STAMINA_MAX, type Stamina } from '../stamina';
 import { loadTutorialState, writeTutorialState } from '../tutorial';
@@ -130,7 +130,7 @@ export function resetUserProgress(): ApplyUserResult {
   return { stamina, merit, rank, loadout, bag };
 }
 
-/** 一键拉满常用测试档：满体、功德 999、全技能、全神兵金阶并装备前 3 */
+/** 一键拉满常用测试档：满体、功德封顶、全技能、全神兵金阶并装备前 3 */
 export function fillUserTestLoadout(): ApplyUserResult {
   const ownedActives = ACTIVE_SKILLS.filter((a) => !a.disabled).map((a) => a.id);
   const ownedPassives = PASSIVE_SKILLS.filter((p) => !p.disabled).map((p) => p.id);
@@ -143,7 +143,7 @@ export function fillUserTestLoadout(): ApplyUserResult {
   return applyUserSnapshot({
     tutorialSeen: {},
     stamina: STAMINA_MAX,
-    merit: 999,
+    merit: MERIT_MAX,
     rankLevel: 0,
     rankStars: 0,
     difficulty: 1,

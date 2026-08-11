@@ -5,6 +5,9 @@ import { storeGet, storeSet, parseStoredJson, safeNumber } from './storage';
 
 const KEY = 'dasheng.merit';
 
+// 功德点持有上限：超出部分作废（对局结算/管理员发放/购买退款等一切增加途径统一封顶）
+export const MERIT_MAX = 300;
+
 export type Rarity = '普通' | '稀有' | '史诗';
 
 // 单个可升级项：每级提供固定增量，成本随等级递增。
@@ -42,7 +45,7 @@ function normalizeMerit(raw: unknown): MeritState | null {
     if (typeof id !== 'string' || typeof lv !== 'number' || !Number.isFinite(lv)) continue;
     levels[id] = Math.max(0, Math.floor(lv));
   }
-  return { merit: Math.max(0, Math.floor(safeNumber(s.merit, 0, 0))), levels };
+  return { merit: Math.min(MERIT_MAX, Math.max(0, Math.floor(safeNumber(s.merit, 0, 0)))), levels };
 }
 
 export function loadMerit(): MeritState {
@@ -72,14 +75,17 @@ export function meritReward(won: boolean, wave: number, opts?: MeritRewardOpts):
 }
 
 export function addMerit(s: MeritState, amount: number): MeritState {
-  const next: MeritState = { merit: s.merit + amount, levels: { ...s.levels } };
+  const raw = s.merit + amount;
+  // 增加功德时封顶 300；扣费（amount<0）只做下限保护，不因起始余额而额外截断。
+  const merit = amount >= 0 ? Math.min(MERIT_MAX, Math.max(0, raw)) : Math.max(0, raw);
+  const next: MeritState = { merit, levels: { ...s.levels } };
   saveMerit(next);
   return next;
 }
 
 /** 将功德设为指定值（测试/调试入口用） */
 export function setMerit(s: MeritState, amount: number): MeritState {
-  const next: MeritState = { merit: Math.max(0, Math.floor(amount)), levels: { ...s.levels } };
+  const next: MeritState = { merit: Math.min(MERIT_MAX, Math.max(0, Math.floor(amount))), levels: { ...s.levels } };
   saveMerit(next);
   return next;
 }
