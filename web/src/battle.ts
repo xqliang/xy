@@ -690,9 +690,14 @@ export class Battle {
   autoplaceFlash = 0; // 布阵闪光(1→0)
   /** 上次一键布阵前的局面指纹（含兵器+字牌+候选）；跨点击阻止 A↔B 对抖 */
   private lastAutoPlaceBoardKey: string | null = null;
+  private lastAiAutoPlaceBoardKey: string | null = null;
 
   private clearAutoPlaceLayoutMemory(): void {
     this.lastAutoPlaceBoardKey = null;
+  }
+
+  private clearAiAutoPlaceLayoutMemory(): void {
+    this.lastAiAutoPlaceBoardKey = null;
   }
 
   /** 深拷贝棋盘兵器/字牌/武将状态，供布阵对抖时回滚 */
@@ -716,6 +721,54 @@ export class Battle {
     this.units = snap.units;
     this.words = snap.words;
     this.generalStates = snap.generalStates;
+  }
+
+  /** AI 半场：兵器数组 + 字牌 + 候选 + 上次调位对（布阵/战中调整共用） */
+  private cloneAiAutoplaceLayout(): {
+    units: PlacedUnit[];
+    words: Map<string, PlacedWord>;
+    generalStates: Map<string, GeneralState>;
+    tray: TrayToken[];
+    lastRepositionPair: { a: Cell; b: Cell } | null;
+  } {
+    const units = this.aiUnits.map((u) => ({ ...u, cell: { ...u.cell }, fireDir: { ...u.fireDir } }));
+    const words = new Map<string, PlacedWord>();
+    for (const [k, w] of this.aiWords) {
+      words.set(k, { ...w, cell: { ...w.cell } });
+    }
+    const tray = this.aiTray.map((t) => (t ? ({ ...t } as TrayToken) : t)) as TrayToken[];
+    const lastRepositionPair = this.aiLastRepositionPair
+      ? { a: { ...this.aiLastRepositionPair.a }, b: { ...this.aiLastRepositionPair.b } }
+      : null;
+    return { units, words, generalStates: new Map(this.aiGeneralStates), tray, lastRepositionPair };
+  }
+
+  private restoreAiAutoplaceLayout(snap: ReturnType<Battle['cloneAiAutoplaceLayout']>): void {
+    this.aiUnits = snap.units;
+    this.aiWords = snap.words;
+    this.aiGeneralStates = snap.generalStates;
+    this.aiTray = snap.tray;
+    this.aiLastRepositionPair = snap.lastRepositionPair;
+  }
+
+  /** 布阵后提交局面指纹；若回到上一版布局则回滚并返回 false */
+  private commitAutoPlaceLayoutMemory(
+    side: 'player' | 'ai',
+    layoutSnap: ReturnType<Battle['cloneAutoplaceLayout']> | ReturnType<Battle['cloneAiAutoplaceLayout']>,
+    keyBefore: string,
+  ): boolean {
+    const keyAfter = autoPlaceBoardKey(side === 'player' ? this.buildPlayerAutoView() : this.buildAiAutoView());
+    const lastKey = side === 'player' ? this.lastAutoPlaceBoardKey : this.lastAiAutoPlaceBoardKey;
+    if (keyAfter !== keyBefore && lastKey !== null && keyAfter === lastKey) {
+      if (side === 'player') this.restoreAutoplaceLayout(layoutSnap as ReturnType<Battle['cloneAutoplaceLayout']>);
+      else this.restoreAiAutoplaceLayout(layoutSnap as ReturnType<Battle['cloneAiAutoplaceLayout']>);
+      return false;
+    }
+    if (keyAfter !== keyBefore) {
+      if (side === 'player') this.lastAutoPlaceBoardKey = keyBefore;
+      else this.lastAiAutoPlaceBoardKey = keyBefore;
+    }
+    return true;
   }
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
@@ -1611,6 +1664,7 @@ export class Battle {
     });
     this.aiSummonCount += 1;
     if (base.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0; else this.aiSummonsSinceShovel += 1;
+    this.clearAiAutoPlaceLayoutMemory();
     // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对（无玩家 mods.wordRateBonus）
     const forceWord = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
     const orphansBefore = this.aiBoardOrphanCharsNow();
@@ -2099,7 +2153,10 @@ export class Battle {
   /** AI 战中调整：有待补英雄配对字时单步布阵，否则兵器调位；下次间隔按类型随机 */
   private tickAiBattleAdjust(pSubOptimal: number): void {
     const view = this.buildAiAutoView();
-    if (aiHeroPartnerAdjustPending(view)) {
+    const heroPending = aiHeroPartnerAdjustPending(view);
+    const layoutSnap = this.cloneAiAutoplaceLayout();
+    const keyBefore = autoPlaceBoardKey(view);
+    if (heroPending) {
       planAutoPlaceSteps(view, {
         rng: () => this.aiRng.next(),
         pSubOptimal,
@@ -2109,8 +2166,9 @@ export class Battle {
     } else {
       this.tickBattleReposition('ai', 1);
     }
+    this.commitAutoPlaceLayoutMemory('ai', layoutSnap, keyBefore);
     this.aiRepositionTimer = rollAiAdjustInterval(
-      aiHeroPartnerAdjustPending(view),
+      heroPending,
       () => this.aiRng.next(),
       this.aiAdjustIntervalScale,
     );
@@ -3317,6 +3375,8 @@ export class Battle {
       this.aiSummonTimer = knobs.summonInterval;
       if (this.aiSummon()) {
         aiPlacedThisFrame = true;
+        const layoutSnap = this.cloneAiAutoplaceLayout();
+        const keyBefore = autoPlaceBoardKey(this.buildAiAutoView());
         planAutoPlaceSteps(this.buildAiAutoView(), {
           rng: () => this.aiRng.next(),
           pSubOptimal: knobs.pSubOptimal,
@@ -3325,6 +3385,7 @@ export class Battle {
           maxGuard: AI_PLACE_MAX_GUARD,
         });
         this.tickAiShovelReserve();
+        this.commitAutoPlaceLayoutMemory('ai', layoutSnap, keyBefore);
       }
     }
     // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
@@ -4641,12 +4702,10 @@ export class Battle {
         ? this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS)
         : 0;
     const keyAfter = autoPlaceBoardKey(this.buildPlayerAutoView());
-    if (keyAfter !== keyBefore && this.lastAutoPlaceBoardKey !== null && keyAfter === this.lastAutoPlaceBoardKey) {
-      this.restoreAutoplaceLayout(layoutSnap);
+    if (!this.commitAutoPlaceLayoutMemory('player', layoutSnap, keyBefore)) {
       this.message = '布阵：当前暂无可执行操作';
       return;
     }
-    if (keyAfter !== keyBefore) this.lastAutoPlaceBoardKey = keyBefore;
     const total = placed + moved;
     if (total > 0) {
       if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;

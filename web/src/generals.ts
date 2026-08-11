@@ -226,6 +226,21 @@ export function generalPOW(def: GeneralDef, tier: number): number {
   return s.atk * s.frq * s.rge * s.targets;
 }
 
+/** 满5且射程大（大圣/二郎/哪吒等）：布阵优先棋盘中部 */
+export function isWideRangeMaxHero(def: GeneralDef, tier: number): boolean {
+  return tier >= 5 && def.maxTier === 5 && def.role !== '控制' && def.rge >= 2.5;
+}
+
+/** 非远距武将贴出口优先级：控制满5 > 其他满5 > 控制满3 > 其他满级 */
+export function heroEntranceBand(def: GeneralDef, tier: number): number {
+  const atCap = tier >= def.maxTier;
+  if (!atCap) return 0;
+  if (def.maxTier === 5 && def.role === '控制') return 4;
+  if (def.maxTier === 5) return 3;
+  if (def.maxTier === 3 && def.role === '控制') return 2;
+  return 1;
+}
+
 // 羁绊：大圣上场 → 全队攻击 +8%
 export const BOND_GENERAL = 'dasheng';
 export const BOND_NAME = '大圣护法';

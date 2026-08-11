@@ -7,7 +7,7 @@
 // tray 遗留且地图缺该兵种：与地图上同级/更低阶、且同型有多余的兵器互换，丰富种类。
 // 满槽时：tray 内先合再上棋盘合；或棋盘同阶合（保留 pathCover+近出口加权更高者）腾位再落子；
 // tray 有放不下的武器/字时优先棋盘同级合并，再放入 tray，尽量清空候选区。
-// 武将：单字远离路径、靠唐僧；配对激活后按路径覆盖选位（不追贴出口），可挪开普通武器。
+// 武将：单字远离路径、靠唐僧；满5远距将落中部覆盖全图，其余按出口优先级贴怪口，可挪开普通武器。
 // 有空格时 tray 不得留字/兵（铲子除外）；字优先于兵，满盘可顶回普通武器腾位。
 // 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
 // 仅当无法左移时才与占位交换（place）。
@@ -15,11 +15,13 @@
 // 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
 // 纯逻辑：只通过 AutoPlaceView 读写宿主状态，rng 注入以便确定性测试。
 import { canMerge, getUnitStat, type UnitType } from '@core';
-import { posAlong } from './board';
+import { posAlong, COLS, FENCE_ROW, ROWS } from './board';
 import {
   GENERALS,
   matchGeneral,
   generalById,
+  heroEntranceBand,
+  isWideRangeMaxHero,
   mainGeneralForVariantChar,
   transitGeneralInFamily,
   variantChar,
@@ -289,11 +291,76 @@ export function singleWordScore(pathDist: number, tangDist: number): number {
   return SINGLE_WORD_PATH_WEIGHT * pathDist - SINGLE_WORD_TANG_WEIGHT * Math.max(0, tangDist);
 }
 
-/**
- * 激活武将双格座位分：路径总覆盖 − 离路惩罚 − 首次接战距离惩罚（越早越好）。
- */
+/** 玩家半场几何中心（远距满5将偏好落此附近） */
+export const PLAYER_BOARD_CENTER = {
+  x: (COLS - 1) / 2,
+  y: (FENCE_ROW + ROWS - 1) / 2,
+};
+
+export function playerBoardCenterDist(ax: number, ay: number): number {
+  return Math.hypot(ax - PLAYER_BOARD_CENTER.x, ay - PLAYER_BOARD_CENTER.y);
+}
+
+/** 满5远距武将：总覆盖优先，座位靠近棋盘中部 */
+export function wideRangeHeroSeatScore(
+  pathCover: number,
+  centerDist: number,
+  pathDist = 0,
+  firstEngage = 0,
+): number {
+  return pathCover
+    - 0.35 * centerDist
+    - 0.03 * Math.max(0, pathDist)
+    - 0.35 * Math.max(0, firstEngage);
+}
+
+/** 其余武将：贴怪口 + 出口段覆盖；entranceBand 体现控制满5 > 其他满5 > … */
+export function entranceHeroSeatScore(
+  pathCover: number,
+  exitDist: number,
+  pathCoverEarly: number,
+  firstEngage: number,
+  entranceBand: number,
+): number {
+  return pathCover
+    - 0.65 * Math.max(0, exitDist)
+    + 0.25 * pathCoverEarly
+    - 0.45 * Math.max(0, firstEngage)
+    + 10 * entranceBand;
+}
+
+/** 激活武将双格座位分（通用兜底，不含出口/中部策略） */
 export function heroSeatScore(pathCover: number, pathDist = 0, firstEngage = 0): number {
   return pathCover - 0.05 * Math.max(0, pathDist) - 0.45 * Math.max(0, firstEngage);
+}
+
+type HeroPlacementView = Pick<
+  AutoPlaceView,
+  'generalRge' | 'pathCoverAt' | 'pathCoverEarlyAt' | 'pathFirstEngageAt' | 'nearestPathDist' | 'exitDist'
+>;
+
+/** 激活武将左右邻格座位分（远距满5→中部，其余→贴出口） */
+export function heroPairPlacementScore(
+  view: HeroPlacementView,
+  left: Cell,
+  right: Cell,
+  general: string,
+  tier: number,
+): number {
+  const def = generalById(general);
+  if (!def) return 0;
+  const ax = (left.c + right.c) / 2;
+  const ay = (left.r + right.r) / 2;
+  const rge = view.generalRge(general, tier);
+  const cover = view.pathCoverAt(ax, ay, rge);
+  const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
+  const firstEngage = view.pathFirstEngageAt(ax, ay, rge);
+  if (isWideRangeMaxHero(def, tier)) {
+    return wideRangeHeroSeatScore(cover, playerBoardCenterDist(ax, ay), pathD, firstEngage);
+  }
+  const exitD = (view.exitDist(left) + view.exitDist(right)) / 2;
+  const coverEarly = view.pathCoverEarlyAt(ax, ay, rge);
+  return entranceHeroSeatScore(cover, exitD, coverEarly, firstEngage, heroEntranceBand(def, tier));
 }
 
 /** 危险时座位加分：沿路径更靠唐僧(exitDist↑) + 欧氏更贴唐僧(tangsengDist↓) */
@@ -1144,11 +1211,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     steps++;
   }
 
-  /** tray 内兵种索引，短射程优先（近格留给短兵） */
+  /** tray 内兵种索引：高阶优先占近出口格，同阶短射程优先 */
   function trayUnitEntries(): { t: Extract<PlaceToken, { kind: 'unit' }>; i: number }[] {
     return filledTraySlots(view.tray())
       .filter((x): x is { t: Extract<PlaceToken, { kind: 'unit' }>; i: number } => x.t.kind === 'unit')
-      .sort((a, b) => getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge);
+      .sort((a, b) =>
+        b.t.tier - a.t.tier
+        || getUnitStat(a.t.type, a.t.tier).rge - getUnitStat(b.t.type, b.t.tier).rge,
+      );
   }
 
   /** 地图挤回 tray、待换低阶上板的兵种 */
@@ -1975,13 +2045,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   }
 
   function heroPairScore(left: Cell, right: Cell, general: string, tier: number): number {
-    const ax = (left.c + right.c) / 2;
-    const ay = (left.r + right.r) / 2;
-    const rge = view.generalRge(general, tier);
-    const cover = view.pathCoverAt(ax, ay, rge);
-    const pathD = (view.nearestPathDist(left) + view.nearestPathDist(right)) / 2;
-    const firstEngage = view.pathFirstEngageAt(ax, ay, rge);
-    return heroSeatScore(cover, pathD, firstEngage);
+    return heroPairPlacementScore(view, left, right, general, tier);
   }
 
   /** 枚举已解锁的左右相邻格对，按武将输出分降序 */
@@ -2955,12 +3019,19 @@ function isHeroPairMaxed(p: BattleRepositionHeroPair): boolean {
   return p.tier >= heroPairMaxTier(p);
 }
 
-/** 练级优先级：先满5将，再满3将；同档内阶越低越优先 */
+/** 练级优先级：先满5将，再满3将；同档内控制/满5优先占怪口 */
 function heroFarmPriority(p: BattleRepositionHeroPair): number {
+  const def = generalById(p.general);
+  if (!def) return -1;
   const cap = heroPairMaxTier(p);
   if (p.tier >= cap) return -1;
   const capBonus = cap >= 5 ? 1000 : 0;
-  return capBonus + (cap - p.tier) * 10 + cap;
+  return capBonus + heroEntranceBand(def, p.tier) * 50 + (cap - p.tier) * 10 + cap;
+}
+
+function isWideRangeHeroPair(p: BattleRepositionHeroPair): boolean {
+  const def = generalById(p.general);
+  return !!(def && isWideRangeMaxHero(def, p.tier));
 }
 
 function heroPairExitDist(view: BattleRepositionView, left: Cell, right: Cell): number {
@@ -3030,7 +3101,9 @@ function tryHeroExpFarmRotation(
   const growing = pairs.filter((p) => !isHeroPairMaxed(p));
   if (growing.length === 0) return tryHeroCoverageReposition(view, opts);
 
-  const entrance = pairs.reduce((best, p) =>
+  const entrancePool = pairs.filter((p) => !isWideRangeHeroPair(p));
+  const entranceCandidates = entrancePool.length > 0 ? entrancePool : pairs;
+  const entrance = entranceCandidates.reduce((best, p) =>
     heroPairExitDist(view, p.left, p.right) < heroPairExitDist(view, best.left, best.right) ? p : best,
   );
   const desired = growing.reduce((best, p) =>
