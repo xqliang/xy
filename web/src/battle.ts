@@ -810,8 +810,7 @@ export class Battle {
   playerSkillFx: SkillFx | null = null; // 玩家半场主动技能爆发特效
   aiSkillFx: SkillFx | null = null; // AI 半场主动技能爆发特效
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
-  private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD
-  /** 上一帧已激活对，用于检测新激活并重置大招 CD 为满 */
+  private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD 为满
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
@@ -1068,7 +1067,6 @@ export class Battle {
         if (!wa || !wb) break;
         wa.tier += 1;
         wb.tier += 1;
-        this.resetHeroSkillCd([d.generalCells[0]!, d.generalCells[1]!]);
         for (const cc of d.generalCells) {
           this.bursts.push({
             kind: 'merge',
@@ -2284,12 +2282,6 @@ export class Battle {
     }
   }
 
-  private resetHeroSkillCd(cells: [Cell, Cell], ai = false): void {
-    const key = Battle.heroPairKey(cells[0], cells[1]);
-    const s = (ai ? this.aiGeneralStates : this.generalStates).get(key);
-    if (s) s.skillCd = 0;
-  }
-
   // 扫描棋盘：左右紧邻且 chars 序对匹配某武将 → 激活（按字匹配，支持门派共享字）
   activeGenerals(): ActiveGeneral[] {
     const out: ActiveGeneral[] = [];
@@ -2326,7 +2318,7 @@ export class Battle {
         }
       }
       const state = this.stateOfPair(cells, def);
-      if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = 0;
+      if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = Battle.initialHeroSkillCd(def);
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
@@ -2382,7 +2374,7 @@ export class Battle {
         }
       }
       const aiState = this.stateOfPairForAi(cells, def);
-      if (!this.lastAiActivePairKeys.has(pairKey)) aiState.skillCd = 0;
+      if (!this.lastAiActivePairKeys.has(pairKey)) aiState.skillCd = Battle.initialHeroSkillCd(def);
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
@@ -3300,7 +3292,6 @@ export class Battle {
           }
           wa.tier += 1;
           wb.tier += 1;
-          this.resetHeroSkillCd(g.cells);
           this.clearTraySlot(index);
           this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
           this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
@@ -3471,7 +3462,6 @@ export class Battle {
       if (wa && wb && wa.tier === wb.tier && w.tier === wa.tier && wa.tier < cap) {
         wa.tier += 1;
         wb.tier += 1;
-        this.resetHeroSkillCd(gTo.cells);
         this.words.delete(kFrom); // 消耗被拖入的字牌
         this.bursts.push({ kind: 'merge', c: gTo.cells[0].c, r: gTo.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
         this.bursts.push({ kind: 'merge', c: gTo.cells[1].c, r: gTo.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
@@ -3979,7 +3969,7 @@ export class Battle {
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
   }
 
-  /** 波 >10：基础血量/移速算完后 × (1 + (wave-10)/100) */
+  /** 波 >10：基础血量 × (1 + (wave-10)/100)；移速固定不乘此系数 */
   wavePostMul(wave: number = this.wave): number {
     if (wave <= 10) return 1;
     return 1 + (wave - 10) / 100;
@@ -4051,18 +4041,17 @@ export class Battle {
     return base * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
   }
 
-  /** 某波普通怪基础移速（含难度加速与波>10 加成，不含被动减速、Boss/骑兵倍乘） */
-  private endlessMonsterBaseSpeed(wave: number = this.wave): number {
-    const diffSpd = 1 + 0.1 * (this.effectiveDifficulty(wave) - 1);
-    return TUNING.monsterSpd * diffSpd * this.wavePostMul(wave);
+  /** 某波普通怪基础移速（固定 TUNING.monsterSpd；不含被动减速、Boss/骑兵倍乘） */
+  private endlessMonsterBaseSpeed(_wave: number = this.wave): number {
+    return TUNING.monsterSpd;
   }
 
-  /** 某波普通怪移速（含被动减速、难度加速与波>10 加成，不含 Boss/骑兵倍乘） */
+  /** 某波普通怪移速（含被动减速，不含 Boss/骑兵倍乘） */
   private normalMonsterSpeed(wave: number = this.wave): number {
     return this.endlessMonsterBaseSpeed(wave) * this.mods.monsterSpdMul;
   }
 
-  /** 某波 Boss 移速（含被动减速、难度加速） */
+  /** 某波 Boss 移速（含被动减速） */
   private bossSpeed(wave: number = this.wave): number {
     return this.normalMonsterSpeed(wave) * TUNING.bossSpdMul;
   }
@@ -4129,7 +4118,7 @@ export class Battle {
       bossSpd: this.bossSpeed(wave),
       monsterSpd: this.normalMonsterSpeed(wave),
       baseSpawnInterval: TUNING.spawnInterval,
-      difficultySpawnFactor: 1 + 0.07 * (this.effectiveDifficulty(wave) - 1),
+      difficultySpawnFactor: 1,
       minSpawnInterval: TUNING.spawnIntervalMin,
       power,
       miniBossExtraHp: hasMiniBoss ? normalHp * (TUNING.miniBossHpMul - 1) : 0,
@@ -4141,10 +4130,7 @@ export class Battle {
     if (this.wavePressure && this.wavePressure.spawnInterval > 0) {
       return this.wavePressure.spawnInterval;
     }
-    return Math.max(
-      TUNING.spawnIntervalMin,
-      TUNING.spawnInterval / (1 + 0.07 * (this.effectiveDifficulty() - 1)),
-    );
+    return Math.max(TUNING.spawnIntervalMin, TUNING.spawnInterval);
   }
 
   /** 双雄引妖王：均匀随机间隔秒数 ∈ [min, hi(heroCount)] */
@@ -4762,7 +4748,6 @@ export class Battle {
       s.exp -= Battle.expToNext(s.level, g.def);
       if (wa2.tier < cap) wa2.tier += 1;
       if (wb2.tier < cap) wb2.tier += 1;
-      this.resetHeroSkillCd(g.cells, ai);
       s.level += 1;
       if (!ai) {
         this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });

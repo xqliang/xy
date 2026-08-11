@@ -395,7 +395,7 @@ export interface PressurePlanInput {
   monsterSpd: number;
   /** 基础出怪间隔（秒） */
   baseSpawnInterval: number;
-  /** 境界等带来的出怪加速系数（与 battle 原公式一致：1+0.07*(diff-1)） */
+  /** 境界等带来的出怪加速系数（已弃用：出怪间隔不再随难度缩短，密度靠怪量与同批叠怪） */
   difficultySpawnFactor?: number;
   power: BoardPowerResult;
   pressureRatio?: number;

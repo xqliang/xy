@@ -36,7 +36,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 流程：
 
 1. 每帧对 `GeneralState.skillCd` 倒数；配置冷却为 `GeneralDef.skillCd`（秒）。
-2. **新激活**（含拆开再合并）与**喂字/战斗升阶**时，`skillCd` 置为 `0`（就绪，可立刻放）。
+2. **新激活**（含拆开再合并）：`skillCd` 置为 `def.skillCd`（满 CD，需等待首轮冷却）；喂字/战斗升阶**不**重置 CD。
 3. CD 归零后，若满足上表条件 → 调用 `castGeneralSkill`，再把 `skillCd` **重置为** `def.skillCd`。
 4. 对怪大招：圈内无怪时**憋招**（CD 停在 0，进怪立刻放）。
 5. `buff`/`cdr`：CD 好即放，与怪是否在圈无关；普攻仍吃同一射程环与 `targets`。
@@ -218,7 +218,24 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ---
 
-## 9. 相关文件
+## 9. 波次压力与移速（`TUNING` / `board-power.ts`，2026-08-12）
+
+**移速固定**：普通妖基础移速恒为 `TUNING.monsterSpd`（0.6 格/s），**不**随境界、分圈、波次 >10 或 `effectiveDifficulty` 升高。Boss/骑兵/小 Boss 仍用各自倍率（相对此固定基准）；被动蛛网/淤泥、技能疾风/减速照常叠加。
+
+**后期加压只走两条**（第 `PRESSURE_FROM_WAVE` 波起，默认 6）：
+
+| 机制 | 说明 |
+|------|------|
+| **出怪总量** | `planWavePressure`：按战场最优 DPS × 压力比（60%→90%）规划本波小怪总血预算，数量不低于 `monstersInWave(wave)`（10+n−1） |
+| **同批叠怪** | `spawnBatchCap(wave)`：单次出怪随机 1..N 只（波 6 起 N≥2，约波 22 封顶 10） |
+
+出怪**间隔**不再随难度缩短（`difficultySpawnFactor = 1`）；仅保留基础 `spawnInterval` 与门口防秒杀压间隔。
+
+血量仍受境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）、前期软血等影响。
+
+---
+
+## 10. 相关文件
 
 | 用途 | 路径 |
 |------|------|
