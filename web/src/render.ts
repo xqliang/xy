@@ -438,25 +438,63 @@ function formatStatusLine(
   return entries.map((e) => `${e.meta.icon}${e.meta.name} ${formatRemainT(e.remain)}`).join(' · ');
 }
 
-/** 全局主动/被动增益文案（用于信息弹窗） */
+/** 单体仙丹/风火轮：信息弹窗用图标条目（不再画在棋盘格角，避免挡等级） */
+type PillBuffEntry = { icon: string; name: string; color: string; label: string };
+
+function pillBuffEntries(target?: { unit?: PlacedUnit; general?: ActiveGeneral }): PillBuffEntry[] {
+  const out: PillBuffEntry[] = [];
+  if (target?.unit?.pillAtk || target?.general?.pillAtk) {
+    out.push({
+      icon: '丹',
+      name: '仙丹',
+      color: '#ff6040',
+      label: `攻击+${Math.round((TUNING.atkBuffMul - 1) * 100)}%`,
+    });
+  }
+  if (target?.unit?.pillFrq || target?.general?.pillFrq) {
+    out.push({
+      icon: '轮',
+      name: '风火轮',
+      color: '#ffb830',
+      label: `攻速+${Math.round((TUNING.frqBuffMul - 1) * 100)}%`,
+    });
+  }
+  return out;
+}
+
+/** 信息弹窗内画仙丹/风火轮增益行：左「增益」+ 右侧文案，最右图标芯片 */
+function drawPillBuffRows(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  pw: number,
+  ry: number,
+  pills: PillBuffEntry[],
+): number {
+  for (const p of pills) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#a0e8b0';
+    ctx.font = '13px "PingFang SC", sans-serif';
+    ctx.fillText('增益', px + 12, ry);
+    const chipX = px + pw - 16;
+    drawStatusChip(ctx, chipX, ry, p.icon, p.color, 8);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#c8ffd8';
+    ctx.fillText(`${p.name}·${p.label}`, chipX - 14, ry);
+    ry += 16;
+  }
+  return ry;
+}
+
+/** 全局主动/被动增益文案（用于信息弹窗；单体仙丹/风火轮见 pillBuffEntries） */
 function battleBuffLines(
   b: Battle,
   ctx: 'unit' | 'general' | 'monster',
   monster?: Monster,
   monsterSide: 'player' | 'ai' = 'player',
-  target?: { unit?: PlacedUnit; general?: ActiveGeneral },
 ): string[] {
   const lines: string[] = [];
   if (ctx !== 'monster') {
     if (b.bondActive()) lines.push(bondBuffText());
-    const pillAtk = target?.unit?.pillAtk ?? target?.general?.pillAtk;
-    const pillFrq = target?.unit?.pillFrq ?? target?.general?.pillFrq;
-    if (pillAtk) {
-      lines.push(`🔴仙丹 攻击+${Math.round((TUNING.atkBuffMul - 1) * 100)}%（本局）`);
-    }
-    if (pillFrq) {
-      lines.push(`🔥风火轮 攻速+${Math.round((TUNING.frqBuffMul - 1) * 100)}%（本局）`);
-    }
     if (b.mods.atkMul > 1.001) lines.push(`💊被动 攻击×${b.mods.atkMul.toFixed(2)}`);
     if (b.mods.frqMul > 1.001) lines.push(`💨被动 攻速×${b.mods.frqMul.toFixed(2)}`);
   }
@@ -796,7 +834,6 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSkillFx(ctx, b.aiSkillFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
-  drawTeamBuffAuras(ctx, b);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawDigFx(ctx, b.digFx);
@@ -809,7 +846,6 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b, ui);
-  drawBattleBuffBanner(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
   drawActiveIcons(ctx, b);
@@ -2853,94 +2889,6 @@ function drawFrqBuffSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number,
     ctx.fill();
   }
   drawSkillGlyphPulse(ctx, x, y, '轮', prog, fade, '#ffd050', '#fff0b0');
-}
-
-type TeamBuffKind = 'atk' | 'frq';
-
-/** 仙丹/风火轮持续期间：单位脚底脉冲光环 */
-function drawUnitBuffAura(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  kind: TeamBuffKind,
-  remain: number,
-  maxDur: number,
-) {
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160);
-  const life = maxDur > 0 ? remain / maxDur : 0;
-  const r = CELL * (0.38 + pulse * 0.06);
-  ctx.save();
-  if (kind === 'atk') {
-    ctx.globalAlpha = 0.22 + pulse * 0.18;
-    ctx.strokeStyle = '#ff6040';
-    ctx.fillStyle = `rgba(255,90,60,${0.12 + pulse * 0.1})`;
-  } else {
-    ctx.globalAlpha = 0.22 + pulse * 0.18;
-    ctx.strokeStyle = '#ffb830';
-    ctx.fillStyle = `rgba(255,180,40,${0.12 + pulse * 0.1})`;
-  }
-  ctx.lineWidth = 2 + pulse;
-  ctx.beginPath();
-  ctx.ellipse(x, y + CELL * 0.22, r, r * 0.42, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  // 快结束时略闪
-  if (life < 0.25) {
-    ctx.globalAlpha = (0.25 - life) * 2;
-    ctx.strokeStyle = '#fff8e0';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/** 棋盘上方增益条（仙丹/风火轮已改单体永久增益，无全场倒计时条） */
-function drawBattleBuffBanner(_ctx: CanvasRenderingContext2D, _b: Battle) {
-  /* no-op */
-}
-
-/** 已施加仙丹/风火轮的单位：格角小字标记 */
-function drawPillBadge(ctx: CanvasRenderingContext2D, x: number, y: number, kind: TeamBuffKind) {
-  ctx.save();
-  ctx.fillStyle = kind === 'atk' ? '#ff6040' : '#ffb830';
-  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-  ctx.lineWidth = 1.5;
-  ctx.font = `bold ${Math.round(CELL * 0.17)}px "PingFang SC", serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const bx = x + CELL * 0.3;
-  const by = y - CELL * 0.3;
-  ctx.beginPath();
-  ctx.arc(bx, by, CELL * 0.13, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#fff8e8';
-  ctx.fillText(kind === 'atk' ? '丹' : '轮', bx, by + 1);
-  ctx.restore();
-}
-
-/** 玩家 + AI 半场：单体仙丹/风火轮标记 */
-function drawTeamBuffAuras(ctx: CanvasRenderingContext2D, b: Battle) {
-  for (const u of b.units.values()) {
-    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    if (u.pillAtk) drawPillBadge(ctx, x, y, 'atk');
-    if (u.pillFrq) drawPillBadge(ctx, x, y, 'frq');
-  }
-  for (const g of b.activeGenerals()) {
-    const { x, y } = cellCenterPx(g.cells[0].c, g.cells[0].r);
-    if (g.pillAtk) drawPillBadge(ctx, x, y, 'atk');
-    if (g.pillFrq) drawPillBadge(ctx, x, y, 'frq');
-  }
-  for (const u of b.aiUnits) {
-    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    if (u.pillAtk) drawPillBadge(ctx, x, y, 'atk');
-    if (u.pillFrq) drawPillBadge(ctx, x, y, 'frq');
-  }
-  for (const g of b.aiActiveGenerals()) {
-    const { x, y } = cellCenterPx(g.cells[0].c, g.cells[0].r);
-    if (g.pillAtk) drawPillBadge(ctx, x, y, 'atk');
-    if (g.pillFrq) drawPillBadge(ctx, x, y, 'frq');
-  }
 }
 
 /** 主动技能爆发特效（紧箍咒 / 陨石 / 冰封 / 仙丹 / 风火轮） */
@@ -6048,17 +5996,18 @@ function drawWordSelection(
   // 信息面板：放在另一半场中央，避免遮住攻击范围环
   const showBondDetail = !fromAi && active && def.id === BOND_GENERAL && b.bondActive();
   const buffLines = !fromAi && active
-    ? battleBuffLines(b, 'general', undefined, 'player', { general: active }).filter((line) => !(showBondDetail && line.startsWith('🐵')))
+    ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
+  const pills = active ? pillBuffEntries({ general: active }) : [];
   const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
   const inactivePartners = !active ? sortedPartnerChars(w.char) : [];
   const inactiveHint = !active ? inactivePartnerHint(w.char, fromTray) : '';
   ctx.font = '12px "PingFang SC", sans-serif';
   const hintMinW = inactiveHint ? ctx.measureText(inactiveHint).width + 24 : 0;
   const pw = active
-    ? 194
+    ? (pills.length > 0 ? 210 : 194)
     : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
-  const ph = (active ? 164 : 160) + buffLines.length * 16 + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
+  const ph = (active ? 164 : 160) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -6153,6 +6102,7 @@ function drawWordSelection(
     ctx.fillText(line, px + pw - 12, ry);
     ry += 16;
   }
+  ry = drawPillBuffRows(ctx, px, pw, ry, pills);
   // 底部状态提示
   ctx.textAlign = 'left';
   if (!active) {
@@ -6461,10 +6411,12 @@ function drawUnitInfoPanel(
   const cfg = UNITS[type];
   const stat = getUnitStat(type, tier);
   const statusEntries = opts?.unit ? unitStatusEntries(opts.unit) : [];
-  const buffLines = opts?.b && opts?.unit ? battleBuffLines(opts.b, 'unit', undefined, 'player', { unit: opts.unit }) : [];
-  const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length;
-  const pw = 176;
-  const ph = 120 + extraRows * 16;
+  const buffLines = opts?.b && opts?.unit ? battleBuffLines(opts.b, 'unit') : [];
+  const pills = opts?.unit ? pillBuffEntries({ unit: opts.unit }) : [];
+  const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length + pills.length;
+  // 有仙丹/风火轮时略加宽，给「风火轮·攻速+40%」图标行留空；底边多留 6px 避免贴边
+  const pw = pills.length > 0 ? 210 : 176;
+  const ph = 120 + extraRows * 16 + (pills.length > 0 ? 6 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -6512,6 +6464,7 @@ function drawUnitInfoPanel(
     ctx.fillText(v, px + pw - 12, ry);
     ry += 16;
   }
+  drawPillBuffRows(ctx, px, pw, ry, pills);
   ctx.restore();
 }
 
