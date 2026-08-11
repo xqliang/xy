@@ -840,6 +840,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSkillFx(ctx, b.aiSkillFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
+  drawPlaceDropMergeIncoming(ctx, b);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawDigFx(ctx, b.digFx);
@@ -2060,21 +2061,60 @@ function placeDropStartDy(side: 'player' | 'ai', r: number): number {
   return halfTopCy - targetCy;
 }
 
-function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number): { dy: number; scale: number; visible: boolean } {
+/** 棋盘落子动效：位移/缩放；合成时 holdTier 表示落地前仍显示合成前阶 */
+function placeDropMotion(
+  b: Battle,
+  side: 'player' | 'ai',
+  c: number,
+  r: number,
+): { dy: number; scale: number; visible: boolean; holdTier?: number } {
   const fx = b.placeDropFx.find((d) => d.side === side && d.c === c && d.r === r);
   if (!fx) return { dy: 0, scale: 1, visible: true };
   const startDy = placeDropStartDy(side, r);
+  // 合成：state 已是高阶，但原单位留在格上不消失；落下物另画，近落地再变阶弹一下
+  if (fx.isMerge) {
+    const holdTier =
+      fx.kind === 'unit' && fx.unitTier != null
+        ? Math.max(1, fx.unitTier - 1)
+        : fx.kind === 'word' && fx.wordTier != null
+          ? Math.max(1, fx.wordTier - 1)
+          : undefined;
+    if (fx.delay > 0) return { dy: 0, scale: 1, visible: true, holdTier };
+    const p = Math.min(1, fx.t / PLACE_TIMING.dropDur);
+    if (p <= 0.72) return { dy: 0, scale: 1, visible: true, holdTier };
+    const bounce = Math.sin(((p - 0.72) / 0.28) * Math.PI) * 0.07;
+    return { dy: -bounce * CELL * 0.28, scale: 1 + bounce, visible: true };
+  }
   if (fx.delay > 0) return { dy: startDy, scale: 0.76, visible: false };
   const p = Math.min(1, fx.t / PLACE_TIMING.dropDur);
   const eased = p ** 2.6; // 重力加速
   const dy = startDy * (1 - eased);
-  let scale = 0.76 + 0.24 * eased;
-  if (fx.isMerge && p > 0.72) {
-    const bounce = Math.sin(((p - 0.72) / 0.28) * Math.PI) * 0.07;
-    scale += bounce;
-    return { dy: dy - bounce * CELL * 0.28, scale, visible: true };
-  }
+  const scale = 0.76 + 0.24 * eased;
   return { dy, scale, visible: true };
+}
+
+/** 合成落子：从上方掉落的「下一枚」同阶单位/字牌（棋盘原单位由 placeDropMotion 留住） */
+function drawPlaceDropMergeIncoming(ctx: CanvasRenderingContext2D, b: Battle): void {
+  for (const fx of b.placeDropFx) {
+    if (!fx.isMerge || fx.delay > 0) continue;
+    const p = Math.min(1, fx.t / PLACE_TIMING.dropDur);
+    if (p > 0.72) continue;
+    const startDy = placeDropStartDy(fx.side, fx.r);
+    const eased = p ** 2.6;
+    const dy = startDy * (1 - eased);
+    const scale = 0.76 + 0.24 * eased;
+    const { x, y } = cellCenterPx(fx.c, fx.r);
+    if (fx.kind === 'unit' && fx.unitType != null && fx.unitTier != null) {
+      const tier = Math.max(1, fx.unitTier - 1);
+      const size = CELL * 0.72 * scale;
+      drawGroundShadow(ctx, x, y + CELL * 0.06 + dy, CELL * 0.28, 0.22);
+      drawUnit(ctx, fx.unitType, tier, x, y + dy, size, false, { x, y: y + dy, s: size });
+    } else if (fx.kind === 'word' && fx.char != null && fx.wordTier != null) {
+      const tier = Math.max(1, fx.wordTier - 1);
+      drawGroundShadow(ctx, x, y + dy, CELL * 0.32, 0.22);
+      drawWordTile(ctx, fx.char, tier, x, y + dy, CELL * 0.78 * scale, true, 0);
+    }
+  }
 }
 
 // 地面椭圆阴影（怪物/武器/字牌共用：贴脚底、略扁）
@@ -6730,6 +6770,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const drop = placeDropMotion(b, 'player', u.cell.c, u.cell.r);
     if (!drop.visible) continue;
+    const drawTier = drop.holdTier ?? u.tier;
     const fallen = u.knockdownT > 0;
     // 地面阴影（贴格底略偏前，不随 bob/开火上跳，与怪物同风格）
     drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, fallen ? 0.18 : 0.28);
@@ -6742,7 +6783,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     drawUnit(
       ctx,
       u.type,
-      u.tier,
+      drawTier,
       x,
       uy,
       unitSize,
@@ -6751,7 +6792,7 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       fallen,
     );
     // 攻击瞬间：字→兵器形变，朝目标出招（倒下时不画）
-    if (!fallen) drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
+    if (!fallen) drawUnitWeapon(ctx, u.type, drawTier, x, uy, u.fireDir ?? -Math.PI / 2, pulse, u.combo);
     // 减益标识：深色芯片（去掉立绘底色后仍清晰）
     const statuses = unitStatusItems(u);
     if (statuses.length > 0) {
@@ -7466,7 +7507,7 @@ function drawActiveGeneralGroup(
     const { x, y } = cellCenterPx(c.c, c.r);
     const drop = placeDropMotion(b, side, c.c, c.r);
     if (!drop.visible) continue;
-    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, false, g.tier);
+    drawWordTile(ctx, w.char, drop.holdTier ?? w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, false, g.tier);
   }
 
   const bx = Math.min(a.x, z.x) - CELL / 2 + 2;
@@ -7523,7 +7564,7 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const drop = placeDropMotion(b, 'player', w.cell.c, w.cell.r);
     if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
-    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
+    drawWordTile(ctx, w.char, drop.holdTier ?? w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
     drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
   }
   // 激活武将：双字+品质框随 firePulse 放大上跳
@@ -8651,6 +8692,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
     const drop = placeDropMotion(b, 'ai', u.cell.c, u.cell.r);
     if (!drop.visible) continue;
+    const drawTier = drop.holdTier ?? u.tier;
     drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, 0.28);
     const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     const pulse = u.firePulse;
@@ -8659,14 +8701,14 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
     drawUnit(
       ctx,
       u.type,
-      u.tier,
+      drawTier,
       x,
       uy,
       unitSize,
       u.fireDir != null && Math.cos(u.fireDir) < 0,
       { x, y: y + drop.dy, s: CELL * 0.72 * drop.scale },
     );
-    drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
+    drawUnitWeapon(ctx, u.type, drawTier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
   }
   // AI 字牌 / 激活武将（与玩家侧 drawGenerals 同视觉，便于点击查看范围与 tips）
   drawAiGenerals(ctx, b);
@@ -8692,7 +8734,7 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     const drop = placeDropMotion(b, 'ai', w.cell.c, w.cell.r);
     if (!drop.visible) continue;
     drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
-    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
+    drawWordTile(ctx, w.char, drop.holdTier ?? w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
     drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
   }
   for (const g of b.aiActiveGenerals()) {
