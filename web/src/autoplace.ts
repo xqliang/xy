@@ -157,11 +157,11 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位（正常对局）：兵器 1–2.5s；待补英雄配对字 0.5–1s */
+/** AI 战中调位（正常对局）：兵器 1–2.5s；待补英雄配对字 0.4–0.7s */
 export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1;
 export const AI_WEAPON_ADJUST_INTERVAL_MAX = 2.5;
-export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.5;
-export const AI_PARTNER_ADJUST_INTERVAL_MAX = 1;
+export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.4;
+export const AI_PARTNER_ADJUST_INTERVAL_MAX = 0.7;
 /** versus-agent 10× 物理子步进时传给 Battle 的间隔缩放（1–2.5s × 0.1 ≈ 旧快放体感） */
 export const AI_ADJUST_INTERVAL_FAST_SCALE = 0.1;
 
