@@ -172,7 +172,8 @@ describe('征兵字牌策略', () => {
       activeHeroChars: ['哪', '吒'],
     });
     expect(policy.maxWordSlots).toBe(SUMMON_MAX_WORD_SLOTS_GROWING);
-    expect(policy.wordTier).toBe(5);
+    // 抽字统一从 1 阶起（继承对齐会在激活/喂字时自动补到搭档当前阶），不预设满5
+    expect(policy.wordTier).toBe(1);
     expect(policy.tier5CapableOnly).toBe(true);
     expect(policy.excludeChars).toEqual(['哪', '吒']);
   });

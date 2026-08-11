@@ -250,13 +250,16 @@ export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWor
   const boardFull = freeCellCount === 0;
   const hasGrowing = activeGenerals.some((g) => g.tier < 5);
 
+  // wordTier 统一从 1 起：配对/喂字时的"继承对齐"（activeGenerals() 里 target = max(左, 右)）
+  // 已经会把新字自动补到已激活搭档的当前阶，无需在抽字时就预设高阶——否则会让满5可培养的字
+  // 一出场就是满级，跳过合并升阶的过程。
   if (boardFull && allMax5) {
     return {
       wordSlotChanceMul: 0,
       allowForceWord: false,
       allowForcePartner: false,
       maxWordSlots: 0,
-      wordTier: 5,
+      wordTier: 1,
       tier5CapableOnly: true,
       excludeChars: activeHeroChars,
       preferRoles,
@@ -269,7 +272,7 @@ export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWor
       allowForceWord: true,
       allowForcePartner: true,
       maxWordSlots: SUMMON_MAX_WORD_SLOTS_GROWING,
-      wordTier: 5,
+      wordTier: 1,
       tier5CapableOnly: true,
       excludeChars: activeHeroChars,
       preferRoles,
