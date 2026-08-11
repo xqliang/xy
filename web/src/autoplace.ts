@@ -157,12 +157,12 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位间隔（DevTools 可改）：兵器 1–2.5s；待补英雄配对字 0.4–0.7s */
+/** AI 战中调位间隔（DevTools 可改）：兵器 1–2.5s；待补英雄配对字 0.3–0.5s */
 export const AI_TIMING = {
   weaponAdjustMin: 1,
   weaponAdjustMax: 2.5,
-  partnerAdjustMin: 0.4,
-  partnerAdjustMax: 0.7,
+  partnerAdjustMin: 0.3,
+  partnerAdjustMax: 0.5,
   /** versus-agent 10× 物理子步进时传给 Battle 的间隔缩放 */
   adjustFastScale: 0.1,
 };

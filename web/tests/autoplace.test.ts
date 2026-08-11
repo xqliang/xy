@@ -2029,7 +2029,7 @@ it('AI 练级轮换：同一对武将不能连续互换', () => {
   expect(r2.ok).toBe(false);
 });
 
-it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.4–0.7s', () => {
+it('rollAiAdjustInterval：兵器 1–2.5s、配对字 0.3–0.5s', () => {
   expect(rollAiAdjustInterval(false, () => 0)).toBe(AI_WEAPON_ADJUST_INTERVAL_MIN);
   expect(rollAiAdjustInterval(false, () => 1)).toBe(AI_WEAPON_ADJUST_INTERVAL_MAX);
   expect(rollAiAdjustInterval(true, () => 0)).toBe(AI_PARTNER_ADJUST_INTERVAL_MIN);

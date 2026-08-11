@@ -1454,7 +1454,7 @@ export class Battle {
   private aiGeneralStates = new Map<string, GeneralState>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
-  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.5–1s 随机）
+  private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.3–0.5s 随机）
   private aiLastRepositionPair: { a: Cell; b: Cell } | null = null;
   private aiAdjustIntervalScale = 1;        // versus-agent 10× 子步进时缩至 0.1
   aiSkill = DEFAULT_AI_SKILL;              // 跨局注入（默认 1.0）
@@ -4255,7 +4255,9 @@ export class Battle {
     // 1) 征兵节奏：到点且够桃则征一次，随后共享布阵
     let aiPlacedThisFrame = false;
     this.aiSummonTimer -= dt;
-    if (this.aiSummonTimer <= 0) {
+    // 自动部署（aiAutoPlacePlaying）播放期间暂停征兵：上一波落子还在逐步回放上板，
+    // 此时再征兵会重新 clone/restore 会话快照，覆盖尚未播完的布局。
+    if (this.aiSummonTimer <= 0 && !this.aiAutoPlacePlaying) {
       this.aiSummonTimer = knobs.summonInterval;
       if (this.aiSummon()) {
         aiPlacedThisFrame = true;
@@ -4296,7 +4298,7 @@ export class Battle {
         }
       }
     }
-    // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.5–1s 单步布阵（与征兵同帧错开）
+    // 2) 战中调整：兵器调位 1–2.5s 随机；待补英雄配对字时 0.3–0.5s 单步布阵（与征兵同帧错开）
     this.aiRepositionTimer -= dt;
     if (this.aiRepositionTimer <= 0) {
       if (aiPlacedThisFrame) {
