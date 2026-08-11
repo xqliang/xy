@@ -36,9 +36,7 @@ const HELP_PX = (VIEW_W - HELP_PW) / 2;
 const HELP_PY = (VIEW_H - HELP_PH) / 2;
 const HELP_PAD = 22;
 const HELP_CLOSE = inkPopupCloseRect(HELP_PX, HELP_PY);
-/** 标题栏下：固定滚动提示条高度 */
-const HELP_HINT_H = 28;
-const HELP_BODY_TOP = HELP_PY + 58 + HELP_HINT_H;
+const HELP_BODY_TOP = HELP_PY + 58;
 const HELP_BODY_BOTTOM = HELP_PY + HELP_PH - 18;
 const HELP_VIEW_H = HELP_BODY_BOTTOM - HELP_BODY_TOP;
 const HELP_TEXT_W = HELP_PW - HELP_PAD * 2;
@@ -205,10 +203,10 @@ type LaidLine =
   | { kind: 'step'; n: number; text: string; y: number }
   | { kind: 'link'; id: HelpLinkId; text: string; y: number; textW: number };
 
-let cachedLayout: { lines: LaidLine[]; contentH: number } | null = null;
-
+// 不做跨帧缓存：若首次测量时自定义字体尚未加载完成，缓存会永久锁死一份用回退字体量出的
+// 错误高度，导致后续可视区与实际渲染错位、滚到底也显示不全（"滚不动"）。文案是静态的一小段
+// 文本，每次重排的开销可忽略，直接按当前 ctx 字体状态重新量取即可保证与实际渲染一致。
 function measureLayout(ctx: CanvasRenderingContext2D): { lines: LaidLine[]; contentH: number } {
-  if (cachedLayout) return cachedLayout;
   const lines: LaidLine[] = [];
   let y = 0;
   const titleLh = 28;
@@ -258,8 +256,7 @@ function measureLayout(ctx: CanvasRenderingContext2D): { lines: LaidLine[]; cont
     y += 4;
   }
 
-  cachedLayout = { lines, contentH: y + 8 };
-  return cachedLayout;
+  return { lines, contentH: y + 8 };
 }
 
 export function helpContentHeight(ctx: CanvasRenderingContext2D): number {
@@ -333,44 +330,11 @@ function drawScrollTrack(ctx: CanvasRenderingContext2D, scrollY: number, maxScro
   ctx.fill();
 }
 
-/** 标题栏下方固定提示：一打开就能看到「可上滑」 */
-function drawPinnedScrollHint(
-  ctx: CanvasRenderingContext2D,
-  scrollY: number,
-  maxScroll: number,
-): void {
-  const y0 = HELP_PY + 58;
-  const cx = HELP_PX + HELP_PW / 2;
-  ctx.fillStyle = 'rgba(180,90,70,0.12)';
-  ctx.fillRect(HELP_PX + 8, y0, HELP_PW - 16, HELP_HINT_H - 2);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = '13px "PingFang SC", serif';
-
-  if (maxScroll <= 0) {
-    ctx.fillStyle = '#8a6030';
-    ctx.fillText('以下为完整操作说明', cx, y0 + (HELP_HINT_H - 2) / 2);
-    return;
-  }
-
-  const canDown = scrollY < maxScroll - 2;
-  const canUp = scrollY > 2;
-  let tip = '上下滑动查看更多';
-  if (canDown && !canUp) tip = '↑ 上滑继续阅读 ↓';
-  else if (canUp && !canDown) tip = '已到文末 · 可下滑回顶';
-
-  ctx.fillStyle = '#8a4020';
-  ctx.fillText(tip, cx, y0 + (HELP_HINT_H - 2) / 2);
-}
-
 export function drawHelpPopup(ctx: CanvasRenderingContext2D, scrollY: number): void {
   drawInkPopupFrame(ctx, HELP_PX, HELP_PY, HELP_PW, HELP_PH, '操作说明', HELP_CLOSE);
   const layout = measureLayout(ctx);
   const maxScroll = Math.max(0, layout.contentH - HELP_VIEW_H);
   const sy = Math.max(0, Math.min(maxScroll, scrollY));
-
-  drawPinnedScrollHint(ctx, sy, maxScroll);
 
   ctx.save();
   ctx.beginPath();
@@ -441,7 +405,7 @@ export function drawHelpPopup(ctx: CanvasRenderingContext2D, scrollY: number): v
   }
   ctx.restore();
 
-  // 内容区上下淡出，配合固定提示条
+  // 内容区上下淡出，提示还有更多内容
   if (sy > 2) {
     const fade = ctx.createLinearGradient(0, HELP_BODY_TOP, 0, HELP_BODY_TOP + 16);
     fade.addColorStop(0, 'rgba(240,230,208,0.95)');
