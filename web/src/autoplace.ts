@@ -1105,7 +1105,7 @@ export function autoPlaceBoardKey(view: AutoPlaceView): string {
     .sort()
     .join(';');
   const words = view.placedWords()
-    .map((w) => `${w.char}:${w.tier ?? 1}@${w.cell.c},${w.cell.r}`)
+    .map((w) => `${w.general}:${w.char}:${w.tier ?? 1}@${w.cell.c},${w.cell.r}`)
     .sort()
     .join(';');
   const tray = filledTraySlots(view.tray())
@@ -1366,9 +1366,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       }
     }
     if (bestMove) return view.moveUnit(bestMove.from, bestMove.to);
-
-    // 无怪时两兵互换仅按贴路分，下一步会再换回来
-    if (view.monstersPresent && !view.monstersPresent()) return false;
 
     let bestSwap: { a: PlacedUnitLite; b: PlacedUnitLite; gain: number } | null = null;
     for (let i = 0; i < units.length; i++) {
@@ -1852,7 +1849,6 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
    * 合成升阶后让高阶占输出更好的座位。
    */
   function trySwapHigherTierToBetterSeats(): boolean {
-    if (view.monstersPresent && !view.monstersPresent()) return false;
     const units = view.placedUnits();
     let best: { hi: PlacedUnitLite; lo: PlacedUnitLite; gain: number } | null = null;
     for (let i = 0; i < units.length; i++) {

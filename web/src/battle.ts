@@ -2183,6 +2183,12 @@ export class Battle {
   // - 铲子 → 锁定的可摆放格 → 开挖解锁
   // - 兵种 → 空绿格放置；同型同级则合并升阶；非同型则替换（旧单位被换下）
   placeFromTray(index: number, to: Cell): boolean {
+    const ok = this.doPlaceFromTray(index, to);
+    if (ok) this.clearAutoPlaceLayoutMemory();
+    return ok;
+  }
+
+  private doPlaceFromTray(index: number, to: Cell): boolean {
     const token = this.tray[index];
     if (!token) return false;
     if (token.kind === 'shovel') {
@@ -4483,7 +4489,7 @@ export class Battle {
       this.tray.splice(index, 1);
       return true;
     }
-    return this.placeFromTray(index, cell);
+    return this.doPlaceFromTray(index, cell);
   }
 
   // 延迟落子结算：预占格的开格动画结束后，真正把预占的兵/字牌落到该格（每帧由 updateFx 调用）。
@@ -4621,7 +4627,7 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
-    const layoutSnap = { units: new Map(this.units), words: new Map(this.words) };
+    const layoutSnap = this.cloneAutoplaceLayout();
     const keyBefore = autoPlaceBoardKey(this.buildPlayerAutoView());
     const trayBefore = this.tray.length;
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
@@ -4636,8 +4642,7 @@ export class Battle {
         : 0;
     const keyAfter = autoPlaceBoardKey(this.buildPlayerAutoView());
     if (keyAfter !== keyBefore && this.lastAutoPlaceBoardKey !== null && keyAfter === this.lastAutoPlaceBoardKey) {
-      this.units = layoutSnap.units;
-      this.words = layoutSnap.words;
+      this.restoreAutoplaceLayout(layoutSnap);
       this.message = '布阵：当前暂无可执行操作';
       return;
     }

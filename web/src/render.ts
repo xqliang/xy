@@ -112,6 +112,18 @@ export function getButtons(b: Battle): Button[] {
   return btns;
 }
 
+/** 主动技能槽圆心（与 getButtons 中 act0/act1 布局一致，供拖拽虚线用） */
+function activeSlotCenter(i: 0 | 1): { x: number; y: number } {
+  const ACT_D = 60;
+  const ACT_GAP = 20;
+  const SUMMON_X = 180;
+  const SUMMON_W = 200;
+  const SUMMON_H = 78;
+  const actX = [SUMMON_X - ACT_GAP - ACT_D, SUMMON_X + SUMMON_W + ACT_GAP];
+  const actY = CTRL_Y + (SUMMON_H - ACT_D) / 2;
+  return { x: actX[i]! + ACT_D / 2, y: actY + ACT_D / 2 };
+}
+
 const SKILL_TITLE_COLOR = '#e8c22c'; // 与神兵金阶同色
 
 export interface UiState {
@@ -797,7 +809,6 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActivePopup(ctx, b, ui);
   drawAiItemPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
-  drawPillDropHints(ctx, b, ui);
   drawBanner(ctx, b);
 }
 
@@ -6077,8 +6088,7 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const slot = b.activeSlots[ui.dragActiveSlot];
     const def = slot ? activeById(slot.id) : undefined;
     if (def) {
-      const btn = getButtons(b).find((bb) => bb.id === `act${ui.dragActiveSlot}`);
-      if (btn) src = { x: btn.x + btn.w / 2, y: btn.y + btn.h / 2 };
+      src = activeSlotCenter(ui.dragActiveSlot as 0 | 1);
       ghost = () => drawSkillGlyph(ctx, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.28, def.icon, '#b5762a', true, def.id);
     }
   } else if (ui.dragFrom) {
@@ -6116,6 +6126,9 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     }
   }
   if (!ghost) return;
+
+  // 仙丹/风火轮：可投放格高亮（在 ghost 与虚线之下）
+  if (ui.dragActiveSlot !== null) drawPillDropHints(ctx, b, ui);
 
   // 托盘拖拽：先画全部可落点瞄准标记（在 ghost 之下）
   if (ui.dragTrayIndex !== null) drawTrayDropHints(ctx, b, ui);
@@ -6164,7 +6177,7 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       drawUnitInfoPanel(ctx, token.type, token.tier);
     }
   }
-  // 源→当前的虚线连接（参考原作）
+  // 源→当前的虚线连接（托盘令牌 / 棋盘单位 / 仙丹·风火轮 共用）
   if (src) {
     ctx.save();
     ctx.strokeStyle = 'rgba(120,90,40,0.8)';
