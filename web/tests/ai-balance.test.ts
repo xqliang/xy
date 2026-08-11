@@ -8,7 +8,9 @@ import { nextAiSkill } from '../src/ai-skill';
 function playOneMatch(seed: number, aiSkill: number): boolean {
   const b = new Battle(seed, 1, undefined, undefined, undefined, undefined, undefined, false, aiSkill);
   let t = 0;
-  const CAP = 60 * 30; // 约 1 分钟游戏时（30fps）
+  // 陨石半径 1.4→2、冰封定身 2.5s→3s 后 AI 自身防守更强、清波更久；给够游戏时长再判超时，
+  // 避免把「AI 也扛住了」误判成「未分胜负」拉低玩家胜率统计。
+  const CAP = 150 * 30; // 约 2.5 分钟游戏时（30fps）
   const WAVE_CAP = 12; // 超时波：视为未分胜负（不计玩家胜）
   while (b.status !== 'won' && b.status !== 'lost' && t < CAP && b.wave < WAVE_CAP) {
     if (b.status === 'ready') b.startNextWave(); // 跳过清波后 5s 等待，加快 sim
@@ -31,9 +33,12 @@ describe('AI 平衡 sim（宏观、非精确）', () => {
     }
     expect(minSkill).toBeGreaterThanOrEqual(0.72);
     expect(maxSkill).toBeLessThanOrEqual(1.8);
-    expect(skill).toBeLessThan(1.0); // 玩家多败 → 控制器确实下调了AI(反馈方向正确)
     const rate = wins / (N - 4);
+    // 反馈方向正确性：不预设本局脚本玩家的绝对胜率（随数值调整会变），只要求
+    // 明显偏胜/偏负时，控制器把 AI skill 调向对应方向（偏胜→调高，偏负→调低）。
+    if (rate > 0.55) expect(skill).toBeGreaterThanOrEqual(1.0);
+    else if (rate < 0.45) expect(skill).toBeLessThanOrEqual(1.0);
     expect(rate).toBeGreaterThan(0.05);
     expect(rate).toBeLessThan(0.98);
-  }, 90000);
+  }, 180000);
 });

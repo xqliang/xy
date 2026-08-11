@@ -190,12 +190,15 @@ export const TUNING = {
   // —— 主动技能数值 ——
   palmPushCells: 6, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
-  meteorRadius: 1.4, // 主动陨石半径
+  meteorRadius: 2, // 主动陨石半径
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
   atkBuffMul: 1.4, // 仙丹单体攻击倍率
   frqBuffMul: 1.4, // 风火轮单体攻速倍率
-  freezeStunDur: 2.5, // 冰封定身时长（全场；CD 24s）
+  freezeStunDur: 3, // 冰封定身时长（全场；CD 24s）
+  // —— AI 攻击型主动技能(陨石/紧箍咒)择时 ——
+  aiOffensiveActiveMinDist: 8, // 最远怪物需已沿路走过该格数，才允许释放（避免开怪就死板打出）
+  aiOffensiveActiveDelayMax: 2, // 达到距离条件后，再随机 0~该值秒才实际释放
   // —— 武将大招控制分档 ——
   heroStunDurMain: 1.5, // 满5 定身时长
   heroStunDurTransit: 1.0, // 满3 定身时长
@@ -517,6 +520,10 @@ export interface GeneralState {
   firePulse: number;
   fireDir?: number; // 上次开火朝向(弧度)，字牌攻击时驱动兵器形变
   skillFlash: number;
+  /** 仙丹：本局攻击 +40%（按格子对持久化，ActiveGeneral 每次调用都是新对象，须存这里才不丢） */
+  pillAtk?: boolean;
+  /** 风火轮：本局攻速 +40% */
+  pillFrq?: boolean;
 }
 
 // 由「左右紧邻的两个同将字牌」激活的武将（占两格，带金框）
@@ -525,9 +532,9 @@ export interface ActiveGeneral {
   tier: number; // 取两字阶数的较小值
   cells: [Cell, Cell];
   state: GeneralState;
-  /** 仙丹：本局攻击 +40% */
+  /** 仙丹：本局攻击 +40%（从 state.pillAtk 同步，写入请走 state） */
   pillAtk?: boolean;
-  /** 风火轮：本局攻速 +40% */
+  /** 风火轮：本局攻速 +40%（从 state.pillFrq 同步，写入请走 state） */
   pillFrq?: boolean;
 }
 
@@ -1425,6 +1432,8 @@ export class Battle {
   aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
+  /** 攻击型主动技能(陨石/紧箍咒)：距离条件达成后的随机延迟倒计时（秒）；undefined=未解锁 */
+  private aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu', number>> = {};
   private aiShovelTimer = 0;
   private aiTierBoosted = new Set<string>();
   private aiMeteorPending = false;
@@ -2206,11 +2215,14 @@ export class Battle {
           if (right.tier < cap) right.tier += 1;
         }
       }
+      const state = this.stateOfPair(cells);
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
         cells,
-        state: this.stateOfPair(cells),
+        state,
+        pillAtk: state.pillAtk,
+        pillFrq: state.pillFrq,
       });
     }
     this.pruneHeroStates(activePairKeys, this.generalStates);
@@ -2259,11 +2271,14 @@ export class Battle {
           if (right.tier < cap) right.tier += 1;
         }
       }
+      const aiState = this.stateOfPairForAi(cells);
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
         cells,
-        state: this.stateOfPairForAi(cells),
+        state: aiState,
+        pillAtk: aiState.pillAtk,
+        pillFrq: aiState.pillFrq,
       });
     }
     this.pruneHeroStates(activePairKeys, this.aiGeneralStates);
@@ -4371,6 +4386,36 @@ export class Battle {
     return false;
   }
 
+  // 最远(沿路走得最远)的 AI 侧怪物已推进的格数；无怪时返回 -Infinity（视为未解锁）
+  private aiFrontMonsterDist(): number {
+    let d = -Infinity;
+    for (const m of this.aiMonsters) if (m.dist > d) d = m.dist;
+    return d;
+  }
+
+  /** 攻击型主动技能(陨石/紧箍咒)择时倒计时：最远怪物越过 aiOffensiveActiveMinDist 才「解锁」，
+   * 解锁瞬间随机滚 0~aiOffensiveActiveDelayMax 秒延迟，避免一开怪就死板打出；怪物退回阈值下则清空重来。 */
+  private tickAiOffensiveActiveDelay(dt: number): void {
+    const unlocked = this.aiFrontMonsterDist() >= TUNING.aiOffensiveActiveMinDist;
+    for (const effect of ['meteor', 'jinggu'] as const) {
+      if (!unlocked) {
+        delete this.aiOffensiveDelay[effect];
+        continue;
+      }
+      const remain = this.aiOffensiveDelay[effect];
+      if (remain === undefined) {
+        this.aiOffensiveDelay[effect] = this.aiRng.next() * TUNING.aiOffensiveActiveDelayMax;
+      } else if (remain > 0) {
+        this.aiOffensiveDelay[effect] = Math.max(0, remain - dt);
+      }
+    }
+  }
+
+  private aiOffensiveActiveReady(effect: 'meteor' | 'jinggu'): boolean {
+    const remain = this.aiOffensiveDelay[effect];
+    return remain !== undefined && remain <= 0;
+  }
+
   private unitColor(type: UnitType): string {
     switch (type) {
       case 'dao': return '#ff9a3c';
@@ -4472,12 +4517,16 @@ export class Battle {
       case 'freeze':
         return this.aiDangerNear();
       case 'meteor':
-        return this.aiMonsters.length >= 3
+        return this.aiOffensiveActiveReady('meteor') && (
+          this.aiMonsters.length >= 3
           || this.aiMonsters.some((m) => m.isBoss)
-          || (this.isBossWave(this.wave) && this.aiMonsters.length >= 1);
+          || (this.isBossWave(this.wave) && this.aiMonsters.length >= 1)
+        );
       case 'jinggu':
-        return this.aiMonsters.length >= 2
-          || this.aiMonsters.some((m) => m.isBoss || m.isMiniBoss);
+        return this.aiOffensiveActiveReady('jinggu') && (
+          this.aiMonsters.length >= 2
+          || this.aiMonsters.some((m) => m.isBoss || m.isMiniBoss)
+        );
       case 'atkBuff':
       case 'frqBuff':
         return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(effect);
@@ -4937,6 +4986,7 @@ export class Battle {
       }
       if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt);
     }
+    this.tickAiOffensiveActiveDelay(dt);
   }
 
   /** AI 主动技能：按优先级择时释放（每帧至多一个，未满足时机则保留 CD）。 */
@@ -5062,9 +5112,9 @@ export class Battle {
       if (isAtk) t.u.pillAtk = true;
       else t.u.pillFrq = true;
     } else if (isAtk) {
-      t.g.pillAtk = true;
+      t.g.state.pillAtk = true;
     } else {
-      t.g.pillFrq = true;
+      t.g.state.pillFrq = true;
     }
     this.setSkillFx(isAtk ? 'atkBuff' : 'frqBuff', cell, false);
     const statLabel = isAtk ? '攻击' : '攻速';
@@ -5134,8 +5184,8 @@ export class Battle {
     } else {
       const g = this.aiActiveGenerals().find((ag) => ag.cells.some((c) => c.c === cell.c && c.r === cell.r));
       if (!g) return false;
-      if (isAtk) g.pillAtk = true;
-      else g.pillFrq = true;
+      if (isAtk) g.state.pillAtk = true;
+      else g.state.pillFrq = true;
     }
     this.setSkillFx(isAtk ? 'atkBuff' : 'frqBuff', cell, true);
     return true;

@@ -1206,6 +1206,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   const subopt = () => pSub > 0 && opts.rng() < pSub;
   const maxSteps = opts.maxSteps ?? Infinity;
   const maxGuard = opts.maxGuard ?? PLAYER_PLACE_MAX_GUARD;
+  // AI 挖格随机化阈值（pickBestDigCell 用）：置于函数顶部，避免主循环先于其原声明位置执行触发 TDZ
+  const DIG_RANDOM_TOP_N = 3;
+  const DIG_RANDOM_SCORE_GAP = 3;
   let guard = 0;
   let steps = 0;
   let heroLayoutPending = false;
@@ -1572,9 +1575,11 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
         : opts.randomDigExitWeight
           ? DIG_EXIT_WEIGHT_AI_MIN + opts.rng() * (DIG_EXIT_WEIGHT_AI_MAX - DIG_EXIT_WEIGHT_AI_MIN)
           : DIG_EXIT_WEIGHT;
-      const digs = sortedDigTargets(exitW);
-      if (digs.length === 0) continue; // 无处可挖：保留，扫下一个
-      const cell = subopt() && digs.length > 1 ? digs[1 + Math.floor(opts.rng() * (digs.length - 1))]! : digs[0]!;
+      const scoredDigs = scoredDigTargets(exitW);
+      if (scoredDigs.length === 0) continue; // 无处可挖：保留，扫下一个
+      const cell = subopt() && scoredDigs.length > 1
+        ? scoredDigs[1 + Math.floor(opts.rng() * (scoredDigs.length - 1))]!.cell
+        : pickBestDigCell(scoredDigs, !!opts.randomDigExitWeight);
       if (view.place(i, cell)) return true;
     }
     // 1a) 地图挤回 tray 的待处理兵：换棋盘更低阶武器上板
@@ -2048,29 +2053,35 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.moveWord(best.from, best.to);
   }
 
-  /** 可挖格：凑将相邻格最优先，否则离路~1格 + 贴边 + 近出口 */
-  function sortedDigTargets(exitWeight: number = DIG_EXIT_WEIGHT): Cell[] {
+  /** 可挖格评分（分越低越优先）：凑将相邻格最优先，否则离路~1格 + 贴边 + 近出口 */
+  function scoredDigTargets(exitWeight: number = DIG_EXIT_WEIGHT): { cell: Cell; score: number }[] {
     const danger = view.dangerNear();
     const heroDigKeys = new Set(trayBoardHeroDigCells(view).map((c) => cellKey(c)));
-    return view.diggableCells().slice().sort((a, b) => {
-      const heroA = heroDigKeys.has(cellKey(a)) ? -DIG_HERO_PAIR_WEIGHT : 0;
-      const heroB = heroDigKeys.has(cellKey(b)) ? -DIG_HERO_PAIR_WEIGHT : 0;
-      const sa = digPriorityScore(
-        view.pathTouchSides(a),
-        view.nearestPathDist(a),
-        view.exitDist(a),
+    return view.diggableCells().map((c) => {
+      const heroBonus = heroDigKeys.has(cellKey(c)) ? -DIG_HERO_PAIR_WEIGHT : 0;
+      const score = digPriorityScore(
+        view.pathTouchSides(c),
+        view.nearestPathDist(c),
+        view.exitDist(c),
         exitWeight,
-        danger ? { danger: true, imminentScore: view.imminentPathScore(a), tangsengDist: view.tangsengDist(a) } : undefined,
-      ) + heroA;
-      const sb = digPriorityScore(
-        view.pathTouchSides(b),
-        view.nearestPathDist(b),
-        view.exitDist(b),
-        exitWeight,
-        danger ? { danger: true, imminentScore: view.imminentPathScore(b), tangsengDist: view.tangsengDist(b) } : undefined,
-      ) + heroB;
-      return sa - sb || a.r - b.r || a.c - b.c;
-    });
+        danger ? { danger: true, imminentScore: view.imminentPathScore(c), tangsengDist: view.tangsengDist(c) } : undefined,
+      ) + heroBonus;
+      return { cell: c, score };
+    }).sort((a, b) => a.score - b.score || a.cell.r - b.cell.r || a.cell.c - b.cell.c);
+  }
+
+  /**
+   * AI 对手挖格随机化：空位 >4 格时不再恒挖评分最优一格，
+   * 而是从评分最优的前 DIG_RANDOM_TOP_N 个、且与最优分差距 ≤DIG_RANDOM_SCORE_GAP 的格子里随机选一个，
+   * 避免每局都挖到同一固定位置。（常量提到函数顶部的 const，避免主循环先于此处初始化触发 TDZ）
+   */
+  function pickBestDigCell(scored: { cell: Cell; score: number }[], randomize: boolean): Cell {
+    if (!randomize || scored.length <= 4) return scored[0]!.cell;
+    const bestScore = scored[0]!.score;
+    const pool = scored
+      .slice(0, DIG_RANDOM_TOP_N)
+      .filter((d) => d.score - bestScore <= DIG_RANDOM_SCORE_GAP);
+    return (pool[Math.floor(opts.rng() * pool.length)] ?? scored[0]!).cell;
   }
 
   function unlockedCells(): Cell[] {
