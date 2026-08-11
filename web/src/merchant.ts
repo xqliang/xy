@@ -48,6 +48,9 @@ export interface MerchantUiState {
   toast: string;
   /** 商店 Tab 购买二次确认：待确认的商品下标 */
   confirmOffer: number | null;
+  /** 首页隐藏入口：展示全部技能并可滚动切换 */
+  testMode: boolean;
+  scrollY: number;
 }
 
 export const LOTTERY_MERIT_COST = 45;
@@ -101,6 +104,10 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+function buildTestOffers(): MerchantOffer[] {
+  return allSkills().map((s) => ({ kind: s.kind, id: s.id, owned: true }));
+}
+
 type SkillRef = { kind: SkillKind; id: string };
 
 function allSkills(): SkillRef[] {
@@ -147,7 +154,7 @@ function withToast(m: MerchantUiState, text: string): MerchantUiState {
 }
 
 export function merchantClosed(): MerchantUiState {
-  return { open: false, tab: 'shop', offers: [], lotteryPreview: [], toast: '', confirmOffer: null };
+  return { open: false, tab: 'shop', offers: [], lotteryPreview: [], toast: '', confirmOffer: null, testMode: false, scrollY: 0 };
 }
 
 /** 战斗结算回首页时调用：弹出并重 roll 商品 */
@@ -160,6 +167,23 @@ export function openMerchant(loadout: LoadoutState): MerchantUiState {
     lotteryPreview: rollLotteryPreview(),
     toast: '',
     confirmOffer: null,
+    testMode: false,
+    scrollY: 0,
+  };
+}
+
+/** 首页隐藏测试入口：全部技能列表 + 滚动 */
+export function openMerchantTest(loadout: LoadoutState): MerchantUiState {
+  clearMerchantFloatToasts();
+  return {
+    open: true,
+    tab: 'shop',
+    offers: buildTestOffers(),
+    lotteryPreview: rollLotteryPreview(),
+    toast: '',
+    confirmOffer: null,
+    testMode: true,
+    scrollY: 0,
   };
 }
 
@@ -263,7 +287,22 @@ export function applyMerchantHit(
     case 'offer': {
       const offer = m.offers[hit.index];
       if (!offer) return { merchant: m, loadout: lo, merit: me };
-      if (offer.owned) {
+      let justGranted = false;
+      if (m.testMode) {
+        if (offer.kind === 'active' && !isOwnedActive(lo, offer.id)) {
+          lo = grantActive(lo, offer.id);
+          justGranted = true;
+        }
+        if (offer.kind === 'passive' && !isOwnedPassive(lo, offer.id)) {
+          lo = grantPassive(lo, offer.id);
+          justGranted = true;
+        }
+      }
+      if (justGranted) {
+        m = withToast(m, '已装备');
+        return { merchant: m, loadout: lo, merit: me };
+      }
+      if (offer.owned || m.testMode) {
         const equipped = isOfferEquipped(lo, offer);
         if (equipped) {
           lo = offer.kind === 'active' ? unequipActive(lo, offer.id) : unequipPassive(lo, offer.id);
@@ -401,13 +440,37 @@ const PAS_ROW_Y = ACT_ROW_Y + ACT_SLOT + EQUIP_ROW_GAP;
 
 const CONTENT_H = EQUIP_TOP - CONTENT_TOP - 12;
 
+export function merchantScrollViewport(): { x: number; y: number; w: number; h: number } {
+  return { x: PX + 14, y: CONTENT_TOP, w: PW - 28, h: CONTENT_H };
+}
+
+export function merchantMaxScroll(m: MerchantUiState): number {
+  const rowH = OFFER_H + OFFER_GAP;
+  const contentH = Math.max(0, m.offers.length * rowH - OFFER_GAP);
+  return Math.max(0, contentH - CONTENT_H);
+}
+
+export function merchantScrollViewportContains(x: number, y: number): boolean {
+  return inRect(x, y, merchantScrollViewport());
+}
+
+/** 测试模式可滚动的中间区域（含滚动条，不含底部装备栏） */
+export function merchantTestScrollAreaContains(x: number, y: number): boolean {
+  return x >= PX && x <= PX + PW && y >= CONTENT_TOP && y < EQUIP_TOP;
+}
+
+export function merchantApplyWheel(m: MerchantUiState, deltaY: number): MerchantUiState {
+  const max = merchantMaxScroll(m);
+  return { ...m, scrollY: Math.max(0, Math.min(max, m.scrollY + deltaY)) };
+}
+
 const OFFER_H = 128;
 const OFFER_GAP = 6;
 const OFFER_BTN_W = 88;
 const OFFER_BTN_H = 34;
 const OFFER_TEXT_X = 68;
-function offerRect(i: number): { x: number; y: number; w: number; h: number } {
-  return { x: PX + 16, y: CONTENT_TOP + i * (OFFER_H + OFFER_GAP), w: PW - 32, h: OFFER_H };
+function offerRect(i: number, scrollY = 0): { x: number; y: number; w: number; h: number } {
+  return { x: PX + 16, y: CONTENT_TOP + i * (OFFER_H + OFFER_GAP) - scrollY, w: PW - 32, h: OFFER_H };
 }
 
 const LOT_CELL = 88;
@@ -548,8 +611,10 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   if (!m.open) return null;
   if (m.confirmOffer !== null) return merchantConfirmHitAt(x, y);
   if (inRect(x, y, CLOSE_R)) return { kind: 'close' };
-  if (inRect(x, y, TAB_SHOP)) return { kind: 'tab', tab: 'shop' };
-  if (inRect(x, y, TAB_LOTTERY)) return { kind: 'tab', tab: 'lottery' };
+  if (!m.testMode) {
+    if (inRect(x, y, TAB_SHOP)) return { kind: 'tab', tab: 'shop' };
+    if (inRect(x, y, TAB_LOTTERY)) return { kind: 'tab', tab: 'lottery' };
+  }
   if (inRect(x, y, CONTINUE_R)) return { kind: 'continue' };
 
   for (const r of activeSlotRects(loadout)) {
@@ -560,15 +625,19 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   }
 
   if (m.tab === 'shop') {
+    const scrollY = m.testMode ? m.scrollY : 0;
     for (let i = 0; i < m.offers.length; i++) {
-      if (inRect(x, y, offerRect(i))) return { kind: 'offer', index: i };
+      if (inRect(x, y, offerRect(i, scrollY))) return { kind: 'offer', index: i };
     }
   } else if (inRect(x, y, LOTTERY_BTN)) {
     return { kind: 'lottery' };
   }
 
-  // 面板内非按钮区吞掉；遮罩空白不关闭（须点 × 或「关闭」）
-  if (x >= PX && x <= PX + PW && y >= PY && y <= PY + PH) return null;
+  // 面板内非按钮区：测试模式中间列表可滚动
+  if (x >= PX && x <= PX + PW && y >= PY && y <= PY + PH) {
+    if (m.testMode && merchantTestScrollAreaContains(x, y)) return null;
+    return null;
+  }
   return null;
 }
 
@@ -620,8 +689,9 @@ function offerActionLabel(
   offer: MerchantOffer,
   cost: number,
   canAfford: boolean,
+  testMode: boolean,
 ): { label: string; variant: 'primary' | 'secondary' | 'accent' } {
-  if (offer.owned) {
+  if (testMode || offer.owned) {
     if (isOfferEquipped(loadout, offer)) {
       return { label: '卸下', variant: 'secondary' };
     }
@@ -642,10 +712,12 @@ function drawOfferCard(
   loadout: LoadoutState,
   merit: MeritState,
   index: number,
+  scrollY: number,
 ): void {
   const offer = m.offers[index];
   if (!offer) return;
-  const r = offerRect(index);
+  const r = offerRect(index, scrollY);
+  if (r.y + r.h < CONTENT_TOP || r.y > CONTENT_TOP + CONTENT_H) return;
   const def = offer.kind === 'active' ? activeById(offer.id) : passiveById(offer.id);
   if (!def) return;
   const rarity = skillRarityColor(def.cost);
@@ -713,7 +785,7 @@ function drawOfferCard(
   }
   ctx.restore();
 
-  const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford);
+  const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford, m.testMode);
   drawInkActionButton(
     ctx,
     { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H },
@@ -983,6 +1055,46 @@ function drawOfferConfirmPopup(
   drawInkActionButton(ctx, CONF_OK, '确认购买', false, merit.merit >= cost ? 'primary' : 'secondary');
 }
 
+function drawMerchantScrollBar(ctx: CanvasRenderingContext2D, m: MerchantUiState): void {
+  const max = merchantMaxScroll(m);
+  if (max <= 0) return;
+  const vp = merchantScrollViewport();
+  const trackX = PX + PW - 12;
+  const trackY = vp.y + 4;
+  const trackH = vp.h - 8;
+  const frac = max > 0 ? m.scrollY / max : 0;
+  const thumbH = Math.max(28, trackH * (CONTENT_H / Math.max(CONTENT_H, m.offers.length * (OFFER_H + OFFER_GAP))));
+  const thumbY = trackY + frac * (trackH - thumbH);
+  ctx.save();
+  roundRect(ctx, trackX, trackY, 6, trackH, 3);
+  ctx.fillStyle = 'rgba(48,28,12,0.25)';
+  ctx.fill();
+  roundRect(ctx, trackX, thumbY, 6, thumbH, 3);
+  ctx.fillStyle = 'rgba(168,120,56,0.75)';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawTestModeSkillList(ctx: CanvasRenderingContext2D, m: MerchantUiState, loadout: LoadoutState, merit: MeritState): void {
+  const vp = merchantScrollViewport();
+  ctx.save();
+  ctx.beginPath();
+  roundRect(ctx, vp.x - 2, vp.y, vp.w + 4, vp.h, 8);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(48,28,12,0.08)';
+  ctx.fillRect(vp.x, vp.y, vp.w, vp.h);
+  for (let i = 0; i < m.offers.length; i++) {
+    drawOfferCard(ctx, m, loadout, merit, i, m.scrollY);
+  }
+  ctx.restore();
+  drawMerchantScrollBar(ctx, m);
+  ctx.fillStyle = 'rgba(90,58,28,0.72)';
+  ctx.font = '12px "PingFang SC", serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`全部技能 ${m.offers.length} 项 · 上下滑动浏览`, PX + 18, CONTENT_TOP - 18);
+}
+
 /** 水墨卷轴弹窗（叠在首页之上） */
 export function drawMerchant(
   ctx: CanvasRenderingContext2D,
@@ -993,15 +1105,32 @@ export function drawMerchant(
 ): void {
   if (!m.open) return;
 
-  drawInkPopupFrame(ctx, PX, PY, PW, PH, '神秘商人', CLOSE_R);
+  const title = m.testMode ? '神秘商人 · 测试' : '神秘商人';
+  drawInkPopupFrame(ctx, PX, PY, PW, PH, title, CLOSE_R);
 
-  drawInkTab(ctx, TAB_SHOP, '商店', m.tab === 'shop');
-  drawInkTab(ctx, TAB_LOTTERY, '抽奖', m.tab === 'lottery');
+  if (!m.testMode) {
+    drawInkTab(ctx, TAB_SHOP, '商店', m.tab === 'shop');
+    drawInkTab(ctx, TAB_LOTTERY, '抽奖', m.tab === 'lottery');
+  } else {
+    roundRect(ctx, PX + 18, TAB_SHOP.y, PW - 36, TAB_SHOP.h, 8);
+    ctx.fillStyle = 'rgba(168,120,56,0.22)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(168,120,56,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#6a4018';
+    ctx.font = 'bold 14px "PingFang SC", "STKaiti", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('测试模式 · 全部技能（滚动切换）', PX + PW / 2, TAB_SHOP.y + TAB_SHOP.h / 2);
+  }
 
   drawInkResourceBar(ctx, MERIT_BAR, '功德', String(merit.merit), 0, 'icon-merit');
 
-  if (m.tab === 'shop') {
-    for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, loadout, merit, i);
+  if (m.testMode) {
+    drawTestModeSkillList(ctx, m, loadout, merit);
+  } else if (m.tab === 'shop') {
+    for (let i = 0; i < m.offers.length; i++) drawOfferCard(ctx, m, loadout, merit, i, 0);
   } else {
     drawLotteryGrid(ctx, m);
   }

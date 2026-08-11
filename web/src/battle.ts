@@ -59,7 +59,7 @@ import {
   type BoardPowerResult,
   type PressurePlan,
 } from './board-power';
-import { activeById, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
+import { activeById, isPillActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
 import {
   DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses,
@@ -192,10 +192,8 @@ export const TUNING = {
   meteorRadius: 1.4, // 主动陨石半径
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
-  atkBuffMul: 1.4, // 主动仙丹攻击倍率（与风火轮对齐）
-  frqBuffMul: 1.4, // 主动风火轮攻速倍率
-  atkBuffDur: 8, // 仙丹持续（秒）
-  frqBuffDur: 8, // 风火轮持续（秒）
+  atkBuffMul: 1.4, // 仙丹单体攻击倍率
+  frqBuffMul: 1.4, // 风火轮单体攻速倍率
   freezeStunDur: 2.5, // 冰封定身时长（全场；CD 24s）
   // —— 武将大招控制分档 ——
   heroStunDurMain: 1.5, // 满5 定身时长
@@ -415,6 +413,10 @@ export interface PlacedUnit {
   weakenImmuneT: number;
   rangeCutImmuneT: number;
   knockdownImmuneT: number;
+  /** 仙丹：本局该兵器攻击 +40%（每单位一次） */
+  pillAtk?: boolean;
+  /** 风火轮：本局该兵器攻速 +40%（每单位一次） */
+  pillFrq?: boolean;
 }
 
 /** 新建落位兵器的公共初始状态（含减益计时器）；可选朝向出怪口 */
@@ -512,6 +514,10 @@ export interface ActiveGeneral {
   tier: number; // 取两字阶数的较小值
   cells: [Cell, Cell];
   state: GeneralState;
+  /** 仙丹：本局攻击 +40% */
+  pillAtk?: boolean;
+  /** 风火轮：本局攻速 +40% */
+  pillFrq?: boolean;
 }
 
 export interface Monster {
@@ -664,7 +670,8 @@ export class Battle {
   gardenOn = false; // 是否装备了「蟠桃园」被动技能（每日购买）
   private plantTimer = 0; // 距下次自动种树累积秒数
   private plantBank = 0; // 满格时蟠桃园累积的「虚拟树」，达阈值后合并升级
-  palmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（渲染 + 逐帧位移）
+  palmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（玩家半场）
+  aiPalmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（AI 半场）
   playerSkillFx: SkillFx | null = null; // 玩家半场主动技能爆发特效
   aiSkillFx: SkillFx | null = null; // AI 半场主动技能爆发特效
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
@@ -690,8 +697,6 @@ export class Battle {
   // —— 主动技能（功德购买、每日装备，最多 2 个；CD 制、手动触发）——
   // 每个装备的技能一个运行时槽：独立冷却计时。
   activeSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
-  atkBuffT = 0; atkBuffMul = 1; // 仙丹：全体攻击临时增益
-  frqBuffT = 0; frqBuffMul = 1; // 风火轮：全体攻速临时增益
   ultFlash = 0; // AOE 技能(紧箍咒/陨石)释放特效计时(秒)
   ultCenter: { c: number; r: number } | null = null; // AOE 爆心（渲染用）
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
@@ -716,8 +721,6 @@ export class Battle {
   aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
-  private aiAtkBuffT = 0;
-  private aiFrqBuffT = 0;
   private aiShovelTimer = 0;
   private aiTierBoosted = new Set<string>();
   private aiMeteorPending = false;
@@ -2499,47 +2502,62 @@ export class Battle {
   }
 
   // 如来神掌：从最前怪沿路径逐格回推（动画结束后各怪 dist 减 cells）
-  private startPalmPush(cells: number): void {
-    if (this.monsters.length === 0) return;
+  private startPalmPush(cells: number, ai = false): void {
+    const list = ai ? this.aiMonsters : this.monsters;
+    if (list.length === 0) return;
     let frontStartDist = 0;
-    for (const m of this.monsters) if (m.dist > frontStartDist) frontStartDist = m.dist;
-    this.palmPushFx = {
+    for (const m of list) if (m.dist > frontStartDist) frontStartDist = m.dist;
+    const fx: PalmPushFx = {
       t: 0,
       dur: SKILL_FX_DUR,
       cells,
       frontStartDist,
-      snapshots: this.monsters.map((m) => ({ id: m.id, startDist: m.dist })),
+      snapshots: list.map((m) => ({ id: m.id, startDist: m.dist })),
     };
+    if (ai) this.aiPalmPushFx = fx;
+    else this.palmPushFx = fx;
   }
 
-  private updatePalmPush(dt: number): void {
-    const fx = this.palmPushFx;
-    if (!fx) return;
+  private palmPushWaveDistFor(fx: PalmPushFx | null): number | null {
+    if (!fx) return null;
+    const p = Math.min(1, fx.t / fx.dur);
+    const eased = 1 - (1 - p) ** 2;
+    return fx.frontStartDist - fx.cells * eased;
+  }
+
+  private updateOnePalmPush(fx: PalmPushFx | null, monsters: Monster[], dt: number): PalmPushFx | null {
+    if (!fx) return null;
     fx.t += dt;
     const p = Math.min(1, fx.t / fx.dur);
     const eased = 1 - (1 - p) ** 2;
     const pushed = fx.cells * eased;
     const snapById = new Map(fx.snapshots.map((s) => [s.id, s.startDist]));
-    for (const m of this.monsters) {
+    for (const m of monsters) {
       const start = snapById.get(m.id);
       if (start !== undefined) m.dist = Math.max(0, start - pushed);
     }
     if (p >= 1) {
-      for (const m of this.monsters) {
+      for (const m of monsters) {
         const start = snapById.get(m.id);
         if (start !== undefined) m.dist = Math.max(0, start - fx.cells);
       }
-      this.palmPushFx = null;
+      return null;
     }
+    return fx;
+  }
+
+  private updatePalmPush(dt: number): void {
+    this.palmPushFx = this.updateOnePalmPush(this.palmPushFx, this.monsters, dt);
+    this.aiPalmPushFx = this.updateOnePalmPush(this.aiPalmPushFx, this.aiMonsters, dt);
   }
 
   /** 回推波前位置（格），供渲染沿路径绘制掌印 */
   palmPushWaveDist(): number | null {
-    const fx = this.palmPushFx;
-    if (!fx) return null;
-    const p = Math.min(1, fx.t / fx.dur);
-    const eased = 1 - (1 - p) ** 2;
-    return fx.frontStartDist - fx.cells * eased;
+    return this.palmPushWaveDistFor(this.palmPushFx);
+  }
+
+  aiPalmPushWaveDist(): number | null {
+    return this.palmPushWaveDistFor(this.aiPalmPushFx);
   }
 
   private setSkillFx(kind: SkillFxKind, cell: { c: number; r: number }, ai: boolean): void {
@@ -2753,7 +2771,7 @@ export class Battle {
 
   private castAiMeteor(): void {
     if (!this.aiMods.meteor || this.aiMonsters.length === 0) return;
-    this.doAiMeteor(TUNING.meteorPassiveDmgMul);
+    this.doAiMeteor(TUNING.meteorPassiveDmgMul, true);
   }
 
   // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
@@ -3177,7 +3195,7 @@ export class Battle {
       const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p));
       if (inRangeRaw.length === 0) continue;
       const inRange = this.sortCombatTargets(inRangeRaw);
-      const dmg = damage(stat.atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
@@ -3195,7 +3213,7 @@ export class Battle {
         const tp = inRange[0]!.p;
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
-      u.cooldown = 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
+      u.cooldown = 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1));
     }
   }
 
@@ -3221,7 +3239,7 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(atk * this.aiMods.atkMul * (this.aiAtkBuffT > 0 ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
+      const dmg = damage(atk * this.aiMods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -3237,7 +3255,7 @@ export class Battle {
         s.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
-      s.cooldown = 1 / (frq * this.aiMods.frqMul * (this.aiFrqBuffT > 0 ? TUNING.frqBuffMul : 1));
+      s.cooldown = 1 / (frq * this.aiMods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1));
     }
   }
 
@@ -3293,8 +3311,12 @@ export class Battle {
         this.creditAiKill(m.isBoss, !m.isBoss && !m.isMiniBoss && !!m.skill, m.isMiniBoss);
         continue;
       } // 击杀产桃（精英/小Boss/大Boss 分档，对齐玩家语义）
-      m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
-        * (this.aiMonsterInMudZone(m) ? 0.82 : 1) * dt;
+      if (m.stunT > 0) {
+        m.stunT = Math.max(0, m.stunT - dt);
+      } else if (!this.aiPalmPushFx) {
+        m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
+          * (this.aiMonsterInMudZone(m) ? 0.82 : 1) * dt;
+      }
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
       if (m.dist >= this.aiPathLen) {
         this.aiTangsengHP -= 1;
@@ -3378,7 +3400,7 @@ export class Battle {
       );
       if (inRange.length === 0) continue;
       // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊抬高攻击
-      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
+      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul();
       const dmg = damage(stat.atk * atkMul); // 道具增伤 + 减益
       const color = this.unitColor(u.type);
       let hitCount = 0;
@@ -3398,7 +3420,7 @@ export class Battle {
         this.emit('attack');
       }
       // 攻速修正(道具/功德 frqMul + 风火轮临时增益) + 减速减益(拉长间隔)
-      u.cooldown = (1 / (stat.frq * this.mods.frqMul * (this.frqBuffT > 0 ? this.frqBuffMul : 1))) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
+      u.cooldown = (1 / (stat.frq * this.mods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1))) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }
   }
 
@@ -3438,7 +3460,7 @@ export class Battle {
           || this.aiMonsters.some((m) => m.isBoss || m.isMiniBoss);
       case 'atkBuff':
       case 'frqBuff':
-        return this.aiDpsPieceCount() >= 2;
+        return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(def.effect);
       default: {
         const _exhaustive: never = effect;
         void _exhaustive;
@@ -3545,13 +3567,13 @@ export class Battle {
   generalAtk(g: ActiveGeneral): number {
     const base = generalStat(g.def, g.tier).atk;
     const wb = this.weaponBonuses[g.def.id];
-    return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (this.atkBuffT > 0 ? this.atkBuffMul : 1) * this.bondAtkMul();
+    return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul();
   }
 
   // 计入神兵加成的武将攻速/范围
   generalFrq(g: ActiveGeneral): number {
     const wb = this.weaponBonuses[g.def.id];
-    return generalStat(g.def, g.tier).frq * (1 + (wb?.frq ?? 0)) * this.mods.frqMul * (this.frqBuffT > 0 ? this.frqBuffMul : 1);
+    return generalStat(g.def, g.tier).frq * (1 + (wb?.frq ?? 0)) * this.mods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1);
   }
   generalRge(g: ActiveGeneral): number {
     const wb = this.weaponBonuses[g.def.id];
@@ -3879,8 +3901,6 @@ export class Battle {
       }
       if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt);
     }
-    if (this.atkBuffT > 0) this.atkBuffT = Math.max(0, this.atkBuffT - dt);
-    if (this.frqBuffT > 0) this.frqBuffT = Math.max(0, this.frqBuffT - dt);
   }
 
   private updateAiActives(dt: number): void {
@@ -3892,8 +3912,6 @@ export class Battle {
         slot.ready = true;
       }
     }
-    if (this.aiAtkBuffT > 0) this.aiAtkBuffT = Math.max(0, this.aiAtkBuffT - dt);
-    if (this.aiFrqBuffT > 0) this.aiFrqBuffT = Math.max(0, this.aiFrqBuffT - dt);
   }
 
   /** AI 主动技能：按优先级择时释放（每帧至多一个，未满足时机则保留 CD）。 */
@@ -3918,35 +3936,41 @@ export class Battle {
     if (!this.aiShouldTriggerActive(def.effect)) return false;
     switch (def.effect) {
       case 'palm':
-        for (const m of this.aiMonsters) {
-          const p = posAlong(this.aiPath, m.dist);
-          this.bursts.push({ kind: 'hit', c: p.c, r: p.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#8fd3ff' });
-        }
-        for (const m of this.aiMonsters) m.dist = Math.max(0, m.dist - TUNING.palmPushCells);
+        this.startPalmPush(TUNING.palmPushCells, true);
+        this.emit('palm');
         break;
       case 'meteor':
         this.doAiMeteor(TUNING.meteorDmgMul, true);
+        this.emit('ult');
         break;
       case 'atkBuff':
         this.aiAtkBuffT = TUNING.atkBuffDur;
         this.setSkillFx('atkBuff', this.aiTangseng, true);
+        this.emit('item');
         break;
       case 'frqBuff':
         this.aiFrqBuffT = TUNING.frqBuffDur;
         this.setSkillFx('frqBuff', this.aiTangseng, true);
+        this.emit('item');
         break;
       case 'freeze': {
         for (const m of this.aiMonsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
         const fc = this.frontMonsterCell(true);
         if (fc) this.setSkillFx('freeze', fc, true);
+        this.emit('item');
         break;
       }
       case 'jinggu':
         this.doAiJingu();
+        this.emit('ult');
         break;
+    }
+    if (def.effect === 'meteor' || def.effect === 'jinggu') {
+      this.ultFlash = Math.max(this.ultFlash, 0.35);
     }
     slot.cd = slot.cdMax;
     slot.ready = false;
+    slot.flash = 0.6;
     return true;
   }
 
@@ -3974,6 +3998,126 @@ export class Battle {
     return this.status === 'playing' && !!slot && slot.ready;
   }
 
+  /** 玩家半场：格上兵器或激活武将 */
+  private playerPillTarget(cell: Cell): { kind: 'unit'; u: PlacedUnit } | { kind: 'general'; g: ActiveGeneral } | null {
+    const u = this.units.get(cellKey(cell.c, cell.r));
+    if (u) return { kind: 'unit', u };
+    const g = this.activeGenerals().find((ag) => ag.cells.some((c) => c.c === cell.c && c.r === cell.r));
+    return g ? { kind: 'general', g } : null;
+  }
+
+  canApplyPill(cell: Cell, effect: 'atkBuff' | 'frqBuff'): boolean {
+    const t = this.playerPillTarget(cell);
+    if (!t) return false;
+    if (effect === 'atkBuff') return t.kind === 'unit' ? !t.u.pillAtk : !t.g.pillAtk;
+    return t.kind === 'unit' ? !t.u.pillFrq : !t.g.pillFrq;
+  }
+
+  private pillTargetLabel(t: { kind: 'unit'; u: PlacedUnit } | { kind: 'general'; g: ActiveGeneral }): string {
+    return t.kind === 'unit' ? `${UNITS[t.u.type].name} Lv.${t.u.tier}` : t.g.def.name;
+  }
+
+  /** 仙丹/风火轮：拖到单体兵器或武将，本局 +40%，每单位各一次 */
+  applyPillActive(i: number, cell: Cell): boolean {
+    if (this.status !== 'playing') return false;
+    const slot = this.activeSlots[i];
+    if (!slot?.ready) return false;
+    const def = activeById(slot.id);
+    if (!def || !isPillActiveEffect(def.effect)) return false;
+    const t = this.playerPillTarget(cell);
+    if (!t) {
+      this.message = '请拖到兵器或武将上';
+      return false;
+    }
+    const isAtk = def.effect === 'atkBuff';
+    const already = t.kind === 'unit' ? (isAtk ? t.u.pillAtk : t.u.pillFrq) : (isAtk ? t.g.pillAtk : t.g.pillFrq);
+    if (already) {
+      this.message = isAtk ? '该单位已使用过仙丹' : '该单位已使用过风火轮';
+      return false;
+    }
+    if (t.kind === 'unit') {
+      if (isAtk) t.u.pillAtk = true;
+      else t.u.pillFrq = true;
+    } else if (isAtk) {
+      t.g.pillAtk = true;
+    } else {
+      t.g.pillFrq = true;
+    }
+    this.setSkillFx(isAtk ? 'atkBuff' : 'frqBuff', cell, false);
+    const statLabel = isAtk ? '攻击' : '攻速';
+    this.message = `${def.name}！${this.pillTargetLabel(t)} ${statLabel} +40%（本局）`;
+    slot.cd = slot.cdMax;
+    slot.ready = false;
+    slot.flash = 0.6;
+    this.ultFlash = Math.max(this.ultFlash, 0.35);
+    this.emit('item');
+    return true;
+  }
+
+  /** 介绍弹窗：已施加的单体增益列表 */
+  pillBuffRoster(effect: 'atkBuff' | 'frqBuff'): string[] {
+    const lines: string[] = [];
+    const isAtk = effect === 'atkBuff';
+    for (const u of this.units.values()) {
+      if (isAtk ? u.pillAtk : u.pillFrq) lines.push(`${UNITS[u.type].name} Lv.${u.tier}`);
+    }
+    for (const g of this.activeGenerals()) {
+      if (isAtk ? g.pillAtk : g.pillFrq) lines.push(g.def.name);
+    }
+    return lines;
+  }
+
+  private aiHasPillTarget(effect: 'atkBuff' | 'frqBuff'): boolean {
+    const isAtk = effect === 'atkBuff';
+    for (const g of this.aiActiveGenerals()) {
+      if (isAtk ? !g.pillAtk : !g.pillFrq) return true;
+    }
+    for (const u of this.aiUnits) {
+      if (isAtk ? !u.pillAtk : !u.pillFrq) return true;
+    }
+    return false;
+  }
+
+  private pickAiPillTarget(effect: 'atkBuff' | 'frqBuff'): Cell | null {
+    const isAtk = effect === 'atkBuff';
+    let best: { cell: Cell; score: number } | null = null;
+    const consider = (cell: Cell, score: number, used: boolean) => {
+      if (used || score <= 0) return;
+      if (!best || score > best.score) best = { cell, score };
+    };
+    for (const g of this.aiActiveGenerals()) {
+      const stat = generalStat(g.def, g.tier);
+      const wb = this.aiWeaponBonuses[g.def.id];
+      const score = isAtk
+        ? stat.atk * (1 + (wb?.atk ?? 0))
+        : stat.frq * (1 + (wb?.frq ?? 0));
+      consider(g.cells[0], score, isAtk ? !!g.pillAtk : !!g.pillFrq);
+    }
+    for (const u of this.aiUnits) {
+      const stat = getUnitStat(u.type, u.tier);
+      consider(u.cell, isAtk ? stat.atk : stat.frq, isAtk ? !!u.pillAtk : !!u.pillFrq);
+    }
+    return best?.cell ?? null;
+  }
+
+  private applyAiPillActive(i: number, effect: 'atkBuff' | 'frqBuff'): boolean {
+    const cell = this.pickAiPillTarget(effect);
+    if (!cell) return false;
+    const isAtk = effect === 'atkBuff';
+    const u = this.aiUnits.find((x) => x.cell.c === cell.c && x.cell.r === cell.r);
+    if (u) {
+      if (isAtk) u.pillAtk = true;
+      else u.pillFrq = true;
+    } else {
+      const g = this.aiActiveGenerals().find((ag) => ag.cells.some((c) => c.c === cell.c && c.r === cell.r));
+      if (!g) return false;
+      if (isAtk) g.pillAtk = true;
+      else g.pillFrq = true;
+    }
+    this.setSkillFx(isAtk ? 'atkBuff' : 'frqBuff', cell, true);
+    return true;
+  }
+
   // 触发第 i 个主动技能。返回是否成功（就绪且效果生效才进入冷却）。
   triggerActive(i: number): boolean {
     if (this.status !== 'playing') return false;
@@ -3998,18 +4142,6 @@ export class Battle {
         this.message = '天降陨石！';
         this.emit('ult');
         break;
-      case 'atkBuff':
-        this.atkBuffT = TUNING.atkBuffDur; this.atkBuffMul = TUNING.atkBuffMul;
-        this.setSkillFx('atkBuff', this.tangsengRenderPos(), false);
-        this.message = '仙丹！全体攻击 +40%（8秒）';
-        this.emit('item');
-        break;
-      case 'frqBuff':
-        this.frqBuffT = TUNING.frqBuffDur; this.frqBuffMul = TUNING.frqBuffMul;
-        this.setSkillFx('frqBuff', this.tangsengRenderPos(), false);
-        this.message = '风火轮！全体攻速 +40%（8秒）';
-        this.emit('item');
-        break;
       case 'freeze': {
         for (const m of this.monsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
         const fc = this.frontMonsterCell(false);
@@ -4029,10 +4161,6 @@ export class Battle {
     slot.flash = 0.6;
     return true;
   }
-
-  /** AI 半场仙丹/风火轮剩余（渲染用） */
-  aiAtkBuffRemaining(): number { return this.aiAtkBuffT; }
-  aiFrqBuffRemaining(): number { return this.aiFrqBuffT; }
 
   // 紧箍咒：以最靠前妖怪为中心的大范围 AOE 爆发（复用原英雄绝招效果）。
   private doJingu(): void {
@@ -4136,6 +4264,7 @@ export class Battle {
     this.ultFlash = 0;
     this.ultCenter = null;
     this.palmPushFx = null;
+    this.aiPalmPushFx = null;
     this.playerSkillFx = null;
     this.aiSkillFx = null;
     for (const u of this.units.values()) {

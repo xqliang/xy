@@ -77,6 +77,13 @@ export function addMerit(s: MeritState, amount: number): MeritState {
   return next;
 }
 
+/** 将功德设为指定值（测试/调试入口用） */
+export function setMerit(s: MeritState, amount: number): MeritState {
+  const next: MeritState = { merit: Math.max(0, Math.floor(amount)), levels: { ...s.levels } };
+  saveMerit(next);
+  return next;
+}
+
 // 购买：功德足够且未满级则升一级。返回新状态与是否成功。
 export function buyUpgrade(s: MeritState, id: string): { state: MeritState; ok: boolean; reason?: string } {
   const up = upgradeById(id);

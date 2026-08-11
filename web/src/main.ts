@@ -46,8 +46,8 @@ import { loadRank, recordWin, recordLose, rankName, type RankState, type RankCha
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
-import { drawMenu, menuButtonAt, STAMINA_PLUS_BTN } from './menu';
-import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
+import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
+import { loadMerit, metaBonuses, meritReward, addMerit, setMerit, buyUpgrade, type MeritState } from './merit';
 import {
   loadLoadout,
   buyActive,
@@ -112,8 +112,13 @@ import {
 import {
   merchantClosed,
   openMerchant,
+  openMerchantTest,
   drawMerchant,
   merchantHitAt,
+  merchantMaxScroll,
+  merchantScrollViewportContains,
+  merchantTestScrollAreaContains,
+  merchantApplyWheel,
   applyMerchantHitFull,
   merchantActiveRowRect,
   merchantPassiveRowRect,
@@ -266,6 +271,17 @@ let menuToast = '';
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
 let menuHoverId: string | null = null;
+/** 连续点版本号 → 神秘商人测试入口 */
+const VERSION_SECRET_TAPS = 7;
+const VERSION_SECRET_TAP_MS = 2500;
+let versionTapCount = 0;
+let versionTapLastAt = 0;
+let versionPointerDown = false;
+let merchantPointerActive = false;
+let merchantDragged = false;
+let merchantDownX = 0;
+let merchantDownY = 0;
+let merchantDownScroll = 0;
 let shopToast = '';
 let shopPopup: ShopPopupState | null = null; // 商品详情/购买确认弹窗（null=未开）
 // 商城竖向滚动状态 + 拖拽跟踪（拖动=滚动，轻点=购买）
@@ -707,6 +723,21 @@ function abortBattleToMenu(): void {
   screen = 'menu';
 }
 
+/** 首页连点版本号 7 次：功德设为 500 并打开神秘商人（测试用） */
+function handleVersionSecretTap(): void {
+  const now = performance.now();
+  if (now - versionTapLastAt > VERSION_SECRET_TAP_MS) versionTapCount = 0;
+  versionTapLastAt = now;
+  versionTapCount++;
+  if (versionTapCount < VERSION_SECRET_TAPS) return;
+  versionTapCount = 0;
+  playSfx('click');
+  merit = setMerit(merit, 500);
+  merchant = openMerchantTest(loadout);
+  menuToast = '测试入口：功德 500 · 全部技能';
+  scheduleFrame();
+}
+
 function handleMenu(id: string) {
   playSfx('click');
   if (id === 'settings') {
@@ -899,13 +930,26 @@ function handleMenuPopupDrag(x: number): void {
 function handleMerchantPointer(x: number, y: number): boolean {
   if (!merchant.open) return false;
   const hit = merchantHitAt(x, y, merchant, loadout);
-  if (hit === null) return true;
+  if (hit === null) {
+    if (merchant.testMode && merchantTestScrollAreaContains(x, y)) return false;
+    return true;
+  }
   playSfx('click');
   const res = applyMerchantHitFull(hit, merchant, loadout, merit);
   merchant = res.merchant;
   loadout = res.loadout;
   merit = res.merit;
   return true;
+}
+
+function applyMerchantHitAt(x: number, y: number): void {
+  const hit = merchantHitAt(x, y, merchant, loadout);
+  if (!hit) return;
+  playSfx('click');
+  const res = applyMerchantHitFull(hit, merchant, loadout, merit);
+  merchant = res.merchant;
+  loadout = res.loadout;
+  merit = res.merit;
 }
 
 function bindBattleWeaponPickup(): void {
@@ -1122,9 +1166,40 @@ function onPointerDown(e: PointerEvent) {
     return;
   }
   if (screen === 'menu') {
-    if (handleMerchantPointer(x, y)) return;
+    if (merchant.open && merchant.testMode) {
+      const hit = merchantHitAt(x, y, merchant, loadout);
+      if (
+        hit &&
+        (hit.kind === 'close' ||
+          hit.kind === 'continue' ||
+          hit.kind === 'unequipActive' ||
+          hit.kind === 'unequipPassive' ||
+          hit.kind === 'cancelOfferBuy' ||
+          hit.kind === 'confirmOfferBuy')
+      ) {
+        applyMerchantHitAt(x, y);
+        return;
+      }
+      if (merchantTestScrollAreaContains(x, y)) {
+        merchantPointerActive = true;
+        merchantDragged = false;
+        merchantDownX = x;
+        merchantDownY = y;
+        merchantDownScroll = merchant.scrollY;
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (handleMerchantPointer(x, y)) return;
+    } else if (handleMerchantPointer(x, y)) {
+      return;
+    }
     if (handleMenuPopupPointer(x, y)) {
       if (menuSliderDrag || helpPointerActive) canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (menuPopup === 'none' && !merchant.open && menuVersionHitAt(x, y)) {
+      versionPointerDown = true;
+      canvas.setPointerCapture(e.pointerId);
       return;
     }
     menuDownId = menuButtonAt(x, y);
@@ -1303,6 +1378,14 @@ function onPointerMove(e: PointerEvent) {
       }
       return;
     }
+    if (merchantPointerActive && merchant.open && merchant.testMode) {
+      const dy = y - merchantDownY;
+      if (Math.abs(dy) > 6) merchantDragged = true;
+      const max = merchantMaxScroll(merchant);
+      merchant = { ...merchant, scrollY: Math.max(0, Math.min(max, merchantDownScroll - dy)) };
+      scheduleFrame();
+      return;
+    }
     if (menuPopup === 'none' && !merchant.open) {
       const nextHover = menuButtonAt(x, y);
       if (nextHover !== menuHoverId) {
@@ -1343,7 +1426,24 @@ function onPointerMove(e: PointerEvent) {
 }
 function onPointerUp(e?: PointerEvent, cancelled = false) {
   if (screen === 'menu') {
+    if (merchantPointerActive) {
+      const upX = e && !cancelled ? toLogical(e.clientX, e.clientY).x : merchantDownX;
+      const upY = e && !cancelled ? toLogical(e.clientX, e.clientY).y : merchantDownY;
+      const wasDrag = merchantDragged;
+      merchantPointerActive = false;
+      merchantDragged = false;
+      if (!cancelled && !wasDrag && merchant.open && merchant.testMode) {
+        applyMerchantHitAt(upX, upY);
+      }
+    }
     menuSliderDrag = null;
+    if (versionPointerDown) {
+      versionPointerDown = false;
+      if (!cancelled && e) {
+        const { x, y } = toLogical(e.clientX, e.clientY);
+        if (menuVersionHitAt(x, y) && menuPopup === 'none') handleVersionSecretTap();
+      }
+    }
     if (helpPointerActive) {
       const upX = e && !cancelled ? toLogical(e.clientX, e.clientY).x : helpDownX;
       const upY = e && !cancelled ? toLogical(e.clientX, e.clientY).y : helpDownY;
@@ -1462,6 +1562,12 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
 
 // 桌面端滚轮滚动商城
 canvas.addEventListener('wheel', (e) => {
+  if (screen === 'menu' && merchant.open && merchant.testMode) {
+    e.preventDefault();
+    merchant = merchantApplyWheel(merchant, e.deltaY);
+    scheduleFrame();
+    return;
+  }
   if (screen === 'menu' && menuPopup === 'help') {
     e.preventDefault();
     helpScrollY = Math.max(0, Math.min(helpMaxScroll(ctx), helpScrollY + e.deltaY));

@@ -6,8 +6,8 @@
 // 技能效果种类：
 // - palm    如来神掌：把场上所有妖怪沿路击退若干格
 // - meteor  天降陨石：对最靠前的妖怪群造成波血比例伤害
-// - atkBuff 仙丹：短时间全体攻击力提升
-// - frqBuff 风火轮：短时间全体攻速提升
+// - atkBuff 仙丹：拖到单体兵器/武将，攻击 +40%（本局，每单位一次）
+// - frqBuff 风火轮：拖到单体兵器/武将，攻速 +40%（本局，每单位一次）
 // - freeze  冰封定身：全体妖怪短暂定身
 // - jinggu  紧箍咒：以最前妖怪为中心的大范围 AOE 爆发
 export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' | 'jinggu';
@@ -35,9 +35,9 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
   { id: 'act_meteor', name: '天降陨石', icon: '陨', cd: 28, cost: 60, effect: 'meteor',
     desc: '对最前方妖怪群砸下波血×2.2 的伤害（半径 1.4）' },
   { id: 'act_atk', name: '仙丹', icon: '丹', cd: 22, cost: 50, effect: 'atkBuff',
-    desc: '8 秒内全体攻击 +40%' },
+    desc: '拖到兵器或武将：该单体攻击 +40%（本局有效，每单位仅一次）' },
   { id: 'act_frq', name: '风火轮', icon: '轮', cd: 22, cost: 50, effect: 'frqBuff',
-    desc: '8 秒内全体攻速 +40%' },
+    desc: '拖到兵器或武将：该单体攻速 +40%（本局有效，每单位仅一次）' },
   { id: 'act_freeze', name: '冰封定身', icon: '冰', cd: 24, cost: 70, effect: 'freeze',
     desc: '全体妖怪定身 2.5 秒' },
   { id: 'act_jinggu', name: '紧箍咒', icon: '咒', cd: 55, cost: 70, effect: 'jinggu',
@@ -46,6 +46,11 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
 
 export function activeById(id: string): ActiveSkillDef | undefined {
   return ACTIVE_SKILLS.find((a) => a.id === id);
+}
+
+/** 仙丹 / 风火轮：需拖到单体目标，非即时全场释放 */
+export function isPillActiveEffect(effect: ActiveEffect): boolean {
+  return effect === 'atkBuff' || effect === 'frqBuff';
 }
 
 /** 是否可上架/装备（未标记 disabled） */

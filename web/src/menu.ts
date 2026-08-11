@@ -352,3 +352,10 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(`v${APP_VERSION}`, VIEW_W - 14, VIEW_H - 12);
 }
+
+/** 右下角版本号点击区（神秘商人隐藏测试入口） */
+export const VERSION_HIT = { x: VIEW_W - 80, y: VIEW_H - 30, w: 80, h: 30 };
+
+export function menuVersionHitAt(x: number, y: number): boolean {
+  return x >= VERSION_HIT.x && x <= VERSION_HIT.x + VERSION_HIT.w && y >= VERSION_HIT.y && y <= VERSION_HIT.y + VERSION_HIT.h;
+}

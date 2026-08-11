@@ -2186,6 +2186,19 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
 // 如来神掌资源图默认「自上而下拍击」，+Y 为推出方向；rotate 后与沿路回推切线对齐
 const PALM_PUSH_ICON_ROT_OFFSET = -Math.PI / 2;
 
+/** 沿路 dist 处、朝向 dist 减小（回推）方向的切线角（像素坐标，任意路径） */
+function pathPushBackAngleAlong(path: Cell[], dist: number): number {
+  const eps = 0.12;
+  const p0 = posAlong(path, dist);
+  const p1 = posAlong(path, Math.max(0, dist - eps));
+  const c0 = cellCenterPx(p0.c, p0.r);
+  const c1 = cellCenterPx(p1.c, p1.r);
+  const dx = c1.x - c0.x;
+  const dy = c1.y - c0.y;
+  if (dx * dx + dy * dy < 1e-4) return 0;
+  return Math.atan2(dy, dx);
+}
+
 /** 沿路 dist 处、朝向 dist 减小（回推）方向的切线角（像素坐标） */
 function pathPushBackAnglePx(map: GameMap, dist: number): number {
   const eps = 0.12;
@@ -5349,23 +5362,64 @@ function drawBondHudChip(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 }
 
-function aiItemChipLayout(b: Battle): { index: number; x: number; y: number; r: number; color: string; icon: string }[] {
+type AiItemChip = {
+  index: number;
+  x: number;
+  y: number;
+  r: number;
+  color: string;
+  icon: string;
+  id: string;
+  kind: 'active' | 'passive';
+  slot?: { cd: number; cdMax: number; ready: boolean };
+};
+
+/** HUD 右上角 AI 道具：上行 2 个主动（大），下行最多 6 个被动（小），右对齐避免与波次重叠 */
+function aiItemChipLayout(b: Battle): AiItemChip[] {
   if (b.endless || b.aiPickedItems.length === 0) return [];
   if (b.status !== 'ready' && b.status !== 'playing') return [];
-  const r = 11;
-  const gap = r * 2 + 4;
-  const cy = HUD_H / 2;
-  const rightX = VIEW_W - 14;
-  const out: { index: number; x: number; y: number; r: number; color: string; icon: string }[] = [];
+  const actR = 13;
+  const pasR = 9;
+  const actY = HUD_H / 2 - 16;
+  const pasY = HUD_H / 2 + 16;
+  const rightX = VIEW_W - 12;
+  const actGap = actR * 2 + 5;
+  const pasGap = pasR * 2 + 3;
+  const out: AiItemChip[] = [];
+  let actIdx = 0;
+  let pasIdx = 0;
   for (let i = 0; i < b.aiPickedItems.length; i++) {
     const id = b.aiPickedItems[i]!;
     const act = activeById(id);
     if (act) {
-      out.push({ index: i, x: rightX - r - i * gap, y: cy, r, color: '#6ab0ff', icon: act.icon });
+      out.push({
+        index: i,
+        x: rightX - actR - actIdx * actGap,
+        y: actY,
+        r: actR,
+        color: '#6ab0ff',
+        icon: act.icon,
+        id,
+        kind: 'active',
+        slot: b.aiActiveSlots.find((s) => s.id === id),
+      });
+      actIdx++;
       continue;
     }
     const pas = passiveById(id);
-    if (pas) out.push({ index: i, x: rightX - r - i * gap, y: cy, r, color: '#6ab07a', icon: pas.icon });
+    if (pas) {
+      out.push({
+        index: i,
+        x: rightX - pasR - pasIdx * pasGap,
+        y: pasY,
+        r: pasR,
+        color: '#6ab07a',
+        icon: pas.icon,
+        id,
+        kind: 'passive',
+      });
+      pasIdx++;
+    }
   }
   return out;
 }
@@ -5382,7 +5436,36 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const chips = aiItemChipLayout(b);
   if (chips.length === 0) return;
   for (const it of chips) {
-    drawStatusChip(ctx, it.x, it.y, it.icon, it.color, it.r);
+    const ready = it.kind === 'passive' || it.slot?.ready !== false;
+    drawSkillGlyph(ctx, it.x, it.y, it.r - 1, it.icon, it.color, ready, it.id);
+    ctx.save();
+    ctx.strokeStyle = it.color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(it.x, it.y, it.r + 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    if (it.kind === 'active' && it.slot && !it.slot.ready && it.slot.cdMax > 0) {
+      const frac = it.slot.cd / it.slot.cdMax;
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(it.x, it.y);
+      ctx.arc(it.x, it.y, it.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else if (it.kind === 'active' && it.slot?.ready) {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
+      ctx.save();
+      ctx.globalAlpha = 0.28 + pulse * 0.2;
+      ctx.strokeStyle = '#6ab0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, it.r + 1 + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (ui.aiItemPopup === it.index) {
       ctx.save();
       ctx.strokeStyle = '#ffe27a';
