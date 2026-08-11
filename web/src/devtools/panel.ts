@@ -182,8 +182,13 @@ function ensureStyle(): void {
   border: 1px solid #d2bc8e; border-radius: 8px;
 }
 #${ROOT_ID} .xy-dt-fx-canvas {
-  width: 100%; height: 220px; background: #1a1510;
+  width: 100%; height: 280px; background: #1a1510;
   border: 1px solid #d2bc8e; border-radius: 8px; display: block;
+  position: sticky; top: 0; z-index: 5;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+}
+@media (max-width: 700px) {
+  #${ROOT_ID} .xy-dt-fx-canvas { height: 200px; }
 }
 #${ROOT_ID} .xy-dt-sim-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;

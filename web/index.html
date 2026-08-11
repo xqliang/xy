@@ -48,7 +48,10 @@
     </style>
   </head>
   <body>
-    <canvas id="game"></canvas>
+    <!-- width/height 属性 = render.ts 的 VIEW_W/VIEW_H（逻辑分辨率），
+         让浏览器在 JS 执行前就按正确宽高比撑满容器，避免默认 300x150 画布先小后大的闪烁。
+         若后续调整 VIEW_W/VIEW_H 需同步改这里。 -->
+    <canvas id="game" width="560" height="1044"></canvas>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

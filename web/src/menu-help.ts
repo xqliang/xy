@@ -358,7 +358,6 @@ function drawPinnedScrollHint(
   const canUp = scrollY > 2;
   let tip = '上下滑动查看更多';
   if (canDown && !canUp) tip = '↑ 上滑继续阅读 ↓';
-  else if (canUp && canDown) tip = '↑ 继续滑动 ↓';
   else if (canUp && !canDown) tip = '已到文末 · 可下滑回顶';
 
   ctx.fillStyle = '#8a4020';
