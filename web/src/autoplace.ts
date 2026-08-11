@@ -116,6 +116,8 @@ export interface AutoPlaceView {
   isActiveHeroCell(cell: Cell): boolean;
   /** 危险提示：怪物逼近唐僧，布阵/调位优先往唐僧方向靠拢 */
   dangerNear(): boolean;
+  /** 场上是否有怪；无怪时不做「互换座位」类微调（防来回切） */
+  monstersPresent?(): boolean;
   /** 格对「怪物即将路过」路段的贴近分（越高越好；无怪时为 0） */
   imminentPathScore(cell: Cell): number;
   /**
@@ -1365,6 +1367,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     }
     if (bestMove) return view.moveUnit(bestMove.from, bestMove.to);
 
+    // 无怪时两兵互换仅按贴路分，下一步会再换回来
+    if (view.monstersPresent && !view.monstersPresent()) return false;
+
     let bestSwap: { a: PlacedUnitLite; b: PlacedUnitLite; gain: number } | null = null;
     for (let i = 0; i < units.length; i++) {
       const a = units[i]!;
@@ -1847,6 +1852,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
    * 合成升阶后让高阶占输出更好的座位。
    */
   function trySwapHigherTierToBetterSeats(): boolean {
+    if (view.monstersPresent && !view.monstersPresent()) return false;
     const units = view.placedUnits();
     let best: { hi: PlacedUnitLite; lo: PlacedUnitLite; gain: number } | null = null;
     for (let i = 0; i < units.length; i++) {

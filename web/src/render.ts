@@ -16,7 +16,7 @@ import {
 } from './board';
 import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
 import { passiveById } from './passives';
-import { activeById } from './actives';
+import { activeById, isPillActiveEffect } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
@@ -118,6 +118,8 @@ export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
   dragTrayIndex: number | null; // 从候选区拖动的令牌下标
   dragPos: { x: number; y: number } | null;
+  dragActiveSlot: number | null; // 从主动技能槽拖出仙丹/风火轮
+  activeDragStart: { x: number; y: number } | null;
   trayDragStart: { x: number; y: number } | null; // 候选区按下起点（区分点击与拖拽）
   selected: Cell | null; // 点击选中的单位格（仅此时显示攻击范围+信息面板）
   selectedTrayIndex: number | null; // 点击选中的候选区字牌（查看武将信息）
@@ -420,15 +422,18 @@ function battleBuffLines(
   ctx: 'unit' | 'general' | 'monster',
   monster?: Monster,
   monsterSide: 'player' | 'ai' = 'player',
+  target?: { unit?: PlacedUnit; general?: ActiveGeneral },
 ): string[] {
   const lines: string[] = [];
   if (ctx !== 'monster') {
     if (b.bondActive()) lines.push(bondBuffText());
-    if (b.atkBuffT > 0) {
-      lines.push(`🔴仙丹 攻击+${Math.round((b.atkBuffMul - 1) * 100)}% ${formatRemainT(b.atkBuffT)}`);
+    const pillAtk = target?.unit?.pillAtk ?? target?.general?.pillAtk;
+    const pillFrq = target?.unit?.pillFrq ?? target?.general?.pillFrq;
+    if (pillAtk) {
+      lines.push(`🔴仙丹 攻击+${Math.round((TUNING.atkBuffMul - 1) * 100)}%（本局）`);
     }
-    if (b.frqBuffT > 0) {
-      lines.push(`🔥风火轮 攻速+${Math.round((b.frqBuffMul - 1) * 100)}% ${formatRemainT(b.frqBuffT)}`);
+    if (pillFrq) {
+      lines.push(`🔥风火轮 攻速+${Math.round((TUNING.frqBuffMul - 1) * 100)}%（本局）`);
     }
     if (b.mods.atkMul > 1.001) lines.push(`💊被动 攻击×${b.mods.atkMul.toFixed(2)}`);
     if (b.mods.frqMul > 1.001) lines.push(`💨被动 攻速×${b.mods.frqMul.toFixed(2)}`);
@@ -765,6 +770,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSkillFx(ctx, b.playerSkillFx);
   if (b.endless) drawEndlessPanel(ctx, b);
   else drawAiSide(ctx, b);
+  drawAiPalmPushFx(ctx, b);
   drawSkillFx(ctx, b.aiSkillFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
@@ -791,6 +797,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActivePopup(ctx, b, ui);
   drawAiItemPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
+  drawPillDropHints(ctx, b, ui);
   drawBanner(ctx, b);
 }
 
@@ -2219,9 +2226,19 @@ function drawRotatedPalmStamp(
   size: number,
   alpha: number,
 ): void {
-  const p = posAtDistance(map, dist);
+  drawRotatedPalmStampAlong(ctx, map.path, dist, size, alpha);
+}
+
+function drawRotatedPalmStampAlong(
+  ctx: CanvasRenderingContext2D,
+  path: Cell[],
+  dist: number,
+  size: number,
+  alpha: number,
+): void {
+  const p = posAlong(path, dist);
   const { x, y } = cellCenterPx(p.c, p.r);
-  const angle = pathPushBackAnglePx(map, dist) + PALM_PUSH_ICON_ROT_OFFSET;
+  const angle = pathPushBackAngleAlong(path, dist) + PALM_PUSH_ICON_ROT_OFFSET;
   const img = sprite(skillAssetKey('act_palm'));
   ctx.save();
   ctx.translate(x, y);
@@ -2268,6 +2285,39 @@ function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
 
   const mainSize = CELL * (0.5 + 0.08 * Math.sin(prog * Math.PI));
   drawRotatedPalmStamp(ctx, b.map, waveDist, mainSize, 0.96);
+}
+
+// AI 半场如来神掌：沿 aiPath 逐格回推
+function drawAiPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const fx = b.aiPalmPushFx;
+  const waveDist = b.aiPalmPushWaveDist();
+  if (!fx || waveDist === null) return;
+
+  const lo = Math.min(fx.frontStartDist, waveDist);
+  const hi = Math.max(fx.frontStartDist, waveDist);
+  const span = Math.max(0.01, hi - lo);
+  const prog = Math.min(1, fx.t / fx.dur);
+
+  for (let d = lo; d <= hi + 0.01; d += 0.42) {
+    if (Math.abs(d - waveDist) < 0.18) continue;
+    const t = (d - lo) / span;
+    drawRotatedPalmStampAlong(ctx, b.aiPath, d, CELL * (0.26 + 0.14 * t), 0.18 + 0.42 * t);
+  }
+
+  const wp = posAlong(b.aiPath, waveDist);
+  const { x, y } = cellCenterPx(wp.c, wp.r);
+  const pushAngle = pathPushBackAngleAlong(b.aiPath, waveDist);
+  ctx.save();
+  ctx.globalAlpha = 0.35 * (1 - prog * 0.4);
+  ctx.strokeStyle = '#ffe27a';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x, y, 10 + prog * 16, pushAngle + Math.PI * 0.55, pushAngle + Math.PI * 1.45);
+  ctx.stroke();
+  ctx.restore();
+
+  const mainSize = CELL * (0.5 + 0.08 * Math.sin(prog * Math.PI));
+  drawRotatedPalmStampAlong(ctx, b.aiPath, waveDist, mainSize, 0.96);
 }
 
 function skillFxFade(prog: number): number {
@@ -2494,113 +2544,52 @@ function drawUnitBuffAura(
   ctx.restore();
 }
 
-/** 棋盘上方增益条：持续 buff 倒计时 + 进度条 */
-function drawBattleBuffBanner(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.status !== 'playing' && b.status !== 'ready') return;
-  const entries: { label: string; pct: number; remain: number; max: number; fill: string; stroke: string }[] = [];
-  if (b.atkBuffT > 0) {
-    entries.push({
-      label: `仙丹 攻击+${Math.round((b.atkBuffMul - 1) * 100)}%`,
-      pct: b.atkBuffT / TUNING.atkBuffDur,
-      remain: b.atkBuffT,
-      max: TUNING.atkBuffDur,
-      fill: '#ff6040',
-      stroke: '#ffd0c0',
-    });
-  }
-  if (b.frqBuffT > 0) {
-    entries.push({
-      label: `风火轮 攻速+${Math.round((b.frqBuffMul - 1) * 100)}%`,
-      pct: b.frqBuffT / TUNING.frqBuffDur,
-      remain: b.frqBuffT,
-      max: TUNING.frqBuffDur,
-      fill: '#ffb830',
-      stroke: '#fff0b0',
-    });
-  }
-  if (entries.length === 0) return;
+/** 棋盘上方增益条（仙丹/风火轮已改单体永久增益，无全场倒计时条） */
+function drawBattleBuffBanner(_ctx: CanvasRenderingContext2D, _b: Battle) {
+  /* no-op */
+}
 
-  const barW = 168;
-  const barH = 8;
-  const rowH = 28;
-  const totalH = entries.length * rowH + 8;
-  const bx = VIEW_W / 2 - barW / 2;
-  let by = HUD_H + 6;
-
+/** 已施加仙丹/风火轮的单位：格角小字标记 */
+function drawPillBadge(ctx: CanvasRenderingContext2D, x: number, y: number, kind: TeamBuffKind) {
   ctx.save();
-  ctx.globalAlpha = 0.92;
-  roundRect(ctx, bx - 10, by - 4, barW + 20, totalH, 10);
-  ctx.fillStyle = 'rgba(40,24,12,0.72)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,220,160,0.35)';
+  ctx.fillStyle = kind === 'atk' ? '#ff6040' : '#ffb830';
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = 1.5;
+  ctx.font = `bold ${Math.round(CELL * 0.17)}px "PingFang SC", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const bx = x + CELL * 0.3;
+  const by = y - CELL * 0.3;
+  ctx.beginPath();
+  ctx.arc(bx, by, CELL * 0.13, 0, Math.PI * 2);
+  ctx.fill();
   ctx.stroke();
-
-  for (const e of entries) {
-    ctx.fillStyle = e.stroke;
-    ctx.font = 'bold 13px "PingFang SC", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(e.label, bx, by + 10);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#ffe8c8';
-    ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(formatRemainT(e.remain), bx + barW, by + 10);
-    const trackY = by + 18;
-    roundRect(ctx, bx, trackY, barW, barH, 4);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fill();
-    if (e.pct > 0.01) {
-      roundRect(ctx, bx, trackY, barW * e.pct, barH, 4);
-      ctx.fillStyle = e.fill;
-      ctx.fill();
-    }
-    by += rowH;
-  }
+  ctx.fillStyle = '#fff8e8';
+  ctx.fillText(kind === 'atk' ? '丹' : '轮', bx, by + 1);
   ctx.restore();
 }
 
-/** 玩家 + AI 半场：buff 持续期间全体 DPS 单位脚底光环 */
+/** 玩家 + AI 半场：单体仙丹/风火轮标记 */
 function drawTeamBuffAuras(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.atkBuffT > 0) {
-    for (const u of b.units.values()) {
-      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-      drawUnitBuffAura(ctx, x, y, 'atk', b.atkBuffT, TUNING.atkBuffDur);
-    }
-    for (const g of b.activeGenerals()) {
-      for (const c of g.cells) {
-        const { x, y } = cellCenterPx(c.c, c.r);
-        drawUnitBuffAura(ctx, x, y, 'atk', b.atkBuffT, TUNING.atkBuffDur);
-      }
-    }
+  for (const u of b.units.values()) {
+    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    if (u.pillAtk) drawPillBadge(ctx, x, y, 'atk');
+    if (u.pillFrq) drawPillBadge(ctx, x, y, 'frq');
   }
-  if (b.frqBuffT > 0) {
-    for (const u of b.units.values()) {
-      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-      drawUnitBuffAura(ctx, x, y, 'frq', b.frqBuffT, TUNING.frqBuffDur);
-    }
-    for (const g of b.activeGenerals()) {
-      for (const c of g.cells) {
-        const { x, y } = cellCenterPx(c.c, c.r);
-        drawUnitBuffAura(ctx, x, y, 'frq', b.frqBuffT, TUNING.frqBuffDur);
-      }
-    }
+  for (const g of b.activeGenerals()) {
+    const { x, y } = cellCenterPx(g.cells[0].c, g.cells[0].r);
+    if (g.pillAtk) drawPillBadge(ctx, x, y, 'atk');
+    if (g.pillFrq) drawPillBadge(ctx, x, y, 'frq');
   }
-  const aiAtk = b.aiAtkBuffRemaining();
-  const aiFrq = b.aiFrqBuffRemaining();
-  if (aiAtk > 0 || aiFrq > 0) {
-    for (const u of b.aiUnits) {
-      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-      if (aiAtk > 0) drawUnitBuffAura(ctx, x, y, 'atk', aiAtk, TUNING.atkBuffDur);
-      if (aiFrq > 0) drawUnitBuffAura(ctx, x, y, 'frq', aiFrq, TUNING.frqBuffDur);
-    }
-    for (const g of b.aiActiveGenerals()) {
-      for (const c of g.cells) {
-        const { x, y } = cellCenterPx(c.c, c.r);
-        if (aiAtk > 0) drawUnitBuffAura(ctx, x, y, 'atk', aiAtk, TUNING.atkBuffDur);
-        if (aiFrq > 0) drawUnitBuffAura(ctx, x, y, 'frq', aiFrq, TUNING.frqBuffDur);
-      }
-    }
+  for (const u of b.aiUnits) {
+    const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    if (u.pillAtk) drawPillBadge(ctx, x, y, 'atk');
+    if (u.pillFrq) drawPillBadge(ctx, x, y, 'frq');
+  }
+  for (const g of b.aiActiveGenerals()) {
+    const { x, y } = cellCenterPx(g.cells[0].c, g.cells[0].r);
+    if (g.pillAtk) drawPillBadge(ctx, x, y, 'atk');
+    if (g.pillFrq) drawPillBadge(ctx, x, y, 'frq');
   }
 }
 
@@ -2862,15 +2851,9 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    const atkBoosted = b.atkBuffT > 0;
-    ctx.fillStyle = d.crit ? '#ff5a3c' : atkBoosted ? '#ffb070' : '#fff8e8';
-    if (atkBoosted && !d.crit) {
-      ctx.shadowColor = 'rgba(255,100,50,0.55)';
-      ctx.shadowBlur = 6;
-    }
+    ctx.fillStyle = d.crit ? '#ff5a3c' : '#fff8e8';
     ctx.strokeText(text, px, py);
     ctx.fillText(text, px, py);
-    ctx.shadowBlur = 0;
     ctx.restore();
   }
 }
@@ -3737,7 +3720,7 @@ function drawWordSelection(
   // 信息面板：放在另一半场中央，避免遮住攻击范围环
   const showBondDetail = !fromAi && active && def.id === BOND_GENERAL && b.bondActive();
   const buffLines = !fromAi && active
-    ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
+    ? battleBuffLines(b, 'general', undefined, 'player', { general: active }).filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
   const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
   const inactivePartners = !active ? sortedPartnerChars(w.char) : [];
@@ -4150,7 +4133,7 @@ function drawUnitInfoPanel(
   const cfg = UNITS[type];
   const stat = getUnitStat(type, tier);
   const statusEntries = opts?.unit ? unitStatusEntries(opts.unit) : [];
-  const buffLines = opts?.b ? battleBuffLines(opts.b, 'unit') : [];
+  const buffLines = opts?.b && opts?.unit ? battleBuffLines(opts.b, 'unit', undefined, 'player', { unit: opts.unit }) : [];
   const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length;
   const pw = 176;
   const ph = 120 + extraRows * 16;
@@ -5371,7 +5354,7 @@ type AiItemChip = {
   icon: string;
   id: string;
   kind: 'active' | 'passive';
-  slot?: { cd: number; cdMax: number; ready: boolean };
+  slot?: { cd: number; cdMax: number; ready: boolean; flash: number };
 };
 
 /** HUD 右上角 AI 道具：上行 2 个主动（大），下行最多 6 个被动（小），右对齐避免与波次重叠 */
@@ -5463,6 +5446,16 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(it.x, it.y, it.r + 1 + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (it.kind === 'active' && it.slot && it.slot.flash > 0) {
+      ctx.save();
+      ctx.globalAlpha = it.slot.flash;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, it.r + 2, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -5713,23 +5706,15 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.stroke();
       ctx.restore();
     }
-    // buff 持续中：对应技能图标常亮描边 + 进度弧
-    const buffActive =
-      (slot.id === 'act_atk' && b.atkBuffT > 0) ||
-      (slot.id === 'act_frq' && b.frqBuffT > 0);
-    if (buffActive) {
-      const remain = slot.id === 'act_atk' ? b.atkBuffT : b.frqBuffT;
-      const maxDur = slot.id === 'act_atk' ? TUNING.atkBuffDur : TUNING.frqBuffDur;
-      const frac = maxDur > 0 ? remain / maxDur : 0;
-      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
-      ctx.save();
-      ctx.globalAlpha = 0.55 + pulse * 0.25;
-      ctx.strokeStyle = slot.id === 'act_atk' ? '#ff7050' : '#ffc040';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r + 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
-      ctx.stroke();
-      ctx.restore();
+    if (isPillActiveEffect(def?.effect ?? 'palm')) {
+      const roster = b.pillBuffRoster(def!.effect as 'atkBuff' | 'frqBuff');
+      if (roster.length > 0) {
+        ctx.fillStyle = '#fff6e6';
+        ctx.font = 'bold 11px "PingFang SC", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(roster.length), cx + r * 0.55, cy - r * 0.55);
+      }
     }
   }
 }
@@ -5769,18 +5754,23 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 主动技能介绍弹窗：CD 中点击技能图标时展示（就绪时点击是释放，不弹），定时自动淡出
+// 主动技能介绍弹窗：点击图标查看说明与本局已增益单位
 function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (ui.activePopup === null || performance.now() > ui.activePopupUntil) return;
   const slot = b.activeSlots[ui.activePopup];
   if (!slot) return;
   const def = activeById(slot.id);
   if (!def) return;
-  const w = 280, pad = 16, lineH = 18;
+  const pill = isPillActiveEffect(def.effect);
+  const roster = pill ? b.pillBuffRoster(def.effect) : [];
+  const w = 300, pad = 16, lineH = 18;
   ctx.save();
   ctx.font = '13px "PingFang SC", sans-serif';
   const descLines = wrapText(ctx, def.desc, w - pad * 2);
-  const h = 66 + descLines.length * lineH + 14;
+  const statusLines: string[] = pill
+    ? [roster.length > 0 ? `本局已增益：${roster.join('、')}` : '本局已增益：无']
+    : [];
+  const h = 66 + descLines.length * lineH + statusLines.length * lineH + 14;
   const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
   roundRect(ctx, x, y, w, h, 12);
   ctx.fillStyle = 'rgba(30,24,18,0.94)';
@@ -5795,11 +5785,19 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.fillText(def.name, x + pad, y + 12);
   ctx.fillStyle = '#8fd3ff';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText(`冷却 ${def.cd}s · 冷却中 ${Math.ceil(slot.cd)}s`, x + pad, y + 40);
+  const cdLine = slot.ready
+    ? (pill ? '就绪 · 拖到兵器或武将' : '就绪')
+    : `冷却 ${def.cd}s · 剩余 ${Math.ceil(slot.cd)}s`;
+  ctx.fillText(cdLine, x + pad, y + 40);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
   let ty = y + 62;
   for (const ln of descLines) {
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
+  }
+  for (const ln of statusLines) {
+    ctx.fillStyle = '#a0e8b0';
     ctx.fillText(ln, x + pad, ty);
     ty += lineH;
   }
@@ -6045,12 +6043,45 @@ function drawTrayDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState
   }
 }
 
+function drawPillDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (ui.dragActiveSlot === null || !ui.dragPos) return;
+  const slot = b.activeSlots[ui.dragActiveSlot];
+  const def = slot ? activeById(slot.id) : undefined;
+  if (!def || !isPillActiveEffect(def.effect)) return;
+  const effect = def.effect;
+  const seen = new Set<string>();
+  const mark = (c: Cell) => {
+    const k = `${c.c},${c.r}`;
+    if (seen.has(k) || !b.canApplyPill(c, effect)) return;
+    seen.add(k);
+    const x = BOARD_X + c.c * CELL;
+    const y = BOARD_Y + c.r * CELL;
+    ctx.save();
+    roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 8);
+    ctx.fillStyle = effect === 'atkBuff' ? 'rgba(255,90,60,0.22)' : 'rgba(255,180,40,0.22)';
+    ctx.fill();
+    ctx.strokeStyle = effect === 'atkBuff' ? '#ff7050' : '#ffc040';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  };
+  for (const u of b.units.values()) mark(u.cell);
+  for (const g of b.activeGenerals()) for (const c of g.cells) mark(c);
+}
+
 function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   if (!ui.dragPos) return;
-  // 拖拽源中心（棋盘单位 或 候选区令牌）
   let src: { x: number; y: number } | null = null;
   let ghost: (() => void) | null = null;
-  if (ui.dragFrom) {
+  if (ui.dragActiveSlot !== null) {
+    const slot = b.activeSlots[ui.dragActiveSlot];
+    const def = slot ? activeById(slot.id) : undefined;
+    if (def) {
+      const btn = getButtons(b).find((bb) => bb.id === `act${ui.dragActiveSlot}`);
+      if (btn) src = { x: btn.x + btn.w / 2, y: btn.y + btn.h / 2 };
+      ghost = () => drawSkillGlyph(ctx, ui.dragPos!.x, ui.dragPos!.y, CELL * 0.28, def.icon, '#b5762a', true, def.id);
+    }
+  } else if (ui.dragFrom) {
     const u = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
     if (u) {
       src = cellCenterPx(ui.dragFrom.c, ui.dragFrom.r);

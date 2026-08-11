@@ -44,7 +44,7 @@ import {
   type WeaponBonuses,
 } from './weapons';
 import { drawSummonTray } from './summon-draw';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -688,6 +688,35 @@ export class Battle {
   private aiPendingPlace: { token: TrayToken; c: number; r: number }[] = [];
   summonFlash = 0; // 征兵闪光(1→0)
   autoplaceFlash = 0; // 布阵闪光(1→0)
+  /** 上次一键布阵前的局面指纹（含兵器+字牌+候选）；跨点击阻止 A↔B 对抖 */
+  private lastAutoPlaceBoardKey: string | null = null;
+
+  private clearAutoPlaceLayoutMemory(): void {
+    this.lastAutoPlaceBoardKey = null;
+  }
+
+  /** 深拷贝棋盘兵器/字牌/武将状态，供布阵对抖时回滚 */
+  private cloneAutoplaceLayout(): {
+    units: Map<string, PlacedUnit>;
+    words: Map<string, PlacedWord>;
+    generalStates: Map<string, GeneralState>;
+  } {
+    const units = new Map<string, PlacedUnit>();
+    for (const [k, u] of this.units) {
+      units.set(k, { ...u, cell: { ...u.cell }, fireDir: { ...u.fireDir } });
+    }
+    const words = new Map<string, PlacedWord>();
+    for (const [k, w] of this.words) {
+      words.set(k, { ...w, cell: { ...w.cell } });
+    }
+    return { units, words, generalStates: new Map(this.generalStates) };
+  }
+
+  private restoreAutoplaceLayout(snap: ReturnType<Battle['cloneAutoplaceLayout']>): void {
+    this.units = snap.units;
+    this.words = snap.words;
+    this.generalStates = snap.generalStates;
+  }
   summonAnimT = 999; // 距上次征兵的秒数（用于候选令牌逐个"飞入槽位"的入场动画）
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
   private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
@@ -990,6 +1019,7 @@ export class Battle {
     this.summonCost += TUNING.summonCostStep;
     this.summonFlash = 1; // 征兵闪光
     this.summonAnimT = 0; // 触发候选令牌逐个飞入动画
+    this.clearAutoPlaceLayoutMemory();
     this.emit('summon');
     // 整盘重抽：不再保留旧字牌，避免 tray 残留
     const avail = TUNING.traySize;
@@ -1722,6 +1752,7 @@ export class Battle {
       dangerNear: () => this.aiDangerNear(),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
+      monstersPresent: () => this.aiMonsters.length > 0,
       unitEngageScore: (cell, type, tier) =>
         this.aiMonsters.length > 0
           ? this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear())
@@ -2305,9 +2336,19 @@ export class Battle {
 
   // 棋盘内拖拽总入口：源格是桃树走 dragTree，字牌走 dragWord，否则走 dragUnit
   dragBoard(from: Cell, to: Cell): boolean {
-    if (this.trees.has(cellKey(from.c, from.r))) return this.dragTree(from, to);
-    if (this.words.has(cellKey(from.c, from.r))) return this.dragWord(from, to);
-    return this.dragUnit(from, to);
+    if (this.trees.has(cellKey(from.c, from.r))) {
+      const ok = this.dragTree(from, to);
+      if (ok) this.clearAutoPlaceLayoutMemory();
+      return ok;
+    }
+    if (this.words.has(cellKey(from.c, from.r))) {
+      const ok = this.dragWord(from, to);
+      if (ok) this.clearAutoPlaceLayoutMemory();
+      return ok;
+    }
+    const ok = this.dragUnit(from, to);
+    if (ok) this.clearAutoPlaceLayoutMemory();
+    return ok;
   }
 
   // 拖拽字牌：移动到空格 / 同字同阶喂字升阶 / 同字异阶或异字与目标(字牌或兵)交换。
@@ -3460,7 +3501,7 @@ export class Battle {
           || this.aiMonsters.some((m) => m.isBoss || m.isMiniBoss);
       case 'atkBuff':
       case 'frqBuff':
-        return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(def.effect);
+        return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(effect);
       default: {
         const _exhaustive: never = effect;
         void _exhaustive;
@@ -3911,6 +3952,7 @@ export class Battle {
       } else {
         slot.ready = true;
       }
+      if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt);
     }
   }
 
@@ -3944,13 +3986,11 @@ export class Battle {
         this.emit('ult');
         break;
       case 'atkBuff':
-        this.aiAtkBuffT = TUNING.atkBuffDur;
-        this.setSkillFx('atkBuff', this.aiTangseng, true);
+        if (!this.applyAiPillActive(i, 'atkBuff')) return false;
         this.emit('item');
         break;
       case 'frqBuff':
-        this.aiFrqBuffT = TUNING.frqBuffDur;
-        this.setSkillFx('frqBuff', this.aiTangseng, true);
+        if (!this.applyAiPillActive(i, 'frqBuff')) return false;
         this.emit('item');
         break;
       case 'freeze': {
@@ -4118,13 +4158,14 @@ export class Battle {
     return true;
   }
 
-  // 触发第 i 个主动技能。返回是否成功（就绪且效果生效才进入冷却）。
+  // 触发第 i 个主动技能。返回是否成功（就绪且效果生效才进入冷却）。仙丹/风火轮请用 applyPillActive。
   triggerActive(i: number): boolean {
     if (this.status !== 'playing') return false;
     const slot = this.activeSlots[i];
     if (!slot || !slot.ready) return false;
     const def = activeById(slot.id);
     if (!def) return false;
+    if (isPillActiveEffect(def.effect)) return false;
     // 需要场上有怪才有意义的技能：无怪时不触发、不进冷却（避免空放浪费）
     const needsMonsters: ActiveEffect[] = ['palm', 'meteor', 'freeze', 'jinggu'];
     if (needsMonsters.includes(def.effect) && this.monsters.length === 0) {
@@ -4562,6 +4603,7 @@ export class Battle {
       dangerNear: () => this.dangerNear(),
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
+      monstersPresent: () => this.monsters.length > 0,
       mergeTray: (from, to) => this.mergeTrayTokens(from, to),
       mergeBoard: (from, to) => {
         const a = this.units.get(cellKey(from.c, from.r));
@@ -4579,6 +4621,8 @@ export class Battle {
   }
 
   autoPlaceTray(): void {
+    const layoutSnap = { units: new Map(this.units), words: new Map(this.words) };
+    const keyBefore = autoPlaceBoardKey(this.buildPlayerAutoView());
     const trayBefore = this.tray.length;
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
       rng: () => this.rng.next(),
@@ -4590,6 +4634,14 @@ export class Battle {
       trayBefore > 0 || this.tray.length > 0
         ? this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS)
         : 0;
+    const keyAfter = autoPlaceBoardKey(this.buildPlayerAutoView());
+    if (keyAfter !== keyBefore && this.lastAutoPlaceBoardKey !== null && keyAfter === this.lastAutoPlaceBoardKey) {
+      this.units = layoutSnap.units;
+      this.words = layoutSnap.words;
+      this.message = '布阵：当前暂无可执行操作';
+      return;
+    }
+    if (keyAfter !== keyBefore) this.lastAutoPlaceBoardKey = keyBefore;
     const total = placed + moved;
     if (total > 0) {
       if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, TUNING, SKILL_FX_DUR } from '../src/battle';
+import { Battle, TUNING, SKILL_FX_DUR, makePlacedUnit } from '../src/battle';
 
 describe('主动技能专属特效', () => {
   it('天降陨石触发 playerSkillFx', () => {
@@ -21,16 +21,21 @@ describe('主动技能专属特效', () => {
     expect(b.playerSkillFx).toBeNull();
   });
 
-  it('仙丹触发 atkBuff 特效与 8s +40% 增益', () => {
+  it('仙丹拖到兵器：单体攻击 +40% 本局，每单位仅一次', () => {
     const b = new Battle(1, 1, undefined, undefined, undefined, ['act_atk'], [], false);
     b.introDone = true;
     b.status = 'playing';
     b.activeSlots[0]!.cd = 0;
     b.activeSlots[0]!.ready = true;
-    expect(b.triggerActive(0)).toBe(true);
+    const cell = { c: 2, r: 7 };
+    b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('spear', 1, cell));
+    expect(b.triggerActive(0)).toBe(false);
+    expect(b.applyPillActive(0, cell)).toBe(true);
     expect(b.playerSkillFx?.kind).toBe('atkBuff');
-    expect(b.atkBuffT).toBe(TUNING.atkBuffDur);
-    expect(b.atkBuffMul).toBe(TUNING.atkBuffMul);
+    expect(b.units.get(`${cell.c},${cell.r}`)?.pillAtk).toBe(true);
+    expect(TUNING.atkBuffMul).toBe(1.4);
+    expect(b.applyPillActive(0, cell)).toBe(false);
+    expect(b.pillBuffRoster('atkBuff')).toEqual(['枪天兵 Lv.1']);
   });
 
   it('冰封定身触发 freeze 特效', () => {

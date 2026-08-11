@@ -1,5 +1,6 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, findTrayIndex, traySome } from './battle';
+import { activeById, isPillActiveEffect } from './actives';
 import { canMerge } from '@core';
 import type { UnitType } from '@core';
 import {
@@ -378,7 +379,23 @@ function openHelpLink(id: HelpLinkId): void {
   }
 }
 let pausePhase: PausePhase = 'main';
-const ui: UiState = { dragFrom: null, dragTrayIndex: null, dragPos: null, trayDragStart: null, selected: null, selectedTrayIndex: null, selectedMonster: null, passivePopup: null, passivePopupUntil: 0, activePopup: null, activePopupUntil: 0, aiItemPopup: null, paused: false };
+const ui: UiState = {
+  dragFrom: null,
+  dragTrayIndex: null,
+  dragPos: null,
+  trayDragStart: null,
+  dragActiveSlot: null,
+  activeDragStart: null,
+  selected: null,
+  selectedTrayIndex: null,
+  selectedMonster: null,
+  passivePopup: null,
+  passivePopupUntil: 0,
+  activePopup: null,
+  activePopupUntil: 0,
+  aiItemPopup: null,
+  paused: false,
+};
 
 // —— 新手引导：首次触发时机 + 各锚点闭包（引用当前 battle/merchant，battle 会随 newGame() 重新赋值） —— //
 let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
@@ -1129,6 +1146,41 @@ function toLogical(clientX: number, clientY: number): { x: number; y: number } {
   };
 }
 
+function activeSlotHit(x: number, y: number): 0 | 1 | null {
+  for (const btn of getButtons(battle)) {
+    if ((btn.id === 'act0' || btn.id === 'act1') && btn.enabled
+      && x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+      return btn.id === 'act0' ? 0 : 1;
+    }
+  }
+  return null;
+}
+
+function handlePillActivePointerDown(e: PointerEvent, x: number, y: number): boolean {
+  const actSlot = activeSlotHit(x, y);
+  if (actSlot === null) return false;
+  const slot = battle.activeSlots[actSlot];
+  const def = slot ? activeById(slot.id) : undefined;
+  if (!def || !isPillActiveEffect(def.effect)) return false;
+  if (battle.status === 'playing' && slot?.ready) {
+    ui.dragActiveSlot = actSlot;
+    ui.activeDragStart = { x, y };
+    ui.dragPos = { x, y };
+    ui.activePopup = null;
+    canvas.setPointerCapture(e.pointerId);
+    return true;
+  }
+  ui.activePopup = actSlot;
+  ui.activePopupUntil = performance.now() + 2500;
+  clearBoardSelect();
+  return true;
+}
+
+function clearActiveDrag(): void {
+  ui.dragActiveSlot = null;
+  ui.activeDragStart = null;
+}
+
 function handleButton(x: number, y: number): boolean {
   for (const btn of getButtons(battle)) {
     if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
@@ -1137,8 +1189,16 @@ function handleButton(x: number, y: number): boolean {
       if (btn.id === 'summon') {
         if (battle.summon()) pendingFirstSummonTutorial = true;
       } else if (btn.id === 'autoplace') battle.autoPlaceTray();
-      else if (btn.id === 'act0') { if (battle.activeSlots[0]?.ready) battle.triggerActive(0); else { ui.activePopup = 0; ui.activePopupUntil = performance.now() + 2500; } }
-      else if (btn.id === 'act1') { if (battle.activeSlots[1]?.ready) battle.triggerActive(1); else { ui.activePopup = 1; ui.activePopupUntil = performance.now() + 2500; } }
+      else if (btn.id === 'act0' || btn.id === 'act1') {
+        const i = btn.id === 'act1' ? 1 : 0;
+        const def = activeById(battle.activeSlots[i]?.id ?? '');
+        if (def && isPillActiveEffect(def.effect)) return true;
+        if (battle.activeSlots[i]?.ready) battle.triggerActive(i);
+        else {
+          ui.activePopup = i;
+          ui.activePopupUntil = performance.now() + 2500;
+        }
+      }
       else if (btn.id.startsWith('pas')) {
         ui.aiItemPopup = null;
         ui.passivePopup = Number(btn.id.slice(3));
@@ -1290,6 +1350,7 @@ function onPointerDown(e: PointerEvent) {
     ui.dragTrayIndex = null;
     ui.dragPos = null;
     ui.trayDragStart = null;
+    clearActiveDrag();
     return;
   }
   // AI 道具详情弹窗：任意点击先关闭（消费本次点击）
@@ -1307,6 +1368,7 @@ function onPointerDown(e: PointerEvent) {
     claimWeaponPickup(pickupId);
     return;
   }
+  if (handlePillActivePointerDown(e, x, y)) return;
   if (handleButton(x, y)) { clearBoardSelect(); return; }
   // 候选区令牌拖拽
   const ti = trayIndexAt(x, y);
@@ -1420,7 +1482,7 @@ function onPointerMove(e: PointerEvent) {
     scheduleFrame();
     return;
   }
-  if (!ui.dragFrom && ui.dragTrayIndex === null) return;
+  if (!ui.dragFrom && ui.dragTrayIndex === null && ui.dragActiveSlot === null) return;
   ui.dragPos = toLogical(e.clientX, e.clientY);
   scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
 }
@@ -1517,7 +1579,17 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
     }
     return;
   }
-  if (ui.dragPos) {
+  if (ui.dragActiveSlot !== null && ui.dragPos) {
+    const moved = ui.activeDragStart
+      && Math.hypot(ui.dragPos.x - ui.activeDragStart.x, ui.dragPos.y - ui.activeDragStart.y) > 8;
+    if (!moved) {
+      ui.activePopup = ui.dragActiveSlot;
+      ui.activePopupUntil = performance.now() + 2500;
+    } else {
+      const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
+      if (target) battle.applyPillActive(ui.dragActiveSlot, target);
+    }
+  } else if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
     const trayTarget = trayIndexAt(ui.dragPos.x, ui.dragPos.y);
     if (ui.dragTrayIndex !== null) {
@@ -1558,6 +1630,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
   ui.dragTrayIndex = null;
   ui.dragPos = null;
   ui.trayDragStart = null;
+  clearActiveDrag();
 }
 
 // 桌面端滚轮滚动商城
