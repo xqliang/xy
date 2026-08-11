@@ -77,6 +77,8 @@ describe('操作说明弹窗', () => {
     expect(joined).toMatch(/输出/);
     expect(joined).toMatch(/控制/);
     expect(joined).toMatch(/辅助/);
+    expect(joined).toMatch(/观音|老君|文殊/);
+    expect(joined).toMatch(/大招 CD|大招CD/);
     expect(joined).toMatch(/过渡/);
   });
 

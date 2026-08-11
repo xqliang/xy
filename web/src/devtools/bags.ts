@@ -134,6 +134,8 @@ export const TUNING_SYSTEM_KEYS = new Set([
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
   'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',
   'heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur',
+  'heroBuffAtkMulMain', 'heroBuffAtkMulTransit', 'heroBuffDurMain', 'heroBuffDurTransit',
+  'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
   'rangeTolerance', 'aiDeployBase', 'aiDeployPerWave', 'aiDeployInterval',
   'waveGapSec',
 ]);
@@ -145,5 +147,7 @@ export const TUNING_ATTACK_KEYS = new Set([
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
   'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',
   'heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur',
+  'heroBuffAtkMulMain', 'heroBuffAtkMulTransit', 'heroBuffDurMain', 'heroBuffDurTransit',
+  'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
   'rangeTolerance',
 ]);

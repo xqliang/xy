@@ -115,6 +115,10 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'baiguzhang', name: '白骨爪', general: 'baigujing', stat: 'frq' },
   { id: 'jingping', name: '净瓶玉露', general: 'guanyin', stat: 'frq' },
   { id: 'fanyinzhu', name: '梵音珠', general: 'fanyin', stat: 'rge' },
+  { id: 'bagualu', name: '八卦炉', general: 'laojun', stat: 'atk' },
+  { id: 'jindanxia', name: '金丹匣', general: 'danjun', stat: 'atk' },
+  { id: 'huijian', name: '慧剑', general: 'wenshu', stat: 'frq' },
+  { id: 'banruozhu', name: '般若珠', general: 'huishu', stat: 'rge' },
 ];
 
 export function weaponById(id: string): WeaponDef | undefined {

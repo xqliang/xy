@@ -6,8 +6,9 @@ import { TIER_COEFFICIENTS, MAX_TIER } from '@core';
 
 export type GeneralRole = '输出' | '控制' | '辅助' | '过渡';
 export type GeneralTierRank = 'T0' | 'T1' | 'T2';
-// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复 burn=灼烧(命中+持续掉血) none=无技能
-export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'burn' | 'none';
+// burst=范围爆发 ranged=远程重击 stun=群体定身 knock=击退 slow=减速 heal=回复 burn=灼烧(命中+持续掉血)
+// buff=友军攻击增益 cdr=缩短友军大招CD none=无技能
+export type GeneralSkill = 'burst' | 'ranged' | 'stun' | 'knock' | 'slow' | 'heal' | 'burn' | 'buff' | 'cdr' | 'none';
 
 export const QUALITY_NAMES = ['白', '绿', '蓝', '紫', '橙'] as const;
 // 白阶用纯白（一级英雄名）；其后绿/蓝/紫/橙
@@ -123,6 +124,22 @@ export const GENERALS: GeneralDef[] = [
   { id: 'fanyin', name: '梵音', chars: ['梵', '音'], role: '过渡', rank: 'T2', skill: 'heal',
     skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 1.6, frq: 1.2, rge: 2.5, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-guanyin',
     maxTier: 3, atkStyle: '辅助治疗', family: '音' },
+
+  // ——— 君：炼丹增攻 ———
+  { id: 'laojun', name: '老君', chars: ['老', '君'], role: '辅助', rank: 'T1', skill: 'buff',
+    skillName: '炼丹·金丹', skillDesc: '短时提升全体武将攻击', atk: 2.0, frq: 1.3, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-mile',
+    maxTier: 5, atkStyle: '炼丹增攻', family: '君' },
+  { id: 'danjun', name: '丹君', chars: ['丹', '君'], role: '过渡', rank: 'T2', skill: 'buff',
+    skillName: '小还丹', skillDesc: '短时弱提升武将攻击（过渡）', atk: 1.5, frq: 1.1, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-mile',
+    maxTier: 3, atkStyle: '炼丹增攻', family: '君' },
+
+  // ——— 殊：般若减 CD ———
+  { id: 'wenshu', name: '文殊', chars: ['文', '殊'], role: '辅助', rank: 'T1', skill: 'cdr',
+    skillName: '般若·慧剑', skillDesc: '缩短其他武将大招剩余冷却', atk: 2.0, frq: 1.3, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-guanyin',
+    maxTier: 5, atkStyle: '般若减CD', family: '殊' },
+  { id: 'huishu', name: '慧殊', chars: ['慧', '殊'], role: '过渡', rank: 'T2', skill: 'cdr',
+    skillName: '慧光浅照', skillDesc: '略缩短友军大招冷却（过渡）', atk: 1.5, frq: 1.1, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-guanyin',
+    maxTier: 3, atkStyle: '般若减CD', family: '殊' },
 ];
 
 export function generalById(id: string): GeneralDef | undefined {

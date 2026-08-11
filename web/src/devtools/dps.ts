@@ -36,6 +36,8 @@ export function heroSkillFocusDps(def: GeneralDef, atk: number): number {
     }
     case 'burn': return (atk * TUNING.heroBurnHitMul + atk * TUNING.heroBurnDpsMul * TUNING.heroBurnDur) / cd;
     case 'heal': return 0;
+    case 'buff': return 0;
+    case 'cdr': return 0;
     default: {
       const _exhaustive: never = def.skill;
       return _exhaustive;

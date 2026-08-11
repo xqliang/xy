@@ -214,6 +214,13 @@ export const TUNING = {
   heroBurnHitMul: 1.6, // 红孩/红袍：大招瞬时命中倍率（低于纯爆发系，余量转入灼烧 DoT）
   heroBurnDpsMul: 0.6, // 灼烧每秒伤害 = atk × 该系数
   heroBurnDur: 3, // 灼烧持续时间（秒）
+  heroBuffAtkMulMain: 1.35, // 老君：友军攻击倍率
+  heroBuffAtkMulTransit: 1.2, // 丹君：友军攻击倍率
+  heroBuffDurMain: 4, // 老君增益时长（秒）
+  heroBuffDurTransit: 2.5, // 丹君增益时长（秒）
+  heroCdrSecMain: 4, // 文殊：其他武将大招剩余 CD 缩短（秒）
+  heroCdrSecTransit: 2.5, // 慧殊：缩短秒数
+  tangsengHurtImmuneDur: 0.5, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
@@ -254,6 +261,8 @@ function heroSkillFocusDps(def: GeneralDef, atk: number): number {
     }
     case 'burn': return (atk * TUNING.heroBurnHitMul + atk * TUNING.heroBurnDpsMul * TUNING.heroBurnDur) / cd;
     case 'heal': return 0;
+    case 'buff': return 0;
+    case 'cdr': return 0;
     default: {
       const _exhaustive: never = def.skill;
       return _exhaustive;
@@ -524,6 +533,10 @@ export interface GeneralState {
   pillAtk?: boolean;
   /** 风火轮：本局攻速 +40% */
   pillFrq?: boolean;
+  /** 老君/丹君炼丹：攻击增益剩余秒数 */
+  buffAtkT?: number;
+  /** 炼丹增益期间生效的攻击倍率（由施法者满5/满3决定） */
+  buffAtkMul?: number;
 }
 
 // 由「左右紧邻的两个同将字牌」激活的武将（占两格，带金框）
@@ -1404,6 +1417,7 @@ export class Battle {
 
   tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
   healUsedThisWave = false; // 观音甘露每波限回一次
+  tangsengHurtImmuneT = 0; // 漏怪扣血后短暂免疫剩余（秒）
 
   // —— 主动技能（功德购买、每日装备，最多 2 个；CD 制、手动触发）——
   // 每个装备的技能一个运行时槽：独立冷却计时。
@@ -1429,6 +1443,7 @@ export class Battle {
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
   aiTangsengHP = ECONOMY.TANGSENG_INITIAL_HP;
+  aiTangsengHurtImmuneT = 0; // AI 唐僧漏怪扣血后短暂免疫
   aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
@@ -4338,6 +4353,9 @@ export class Battle {
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
+    if (this.aiTangsengHurtImmuneT > 0) {
+      this.aiTangsengHurtImmuneT = Math.max(0, this.aiTangsengHurtImmuneT - dt);
+    }
     const survivors: Monster[] = [];
     for (const m of this.aiMonsters) {
       m.spawnT += dt;
@@ -4354,7 +4372,9 @@ export class Battle {
       }
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
       if (m.dist >= this.aiPathLen) {
+        if (this.aiTangsengHurtImmuneT > 0) continue;
         this.aiTangsengHP -= 1;
+        this.aiTangsengHurtImmuneT = TUNING.tangsengHurtImmuneDur;
         if (this.aiTangsengHP <= 0) { this.aiTangsengHP = 0; this.aiDefeated = true; }
         continue;
       }
@@ -4638,7 +4658,8 @@ export class Battle {
   generalAtk(g: ActiveGeneral): number {
     const base = generalStat(g.def, g.tier).atk;
     const wb = this.weaponBonuses[g.def.id];
-    return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul();
+    const atkBuffMul = (g.state.buffAtkT ?? 0) > 0 ? (g.state.buffAtkMul ?? 1) : 1;
+    return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul() * atkBuffMul;
   }
 
   // 计入神兵加成的武将攻速/范围
@@ -4674,6 +4695,10 @@ export class Battle {
       const s = g.state;
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
       s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
+      if ((s.buffAtkT ?? 0) > 0) {
+        s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
+        if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
+      }
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
       const inRange = this.sortCombatTargets(
@@ -4684,7 +4709,9 @@ export class Battle {
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
         s.skillCd -= dt;
-        if (s.skillCd <= 0 && inRange.length > 0) {
+        // buff/cdr 不依赖射程内有怪；其余大招仍需有目标才施放
+        const needsTarget = g.def.skill !== 'buff' && g.def.skill !== 'cdr';
+        if (s.skillCd <= 0 && (!needsTarget || inRange.length > 0)) {
           this.castGeneralSkill(g, inRange);
           s.skillCd = g.def.skillCd;
         }
@@ -4717,7 +4744,9 @@ export class Battle {
   private castGeneralSkill(g: ActiveGeneral, inRange: { m: Monster; p: { c: number; r: number } }[]): void {
     const atk = this.generalAtk(g);
     g.state.skillFlash = 1;
-    const center = inRange[0]!.p;
+    const gAx = (g.cells[0].c + g.cells[1].c) / 2;
+    const gAy = (g.cells[0].r + g.cells[1].r) / 2;
+    const center = inRange[0]?.p ?? { c: gAx, r: gAy };
     const crit = ultTypeOf(g.def) === 'crit';
     switch (g.def.skill) {
       case 'burst': {
@@ -4766,6 +4795,29 @@ export class Battle {
         }
         break;
       }
+      case 'buff': {
+        const mul = g.def.maxTier === 5 ? TUNING.heroBuffAtkMulMain : TUNING.heroBuffAtkMulTransit;
+        const dur = g.def.maxTier === 5 ? TUNING.heroBuffDurMain : TUNING.heroBuffDurTransit;
+        for (const ally of this.activeGenerals()) {
+          ally.state.buffAtkT = Math.max(ally.state.buffAtkT ?? 0, dur);
+          ally.state.buffAtkMul = Math.max(ally.state.buffAtkMul ?? 1, mul);
+        }
+        this.message = `${g.def.name}炼丹：武将攻击 ×${mul.toFixed(2)}（${dur}s）`;
+        break;
+      }
+      case 'cdr': {
+        const sec = g.def.maxTier === 5 ? TUNING.heroCdrSecMain : TUNING.heroCdrSecTransit;
+        let n = 0;
+        for (const ally of this.activeGenerals()) {
+          if (ally.state === g.state) continue;
+          ally.state.skillCd = Math.max(0, ally.state.skillCd - sec);
+          n++;
+        }
+        this.message = n > 0
+          ? `${g.def.name}慧剑：${n} 名武将大招 CD −${sec}s`
+          : `${g.def.name}慧剑：场上暂无其他武将`;
+        break;
+      }
       case 'burn': {
         // 红孩/红袍：瞬时命中较轻，余量转为持续灼烧（真正的 DoT，区别于哪吒/金吒的纯爆发）
         for (const t of inRange) {
@@ -4784,17 +4836,22 @@ export class Battle {
       }
     }
     // 专属大招特效（替代原通用 bursts.push）
-    const gAx = (g.cells[0].c + g.cells[1].c) / 2;
-    const gAy = (g.cells[0].r + g.cells[1].r) / 2;
-    const ultTtl = g.def.id === 'dasheng' ? 0.9 : 0.6;
+    const ultTtl = g.def.id === 'dasheng' ? 0.9
+      : g.def.id === 'honghaier' ? 0.9
+      : g.def.id === 'bailong' ? 0.8
+      : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? 0.85
+      : 0.6;
+    const fxAtCaster = g.def.skill === 'buff' || g.def.skill === 'cdr';
     this.heroUltFx.push({
       heroId: g.def.id,
-      c: center.c, r: center.r,
+      c: fxAtCaster ? gAx : center.c,
+      r: fxAtCaster ? gAy : center.r,
       ttl: ultTtl, maxTtl: ultTtl,
       tier: g.tier,
       rge: this.generalRge(g),
       crit,
       ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' || g.def.id === 'niumowang'
+        || g.def.skill === 'buff' || g.def.skill === 'cdr'
         ? { fromC: gAx, fromR: gAy }
         : {}),
     });
@@ -5256,6 +5313,9 @@ export class Battle {
   }
 
   private updateMonsters(dt: number): void {
+    if (this.tangsengHurtImmuneT > 0) {
+      this.tangsengHurtImmuneT = Math.max(0, this.tangsengHurtImmuneT - dt);
+    }
     const survivors: Monster[] = [];
     for (const m of this.monsters) {
       m.spawnT += dt;
@@ -5311,9 +5371,11 @@ export class Battle {
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
       if (m.healFlash > 0) m.healFlash = Math.max(0, m.healFlash - dt * 2.5);
       if (m.dist >= this.pathLen) {
-        // 撞到唐僧：扣血 + 舍身饲魔补偿蟠桃
+        // 撞到唐僧：扣血 + 舍身饲魔；扣血后短暂免疫，避免同帧连扣
+        if (this.tangsengHurtImmuneT > 0) continue;
         this.tangsengHP -= 1;
         this.peach += ECONOMY.PEACH_PER_BLEED;
+        this.tangsengHurtImmuneT = TUNING.tangsengHurtImmuneDur;
         this.emit('hurt');
         if (this.tangsengHP <= 0) {
           this.tangsengHP = 0;

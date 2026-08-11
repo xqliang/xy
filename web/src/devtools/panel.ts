@@ -377,10 +377,9 @@ export class DevToolsPanel {
     }
     const root = document.createElement('div');
     root.id = ROOT_ID;
+    // 遮罩点击不关闭：连点版本号打开后手指/鼠标容易误点到遮罩，导致刚开又关；只能点「关闭」退出
     root.addEventListener('pointerdown', (e) => e.stopPropagation());
-    root.addEventListener('click', (e) => {
-      if (e.target === root) this.hide();
-    });
+    root.addEventListener('click', (e) => e.stopPropagation());
 
     const panel = document.createElement('div');
     panel.className = 'xy-dt-panel';

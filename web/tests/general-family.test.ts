@@ -35,10 +35,10 @@ function placePair(b: Battle, left: string, right: string, leftTier: number, rig
 }
 
 describe('门派配置', () => {
-  it('20 武将、10 门派、每门派一满5一满3', () => {
-    expect(GENERALS).toHaveLength(20);
+  it('24 武将、12 门派、每门派一满5一满3', () => {
+    expect(GENERALS).toHaveLength(24);
     const families = new Set(GENERALS.map((g) => g.family));
-    expect(families.size).toBe(10);
+    expect(families.size).toBe(12);
     for (const f of families) {
       const gs = GENERALS.filter((g) => g.family === f);
       expect(gs.map((g) => g.maxTier).sort()).toEqual([3, 5]);

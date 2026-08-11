@@ -4,8 +4,10 @@ import { GENERALS, ultTypeOf, CRIT_MULT } from '../src/generals';
 /** 与 render.ts drawHeroUlt switch 对齐：有技能的武将均应有专属大招动画 */
 const HERO_ULT_IDS = new Set([
   'nezha', 'erlang', 'niulang',
-  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'tangseng',
-  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'bailong',
+  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu',
+  'baigujing', 'tangseng',
+  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'danjun', 'huishu',
+  'bailong',
 ]);
 
 describe('大招类型派生 ultTypeOf', () => {
@@ -17,7 +19,7 @@ describe('大招类型派生 ultTypeOf', () => {
   });
 
   it('其余技能类型 = 群攻 aoe', () => {
-    for (const id of ['dasheng', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'bailong']) {
+    for (const id of ['dasheng', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu', 'baigujing', 'bailong']) {
       const def = GENERALS.find((g) => g.id === id)!;
       expect(ultTypeOf(def)).toBe('aoe');
     }

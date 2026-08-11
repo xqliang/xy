@@ -491,12 +491,18 @@ function battleBuffLines(
   ctx: 'unit' | 'general' | 'monster',
   monster?: Monster,
   monsterSide: 'player' | 'ai' = 'player',
+  general?: ActiveGeneral,
 ): string[] {
   const lines: string[] = [];
   if (ctx !== 'monster') {
     if (b.bondActive()) lines.push(bondBuffText());
     if (b.mods.atkMul > 1.001) lines.push(`💊被动 攻击×${b.mods.atkMul.toFixed(2)}`);
     if (b.mods.frqMul > 1.001) lines.push(`💨被动 攻速×${b.mods.frqMul.toFixed(2)}`);
+  }
+  if (ctx === 'general' && general && (general.state.buffAtkT ?? 0) > 0) {
+    const mul = general.state.buffAtkMul ?? 1;
+    const rem = Math.ceil(general.state.buffAtkT ?? 0);
+    lines.push(`⚗炼丹 攻击×${mul.toFixed(2)} ·${rem}s`);
   }
   if (ctx === 'monster' && monsterSide === 'player') {
     if (b.mods.monsterSpdMul < 0.999) {
@@ -3112,6 +3118,8 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'shaseng': drawUltShaseng(ctx, x, y, prog, fade, f.tier, R); break;
       case 'niumowang': drawUltNiumowang(ctx, x, y, prog, fade, f.tier, R, f.fromC, f.fromR); break;
       case 'guanyin': drawUltGuanyin(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'laojun': drawUltLaojun(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'wenshu': drawUltWenshu(ctx, x, y, prog, fade, f.tier, R); break;
       case 'baigujing': drawUltBaigujing(ctx, x, y, prog, fade, f.tier, R); break;
       case 'tangseng': drawUltTangseng(ctx, x, y, prog, fade, f.tier, R); break;
       // —— 过渡满3 ——
@@ -3123,6 +3131,8 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
       case 'tiebei': drawUltTiebei(ctx, x, y, prog, fade, f.tier, R); break;
       case 'liusha': drawUltLiusha(ctx, x, y, prog, fade, f.tier, R); break;
       case 'fanyin': drawUltFanyin(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'danjun': drawUltDanjun(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'huishu': drawUltHuishu(ctx, x, y, prog, fade, f.tier, R); break;
       case 'bailong': drawUltBailong(ctx, x, y, prog, fade, f.tier, R); break;
     }
     ctx.restore();
@@ -3724,79 +3734,140 @@ function drawFlameTongue(
 }
 
 // 红孩 三昧真火：地涌火柱 + 环绕火舌 + 火星上窜
+/** 红孩三昧真火：天火重砸落地 → 冲击爆闪 → 外溅火花 */
 function drawUltHonghaier(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.85);
-  const bloom = easeOut(Math.min(1, p / 0.5));
-  const sway = Math.sin(p * 14);
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI);
+  const vis = Math.max(fade, life * 0.88);
+  // 0~0.38 下落；0.38~0.55 砸地；0.55~1 外溅
+  const fall = easeIn(Math.min(1, p / 0.38));
+  const impact = easeOut(Math.max(0, Math.min(1, (p - 0.38) / 0.17)));
+  const splash = easeOut(Math.max(0, Math.min(1, (p - 0.52) / 0.45)));
+  const skyY = y - R * 1.55 - CELL * 0.8;
+  const fireY = skyY + (y - skyY) * fall;
+  const inAir = p < 0.4;
 
-  // 地面灼热底光（椭圆形，不像正圆光球）
-  ctx.globalAlpha = vis * 0.55 * bloom;
-  const ground = ctx.createRadialGradient(x, y + CELL * 0.08, 1, x, y + CELL * 0.08, R * 0.7 * bloom);
-  ground.addColorStop(0, 'rgba(255,200,80,0.7)');
-  ground.addColorStop(0.45, 'rgba(255,80,20,0.35)');
-  ground.addColorStop(1, 'rgba(180,20,0,0)');
-  ctx.fillStyle = ground;
-  ctx.beginPath();
-  ctx.ellipse(x, y + CELL * 0.1, R * 0.72 * bloom, R * 0.28 * bloom, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 中心火柱（多层火舌叠起）
-  const columnH = R * (0.55 + bloom * 0.55 + tier * 0.04);
-  for (let layer = 0; layer < 3; layer++) {
-    const lh = columnH * (1 - layer * 0.18);
-    const lw = CELL * (0.22 + tier * 0.02) * (1 - layer * 0.15);
-    ctx.save();
-    ctx.translate(x + sway * (2 - layer), y + CELL * 0.05);
-    ctx.rotate(sway * 0.06 * (layer + 1));
-    const colors =
-      layer === 0
-        ? ['rgba(200,40,10,0.9)', 'rgba(255,110,30,0.95)', 'rgba(255,230,120,0.98)'] as const
-        : layer === 1
-          ? ['rgba(255,70,20,0.85)', 'rgba(255,150,40,0.9)', 'rgba(255,240,160,0.95)'] as const
-          : ['rgba(255,120,40,0.7)', 'rgba(255,200,80,0.85)', 'rgba(255,255,220,0.9)'] as const;
-    drawFlameTongue(ctx, lh, lw, vis * (0.7 + bloom * 0.3), colors[0], colors[1], colors[2]);
-    ctx.restore();
+  // 下落拖尾
+  if (inAir || impact < 0.6) {
+    const trailH = (y - skyY) * fall * 0.85;
+    const trailG = ctx.createLinearGradient(x, fireY - trailH, x, fireY);
+    trailG.addColorStop(0, 'rgba(255,80,20,0)');
+    trailG.addColorStop(0.45, 'rgba(255,120,30,0.35)');
+    trailG.addColorStop(1, 'rgba(255,220,120,0.75)');
+    ctx.globalAlpha = vis * (inAir ? 0.85 : 1 - impact);
+    ctx.fillStyle = trailG;
+    ctx.beginPath();
+    ctx.moveTo(x - CELL * 0.12, fireY);
+    ctx.lineTo(x - CELL * 0.06, fireY - trailH);
+    ctx.lineTo(x + CELL * 0.06, fireY - trailH);
+    ctx.lineTo(x + CELL * 0.12, fireY);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // 环绕火舌（向外窜）
-  const tongues = 7 + tier;
-  for (let i = 0; i < tongues; i++) {
-    const a = (i / tongues) * Math.PI * 2 + p * 1.5;
-    const d = R * bloom * (0.35 + (i % 3) * 0.15);
-    const tx = x + Math.cos(a) * d;
-    const ty = y + Math.sin(a) * d * 0.55;
-    const th = CELL * (0.28 + (i % 3) * 0.08 + tier * 0.02) * (0.7 + bloom * 0.5);
-    const tw = th * 0.38;
+  // 天火本体（从天重砸：下落中变大变亮，砸地瞬间略压扁）
+  if (fall < 1 || impact < 0.85) {
+    const scale = 0.7 + fall * 0.85 + impact * 0.2;
+    const squash = 1 + impact * 0.55;
+    const fw = CELL * (0.34 + tier * 0.035) * scale * squash;
+    const fh = CELL * (0.72 + tier * 0.05) * scale / Math.sqrt(squash);
     ctx.save();
-    ctx.translate(tx, ty);
-    ctx.rotate(a - Math.PI / 2 + Math.sin(p * 10 + i) * 0.2);
+    ctx.translate(x, fireY);
+    ctx.rotate(Math.sin(p * 10) * 0.08 * (1 - impact));
     drawFlameTongue(
       ctx,
-      th,
-      tw,
-      vis * (0.45 + bloom * 0.4),
-      'rgba(220,50,15,0.85)',
-      'rgba(255,130,35,0.9)',
-      'rgba(255,230,110,0.95)',
+      fh,
+      fw,
+      vis * (0.8 + fall * 0.2),
+      'rgba(200,35,10,0.92)',
+      'rgba(255,110,25,0.95)',
+      'rgba(255,240,150,0.98)',
     );
+    // 外包火晕
+    const halo = ctx.createRadialGradient(0, -fh * 0.2, 1, 0, -fh * 0.2, fh * 0.9);
+    halo.addColorStop(0, 'rgba(255,200,80,0.45)');
+    halo.addColorStop(1, 'rgba(255,60,10,0)');
+    ctx.globalAlpha = vis * 0.7;
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, -fh * 0.15, fh * 0.85, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
-  // 火星上窜
-  const sparks = 14 + tier * 3;
-  for (let i = 0; i < sparks; i++) {
-    const seed = (i * 19 + tier * 5) % 97;
-    const t = ((p * 1.8 + seed * 0.01) % 1);
-    const rise = easeOut(t);
-    const ox = (((seed % 13) - 6) / 6) * R * 0.55 * bloom;
-    const sx = x + ox + Math.sin(p * 8 + i) * CELL * 0.04;
-    const sy = y - rise * R * (0.7 + (seed % 5) * 0.08);
-    ctx.globalAlpha = vis * (1 - rise) * 0.85;
-    ctx.fillStyle = i % 3 === 0 ? '#fff3a0' : i % 3 === 1 ? '#ffcf5a' : '#ff6a20';
+  // 砸地冲击
+  if (impact > 0) {
+    ctx.globalAlpha = vis * (1 - impact * 0.35) * 0.9;
+    const flash = ctx.createRadialGradient(x, y, 1, x, y, R * (0.35 + impact * 0.55));
+    flash.addColorStop(0, 'rgba(255,245,200,0.95)');
+    flash.addColorStop(0.35, 'rgba(255,140,40,0.55)');
+    flash.addColorStop(1, 'rgba(180,30,0,0)');
+    ctx.fillStyle = flash;
     ctx.beginPath();
-    ctx.arc(sx, sy, 1.2 + (seed % 3) * 0.5, 0, Math.PI * 2);
+    ctx.arc(x, y, R * (0.35 + impact * 0.55), 0, Math.PI * 2);
     ctx.fill();
+
+    // 地面灼痕椭圆
+    ctx.globalAlpha = vis * impact * 0.7;
+    const scorch = ctx.createRadialGradient(x, y + CELL * 0.08, 1, x, y + CELL * 0.08, R * 0.75 * impact);
+    scorch.addColorStop(0, 'rgba(255,180,60,0.65)');
+    scorch.addColorStop(0.5, 'rgba(220,60,15,0.35)');
+    scorch.addColorStop(1, 'rgba(120,20,0,0)');
+    ctx.fillStyle = scorch;
+    ctx.beginPath();
+    ctx.ellipse(x, y + CELL * 0.1, R * 0.78 * impact, R * 0.3 * impact, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 冲击环
+    for (let k = 0; k < 3; k++) {
+      const pk = Math.max(0, Math.min(1, impact - k * 0.12));
+      if (pk <= 0) continue;
+      ctx.globalAlpha = vis * (1 - pk) * 0.75;
+      ctx.strokeStyle = k === 0 ? 'rgba(255,220,120,0.95)' : 'rgba(255,100,30,0.55)';
+      ctx.lineWidth = 4 - k * 0.9 + tier * 0.15;
+      ctx.beginPath();
+      ctx.arc(x, y, easeOut(pk) * R * (0.55 + k * 0.15), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // 外溅火花 + 火舌
+  if (splash > 0) {
+    const tongues = 8 + tier;
+    for (let i = 0; i < tongues; i++) {
+      const a = (i / tongues) * Math.PI * 2 + p * 0.6;
+      const d = R * splash * (0.4 + (i % 3) * 0.18);
+      const tx = x + Math.cos(a) * d;
+      const ty = y + Math.sin(a) * d * 0.65;
+      const th = CELL * (0.22 + (i % 3) * 0.06 + tier * 0.015) * (0.55 + splash * 0.55);
+      ctx.save();
+      ctx.translate(tx, ty);
+      ctx.rotate(a - Math.PI / 2 + Math.sin(p * 8 + i) * 0.15);
+      drawFlameTongue(
+        ctx,
+        th,
+        th * 0.36,
+        vis * (0.4 + splash * 0.45) * (1 - splash * 0.25),
+        'rgba(220,45,12,0.88)',
+        'rgba(255,130,30,0.92)',
+        'rgba(255,230,120,0.95)',
+      );
+      ctx.restore();
+    }
+
+    const sparks = 22 + tier * 4;
+    for (let i = 0; i < sparks; i++) {
+      const seed = (i * 17 + tier * 3) % 89;
+      const a = (i / sparks) * Math.PI * 2 + seed * 0.02;
+      const t = Math.min(1, splash * (0.7 + (seed % 5) * 0.08));
+      const dist = R * t * (0.55 + (seed % 7) * 0.06);
+      const sx = x + Math.cos(a) * dist;
+      const sy = y + Math.sin(a) * dist * 0.75 - t * CELL * 0.25;
+      ctx.globalAlpha = vis * (1 - t * 0.7) * 0.9;
+      ctx.fillStyle = i % 3 === 0 ? '#fff3a0' : i % 3 === 1 ? '#ffb040' : '#ff5a18';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.3 + (seed % 3) * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
@@ -3955,6 +4026,7 @@ function drawUltBajie(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
 }
 
 /** 芭蕉扇剪影：扇柄 + 宽叶扇面 */
+/** 芭蕉扇完整剪影：长柄 + 宽叶扇面（柄在下、叶向上展开，避免只剩半截） */
 function drawBajiaoFanGlyph(
   ctx: CanvasRenderingContext2D,
   size: number,
@@ -3965,53 +4037,84 @@ function drawBajiaoFanGlyph(
   ctx.globalAlpha = alpha;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  // 扇柄
-  ctx.strokeStyle = '#6a4a28';
-  ctx.lineWidth = 2.4 + tier * 0.25;
+  // 扇柄（加长到底，带柄首金环）
+  ctx.strokeStyle = '#5a3a18';
+  ctx.lineWidth = 2.8 + tier * 0.3;
   ctx.beginPath();
-  ctx.moveTo(0, size * 0.55);
-  ctx.lineTo(0, size * 0.08);
+  ctx.moveTo(0, size * 0.72);
+  ctx.lineTo(0, size * 0.02);
   ctx.stroke();
-  ctx.strokeStyle = '#c9a86a';
+  ctx.strokeStyle = '#d2b06a';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-1.2, size * 0.65);
+  ctx.lineTo(-1.2, size * 0.08);
+  ctx.stroke();
+  // 柄首金箍
+  ctx.fillStyle = 'rgba(230,190,90,0.9)';
+  ctx.strokeStyle = 'rgba(120,80,30,0.8)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(-1, size * 0.5);
-  ctx.lineTo(-1, size * 0.12);
+  ctx.ellipse(0, size * 0.08, size * 0.09, size * 0.05, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.stroke();
-  // 扇面（芭蕉叶）
-  ctx.fillStyle = 'rgba(90,170,110,0.9)';
-  ctx.strokeStyle = '#2e6a3a';
-  ctx.lineWidth = 1.5 + tier * 0.15;
   ctx.beginPath();
-  ctx.moveTo(0, size * 0.1);
-  ctx.quadraticCurveTo(size * 0.85, -size * 0.15, size * 0.55, -size * 0.95);
-  ctx.quadraticCurveTo(0, -size * 1.15, -size * 0.55, -size * 0.95);
-  ctx.quadraticCurveTo(-size * 0.85, -size * 0.15, 0, size * 0.1);
+  ctx.ellipse(0, size * 0.68, size * 0.07, size * 0.04, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 扇面：完整宽芭蕉叶（从柄顶铺满到叶尖）
+  ctx.fillStyle = 'rgba(70,160,95,0.92)';
+  ctx.strokeStyle = '#245a32';
+  ctx.lineWidth = 1.7 + tier * 0.15;
+  ctx.beginPath();
+  ctx.moveTo(0, size * 0.06);
+  // 右叶缘外扩再收尖
+  ctx.bezierCurveTo(size * 0.95, -size * 0.05, size * 0.9, -size * 0.55, size * 0.42, -size * 1.05);
+  ctx.quadraticCurveTo(0, -size * 1.28, -size * 0.42, -size * 1.05);
+  // 左叶缘对称
+  ctx.bezierCurveTo(-size * 0.9, -size * 0.55, -size * 0.95, -size * 0.05, 0, size * 0.06);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  // 叶脉
-  ctx.strokeStyle = 'rgba(40,100,55,0.75)';
-  ctx.lineWidth = 1.2;
+
+  // 中脉
+  ctx.strokeStyle = 'rgba(35,90,50,0.85)';
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(0, size * 0.02);
-  ctx.quadraticCurveTo(0, -size * 0.4, 0, -size * 1.0);
+  ctx.quadraticCurveTo(0, -size * 0.45, 0, -size * 1.12);
   ctx.stroke();
+  // 侧脉（更密，叶面更完整）
+  ctx.strokeStyle = 'rgba(40,100,55,0.7)';
+  ctx.lineWidth = 1.15;
   for (const side of [-1, 1] as const) {
-    for (const t of [0.35, 0.55, 0.75] as const) {
+    for (const t of [0.18, 0.34, 0.5, 0.66, 0.82] as const) {
+      const y0 = size * 0.02 - size * 1.1 * t;
+      const reach = size * (0.38 + t * 0.22);
       ctx.beginPath();
-      ctx.moveTo(0, -size * t);
-      ctx.quadraticCurveTo(side * size * 0.25, -size * (t + 0.08), side * size * 0.42, -size * (t + 0.18));
+      ctx.moveTo(0, y0);
+      ctx.quadraticCurveTo(side * reach * 0.45, y0 - size * 0.08, side * reach, y0 - size * 0.16);
       ctx.stroke();
     }
   }
-  // 叶缘高光
-  ctx.strokeStyle = 'rgba(180,240,190,0.55)';
-  ctx.lineWidth = 1.1;
+  // 叶缘高光（左右各一道，避免只剩一边）
+  ctx.strokeStyle = 'rgba(190,245,200,0.55)';
+  ctx.lineWidth = 1.2;
+  for (const side of [-1, 1] as const) {
+    ctx.beginPath();
+    ctx.moveTo(side * size * 0.12, -size * 0.02);
+    ctx.bezierCurveTo(
+      side * size * 0.7, -size * 0.2,
+      side * size * 0.55, -size * 0.7,
+      side * size * 0.22, -size * 1.05,
+    );
+    ctx.stroke();
+  }
+  // 叶尖亮点
+  ctx.fillStyle = 'rgba(220,255,210,0.75)';
   ctx.beginPath();
-  ctx.moveTo(size * 0.15, -size * 0.1);
-  ctx.quadraticCurveTo(size * 0.55, -size * 0.35, size * 0.4, -size * 0.85);
-  ctx.stroke();
+  ctx.arc(0, -size * 1.14, 2.2 + tier * 0.2, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -4113,22 +4216,31 @@ function drawUltTieshan(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
     ctx.restore();
   }
 
-  // 中心巨扇挥扫（比普攻疾风刃大得多）
-  const fanSize = CELL * (0.62 + tier * 0.06) * (0.7 + bloom * 0.4);
-  const swing = -1.05 + bloom * 2.1 + Math.sin(p * Math.PI * 2) * 0.15;
+  // 中心巨扇挥扫（放大 + 残影，确保整扇可见）
+  const fanSize = CELL * (0.85 + tier * 0.08) * (0.85 + bloom * 0.35);
+  const swing = -1.15 + bloom * 2.35 + Math.sin(p * Math.PI * 2) * 0.12;
+  // 扇身残影（挥扫轨迹）
+  for (let g = 2; g >= 1; g--) {
+    const ghostSwing = swing - g * 0.35 * bloom;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(ghostSwing);
+    drawBajiaoFanGlyph(ctx, fanSize * (1 - g * 0.06), tier, vis * bloom * (0.22 - g * 0.05));
+    ctx.restore();
+  }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(swing);
-  drawBajiaoFanGlyph(ctx, fanSize, tier, vis * (0.65 + bloom * 0.35));
-  // 扇缘宽幅风刃残影（填充扇形而非细弧线）
-  ctx.globalAlpha = vis * 0.45 * bloom;
-  const arcG = ctx.createRadialGradient(0, 0, fanSize * 0.5, 0, 0, fanSize * 1.15);
+  drawBajiaoFanGlyph(ctx, fanSize, tier, vis * (0.75 + bloom * 0.25));
+  // 扇缘宽幅风刃残影
+  ctx.globalAlpha = vis * 0.4 * bloom;
+  const arcG = ctx.createRadialGradient(0, 0, fanSize * 0.35, 0, 0, fanSize * 1.25);
   arcG.addColorStop(0, 'rgba(210,255,230,0)');
-  arcG.addColorStop(1, 'rgba(210,255,230,0.75)');
+  arcG.addColorStop(1, 'rgba(210,255,230,0.7)');
   ctx.fillStyle = arcG;
   ctx.beginPath();
   ctx.moveTo(0, 0);
-  ctx.arc(0, 0, fanSize * 1.15, -Math.PI * 1.05, -Math.PI * 1.05 + bloom * Math.PI * 1.15);
+  ctx.arc(0, 0, fanSize * 1.25, -Math.PI * 1.15, -Math.PI * 1.15 + bloom * Math.PI * 1.25);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -4547,41 +4659,556 @@ function drawUltNiumowang(
 }
 
 // —— 辅助/过渡 ——
-// 观音 净瓶甘露下落（无扩散环）
+// 观音 甘露·净瓶：起手金环 → 净瓶倾倒 → 莲台绽放 → 甘露雨幕 + 圣光环（明显强于梵音浅润）
 function drawUltGuanyin(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.75);
-  const bloom = easeOut(Math.min(1, p / 0.55));
-  // 净瓶剪影（轻）
-  ctx.globalAlpha = vis * (0.45 + bloom * 0.35);
-  ctx.fillStyle = 'rgba(200,230,255,0.55)';
-  ctx.strokeStyle = 'rgba(255,246,210,0.7)';
-  ctx.lineWidth = 1.4;
-  const bw = CELL * (0.12 + tier * 0.01);
-  const bh = CELL * (0.22 + tier * 0.015);
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI);
+  const vis = Math.max(fade, life * 0.88);
+  const rise = easeOut(Math.min(1, p / 0.28));
+  const bloom = easeOut(Math.min(1, p / 0.5));
+  const pour = easeOut(Math.max(0, Math.min(1, (p - 0.18) / 0.45)));
+  const rain = easeOut(Math.max(0, Math.min(1, (p - 0.28) / 0.55)));
+  const RR = R * (1.02 + tier * 0.02);
+
+  // 地面圣光椭圆
+  ctx.globalAlpha = vis * 0.55 * bloom;
+  const ground = ctx.createRadialGradient(x, y + CELL * 0.1, 2, x, y + CELL * 0.1, RR * 0.85 * bloom);
+  ground.addColorStop(0, 'rgba(255,245,200,0.55)');
+  ground.addColorStop(0.45, 'rgba(170,220,255,0.28)');
+  ground.addColorStop(1, 'rgba(120,180,255,0)');
+  ctx.fillStyle = ground;
   ctx.beginPath();
-  ctx.moveTo(x - bw * 0.35, y - bh * 1.55);
-  ctx.lineTo(x + bw * 0.35, y - bh * 1.55);
-  ctx.lineTo(x + bw * 0.55, y - bh * 1.15);
-  ctx.quadraticCurveTo(x + bw * 0.85, y - bh * 0.4, x + bw * 0.45, y);
-  ctx.quadraticCurveTo(x, y + bh * 0.15, x - bw * 0.45, y);
-  ctx.quadraticCurveTo(x - bw * 0.85, y - bh * 0.4, x - bw * 0.55, y - bh * 1.15);
+  ctx.ellipse(x, y + CELL * 0.1, RR * 0.82 * bloom, RR * 0.32 * bloom, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 起手金白冲击环
+  const snap = easeOut(Math.min(1, p / 0.2));
+  if (snap < 1) {
+    ctx.globalAlpha = vis * (1 - snap) * 0.85;
+    ctx.strokeStyle = 'rgba(255,240,180,0.95)';
+    ctx.lineWidth = 4.5 + tier * 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, snap * RR * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 外扩圣光环（多层）
+  for (let k = 0; k < 3; k++) {
+    const pk = Math.max(0, Math.min(1, bloom - k * 0.12));
+    if (pk <= 0) continue;
+    const rad = easeOut(pk) * RR * (0.42 + k * 0.28);
+    ctx.globalAlpha = vis * (0.65 - k * 0.15);
+    ctx.strokeStyle = k === 0 ? 'rgba(255,240,190,0.95)' : k === 1 ? 'rgba(180,220,255,0.7)' : 'rgba(140,200,255,0.45)';
+    ctx.lineWidth = 3.6 - k * 0.7 + tier * 0.15;
+    ctx.setLineDash(k === 1 ? [6, 5] : []);
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // 莲台（六瓣）
+  const lotusR = CELL * (0.38 + tier * 0.02) * (0.55 + bloom * 0.55);
+  const lotusY = y + CELL * 0.05;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + p * 0.15;
+    ctx.save();
+    ctx.translate(x, lotusY);
+    ctx.rotate(a);
+    ctx.globalAlpha = vis * (0.45 + bloom * 0.4);
+    const petal = ctx.createLinearGradient(0, 0, 0, -lotusR);
+    petal.addColorStop(0, 'rgba(255,230,200,0.9)');
+    petal.addColorStop(0.55, 'rgba(220,180,255,0.55)');
+    petal.addColorStop(1, 'rgba(160,200,255,0)');
+    ctx.fillStyle = petal;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(lotusR * 0.38, -lotusR * 0.35, 0, -lotusR);
+    ctx.quadraticCurveTo(-lotusR * 0.38, -lotusR * 0.35, 0, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  // 莲心
+  ctx.globalAlpha = vis * 0.85 * bloom;
+  const heart = ctx.createRadialGradient(x, lotusY, 1, x, lotusY, lotusR * 0.35);
+  heart.addColorStop(0, 'rgba(255,250,220,0.95)');
+  heart.addColorStop(1, 'rgba(255,200,120,0)');
+  ctx.fillStyle = heart;
+  ctx.beginPath();
+  ctx.arc(x, lotusY, lotusR * 0.32, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 净瓶（倾斜倾倒）
+  const bottleY = y - CELL * (0.55 + rise * 0.35);
+  const tilt = -0.55 + pour * 0.95;
+  ctx.save();
+  ctx.translate(x + Math.sin(tilt) * CELL * 0.08, bottleY);
+  ctx.rotate(tilt);
+  const bw = CELL * (0.16 + tier * 0.012) * (0.75 + rise * 0.35);
+  const bh = CELL * (0.32 + tier * 0.02) * (0.75 + rise * 0.35);
+  // 瓶身
+  ctx.globalAlpha = vis * (0.6 + rise * 0.35);
+  const bodyG = ctx.createLinearGradient(-bw, 0, bw, 0);
+  bodyG.addColorStop(0, 'rgba(140,190,230,0.75)');
+  bodyG.addColorStop(0.5, 'rgba(220,245,255,0.95)');
+  bodyG.addColorStop(1, 'rgba(150,200,240,0.75)');
+  ctx.fillStyle = bodyG;
+  ctx.strokeStyle = 'rgba(255,236,180,0.9)';
+  ctx.lineWidth = 1.6 + tier * 0.15;
+  ctx.beginPath();
+  ctx.moveTo(-bw * 0.32, -bh * 1.15);
+  ctx.lineTo(bw * 0.32, -bh * 1.15);
+  ctx.lineTo(bw * 0.48, -bh * 0.85);
+  ctx.quadraticCurveTo(bw * 0.9, -bh * 0.15, bw * 0.5, bh * 0.55);
+  ctx.quadraticCurveTo(0, bh * 0.85, -bw * 0.5, bh * 0.55);
+  ctx.quadraticCurveTo(-bw * 0.9, -bh * 0.15, -bw * 0.48, -bh * 0.85);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  // 甘露滴落
-  const drops = 8 + tier * 2;
-  for (let i = 0; i < drops; i++) {
-    const a = (i / drops) * Math.PI * 2 + p * 0.4;
-    const spread = R * 0.75 * bloom * (0.35 + (i % 3) * 0.22);
-    const dx = x + Math.cos(a) * spread;
-    const fall = ((p * 1.6 + i * 0.13) % 1);
-    const dy = y - CELL * 0.35 + fall * CELL * (1.1 + bloom * 0.35);
-    ctx.globalAlpha = vis * (0.55 + (1 - fall) * 0.35);
-    ctx.fillStyle = i % 2 === 0 ? 'rgba(191,230,255,0.9)' : 'rgba(230,248,255,0.75)';
+  // 瓶颈
+  ctx.fillStyle = 'rgba(255,230,160,0.9)';
+  ctx.fillRect(-bw * 0.22, -bh * 1.35, bw * 0.44, bh * 0.22);
+  ctx.strokeRect(-bw * 0.22, -bh * 1.35, bw * 0.44, bh * 0.22);
+  // 瓶口流光
+  if (pour > 0.05) {
+    ctx.globalAlpha = vis * pour * 0.9;
+    const stream = ctx.createLinearGradient(0, -bh * 1.15, bw * 0.9, bh * 0.2);
+    stream.addColorStop(0, 'rgba(255,250,220,0.95)');
+    stream.addColorStop(0.45, 'rgba(180,230,255,0.75)');
+    stream.addColorStop(1, 'rgba(140,200,255,0)');
+    ctx.strokeStyle = stream;
+    ctx.lineWidth = 3.2 + tier * 0.3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.ellipse(dx, dy, 2.2 + (i % 3) * 0.4, 4.5 + (i % 2), 0, 0, Math.PI * 2);
+    ctx.moveTo(0, -bh * 1.05);
+    ctx.quadraticCurveTo(bw * 0.55, -bh * 0.2, bw * 0.85, bh * 0.55);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 甘露雨幕（多列下落）
+  const drops = 16 + tier * 3;
+  for (let i = 0; i < drops; i++) {
+    const seed = (i * 19 + tier * 5) % 97;
+    const a = (i / drops) * Math.PI * 2 + seed * 0.01;
+    const spread = RR * rain * (0.2 + (seed % 5) * 0.14);
+    const dx = x + Math.cos(a) * spread;
+    const fall = ((p * 1.85 + i * 0.11) % 1);
+    const dy = y - CELL * (0.85 + bloom * 0.2) + fall * CELL * (1.55 + bloom * 0.45);
+    const sz = 2.1 + (seed % 4) * 0.55 + tier * 0.12;
+    ctx.globalAlpha = vis * rain * (0.45 + (1 - fall) * 0.5);
+    // 水滴拖尾
+    const trail = ctx.createLinearGradient(dx, dy - sz * 2.2, dx, dy + sz);
+    trail.addColorStop(0, 'rgba(200,235,255,0)');
+    trail.addColorStop(0.55, i % 2 === 0 ? 'rgba(191,230,255,0.85)' : 'rgba(255,245,210,0.75)');
+    trail.addColorStop(1, 'rgba(230,248,255,0.95)');
+    ctx.fillStyle = trail;
+    ctx.beginPath();
+    ctx.ellipse(dx, dy, sz * 0.55, sz * 1.55, 0, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // 落地涟漪
+  if (rain > 0.25) {
+    for (let k = 0; k < 4; k++) {
+      const pk = Math.max(0, Math.min(1, rain - 0.15 - k * 0.12));
+      if (pk <= 0) continue;
+      ctx.globalAlpha = vis * (1 - pk) * 0.55;
+      ctx.strokeStyle = k % 2 === 0 ? 'rgba(200,235,255,0.85)' : 'rgba(255,235,180,0.65)';
+      ctx.lineWidth = 2.2 - k * 0.3;
+      ctx.beginPath();
+      ctx.ellipse(x, y + CELL * 0.12, easeOut(pk) * RR * (0.35 + k * 0.12), easeOut(pk) * RR * (0.14 + k * 0.04), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // 光粒子上浮（续命感）
+  const motes = 10 + tier * 2;
+  for (let i = 0; i < motes; i++) {
+    const t = ((p * 0.9 + i * 0.09) % 1);
+    const a = (i / motes) * Math.PI * 2 + p * 0.8;
+    const rad = RR * (0.2 + (i % 3) * 0.12) * bloom;
+    const mx = x + Math.cos(a) * rad;
+    const my = y + CELL * 0.15 - t * CELL * (0.9 + bloom * 0.4);
+    ctx.globalAlpha = vis * (1 - t) * 0.85 * bloom;
+    ctx.fillStyle = i % 2 === 0 ? '#fff6c8' : '#c8e8ff';
+    ctx.beginPath();
+    ctx.arc(mx, my, 1.4 + (i % 3) * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** 老君：八卦炉升起 → 太极环转 → 金丹外溅 + 地火冲击（暖金） */
+function drawUltLaojun(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI);
+  const vis = Math.max(fade, life * 0.85);
+  const rise = easeOut(Math.min(1, p / 0.35));
+  const bloom = easeOut(Math.max(0, Math.min(1, (p - 0.15) / 0.45)));
+  const burst = easeOut(Math.max(0, Math.min(1, (p - 0.4) / 0.45)));
+
+  // 地面热浪底光
+  const ground = ctx.createRadialGradient(x, y + CELL * 0.15, 2, x, y + CELL * 0.15, R * 0.85 * bloom);
+  ground.addColorStop(0, 'rgba(255,160,40,0.35)');
+  ground.addColorStop(0.55, 'rgba(255,100,20,0.12)');
+  ground.addColorStop(1, 'rgba(180,60,0,0)');
+  ctx.globalAlpha = vis * 0.9;
+  ctx.fillStyle = ground;
+  ctx.beginPath();
+  ctx.ellipse(x, y + CELL * 0.12, R * 0.75 * bloom, R * 0.28 * bloom, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 八卦炉剪影（鼎身 + 三足 + 双耳）
+  const furnaceY = y - CELL * 0.15 * rise;
+  const fw = CELL * (0.38 + tier * 0.02) * (0.75 + rise * 0.25);
+  const fh = CELL * (0.42 + tier * 0.02) * rise;
+  ctx.globalAlpha = vis * (0.55 + rise * 0.35);
+  ctx.fillStyle = 'rgba(90,55,30,0.85)';
+  ctx.strokeStyle = 'rgba(255,210,120,0.85)';
+  ctx.lineWidth = 1.6 + tier * 0.15;
+  // 鼎腹
+  ctx.beginPath();
+  ctx.moveTo(x - fw * 0.55, furnaceY - fh * 0.15);
+  ctx.quadraticCurveTo(x - fw * 0.7, furnaceY + fh * 0.35, x - fw * 0.35, furnaceY + fh * 0.55);
+  ctx.lineTo(x + fw * 0.35, furnaceY + fh * 0.55);
+  ctx.quadraticCurveTo(x + fw * 0.7, furnaceY + fh * 0.35, x + fw * 0.55, furnaceY - fh * 0.15);
+  ctx.quadraticCurveTo(x, furnaceY - fh * 0.55, x - fw * 0.55, furnaceY - fh * 0.15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // 双耳
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(x + side * fw * 0.58, furnaceY - fh * 0.05, fw * 0.14, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // 三足
+  for (let i = 0; i < 3; i++) {
+    const ox = (i - 1) * fw * 0.28;
+    ctx.beginPath();
+    ctx.moveTo(x + ox, furnaceY + fh * 0.52);
+    ctx.lineTo(x + ox * 1.15, furnaceY + fh * 0.85);
+    ctx.stroke();
+  }
+  // 炉内金焰
+  const flameH = fh * (0.55 + Math.sin(p * Math.PI * 4) * 0.08) * rise;
+  const flame = ctx.createLinearGradient(x, furnaceY + fh * 0.2, x, furnaceY - flameH);
+  flame.addColorStop(0, 'rgba(255,120,30,0.2)');
+  flame.addColorStop(0.4, 'rgba(255,180,50,0.75)');
+  flame.addColorStop(1, 'rgba(255,245,200,0.95)');
+  ctx.globalAlpha = vis * rise;
+  ctx.fillStyle = flame;
+  ctx.beginPath();
+  ctx.moveTo(x - fw * 0.22, furnaceY + fh * 0.15);
+  ctx.quadraticCurveTo(x - fw * 0.18, furnaceY - flameH * 0.4, x, furnaceY - flameH);
+  ctx.quadraticCurveTo(x + fw * 0.18, furnaceY - flameH * 0.4, x + fw * 0.22, furnaceY + fh * 0.15);
+  ctx.closePath();
+  ctx.fill();
+
+  // 太极环（阴阳点 + 八卦刻度）
+  const taijiR = R * (0.42 + tier * 0.02) * bloom;
+  ctx.save();
+  ctx.translate(x, furnaceY - fh * 0.1);
+  ctx.rotate(p * Math.PI * 1.6);
+  ctx.globalAlpha = vis * bloom * 0.9;
+  ctx.strokeStyle = 'rgba(255,220,100,0.9)';
+  ctx.lineWidth = 2.2 + tier * 0.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, taijiR, 0, Math.PI * 2);
+  ctx.stroke();
+  // 阴阳双鱼简笔
+  ctx.fillStyle = 'rgba(255,235,160,0.75)';
+  ctx.beginPath();
+  ctx.arc(0, -taijiR * 0.28, taijiR * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(80,40,10,0.65)';
+  ctx.beginPath();
+  ctx.arc(0, taijiR * 0.28, taijiR * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(80,40,10,0.8)';
+  ctx.beginPath();
+  ctx.arc(0, -taijiR * 0.28, taijiR * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,235,160,0.9)';
+  ctx.beginPath();
+  ctx.arc(0, taijiR * 0.28, taijiR * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+  // 八卦刻度
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const solid = i % 2 === 0;
+    ctx.strokeStyle = solid ? 'rgba(255,200,80,0.95)' : 'rgba(255,160,40,0.7)';
+    ctx.lineWidth = solid ? 2.4 : 1.4;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * (taijiR + 3), Math.sin(a) * (taijiR + 3));
+    ctx.lineTo(Math.cos(a) * (taijiR + 10 + tier), Math.sin(a) * (taijiR + 10 + tier));
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 冲击波
+  for (let k = 0; k < 3; k++) {
+    const pk = Math.max(0, Math.min(1, burst - k * 0.12));
+    if (pk <= 0) continue;
+    const rad = easeOut(pk) * R * (0.7 + k * 0.12);
+    ctx.globalAlpha = vis * (1 - pk) * 0.7;
+    ctx.strokeStyle = k === 0 ? 'rgba(255,210,90,0.9)' : 'rgba(255,150,40,0.5)';
+    ctx.lineWidth = 3.5 - k * 0.8;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 金丹：先环绕再外溅
+  const pills = 8 + tier * 2;
+  for (let i = 0; i < pills; i++) {
+    const spin = (i / pills) * Math.PI * 2 + p * 2.4;
+    const orbit = R * (0.22 + (i % 3) * 0.06) * bloom;
+    const fly = R * (0.35 + (i % 4) * 0.12) * burst;
+    const dist = orbit * (1 - burst * 0.35) + fly;
+    const dx = x + Math.cos(spin) * dist;
+    const dy = y + Math.sin(spin) * dist - CELL * 0.12 * Math.sin(p * Math.PI + i);
+    const pr = 2.2 + (i % 3) * 0.7 + tier * 0.15;
+    const glow = ctx.createRadialGradient(dx, dy, 0.5, dx, dy, pr * 2.8);
+    glow.addColorStop(0, 'rgba(255,245,200,0.95)');
+    glow.addColorStop(0.5, 'rgba(255,180,60,0.55)');
+    glow.addColorStop(1, 'rgba(255,120,20,0)');
+    ctx.globalAlpha = vis * (0.55 + (i % 2) * 0.25);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(dx, dy, pr * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = i % 2 === 0 ? '#ffe08a' : '#ffb040';
+    ctx.beginPath();
+    ctx.arc(dx, dy, pr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 火星粒子上扬
+  const sparks = 10 + tier * 2;
+  for (let i = 0; i < sparks; i++) {
+    const t = ((p * 1.8 + i * 0.11) % 1);
+    const a = (i / sparks) * Math.PI * 2 + p;
+    const sx = x + Math.cos(a) * R * 0.2 * bloom * (0.4 + (i % 3) * 0.2);
+    const sy = y - t * CELL * (1.1 + bloom * 0.5) + Math.sin(a * 3) * 4;
+    ctx.globalAlpha = vis * (1 - t) * 0.75;
+    ctx.fillStyle = i % 2 === 0 ? '#ffe6a0' : '#ff9a40';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.4 + (i % 3) * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** 丹君：轻量炼丹（过渡，弱于老君） */
+function drawUltDanjun(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
+  const vis = Math.max(fade, life * 0.75);
+  const bloom = easeOut(Math.min(1, p / 0.5));
+  const burst = easeOut(Math.max(0, Math.min(1, (p - 0.35) / 0.5)));
+
+  const core = ctx.createRadialGradient(x, y, 1, x, y, CELL * 0.55 * bloom);
+  core.addColorStop(0, 'rgba(255,230,160,0.9)');
+  core.addColorStop(1, 'rgba(255,140,40,0)');
+  ctx.globalAlpha = vis;
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(x, y, CELL * 0.55 * bloom, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 小炉口
+  ctx.globalAlpha = vis * 0.7;
+  ctx.strokeStyle = 'rgba(255,200,90,0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(x, y + CELL * 0.05, CELL * 0.22 * bloom, CELL * 0.1 * bloom, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  for (let k = 0; k < 2; k++) {
+    const pk = Math.max(0, Math.min(1, burst - k * 0.15));
+    if (pk <= 0) continue;
+    ctx.globalAlpha = vis * (1 - pk) * 0.65;
+    ctx.strokeStyle = 'rgba(255,180,70,0.7)';
+    ctx.lineWidth = 2 - k * 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.45 + k * 0.12) * easeOut(pk), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  const n = 5 + tier;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + p * 1.6;
+    const d = R * (0.25 + burst * 0.35) * bloom;
+    const dx = x + Math.cos(a) * d;
+    const dy = y + Math.sin(a) * d;
+    ctx.globalAlpha = vis * 0.8;
+    ctx.fillStyle = '#ffd070';
+    ctx.beginPath();
+    ctx.arc(dx, dy, 2.4 + (i % 2), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** 文殊：青莲层层展开 → 慧剑环斩 → 光尘外散（青金/莲紫） */
+function drawUltWenshu(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI);
+  const vis = Math.max(fade, life * 0.85);
+  const bloom = easeOut(Math.min(1, p / 0.4));
+  const slash = easeOut(Math.max(0, Math.min(1, (p - 0.2) / 0.45)));
+  const settle = easeOut(Math.max(0, Math.min(1, (p - 0.45) / 0.5)));
+
+  // 莲心光核
+  const coreR = CELL * (0.2 + tier * 0.015) * (0.7 + bloom * 0.4);
+  const g = ctx.createRadialGradient(x, y, 1, x, y, coreR * 2.8);
+  g.addColorStop(0, 'rgba(245,250,255,0.95)');
+  g.addColorStop(0.35, 'rgba(170,210,255,0.55)');
+  g.addColorStop(0.7, 'rgba(160,120,220,0.25)');
+  g.addColorStop(1, 'rgba(100,60,180,0)');
+  ctx.globalAlpha = vis;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, coreR * 2.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 双层莲瓣（内外反向旋转）
+  for (let layer = 0; layer < 2; layer++) {
+    const petals = (layer === 0 ? 8 : 6) + Math.min(3, tier);
+    const layerBloom = easeOut(Math.max(0, Math.min(1, (p - layer * 0.08) / 0.42)));
+    const spin = p * (layer === 0 ? 0.9 : -1.2);
+    for (let i = 0; i < petals; i++) {
+      const a = (i / petals) * Math.PI * 2 + spin;
+      const len = R * (layer === 0 ? 0.42 : 0.62) * layerBloom;
+      const px = x + Math.cos(a) * len * 0.62;
+      const py = y + Math.sin(a) * len * 0.62;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(a);
+      ctx.globalAlpha = vis * (0.35 + layerBloom * 0.45) * (layer === 0 ? 1 : 0.85);
+      ctx.fillStyle = (i + layer) % 2 === 0 ? 'rgba(190,215,255,0.8)' : 'rgba(210,175,255,0.72)';
+      ctx.strokeStyle = 'rgba(230,240,255,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, CELL * (0.2 + layer * 0.04), CELL * (0.09 + layer * 0.02), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 慧剑：三道弧斩
+  for (let s = 0; s < 3; s++) {
+    const sp = Math.max(0, Math.min(1, slash - s * 0.1));
+    if (sp <= 0) continue;
+    const start = -Math.PI * 0.85 + s * 0.35 + p * 0.4;
+    const sweep = Math.PI * 1.55 * easeOut(sp);
+    const rad = R * (0.55 + s * 0.1) * (0.7 + bloom * 0.35);
+    ctx.globalAlpha = vis * (1 - sp * 0.35) * (0.75 - s * 0.12);
+    ctx.strokeStyle = s === 1 ? 'rgba(200,230,255,0.95)' : 'rgba(180,160,255,0.7)';
+    ctx.lineWidth = 3.2 - s * 0.6 + tier * 0.15;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y, rad, start, start + sweep);
+    ctx.stroke();
+    // 剑尖闪光
+    const tipA = start + sweep;
+    const tipX = x + Math.cos(tipA) * rad;
+    const tipY = y + Math.sin(tipA) * rad;
+    const tipG = ctx.createRadialGradient(tipX, tipY, 0, tipX, tipY, CELL * 0.22);
+    tipG.addColorStop(0, 'rgba(255,255,255,0.9)');
+    tipG.addColorStop(1, 'rgba(160,200,255,0)');
+    ctx.fillStyle = tipG;
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, CELL * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 外圈慧光环 + 刻度
+  const ringR = R * 0.78 * bloom;
+  ctx.globalAlpha = vis * 0.8;
+  ctx.strokeStyle = 'rgba(170,210,255,0.75)';
+  ctx.lineWidth = 2 + tier * 0.15;
+  ctx.beginPath();
+  ctx.arc(x, y, ringR, 0, Math.PI * 2);
+  ctx.stroke();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + p * 1.8;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a) * (ringR - 5), y + Math.sin(a) * (ringR - 5));
+    ctx.lineTo(x + Math.cos(a) * (ringR + 7), y + Math.sin(a) * (ringR + 7));
+    ctx.stroke();
+  }
+
+  // 飘散光尘 / 花瓣
+  const dust = 12 + tier * 2;
+  for (let i = 0; i < dust; i++) {
+    const t = ((p * 1.3 + i * 0.09) % 1);
+    const a = (i / dust) * Math.PI * 2 + p * 0.8;
+    const dist = R * (0.25 + settle * 0.55) * (0.5 + (i % 3) * 0.18);
+    const dx = x + Math.cos(a) * dist;
+    const dy = y + Math.sin(a) * dist - t * CELL * 0.35;
+    ctx.globalAlpha = vis * (1 - t) * 0.7;
+    if (i % 3 === 0) {
+      ctx.fillStyle = 'rgba(210,190,255,0.85)';
+      ctx.beginPath();
+      ctx.ellipse(dx, dy, 3.2, 1.6, a, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = i % 2 === 0 ? '#d8e8ff' : '#f0e0ff';
+      ctx.beginPath();
+      ctx.arc(dx, dy, 1.5 + (i % 2) * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+/** 慧殊：浅莲 + 单道慧光（过渡） */
+function drawUltHuishu(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
+  const vis = Math.max(fade, life * 0.75);
+  const bloom = easeOut(Math.min(1, p / 0.5));
+  const slash = easeOut(Math.max(0, Math.min(1, (p - 0.25) / 0.5)));
+
+  const g = ctx.createRadialGradient(x, y, 1, x, y, CELL * 0.7 * bloom);
+  g.addColorStop(0, 'rgba(230,235,255,0.85)');
+  g.addColorStop(1, 'rgba(140,120,220,0)');
+  ctx.globalAlpha = vis;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, CELL * 0.7 * bloom, 0, Math.PI * 2);
+  ctx.fill();
+
+  const petals = 5 + Math.min(2, tier);
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2 + p * 0.7;
+    ctx.save();
+    ctx.translate(x + Math.cos(a) * R * 0.32 * bloom, y + Math.sin(a) * R * 0.32 * bloom);
+    ctx.rotate(a);
+    ctx.globalAlpha = vis * 0.65 * bloom;
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(200,210,255,0.75)' : 'rgba(210,190,255,0.65)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, CELL * 0.16, CELL * 0.07, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (slash > 0) {
+    const start = -Math.PI * 0.7 + p * 0.3;
+    const sweep = Math.PI * 1.3 * slash;
+    ctx.globalAlpha = vis * (1 - slash * 0.3);
+    ctx.strokeStyle = 'rgba(180,200,255,0.85)';
+    ctx.lineWidth = 2.2 + tier * 0.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y, R * 0.55 * bloom, start, start + sweep);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 2; i++) {
+    const t = Math.max(0, Math.min(1, (p - i * 0.12) / (1 - i * 0.12)));
+    ctx.globalAlpha = vis * (1 - t * 0.55) * 0.7;
+    ctx.strokeStyle = i === 0 ? 'rgba(200,190,255,0.75)' : 'rgba(170,210,255,0.5)';
+    ctx.lineWidth = 1.5 + tier * 0.15;
+    ctx.beginPath();
+    ctx.arc(x, y, R * 0.48 * easeOut(t), 0, Math.PI * 2);
+    ctx.stroke();
   }
 }
 
@@ -5672,28 +6299,140 @@ function drawUltLiusha(ctx: CanvasRenderingContext2D, x: number, y: number, p: n
   ctx.beginPath(); ctx.arc(x, y, expand * R * 0.75, 0, Math.PI * 2); ctx.stroke();
 }
 
-// 梵音 浅润：淡紫音环由小向外扩散 + 少许甘露
-// 梵音 浅润：淡紫甘露下落（无扩散环，弱于观音）
+// 梵音 浅润：弱版观音主题——淡紫音环 + 小净瓶轻倾 + 稀疏甘露（规模/亮度均弱于观音）
 function drawUltFanyin(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.75);
+  const life = Math.sin(Math.min(1, p / 0.94) * Math.PI);
+  const vis = Math.max(fade, life * 0.82);
+  const rise = easeOut(Math.min(1, p / 0.32));
   const bloom = easeOut(Math.min(1, p / 0.55));
-  const drops = 4 + tier;
-  for (let i = 0; i < drops; i++) {
-    const a = (i / drops) * Math.PI * 2 + p * 0.3;
-    const spread = R * 0.5 * bloom * (0.45 + (i % 2) * 0.25);
-    const dx = x + Math.cos(a) * spread;
-    const fall = ((p * 1.4 + i * 0.17) % 1);
-    const dy = y - CELL * 0.55 + fall * CELL * (1.05 + bloom * 0.25);
-    ctx.globalAlpha = vis * (0.5 + (1 - fall) * 0.35);
-    ctx.fillStyle = i % 2 === 0 ? 'rgba(210,200,255,0.85)' : 'rgba(230,220,255,0.7)';
+  const pour = easeOut(Math.max(0, Math.min(1, (p - 0.22) / 0.45)));
+  const rain = easeOut(Math.max(0, Math.min(1, (p - 0.3) / 0.5)));
+  const RR = R * (0.85 + tier * 0.015);
+
+  // 淡紫地面润光
+  ctx.globalAlpha = vis * 0.4 * bloom;
+  const ground = ctx.createRadialGradient(x, y + CELL * 0.08, 1, x, y + CELL * 0.08, RR * 0.7 * bloom);
+  ground.addColorStop(0, 'rgba(230,210,255,0.45)');
+  ground.addColorStop(0.55, 'rgba(180,170,255,0.18)');
+  ground.addColorStop(1, 'rgba(140,140,220,0)');
+  ctx.fillStyle = ground;
+  ctx.beginPath();
+  ctx.ellipse(x, y + CELL * 0.08, RR * 0.68 * bloom, RR * 0.26 * bloom, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 起手淡紫环
+  const snap = easeOut(Math.min(1, p / 0.22));
+  if (snap < 1) {
+    ctx.globalAlpha = vis * (1 - snap) * 0.7;
+    ctx.strokeStyle = 'rgba(210,190,255,0.9)';
+    ctx.lineWidth = 3.2 + tier * 0.25;
     ctx.beginPath();
-    ctx.ellipse(dx, dy, 2, 4, 0, 0, Math.PI * 2);
+    ctx.arc(x, y, snap * RR * 0.42, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 双层音环外扩
+  for (let k = 0; k < 2; k++) {
+    const pk = Math.max(0, Math.min(1, bloom - k * 0.18));
+    if (pk <= 0) continue;
+    const rad = easeOut(pk) * RR * (0.4 + k * 0.28);
+    ctx.globalAlpha = vis * (0.55 - k * 0.15);
+    ctx.strokeStyle = k === 0 ? 'rgba(220,200,255,0.85)' : 'rgba(170,160,240,0.5)';
+    ctx.lineWidth = 2.8 - k * 0.5 + tier * 0.1;
+    ctx.setLineDash(k === 1 ? [5, 5] : []);
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // 小莲台（四瓣，弱于观音六瓣）
+  const lotusR = CELL * (0.26 + tier * 0.015) * (0.5 + bloom * 0.5);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + p * 0.2;
+    ctx.save();
+    ctx.translate(x, y + CELL * 0.04);
+    ctx.rotate(a);
+    ctx.globalAlpha = vis * (0.35 + bloom * 0.35);
+    ctx.fillStyle = 'rgba(210,190,255,0.7)';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(lotusR * 0.32, -lotusR * 0.3, 0, -lotusR);
+    ctx.quadraticCurveTo(-lotusR * 0.32, -lotusR * 0.3, 0, 0);
+    ctx.closePath();
     ctx.fill();
+    ctx.restore();
+  }
+
+  // 小净瓶轻倾
+  const bottleY = y - CELL * (0.4 + rise * 0.25);
+  const tilt = -0.35 + pour * 0.7;
+  ctx.save();
+  ctx.translate(x + Math.sin(tilt) * CELL * 0.05, bottleY);
+  ctx.rotate(tilt);
+  const bw = CELL * (0.11 + tier * 0.01) * (0.7 + rise * 0.3);
+  const bh = CELL * (0.22 + tier * 0.015) * (0.7 + rise * 0.3);
+  ctx.globalAlpha = vis * (0.5 + rise * 0.35);
+  ctx.fillStyle = 'rgba(190,180,240,0.8)';
+  ctx.strokeStyle = 'rgba(230,210,255,0.85)';
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.moveTo(-bw * 0.3, -bh * 1.1);
+  ctx.lineTo(bw * 0.3, -bh * 1.1);
+  ctx.lineTo(bw * 0.45, -bh * 0.8);
+  ctx.quadraticCurveTo(bw * 0.8, -bh * 0.1, bw * 0.45, bh * 0.5);
+  ctx.quadraticCurveTo(0, bh * 0.75, -bw * 0.45, bh * 0.5);
+  ctx.quadraticCurveTo(-bw * 0.8, -bh * 0.1, -bw * 0.45, -bh * 0.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(220,200,255,0.85)';
+  ctx.fillRect(-bw * 0.18, -bh * 1.28, bw * 0.36, bh * 0.2);
+  if (pour > 0.08) {
+    ctx.globalAlpha = vis * pour * 0.75;
+    ctx.strokeStyle = 'rgba(210,200,255,0.85)';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -bh * 1.0);
+    ctx.quadraticCurveTo(bw * 0.45, -bh * 0.15, bw * 0.7, bh * 0.45);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 稀疏淡紫甘露
+  const drops = 8 + tier * 2;
+  for (let i = 0; i < drops; i++) {
+    const seed = (i * 13 + tier * 3) % 71;
+    const a = (i / drops) * Math.PI * 2 + seed * 0.015;
+    const spread = RR * rain * (0.22 + (seed % 4) * 0.12);
+    const dx = x + Math.cos(a) * spread;
+    const fall = ((p * 1.5 + i * 0.14) % 1);
+    const dy = y - CELL * (0.65 + bloom * 0.15) + fall * CELL * (1.2 + bloom * 0.3);
+    const sz = 1.8 + (seed % 3) * 0.45;
+    ctx.globalAlpha = vis * rain * (0.4 + (1 - fall) * 0.45);
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(210,200,255,0.9)' : 'rgba(230,220,255,0.75)';
+    ctx.beginPath();
+    ctx.ellipse(dx, dy, sz * 0.5, sz * 1.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 轻涟漪
+  if (rain > 0.3) {
+    for (let k = 0; k < 2; k++) {
+      const pk = Math.max(0, Math.min(1, rain - 0.2 - k * 0.15));
+      if (pk <= 0) continue;
+      ctx.globalAlpha = vis * (1 - pk) * 0.45;
+      ctx.strokeStyle = 'rgba(200,190,255,0.7)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.ellipse(x, y + CELL * 0.1, easeOut(pk) * RR * (0.3 + k * 0.12), easeOut(pk) * RR * 0.12, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 }
 
-/** 降妖宝杖剪影：前端大月牙铲 + 后端小月牙（凹面朝杆、尖朝外） */
+/** 降妖宝杖剪影：前端大月牙铲 + 后端小月牙（开口朝外、凸背贴杆） */
 function drawJiangyaoStaffGlyph(
   ctx: CanvasRenderingContext2D,
   len: number,
@@ -5742,23 +6481,37 @@ function drawJiangyaoStaffGlyph(
   ctx.stroke();
   ctx.restore();
 
-  // 后端：小月牙（凹面朝杆、凸面与尖朝外，参考实物）
+  // 后端：扁月牙 `)` —— 开口朝外（左）、凸背贴杆（右）；锐角尖 + miter
   ctx.save();
-  ctx.translate(-half + moonR * 0.2, 0);
+  ctx.translate(-half + moonR * 0.18, 0);
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
+  ctx.miterLimit = 14;
   ctx.strokeStyle = '#d8e0ea';
-  ctx.fillStyle = 'rgba(190,205,220,0.88)';
-  ctx.lineWidth = 1.4 + tier * 0.2;
-  // 开口朝右（朝向杆身）：尖端在左侧朝外
+  ctx.fillStyle = 'rgba(190,205,220,0.92)';
+  ctx.lineWidth = 1.1 + tier * 0.15;
+  const R = moonR * 1.02;
+  const tipX = -R * 0.95;       // 尖在外侧（开口端）
+  const tipY = R * 0.52;        // 扁：上下尖距短
+  const backX = R * 0.38;       // 凸背靠杆
+  // 内凹控制点须在 tip 右侧（更靠杆），否则凹口会翻到尖外
+  const innerX = -R * 0.42;
   ctx.beginPath();
-  ctx.arc(0, 0, moonR, Math.PI * 0.28, -Math.PI * 0.28, true);
-  ctx.arc(-moonR * 0.22, 0, moonR * 0.58, -Math.PI * 0.32, Math.PI * 0.32, false);
+  ctx.moveTo(tipX, -tipY);                                            // 上尖
+  ctx.lineTo(-R * 0.12, -R * 0.28);                                    // 上背肩
+  ctx.quadraticCurveTo(backX, 0, -R * 0.12, R * 0.28);                 // 凸背朝杆
+  ctx.lineTo(tipX, tipY);                                             // 下尖
+  ctx.lineTo(-R * 0.62, R * 0.18);                                     // 下内肩（尖与背之间）
+  ctx.quadraticCurveTo(innerX, 0, -R * 0.62, -R * 0.18);               // 凹口朝外
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  // 刃口高光贴凸背
   ctx.strokeStyle = '#f2f6ff';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(0, 0, moonR * 0.9, Math.PI * 0.45, -Math.PI * 0.45, true);
+  ctx.moveTo(-R * 0.08, -R * 0.18);
+  ctx.quadraticCurveTo(R * 0.18, 0, -R * 0.08, R * 0.18);
   ctx.stroke();
   ctx.restore();
 
@@ -5821,40 +6574,123 @@ function drawDragonClawGlyph(
   ctx.restore();
 }
 
-// 白龙 龙牙突进：龙爪挥击撕扯
+// 白龙 龙牙突进：大爪快速连抓两下（左下→右上，再右上→左下）
 function drawUltBailong(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const jab = easeOut(Math.min(1, p / 0.55));
-  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.75);
-  const claw = R * (0.32 + jab * 0.18);
-  ctx.save();
-  // 爪从侧方扫入爆心
-  const swing = -0.55 + jab * 1.1;
-  ctx.translate(x + Math.sin(swing) * R * 0.15, y - R * 0.05);
-  ctx.rotate(swing * 0.35);
-  // 挥爪残影（短弧，不做扇面）
-  if (jab > 0.15) {
-    ctx.globalAlpha = vis * 0.35 * jab;
-    ctx.strokeStyle = 'rgba(200,220,255,0.7)';
-    ctx.lineWidth = 2.2 + tier * 0.3;
-    ctx.lineCap = 'round';
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI);
+  const vis = Math.max(fade, life * 0.85);
+
+  // 两段抓击：0~0.38 第一下；0.38~0.48 收回；0.48~0.92 第二下
+  const swipeLocal = (start: number, end: number) => {
+    const t = Math.max(0, Math.min(1, (p - start) / Math.max(0.001, end - start)));
+    // 前段加速抓入，后段略停顿
+    return t < 0.7 ? easeIn(t / 0.7) : 1;
+  };
+  const s1 = swipeLocal(0.02, 0.36);
+  const s2 = swipeLocal(0.46, 0.86);
+  const retract = easeOut(Math.max(0, Math.min(1, (p - 0.34) / 0.12)));
+  const inSecond = p >= 0.46;
+
+  // 地面撕扯痕迹（两下叠加）
+  const scarBloom = Math.max(s1, s2 * 0.9);
+  if (scarBloom > 0.05) {
+    ctx.globalAlpha = vis * 0.35 * scarBloom;
+    const scar = ctx.createRadialGradient(x, y, 1, x, y, R * 0.55 * scarBloom);
+    scar.addColorStop(0, 'rgba(210,230,255,0.45)');
+    scar.addColorStop(1, 'rgba(150,180,220,0)');
+    ctx.fillStyle = scar;
     ctx.beginPath();
-    ctx.arc(0, 0, claw * 0.95, -Math.PI * 0.85, -Math.PI * 0.85 + jab * Math.PI * 0.7);
-    ctx.stroke();
-  }
-  drawDragonClawGlyph(ctx, claw, tier, vis * (0.55 + jab * 0.45));
-  if (jab > 0.55) {
-    const bp = (jab - 0.55) / 0.45;
-    ctx.globalAlpha = (1 - bp) * vis * 0.75;
-    const g = ctx.createRadialGradient(0, -claw * 0.7, 1, 0, -claw * 0.7, CELL * (0.22 + bp * 0.15));
-    g.addColorStop(0, 'rgba(230,245,255,0.9)');
-    g.addColorStop(1, 'rgba(180,210,240,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, -claw * 0.7, CELL * (0.22 + bp * 0.15), 0, Math.PI * 2);
+    ctx.ellipse(x, y + CELL * 0.06, R * 0.55 * scarBloom, R * 0.22 * scarBloom, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.restore();
+
+  const drawSwipe = (
+    progress: number,
+    dir: 1 | -1,
+    sizeMul: number,
+    alphaMul: number,
+  ) => {
+    if (progress <= 0.01) return;
+    const swing = dir * (-0.85 + easeOut(progress) * 1.7);
+    const claw = R * (0.48 + progress * 0.22) * sizeMul;
+    ctx.save();
+    ctx.translate(
+      x + Math.sin(swing) * R * 0.22 * dir,
+      y - R * 0.08 + (1 - progress) * CELL * 0.12,
+    );
+    ctx.rotate(swing * 0.42);
+    ctx.scale(dir, 1);
+
+    // 挥爪残影弧
+    if (progress > 0.12) {
+      ctx.globalAlpha = vis * 0.4 * progress * alphaMul;
+      ctx.strokeStyle = 'rgba(200,225,255,0.85)';
+      ctx.lineWidth = 3.2 + tier * 0.35;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 0, claw * 0.95, -Math.PI * 0.9, -Math.PI * 0.9 + progress * Math.PI * 0.85);
+      ctx.stroke();
+      // 第二道淡残影
+      ctx.globalAlpha = vis * 0.2 * progress * alphaMul;
+      ctx.lineWidth = 5 + tier * 0.4;
+      ctx.beginPath();
+      ctx.arc(0, 0, claw * 1.05, -Math.PI * 0.95, -Math.PI * 0.95 + progress * Math.PI * 0.7);
+      ctx.stroke();
+    }
+
+    drawDragonClawGlyph(ctx, claw, tier, vis * (0.55 + progress * 0.45) * alphaMul);
+
+    // 抓中闪光
+    if (progress > 0.55) {
+      const bp = (progress - 0.55) / 0.45;
+      ctx.globalAlpha = (1 - bp) * vis * 0.85 * alphaMul;
+      const g = ctx.createRadialGradient(0, -claw * 0.65, 1, 0, -claw * 0.65, CELL * (0.28 + bp * 0.2));
+      g.addColorStop(0, 'rgba(240,250,255,0.95)');
+      g.addColorStop(0.5, 'rgba(180,210,245,0.45)');
+      g.addColorStop(1, 'rgba(150,190,230,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, -claw * 0.65, CELL * (0.28 + bp * 0.2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+
+  // 第一爪：左侧扫入（略小略快）
+  if (p < 0.48) {
+    drawSwipe(s1 * (p < 0.36 ? 1 : Math.max(0.15, 1 - retract)), 1, 1.05, p < 0.36 ? 1 : 1 - retract * 0.6);
+  }
+  // 第二爪：反向回抓（更大更重）
+  if (inSecond) {
+    drawSwipe(s2, -1, 1.2, 1);
+  }
+
+  // 两下抓击的冲击环
+  for (const [hitAt, strength] of [[0.32, 0.85], [0.72, 1]] as const) {
+    const ht = Math.max(0, Math.min(1, (p - hitAt) / 0.18));
+    if (ht <= 0 || ht >= 1) continue;
+    ctx.globalAlpha = vis * (1 - ht) * 0.7 * strength;
+    ctx.strokeStyle = 'rgba(220,240,255,0.9)';
+    ctx.lineWidth = 3.5 * strength;
+    ctx.beginPath();
+    ctx.arc(x, y, easeOut(ht) * R * (0.35 + strength * 0.2), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 爪痕飞屑
+  const shred = Math.max(s1, s2);
+  if (shred > 0.2) {
+    const n = 8 + tier;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + p * 3;
+      const t = Math.min(1, shred * (0.6 + (i % 3) * 0.15));
+      const dist = R * t * (0.25 + (i % 4) * 0.08);
+      ctx.globalAlpha = vis * (1 - t) * 0.7;
+      ctx.fillStyle = i % 2 === 0 ? '#e8f2ff' : '#b8d0f0';
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(a) * dist, y + Math.sin(a) * dist * 0.7, 1.4 + (i % 3) * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 // 击杀蟠桃飘字：头上 桃图+N（+N 字号更小），升空不透明，过顶后按下落进度淡出
@@ -5996,7 +6832,8 @@ function drawWordSelection(
   // 信息面板：放在另一半场中央，避免遮住攻击范围环
   const showBondDetail = !fromAi && active && def.id === BOND_GENERAL && b.bondActive();
   const buffLines = !fromAi && active
-    ? battleBuffLines(b, 'general').filter((line) => !(showBondDetail && line.startsWith('🐵')))
+    ? battleBuffLines(b, 'general', undefined, 'player', active)
+      .filter((line) => !(showBondDetail && line.startsWith('🐵')))
     : [];
   const pills = active ? pillBuffEntries({ general: active }) : [];
   const equippedWeapon = !fromAi ? generalEquippedWeapon(def.id, b.weaponBonuses[def.id]) : null;
@@ -6007,7 +6844,8 @@ function drawWordSelection(
   const pw = active
     ? (pills.length > 0 ? 210 : 194)
     : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
-  const ph = (active ? 164 : 160) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
+  // 激活多 1 行「大招CD」；未激活也展示配置 CD
+  const ph = (active ? 180 : 176) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -6058,7 +6896,15 @@ function drawWordSelection(
     weaponRowY += 16;
   }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
+  // 「范围」= 普攻与对怪大招共用的射程环；「大招CD」= skillCd（激活时附剩余）
   const statTop = equippedWeapon ? weaponRowY : (showBondDetail ? 114 : 90);
+  const skillCdText = (() => {
+    if (def.skill === 'none' || def.skillCd <= 0) return '无';
+    if (!active) return `${def.skillCd}s`;
+    const rem = active.state.skillCd;
+    if (rem <= 0) return `就绪 · ${def.skillCd}s`;
+    return `${Math.ceil(rem)}s / ${def.skillCd}s`;
+  })();
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -6067,6 +6913,7 @@ function drawWordSelection(
             ['攻击力', damage(st.atk).toFixed(2)],
             ['攻速', `${st.frq.toFixed(2)}/s`],
             ['范围', st.rge.toFixed(1)],
+            ['大招CD', skillCdText],
             ['等级', `Lv.${active.state.level}`],
           ];
         })()
@@ -6074,12 +6921,14 @@ function drawWordSelection(
           ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
           ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
           ['范围', b.generalRge(active).toFixed(1)],
+          ['大招CD', skillCdText],
           ['等级', `Lv.${active.state.level}`],
         ]
     : [
         ['基础攻击', def.atk.toFixed(1)],
         ['攻速', `${def.frq.toFixed(1)}/s`],
         ['范围', def.rge.toFixed(1)],
+        ['大招CD', skillCdText],
       ];
   ctx.font = '13px "PingFang SC", sans-serif';
   let ry = py + statTop;
@@ -6972,19 +7821,56 @@ function drawHeroAttackFx(
       break;
     }
     case 'honghaier': {
+      // 普攻火球：略放大 + 周缘火苗（仍明显小于大招天火）
       const x = ax + (tx - ax) * prog;
       const y = ay + (ty - ay) * prog;
-      // 飞出时由小变大，近命中时再缩小，避免全程维持大火球
-      const grow = 0.16 + 0.84 * Math.sin(prog * Math.PI);
-      const rad = CELL * (0.18 + sc * 0.14) * grow;
-      const outer = rad * (1.4 + tier * 0.2);
-      const g = ctx.createRadialGradient(x, y, 1, x, y, outer);
-      g.addColorStop(0, '#fff6c8');
-      g.addColorStop(0.4, '#ff6020');
-      g.addColorStop(1, 'rgba(255,20,10,0)');
-      ctx.globalAlpha = fade * (0.45 + grow * 0.55);
+      const ang = Math.atan2(ty - ay, tx - ax);
+      const grow = 0.4 + 0.6 * Math.sin(prog * Math.PI);
+      const rad = CELL * (0.11 + sc * 0.07) * grow;
+      const outer = rad * (1.35 + tier * 0.1);
+      // 尾焰拖曳
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang + Math.PI / 2);
+      drawFlameTongue(
+        ctx,
+        rad * 1.85,
+        rad * 0.7,
+        fade * (0.45 + grow * 0.4),
+        'rgba(220,40,10,0.75)',
+        'rgba(255,110,25,0.85)',
+        'rgba(255,230,120,0.9)',
+      );
+      ctx.restore();
+      // 本体火晕
+      const g = ctx.createRadialGradient(x, y, 0.5, x, y, outer);
+      g.addColorStop(0, '#fff2b0');
+      g.addColorStop(0.4, '#ff7028');
+      g.addColorStop(1, 'rgba(255,40,10,0)');
+      ctx.globalAlpha = fade * (0.6 + grow * 0.4);
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(x, y, outer, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffe080';
+      ctx.beginPath(); ctx.arc(x, y, rad * 0.42, 0, Math.PI * 2); ctx.fill();
+      // 周缘跳动火苗
+      const tongues = 3 + Math.min(2, tier - 1);
+      for (let i = 0; i < tongues; i++) {
+        const a = ang + Math.PI + (i - (tongues - 1) / 2) * 0.55 + Math.sin(prog * 14 + i * 2) * 0.18;
+        const dist = rad * (0.85 + (i % 2) * 0.2);
+        ctx.save();
+        ctx.translate(x + Math.cos(a) * dist * 0.35, y + Math.sin(a) * dist * 0.35);
+        ctx.rotate(a + Math.PI / 2 + Math.sin(prog * 10 + i) * 0.25);
+        drawFlameTongue(
+          ctx,
+          rad * (0.85 + (i % 3) * 0.15),
+          rad * (0.32 + (i % 2) * 0.08),
+          fade * (0.4 + grow * 0.35) * (0.75 + (i % 2) * 0.15),
+          'rgba(230,50,12,0.8)',
+          'rgba(255,130,30,0.88)',
+          'rgba(255,235,130,0.92)',
+        );
+        ctx.restore();
+      }
       break;
     }
     case 'hongpao': {
@@ -7026,8 +7912,8 @@ function drawHeroAttackFx(
       }
       ctx.save();
       ctx.translate(cx, cy);
-      // 耙齿朝飞行方向扎去
-      ctx.rotate(ang + Math.PI / 2 + spin * 0.35);
+      // 剪影：柄在 -Y、齿在 +Y；旋转后让齿朝飞行方向、柄在后方
+      ctx.rotate(ang - Math.PI / 2 + spin * 0.35);
       drawJiuchiRakeGlyph(ctx, rakeSize * scale, tier, fade * (0.55 + sc * 0.45));
       ctx.restore();
       if (dash > 0.72) {
@@ -7128,23 +8014,116 @@ function drawHeroAttackFx(
       break;
     }
     case 'qingniu': {
-      const jab = Math.sin(Math.min(1, prog / 0.48) * Math.PI);
-      const dist = Math.hypot(tx - ax, ty - ay);
-      const tipD = dist * (0.2 + 0.8 * jab);
-      ctx.globalAlpha = fade;
+      // 牛角顶刺：青绿冲刺带 + 双角前顶 + 命中冲击（不再是细枪尖）
+      const jab = Math.sin(Math.min(1, prog / 0.5) * Math.PI);
+      const dash = easeOut(Math.min(1, prog / 0.48));
+      const dist = Math.hypot(tx - ax, ty - ay) || 1;
+      const tipD = dist * (0.18 + 0.82 * dash);
+      const grow = 0.55 + jab * 0.55;
+      const hornLen = CELL * (0.28 + sc * 0.14) * grow;
+      const hornSpread = CELL * (0.1 + sc * 0.04);
+
+      ctx.save();
       ctx.translate(ax, ay);
       ctx.rotate(ang);
-      ctx.strokeStyle = '#7a9a70';
-      ctx.lineWidth = 2 + tier * 0.45;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(tipD - CELL * 0.35, 0); ctx.lineTo(tipD + 2, 0); ctx.stroke();
-      ctx.fillStyle = '#c8e0b8';
+
+      // 冲刺青绿走廊
+      ctx.globalAlpha = fade * (0.35 + jab * 0.4);
+      const corridor = ctx.createLinearGradient(tipD - hornLen * 1.6, 0, tipD + hornLen * 0.2, 0);
+      corridor.addColorStop(0, 'rgba(80,120,70,0)');
+      corridor.addColorStop(0.45, 'rgba(120,180,100,0.45)');
+      corridor.addColorStop(1, 'rgba(210,245,180,0.7)');
+      ctx.fillStyle = corridor;
       ctx.beginPath();
-      ctx.moveTo(tipD + 4, 0);
-      ctx.lineTo(tipD - 4, -3 - tier * 0.3);
-      ctx.lineTo(tipD - 4, 3 + tier * 0.3);
+      ctx.moveTo(tipD - hornLen * 1.5, -hornSpread * 0.55);
+      ctx.lineTo(tipD + 2, -hornSpread * 1.15);
+      ctx.lineTo(tipD + 2, hornSpread * 1.15);
+      ctx.lineTo(tipD - hornLen * 1.5, hornSpread * 0.55);
       ctx.closePath();
       ctx.fill();
+
+      // 中轴高光拖尾
+      ctx.globalAlpha = fade * (0.5 + jab * 0.35);
+      ctx.strokeStyle = '#d8f0c0';
+      ctx.lineWidth = 3 + tier * 0.35;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(tipD - hornLen * 1.35, 0);
+      ctx.lineTo(tipD + 1, 0);
+      ctx.stroke();
+
+      // 两侧速度线
+      for (let i = 0; i < 4; i++) {
+        const side = i % 2 === 0 ? 1 : -1;
+        const along = tipD - hornLen * (0.4 + (i % 2) * 0.35);
+        const lat = side * hornSpread * (0.85 + (i % 2) * 0.35);
+        ctx.globalAlpha = fade * jab * (0.35 + (i % 2) * 0.2);
+        ctx.strokeStyle = i % 2 === 0 ? 'rgba(180,230,150,0.9)' : 'rgba(100,150,80,0.75)';
+        ctx.lineWidth = 1.4 + (i % 2) * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(along - hornLen * 0.35, lat);
+        ctx.lineTo(along + hornLen * 0.25, lat * 0.7);
+        ctx.stroke();
+      }
+
+      // 双角本体（前伸弯尖）
+      for (const side of [-1, 1] as const) {
+        const baseX = tipD - hornLen * 0.55;
+        const baseY = side * hornSpread * 0.55;
+        const tipX = tipD + hornLen * 0.55;
+        const tipY = side * hornSpread * 0.15;
+        const midX = tipD + hornLen * 0.05;
+        const midY = side * hornSpread * 1.15;
+        ctx.globalAlpha = fade * (0.65 + jab * 0.3);
+        ctx.fillStyle = side < 0 ? '#c8e0b8' : '#b8d8a8';
+        ctx.strokeStyle = '#3a5a32';
+        ctx.lineWidth = 1.4 + tier * 0.1;
+        ctx.beginPath();
+        ctx.moveTo(baseX, baseY - side * 2.2);
+        ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+        ctx.quadraticCurveTo(midX - hornLen * 0.05, midY * 0.55, baseX, baseY + side * 2.8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // 角尖高光
+        ctx.strokeStyle = '#f0ffe0';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(midX, midY * 0.65);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+      }
+
+      // 额骨/鼻梁小块（双角根部连成一体，避免像两根小枪）
+      ctx.globalAlpha = fade * (0.55 + jab * 0.3);
+      ctx.fillStyle = 'rgba(90,130,75,0.9)';
+      ctx.strokeStyle = '#3a5a32';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(tipD - hornLen * 0.45, 0, hornLen * 0.28, hornSpread * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.restore();
+
+      // 命中青绿冲击
+      if (dash > 0.7) {
+        const bp = (dash - 0.7) / 0.3;
+        ctx.globalAlpha = fade * (1 - bp) * 0.8;
+        const g = ctx.createRadialGradient(tx, ty, 1, tx, ty, CELL * (0.2 + sc * 0.1));
+        g.addColorStop(0, 'rgba(230,255,200,0.9)');
+        g.addColorStop(0.45, 'rgba(140,200,110,0.45)');
+        g.addColorStop(1, 'rgba(80,130,60,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(tx, ty, CELL * (0.2 + sc * 0.1) * (0.65 + bp), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(200,240,160,0.85)';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(tx, ty, CELL * (0.14 + sc * 0.06) * easeOut(bp), 0, Math.PI * 2);
+        ctx.stroke();
+      }
       break;
     }
     case 'tieshan':
@@ -7296,6 +8275,113 @@ function drawHeroAttackFx(
         ctx.strokeStyle = '#ffe8a0';
         ctx.lineWidth = 1.5 + tier * 0.3;
         ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
+      }
+      break;
+    }
+    case 'laojun': {
+      // 金丹飞掠：暖金弹丸 + 尾焰
+      const dash = easeOut(Math.min(1, prog / 0.55));
+      const x = ax + (tx - ax) * dash;
+      const y = ay + (ty - ay) * dash;
+      ctx.globalAlpha = fade * 0.45;
+      ctx.strokeStyle = 'rgba(255,180,60,0.75)';
+      ctx.lineWidth = 2 + tier * 0.25;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ax + (tx - ax) * Math.max(0, dash - 0.28), ay + (ty - ay) * Math.max(0, dash - 0.28));
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      const rad = CELL * (0.1 + sc * 0.08);
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad * 2.4);
+      g.addColorStop(0, 'rgba(255,245,180,0.95)');
+      g.addColorStop(0.45, 'rgba(255,170,50,0.65)');
+      g.addColorStop(1, 'rgba(200,90,20,0)');
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, rad * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffe08a';
+      ctx.beginPath();
+      ctx.arc(x, y, rad * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'danjun': {
+      // 小还丹：轻量金丸
+      const dash = easeOut(Math.min(1, prog / 0.5));
+      const x = ax + (tx - ax) * dash;
+      const y = ay + (ty - ay) * dash;
+      ctx.globalAlpha = fade * 0.7;
+      ctx.strokeStyle = 'rgba(255,200,90,0.65)';
+      ctx.lineWidth = 1.4 + tier * 0.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ax + (tx - ax) * Math.max(0, dash - 0.22), ay + (ty - ay) * Math.max(0, dash - 0.22));
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.fillStyle = '#ffd070';
+      ctx.beginPath();
+      ctx.arc(x, y, CELL * (0.07 + sc * 0.05), 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'wenshu': {
+      // 慧剑轻斩：青金剑气飞掠 + 落点浅莲
+      const dash = easeOut(Math.min(1, prog / 0.5));
+      const x = ax + (tx - ax) * dash;
+      const y = ay + (ty - ay) * dash;
+      const len = CELL * (0.28 + sc * 0.18);
+      ctx.save();
+      ctx.globalAlpha = fade * 0.85;
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      ctx.strokeStyle = 'rgba(180,220,255,0.9)';
+      ctx.lineWidth = 2 + tier * 0.3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-len * 0.7, 0);
+      ctx.lineTo(len * 0.85, 0);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(200,180,255,0.7)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(len * 0.2, -len * 0.22);
+      ctx.lineTo(len * 0.85, 0);
+      ctx.lineTo(len * 0.2, len * 0.22);
+      ctx.stroke();
+      ctx.restore();
+      const petals = 3 + Math.min(3, tier);
+      for (let i = 0; i < petals; i++) {
+        const a = (i / petals) * Math.PI * 2 + prog * 2.2;
+        const pr = CELL * (0.1 + sc * 0.06);
+        ctx.globalAlpha = fade * sc * 0.55;
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(190,210,255,0.8)' : 'rgba(210,180,255,0.7)';
+        ctx.beginPath();
+        ctx.ellipse(
+          x + Math.cos(a) * pr * 1.5,
+          y + Math.sin(a) * pr * 1.5,
+          pr * 0.5, pr * 0.22, a, 0, Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      break;
+    }
+    case 'huishu': {
+      // 慧光浅照：淡紫飞环
+      const x = ax + (tx - ax) * prog;
+      const y = ay + (ty - ay) * prog;
+      const rings = 1 + Math.min(2, tier - 1);
+      for (let i = 0; i < rings; i++) {
+        const t = Math.max(0, Math.min(1, (prog - i * 0.12) / (1 - i * 0.12)));
+        const grow = easeOut(t);
+        const rad = CELL * grow * (0.28 + sc * 0.32 + i * 0.05);
+        ctx.globalAlpha = fade * (1 - grow * 0.5) * (0.5 + sc * 0.35);
+        ctx.strokeStyle = i === 0 ? 'rgba(200,190,255,0.85)' : 'rgba(170,210,255,0.6)';
+        ctx.lineWidth = 1.4 + tier * 0.25;
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, Math.PI * 2);
+        ctx.stroke();
       }
       break;
     }
@@ -8827,10 +9913,14 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
       contentHalfW = Math.max(rge * CELL * 0.85, Math.abs(to.x - from.x) * 0.65 + CELL * 1.4);
       contentHalfH = Math.max(rge * CELL * 0.85, Math.abs(to.y - from.y) * 0.65 + CELL * 1.4);
     } else {
-      // 青牛等向上冲的大招，焦点略上移；半径按 rge 留边
-      const upBias = spec.heroId === 'qingniu' ? CELL * rge * 0.35 : 0;
-      // 铁扇/大蟒大招带外扩气流/裂纹残骸，需要更宽的留边避免裁切
-      const wideMargin = spec.heroId === 'tieshan' || spec.heroId === 'damang' ? 1.35 : 1.05;
+      // 青牛上冲 / 红孩天火 / 观音净瓶抬升：焦点略上移，避免裁切
+      const upBias = spec.heroId === 'qingniu' || spec.heroId === 'honghaier' || spec.heroId === 'guanyin'
+        ? CELL * rge * 0.35
+        : spec.heroId === 'fanyin'
+          ? CELL * rge * 0.22
+          : 0;
+      // 铁扇巨扇挥扫、大蟒裂纹残骸：更宽留边
+      const wideMargin = spec.heroId === 'tieshan' || spec.heroId === 'damang' ? 1.55 : 1.05;
       focusX = to.x;
       focusY = to.y - upBias;
       contentHalfW = Math.max(CELL * 2.2, rge * CELL * wideMargin);

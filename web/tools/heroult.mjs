@@ -14,8 +14,10 @@ await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).ca
 
 const heroes = [
   'nezha', 'erlang', 'niulang',
-  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'baigujing', 'tangseng',
-  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'bailong',
+  'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu',
+  'baigujing', 'tangseng',
+  'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'danjun', 'huishu',
+  'bailong',
 ];
 for (const id of heroes) {
   await page.evaluate((heroId) => {
