@@ -504,16 +504,32 @@ export class DevToolsPanel {
 
     body.appendChild(section('引导'));
     const seenKeys = Object.keys(snap.tutorialSeen);
-    const seenCard = document.createElement('div');
-    seenCard.className = 'xy-dt-card';
-    seenCard.textContent = seenKeys.length
-      ? `已看过：${seenKeys.join(', ')}`
-      : '尚未看过任何引导';
-    body.appendChild(seenCard);
-    body.appendChild(btn('清空引导记录', () => {
+    if (seenKeys.length) {
+      const hint2 = document.createElement('p');
+      hint2.className = 'xy-dt-hint';
+      hint2.textContent = '已看过（点击单项可单独清除，该引导会在下次触发时机重新弹出）：';
+      body.appendChild(hint2);
+      const list = document.createElement('div');
+      list.className = 'xy-dt-actions';
+      for (const key of seenKeys) {
+        list.appendChild(btn(`${key} ✕`, () => {
+          const next = { ...snap.tutorialSeen };
+          delete next[key];
+          this.host.onUserApplied(applyUserSnapshot({ tutorialSeen: next }));
+          this.renderBody();
+        }));
+      }
+      body.appendChild(list);
+    } else {
+      const seenCard = document.createElement('div');
+      seenCard.className = 'xy-dt-card';
+      seenCard.textContent = '尚未看过任何引导';
+      body.appendChild(seenCard);
+    }
+    body.appendChild(btn('清空全部引导记录', () => {
       this.host.onUserApplied(applyUserSnapshot({ tutorialSeen: {} }));
       this.renderBody();
-    }));
+    }, 'danger'));
 
     body.appendChild(section('装配主动（最多 2）'));
     body.appendChild(this.skillChecklist(

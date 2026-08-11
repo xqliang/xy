@@ -2,6 +2,7 @@
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_COST } from './stamina';
+import { MERIT_MAX } from './merit';
 import { STARS_PER_TIER } from './rank';
 import { APP_VERSION } from './version';
 import {
@@ -224,7 +225,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
     ctx.drawImage(av, AVATAR.x + 4, AVATAR.y + 4, av.width * scale, av.height * scale);
   }
 
-  drawInkResourceBar(ctx, MERIT_BAR, '功德', String(info.merit), 0, 'icon-merit');
+  drawInkResourceBar(ctx, MERIT_BAR, '功德', `${info.merit}/${MERIT_MAX}`, 0, 'icon-merit');
   drawInkResourceBar(
     ctx,
     STAMINA_BAR,
