@@ -633,13 +633,28 @@ export const DAMAGE_FLOAT_VX = 0.72; // 左右抛物线初速（格/秒）
 export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
 export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
-export const PLACE_DROP_DUR = 0.24; // 自动/AI 布阵落子：自上方快速掉落的时长（秒）
+export const PLACE_DROP_DUR = 0.03; // 自半场顶加速落入格心的时长（秒）；着地时播 sfx
+export const PLACE_DROP_STAGGER_MIN = 0.6; // 连续落子之间的最短间隔（秒）
+export const PLACE_DROP_STAGGER_MAX = 1.0; // 连续落子之间的最长间隔（秒）
+
+/** 玩家一键布阵回放步（先规划再逐步执行，tray 逐个清空） */
+export type AutoPlacePlaybackStep =
+  | { kind: 'place'; trayIndex: number; cell: Cell; token: TrayToken }
+  | { kind: 'mergeTray'; from: number; to: number }
+  | { kind: 'mergeBoard'; from: Cell; to: Cell }
+  | { kind: 'moveUnit'; from: Cell; to: Cell }
+  | { kind: 'swapUnits'; a: Cell; b: Cell }
+  | { kind: 'swapUnitWord'; unitCell: Cell; wordCell: Cell }
+  | { kind: 'moveWord'; from: Cell; to: Cell }
+  | { kind: 'swapWords'; from: Cell; to: Cell }
+  | { kind: 'displaceToTray'; cell: Cell };
 
 /** 棋盘落子掉落动效（AI 布阵与用户点「布阵」） */
 export interface PlaceDropFx {
   side: 'player' | 'ai';
   c: number;
   r: number;
+  delay: number; // 开始掉落前的等待（秒）
   t: number;
   kind: 'unit' | 'word';
   isMerge: boolean;
@@ -712,9 +727,17 @@ export class Battle {
   aiDigFx: { c: number; r: number; t: number }[] = []; // AI 侧挖坑动画（对称展示，见 render）
   placeDropFx: PlaceDropFx[] = []; // 布阵/AI 落子：自上方快速掉落的动效
   // 自动布阵对"刚挖开、开格动画未完"的格做的延迟落子：先预占该格，动画结束后由 updateFx 真正落子。
-  private pendingPlace: { token: TrayToken; c: number; r: number; dropAnim: boolean }[] = [];
+  private pendingPlace: { token: TrayToken; c: number; r: number; dropAnim: boolean; trayIndex?: number; keepInTray?: boolean }[] = [];
   private aiPendingPlace: { token: TrayToken; c: number; r: number }[] = [];
   private placeDropAnimDepth = 0; // >0 时玩家侧落子也播掉落动效（一键布阵）
+  private placeDropStagger: Record<'player' | 'ai', number> = { player: 0, ai: 0 };
+  private autoPlaceRecorder: AutoPlacePlaybackStep[] | null = null;
+  private autoPlaceRecording = false;
+  private autoPlacePlayback: AutoPlacePlaybackStep[] = [];
+  private autoPlacePlaying = false;
+  private autoPlacePlaybackWait = false;
+  private autoPlacePlaybackGap = 0;
+  private autoPlaceRepositionPending = false;
   summonFlash = 0; // 征兵闪光(1→0)
   autoplaceFlash = 0; // 布阵闪光(1→0)
   /** 上次一键布阵前的局面指纹（含兵器+字牌+候选）；跨点击阻止 A↔B 对抖 */
@@ -750,6 +773,35 @@ export class Battle {
     this.units = snap.units;
     this.words = snap.words;
     this.generalStates = snap.generalStates;
+  }
+
+  /** 玩家布阵回放：含 tray / 延迟落子 / 开挖动画，便于规划后整局回滚再逐步播放 */
+  private clonePlayerAutoPlaceSession(): {
+    layout: ReturnType<Battle['cloneAutoplaceLayout']>;
+    tray: TrayToken[];
+    pendingPlace: { token: TrayToken; c: number; r: number; dropAnim: boolean; trayIndex?: number; keepInTray?: boolean }[];
+    digFx: { c: number; r: number; t: number }[];
+    unlocked: Set<string>;
+  } {
+    return {
+      layout: this.cloneAutoplaceLayout(),
+      tray: this.tray.map((t) => (t ? ({ ...t } as TrayToken) : t)) as TrayToken[],
+      pendingPlace: this.pendingPlace.map((p) => ({ ...p, token: { ...p.token } as TrayToken })),
+      digFx: this.digFx.map((d) => ({ ...d })),
+      unlocked: new Set(this.unlocked),
+    };
+  }
+
+  private restorePlayerAutoPlaceSession(snap: ReturnType<Battle['clonePlayerAutoPlaceSession']>): void {
+    this.restoreAutoplaceLayout(snap.layout);
+    this.tray = snap.tray.map((t) => (t ? ({ ...t } as TrayToken) : t)) as TrayToken[];
+    this.pendingPlace = snap.pendingPlace.map((p) => ({ ...p, token: { ...p.token } as TrayToken }));
+    this.digFx = snap.digFx.map((d) => ({ ...d }));
+    this.unlocked = snap.unlocked;
+  }
+
+  private recordAutoPlaceStep(step: AutoPlacePlaybackStep): void {
+    this.autoPlaceRecorder?.push(step);
   }
 
   /** AI 半场：兵器数组 + 字牌 + 候选 + 上次调位对（布阵/战中调整共用） */
@@ -803,8 +855,25 @@ export class Battle {
   sfxEvents: string[] = []; // 引擎发出的音效事件名，由音频层每帧取走播放（保持引擎与DOM解耦）
   private emit(name: string): void { if (this.sfxEvents.length < 32) this.sfxEvents.push(name); }
 
-  private beginPlaceDropAnim(): void { this.placeDropAnimDepth += 1; }
+  private beginPlaceDropAnim(): void {
+    this.placeDropAnimDepth += 1;
+    if (this.placeDropAnimDepth === 1) this.placeDropStagger.player = 0;
+  }
   private endPlaceDropAnim(): void { this.placeDropAnimDepth = Math.max(0, this.placeDropAnimDepth - 1); }
+  private beginAiPlaceDropStagger(): void { this.placeDropStagger.ai = 0; }
+
+  private nextPlaceDropDelay(side: 'player' | 'ai'): number {
+    if (side === 'player' && this.autoPlacePlaying) return 0;
+    const delay = this.placeDropStagger[side];
+    const rng = side === 'ai' ? this.aiRng : this.rng;
+    this.placeDropStagger[side] +=
+      PLACE_DROP_STAGGER_MIN + rng.next() * (PLACE_DROP_STAGGER_MAX - PLACE_DROP_STAGGER_MIN);
+    return delay;
+  }
+
+  private rollAutoPlaceStagger(): number {
+    return PLACE_DROP_STAGGER_MIN + this.rng.next() * (PLACE_DROP_STAGGER_MAX - PLACE_DROP_STAGGER_MIN);
+  }
 
   /** 落子/合成：AI 或一键布阵时播掉落动效并在着地时发声；手动拖拽仍即时发声 */
   private spawnPlaceDropFx(
@@ -821,6 +890,7 @@ export class Battle {
       playSfx?: boolean;
     },
   ): void {
+    if (side === 'player' && this.autoPlaceRecording) return;
     if (side === 'player' && this.placeDropAnimDepth <= 0) {
       this.emit(opts.sfx);
       return;
@@ -829,6 +899,7 @@ export class Battle {
       side,
       c: cell.c,
       r: cell.r,
+      delay: this.nextPlaceDropDelay(side),
       t: 0,
       landed: false,
       ...opts,
@@ -845,6 +916,192 @@ export class Battle {
     return this.aiActiveGenerals().some((g) => g.cells.some((cc) => cc.c === cell.c && cc.r === cell.r))
       ? 'general'
       : 'place';
+  }
+
+  private playerPlaceAnimBusy(): boolean {
+    return this.placeDropFx.some((d) => d.side === 'player' && (d.delay > 0 || d.t < PLACE_DROP_DUR))
+      || this.pendingPlace.length > 0
+      || this.digFx.length > 0;
+  }
+
+  private cloneTrayToken(t: TrayToken): TrayToken {
+    switch (t.kind) {
+      case 'unit':
+        return { kind: 'unit', type: t.type, tier: t.tier, ...(t.displaced ? { displaced: true } : {}) };
+      case 'word':
+        return { kind: 'word', char: t.char, general: t.general, tier: t.tier };
+      case 'shovel':
+        return { kind: 'shovel' };
+      case 'tree':
+        return { kind: 'tree', level: t.level, growT: t.growT };
+      default: {
+        const _exhaustive: never = t;
+        void _exhaustive;
+        return { kind: 'shovel' };
+      }
+    }
+  }
+
+  private trayTokensMatch(a: TrayToken, b: TrayToken): boolean {
+    if (a.kind !== b.kind) return false;
+    switch (a.kind) {
+      case 'unit':
+        return b.kind === 'unit' && a.type === b.type && a.tier === b.tier;
+      case 'word':
+        return b.kind === 'word' && a.char === b.char && a.tier === b.tier && a.general === b.general;
+      case 'shovel':
+        return true;
+      case 'tree':
+        return b.kind === 'tree' && a.level === b.level;
+      default: {
+        const _exhaustive: never = a;
+        void _exhaustive;
+        return false;
+      }
+    }
+  }
+
+  private findTrayIndexForPlaceStep(step: Extract<AutoPlacePlaybackStep, { kind: 'place' }>): number | null {
+    const direct = this.tray[step.trayIndex];
+    if (direct && this.trayTokensMatch(direct, step.token)) return step.trayIndex;
+    for (let i = 0; i < this.tray.length; i++) {
+      const t = this.tray[i];
+      if (t && this.trayTokensMatch(t, step.token)) return i;
+    }
+    return null;
+  }
+
+  /** @returns true=等待动效, null=即时完成, false=步骤失败（丢弃） */
+  private runAutoPlacePlaybackStep(step: AutoPlacePlaybackStep): boolean | null {
+    switch (step.kind) {
+      case 'place': {
+        const idx = this.findTrayIndexForPlaceStep(step);
+        if (idx === null || !this.autoPlaceApply(idx, step.cell)) return false;
+        return this.playerPlaceAnimBusy() ? true : null;
+      }
+      case 'mergeTray':
+        return this.mergeTrayTokens(step.from, step.to) ? null : false;
+      case 'mergeBoard': {
+        const a = this.units.get(cellKey(step.from.c, step.from.r));
+        const b = this.units.get(cellKey(step.to.c, step.to.r));
+        if (!a || !b) return false;
+        if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
+        const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
+        this.units.set(cellKey(step.to.c, step.to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.delete(cellKey(step.from.c, step.from.r));
+        this.bursts.push({ kind: 'merge', c: step.to.c, r: step.to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
+        this.spawnPlaceDropFx('player', step.to, {
+          kind: 'unit',
+          isMerge: true,
+          sfx: 'merge',
+          unitType: merged.type,
+          unitTier: merged.tier,
+        });
+        return this.playerPlaceAnimBusy();
+      }
+      case 'moveUnit': {
+        const u = this.units.get(cellKey(step.from.c, step.from.r));
+        if (!u) return false;
+        if (!this.isUnlocked(step.to.c, step.to.r) || !this.cellFree(step.to.c, step.to.r)) return false;
+        this.units.delete(cellKey(step.from.c, step.from.r));
+        u.cell = { c: step.to.c, r: step.to.r };
+        u.fireDir = faceDirToward(u.cell, this.unitFaceGate());
+        this.units.set(cellKey(step.to.c, step.to.r), u);
+        return false;
+      }
+      case 'swapUnits': {
+        const ka = cellKey(step.a.c, step.a.r);
+        const kb = cellKey(step.b.c, step.b.r);
+        const ua = this.units.get(ka);
+        const ub = this.units.get(kb);
+        if (!ua || !ub) return false;
+        this.units.delete(ka);
+        this.units.delete(kb);
+        ua.cell = { c: step.b.c, r: step.b.r };
+        ub.cell = { c: step.a.c, r: step.a.r };
+        ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate());
+        ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate());
+        this.units.set(kb, ua);
+        this.units.set(ka, ub);
+        return false;
+      }
+      case 'swapUnitWord':
+        this.swapUnitWord(step.unitCell, step.wordCell);
+        return false;
+      case 'moveWord': {
+        const kFrom = cellKey(step.from.c, step.from.r);
+        const kTo = cellKey(step.to.c, step.to.r);
+        const w = this.words.get(kFrom);
+        if (!w) return false;
+        if (!this.isUnlocked(step.to.c, step.to.r) || !this.cellFree(step.to.c, step.to.r)) return false;
+        this.words.delete(kFrom);
+        w.cell = { c: step.to.c, r: step.to.r };
+        this.words.set(kTo, w);
+        return false;
+      }
+      case 'swapWords':
+        this.dragWord(step.from, step.to);
+        return false;
+      case 'displaceToTray':
+        this.displaceToTray(step.cell);
+        return false;
+      default: {
+        const _exhaustive: never = step;
+        void _exhaustive;
+        return false;
+      }
+    }
+  }
+
+  private finishAutoPlacePlayback(): void {
+    if (this.autoPlaceRepositionPending) {
+      this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS);
+      this.autoPlaceRepositionPending = false;
+    }
+    this.autoPlacePlaying = false;
+    this.autoPlacePlaybackWait = false;
+    this.endPlaceDropAnim();
+  }
+
+  private tickAutoPlacePlayback(dt = 0): void {
+    if (!this.autoPlacePlaying) return;
+    if (this.autoPlacePlaybackGap > 0) {
+      this.autoPlacePlaybackGap = Math.max(0, this.autoPlacePlaybackGap - dt);
+      return;
+    }
+    if (this.autoPlacePlaybackWait) {
+      if (this.playerPlaceAnimBusy()) return;
+      this.autoPlacePlaybackWait = false;
+      if (this.autoPlacePlayback.length > 0) {
+        this.autoPlacePlaybackGap = this.rollAutoPlaceStagger();
+        return;
+      }
+    }
+    while (!this.autoPlacePlaybackWait && this.autoPlacePlayback.length > 0) {
+      const step = this.autoPlacePlayback.shift()!;
+      const wait = this.runAutoPlacePlaybackStep(step);
+      if (wait) {
+        this.autoPlacePlaybackWait = true;
+        break;
+      }
+    }
+    if (!this.autoPlacePlaybackWait && this.autoPlacePlayback.length === 0 && !this.playerPlaceAnimBusy()) {
+      this.finishAutoPlacePlayback();
+    }
+  }
+
+  /** 测试用：跳过落子动效等待，立即播完布阵队列 */
+  flushAutoPlacePlaybackForTest(): void {
+    while (this.autoPlacePlaying) {
+      this.autoPlacePlaybackGap = 0;
+      if (this.autoPlacePlaybackWait && this.playerPlaceAnimBusy()) {
+        this.placeDropFx = this.placeDropFx.filter((d) => d.side !== 'player');
+        this.pendingPlace = [];
+        this.digFx = [];
+        this.autoPlacePlaybackWait = false;
+      }
+      this.tickAutoPlacePlayback();
+    }
   }
 
   tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
@@ -2391,6 +2648,7 @@ export class Battle {
     const layoutSnap = this.cloneAiAutoplaceLayout();
     const keyBefore = autoPlaceBoardKey(view);
     if (heroPending) {
+      this.beginAiPlaceDropStagger();
       planAutoPlaceSteps(view, {
         rng: () => this.aiRng.next(),
         pSubOptimal,
@@ -3650,6 +3908,7 @@ export class Battle {
         aiPlacedThisFrame = true;
         const layoutSnap = this.cloneAiAutoplaceLayout();
         const keyBefore = autoPlaceBoardKey(this.buildAiAutoView());
+        this.beginAiPlaceDropStagger();
         planAutoPlaceSteps(this.buildAiAutoView(), {
           rng: () => this.aiRng.next(),
           pSubOptimal: knobs.pSubOptimal,
@@ -3679,8 +3938,10 @@ export class Battle {
       this.aiMeteorPending = false;
       this.castAiMeteor();
     }
-    this.updateAiActives(dt);
-    this.tickAiActives();
+    if (this.status === 'playing') {
+      this.updateAiActives(dt);
+      this.tickAiActives();
+    }
     this.updateAiUnits(dt);
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
@@ -4699,6 +4960,19 @@ export class Battle {
     this.digFx = this.digFx.filter((d) => d.t < DIG_DUR);
     for (const d of this.aiDigFx) d.t += dt;
     this.aiDigFx = this.aiDigFx.filter((d) => d.t < DIG_DUR);
+    for (const d of this.placeDropFx) {
+      if (d.delay > 0) {
+        d.delay -= dt;
+        continue;
+      }
+      d.t += dt;
+      if (!d.landed && d.t >= PLACE_DROP_DUR) {
+        d.landed = true;
+        if (d.playSfx !== false) this.emit(d.sfx);
+      }
+    }
+    this.placeDropFx = this.placeDropFx.filter((d) => d.delay > 0 || d.t < PLACE_DROP_DUR + 0.04);
+    this.tickAutoPlacePlayback(dt);
     this.updatePendingPlace(); // 开格动画结束后落下预占的兵/字牌
     if (this.summonFlash > 0) this.summonFlash = Math.max(0, this.summonFlash - dt * 2);
     if (this.autoplaceFlash > 0) this.autoplaceFlash = Math.max(0, this.autoplaceFlash - dt * 2);
@@ -4819,8 +5093,10 @@ export class Battle {
     if (!token) return false;
     const animating = this.digFx.some((d) => d.c === cell.c && d.r === cell.r);
     if (token.kind !== 'shovel' && animating && this.isUnlocked(cell.c, cell.r) && this.cellFree(cell.c, cell.r)) {
-      this.pendingPlace.push({ token, c: cell.c, r: cell.r, dropAnim: this.placeDropAnimDepth > 0 }); // 预占：cellFree 此后视其为占用
-      this.tray.splice(index, 1);
+      const dropAnim = this.placeDropAnimDepth > 0;
+      const keepInTray = this.autoPlacePlaying;
+      this.pendingPlace.push({ token, c: cell.c, r: cell.r, dropAnim, trayIndex: index, keepInTray });
+      if (!keepInTray) this.tray.splice(index, 1);
       return true;
     }
     return this.doPlaceFromTray(index, cell);
@@ -4829,9 +5105,12 @@ export class Battle {
   // 延迟落子结算：预占格的开格动画结束后，真正把预占的兵/字牌落到该格（每帧由 updateFx 调用）。
   private updatePendingPlace(): void {
     if (this.pendingPlace.length > 0) {
-      const still: { token: TrayToken; c: number; r: number }[] = [];
+      const still: { token: TrayToken; c: number; r: number; dropAnim: boolean; trayIndex?: number; keepInTray?: boolean }[] = [];
       for (const p of this.pendingPlace) {
         if (this.digFx.some((d) => d.c === p.c && d.r === p.r)) { still.push(p); continue; } // 动画未完，继续等
+        if (p.keepInTray && p.trayIndex !== undefined) {
+          this.clearTraySlot(p.trayIndex);
+        }
         const cell = { c: p.c, r: p.r };
         if (p.token.kind === 'unit') {
           this.units.set(cellKey(p.c, p.r), makePlacedUnit(p.token.type, p.token.tier, cell, this.unitFaceGate()));
@@ -4931,7 +5210,11 @@ export class Battle {
           ? this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear())
           : 0,
       wordChars: (general) => generalById(general)?.chars,
-      place: (i, cell) => this.autoPlaceApply(i, cell),
+      place: (i, cell) => {
+        const ok = this.autoPlaceApply(i, cell);
+        if (ok) this.recordAutoPlaceStep({ kind: 'place', trayIndex: i, cell: { c: cell.c, r: cell.r } });
+        return ok;
+      },
       moveUnit: (from, to) => {
         const u = this.units.get(cellKey(from.c, from.r));
         if (!u) return false;
@@ -4940,6 +5223,7 @@ export class Battle {
         u.cell = { c: to.c, r: to.r };
         u.fireDir = faceDirToward(u.cell, this.unitFaceGate());
         this.units.set(cellKey(to.c, to.r), u);
+        this.recordAutoPlaceStep({ kind: 'moveUnit', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
       swapUnits: (a, b) => {
@@ -4956,10 +5240,19 @@ export class Battle {
         ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate());
         this.units.set(kb, ua);
         this.units.set(ka, ub);
+        this.recordAutoPlaceStep({ kind: 'swapUnits', a: { c: a.c, r: a.r }, b: { c: b.c, r: b.r } });
         return true;
       },
-      swapUnitWord: (unitCell, wordCell) => this.swapUnitWord(unitCell, wordCell),
-      swapWords: (from, to) => this.dragWord(from, to),
+      swapUnitWord: (unitCell, wordCell) => {
+        const ok = this.swapUnitWord(unitCell, wordCell);
+        if (ok) this.recordAutoPlaceStep({ kind: 'swapUnitWord', unitCell: { ...unitCell }, wordCell: { ...wordCell } });
+        return ok;
+      },
+      swapWords: (from, to) => {
+        const ok = this.dragWord(from, to);
+        if (ok) this.recordAutoPlaceStep({ kind: 'swapWords', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
+        return ok;
+      },
       moveWord: (from, to) => {
         const kFrom = cellKey(from.c, from.r);
         const kTo = cellKey(to.c, to.r);
@@ -4969,9 +5262,14 @@ export class Battle {
         this.words.delete(kFrom);
         w.cell = { c: to.c, r: to.r };
         this.words.set(kTo, w);
+        this.recordAutoPlaceStep({ kind: 'moveWord', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
-      displaceToTray: (cell) => this.displaceToTray(cell),
+      displaceToTray: (cell) => {
+        const ok = this.displaceToTray(cell);
+        if (ok) this.recordAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
+        return ok;
+      },
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       dangerNear: () => this.dangerNear(),
@@ -4979,7 +5277,11 @@ export class Battle {
         this.imminentPathScoreAt(this.monsters, this.map.path, this.pathLen, this.entranceDist, cell),
       monstersPresent: () => this.monsters.length > 0,
       heroRosterComplete: () => this.isHeroRosterComplete(),
-      mergeTray: (from, to) => this.mergeTrayTokens(from, to),
+      mergeTray: (from, to) => {
+        const ok = this.mergeTrayTokens(from, to);
+        if (ok) this.recordAutoPlaceStep({ kind: 'mergeTray', from, to });
+        return ok;
+      },
       mergeBoard: (from, to) => {
         const a = this.units.get(cellKey(from.c, from.r));
         const b = this.units.get(cellKey(to.c, to.r));
@@ -4989,43 +5291,74 @@ export class Battle {
         this.units.set(cellKey(to.c, to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
         this.units.delete(cellKey(from.c, from.r));
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
-        this.emit('merge');
+        if (!this.autoPlaceRecording) {
+          this.spawnPlaceDropFx('player', to, {
+            kind: 'unit',
+            isMerge: true,
+            sfx: 'merge',
+            unitType: merged.type,
+            unitTier: merged.tier,
+          });
+        }
+        this.recordAutoPlaceStep({ kind: 'mergeBoard', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
     };
   }
 
   autoPlaceTray(): void {
-    const layoutSnap = this.cloneAutoplaceLayout();
+    if (this.autoPlacePlaying) {
+      this.message = '布阵进行中…';
+      return;
+    }
+    const sessionSnap = this.clonePlayerAutoPlaceSession();
     const keyBefore = autoPlaceBoardKey(this.buildPlayerAutoView());
     const trayBefore = this.tray.length;
+    const recorded: AutoPlacePlaybackStep[] = [];
+    this.autoPlaceRecorder = recorded;
+    this.autoPlaceRecording = true;
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
       rng: () => this.rng.next(),
       pSubOptimal: 0,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
     });
-    const moved =
-      trayBefore > 0 || this.tray.length > 0
-        ? this.tickBattleReposition('player', PLAYER_REPOSITION_MAX_STEPS)
-        : 0;
+    this.autoPlaceRecording = false;
+    this.autoPlaceRecorder = null;
+    const needsReposition = trayBefore > 0 || this.tray.length > 0;
     const keyAfter = autoPlaceBoardKey(this.buildPlayerAutoView());
-    if (!this.commitAutoPlaceLayoutMemory('player', layoutSnap, keyBefore)) {
+    const lastKey = this.lastAutoPlaceBoardKey;
+    if (keyAfter !== keyBefore && lastKey !== null && keyAfter === lastKey) {
+      this.restorePlayerAutoPlaceSession(sessionSnap);
       this.message = '布阵：当前暂无可执行操作';
       return;
     }
-    const total = placed + moved;
-    if (total > 0) {
-      if (placed > 0 && moved > 0) this.message = `布阵：落子 ${placed} 步，调位 ${moved} 步`;
-      else if (placed > 0) this.message = `布阵：落子/合成 ${placed} 步`;
-      else this.message = `布阵：调位 ${moved} 步`;
-      this.autoplaceFlash = 1;
-      if (placed > 0) this.emit('place');
-    } else if (this.tray.length === 0 && this.units.size === 0 && this.words.size === 0) {
-      this.message = '请先征兵，再点布阵';
-    } else {
-      this.message = '布阵：当前暂无可执行操作';
+    if (keyAfter !== keyBefore) this.lastAutoPlaceBoardKey = keyBefore;
+
+    this.restorePlayerAutoPlaceSession(sessionSnap);
+    const totalPlan = placed + (needsReposition ? 1 : 0);
+    if (recorded.length === 0 && !needsReposition) {
+      if (this.tray.length === 0 && this.units.size === 0 && this.words.size === 0) {
+        this.message = '请先征兵，再点布阵';
+      } else {
+        this.message = '布阵：当前暂无可执行操作';
+      }
+      return;
     }
+
+    this.autoPlacePlayback = [...recorded];
+    this.autoPlacePlaying = true;
+    this.autoPlacePlaybackWait = false;
+    this.autoPlaceRepositionPending = needsReposition;
+    this.placeDropStagger.player = 0;
+    this.beginPlaceDropAnim();
+    this.tickAutoPlacePlayback();
+
+    if (placed > 0 && needsReposition) this.message = `布阵：落子 ${placed} 步，随后调位`;
+    else if (placed > 0) this.message = `布阵：落子/合成 ${placed} 步`;
+    else if (needsReposition) this.message = '布阵：调位中';
+    else this.message = '布阵中…';
+    if (totalPlan > 0) this.autoplaceFlash = 1;
   }
 
   // 便于自测/渲染读取的快照

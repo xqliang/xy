@@ -59,6 +59,7 @@ describe('wave4 screenshot tray words', () => {
     expect(freeBefore.length).toBeGreaterThan(0);
 
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
 
     expect(b.tray.some((t) => t.kind === 'word')).toBe(false);
     expect([...b.words.values()].some((w) => w.char === '红')).toBe(true);

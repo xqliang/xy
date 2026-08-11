@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, PLACE_DROP_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
 import { passiveById } from './passives';
 import { activeById, isPillActiveEffect } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
@@ -125,6 +125,7 @@ function activeSlotCenter(i: 0 | 1): { x: number; y: number } {
 }
 
 const SKILL_TITLE_COLOR = '#e8c22c'; // 与神兵金阶同色
+const ACTIVE_CD_OVERLAY = 'rgba(0,0,0,0.30)'; // 主动技能冷却扇形遮罩（略透明以便看清图标）
 
 export interface UiState {
   dragFrom: Cell | null; // 从棋盘拖动的单位源格
@@ -1997,6 +1998,32 @@ function emergeScale(t: number): number {
   return 0.2 + 0.8 * ease;
 }
 
+// 落子掉落：从各自半场顶加速落入格心，着地时由 battle 播 sfx
+function placeDropStartDy(side: 'player' | 'ai', r: number): number {
+  const targetCy = BOARD_Y + r * CELL + CELL / 2;
+  const halfTopCy = side === 'ai'
+    ? BOARD_Y + CELL * 0.2
+    : BOARD_Y + FENCE_ROW * CELL + CELL * 0.2;
+  return halfTopCy - targetCy;
+}
+
+function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number): { dy: number; scale: number } {
+  const fx = b.placeDropFx.find((d) => d.side === side && d.c === c && d.r === r);
+  if (!fx) return { dy: 0, scale: 1 };
+  const startDy = placeDropStartDy(side, r);
+  if (fx.delay > 0) return { dy: startDy, scale: 0.76 };
+  const p = Math.min(1, fx.t / PLACE_DROP_DUR);
+  const eased = p ** 2.6; // 重力加速
+  const dy = startDy * (1 - eased);
+  let scale = 0.76 + 0.24 * eased;
+  if (fx.isMerge && p > 0.72) {
+    const bounce = Math.sin(((p - 0.72) / 0.28) * Math.PI) * 0.07;
+    scale += bounce;
+    return { dy: dy - bounce * CELL * 0.28, scale };
+  }
+  return { dy, scale };
+}
+
 // 地面椭圆阴影（怪物/武器/字牌共用：贴脚底、略扁）
 function drawGroundShadow(
   ctx: CanvasRenderingContext2D,
@@ -2217,29 +2244,6 @@ function pathPushBackAngleAlong(path: Cell[], dist: number): number {
   return Math.atan2(dy, dx);
 }
 
-/** 沿路 dist 处、朝向 dist 减小（回推）方向的切线角（像素坐标） */
-function pathPushBackAnglePx(map: GameMap, dist: number): number {
-  const eps = 0.12;
-  const p0 = posAtDistance(map, dist);
-  const p1 = posAtDistance(map, Math.max(0, dist - eps));
-  const c0 = cellCenterPx(p0.c, p0.r);
-  const c1 = cellCenterPx(p1.c, p1.r);
-  const dx = c1.x - c0.x;
-  const dy = c1.y - c0.y;
-  if (dx * dx + dy * dy < 1e-4) return 0;
-  return Math.atan2(dy, dx);
-}
-
-function drawRotatedPalmStamp(
-  ctx: CanvasRenderingContext2D,
-  map: GameMap,
-  dist: number,
-  size: number,
-  alpha: number,
-): void {
-  drawRotatedPalmStampAlong(ctx, map.path, dist, size, alpha);
-}
-
 function drawRotatedPalmStampAlong(
   ctx: CanvasRenderingContext2D,
   path: Cell[],
@@ -2266,25 +2270,30 @@ function drawRotatedPalmStampAlong(
 }
 
 // 如来神掌：skill-act-palm 图标沿取经路逐格回推，掌缘朝向路径切线
-function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
-  const fx = b.palmPushFx;
-  const waveDist = b.palmPushWaveDist();
-  if (!fx || waveDist === null) return;
+const PALM_TRAIL_MAX = 3;
+const PALM_TRAIL_STEP = 0.42; // 残影间距（格）
 
-  const lo = Math.min(fx.frontStartDist, waveDist);
-  const hi = Math.max(fx.frontStartDist, waveDist);
-  const span = Math.max(0.01, hi - lo);
-  const prog = Math.min(1, fx.t / fx.dur);
-
-  for (let d = lo; d <= hi + 0.01; d += 0.42) {
-    if (Math.abs(d - waveDist) < 0.18) continue;
-    const t = (d - lo) / span;
-    drawRotatedPalmStamp(ctx, b.map, d, CELL * (0.26 + 0.14 * t), 0.18 + 0.42 * t);
+/** 波前 + 最多 3 枚渐变残影 + 推进弧光（玩家/AI 共用） */
+function drawPalmPushWaveFx(
+  ctx: CanvasRenderingContext2D,
+  path: Cell[],
+  waveDist: number,
+  frontStartDist: number,
+  prog: number,
+): void {
+  // 残影在波前后方（已掠过路段），越远越淡越小
+  for (let i = PALM_TRAIL_MAX; i >= 1; i--) {
+    const d = waveDist + i * PALM_TRAIL_STEP;
+    if (d > frontStartDist + 0.05) continue;
+    const fade = (PALM_TRAIL_MAX - i + 1) / PALM_TRAIL_MAX; // 近→远：1, 2/3, 1/3
+    const alpha = 0.14 + fade * 0.36;
+    const size = CELL * (0.28 + fade * 0.14);
+    drawRotatedPalmStampAlong(ctx, path, d, size, alpha);
   }
 
-  const wp = posAtDistance(b.map, waveDist);
+  const wp = posAlong(path, waveDist);
   const { x, y } = cellCenterPx(wp.c, wp.r);
-  const pushAngle = pathPushBackAnglePx(b.map, waveDist);
+  const pushAngle = pathPushBackAngleAlong(path, waveDist);
   ctx.save();
   ctx.globalAlpha = 0.35 * (1 - prog * 0.4);
   ctx.strokeStyle = '#ffe27a';
@@ -2295,7 +2304,15 @@ function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.restore();
 
   const mainSize = CELL * (0.5 + 0.08 * Math.sin(prog * Math.PI));
-  drawRotatedPalmStamp(ctx, b.map, waveDist, mainSize, 0.96);
+  drawRotatedPalmStampAlong(ctx, path, waveDist, mainSize, 0.96);
+}
+
+function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const fx = b.palmPushFx;
+  const waveDist = b.palmPushWaveDist();
+  if (!fx || waveDist === null) return;
+  const prog = Math.min(1, fx.t / fx.dur);
+  drawPalmPushWaveFx(ctx, b.map.path, waveDist, fx.frontStartDist, prog);
 }
 
 // AI 半场如来神掌：沿 aiPath 逐格回推
@@ -2303,32 +2320,8 @@ function drawAiPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   const fx = b.aiPalmPushFx;
   const waveDist = b.aiPalmPushWaveDist();
   if (!fx || waveDist === null) return;
-
-  const lo = Math.min(fx.frontStartDist, waveDist);
-  const hi = Math.max(fx.frontStartDist, waveDist);
-  const span = Math.max(0.01, hi - lo);
   const prog = Math.min(1, fx.t / fx.dur);
-
-  for (let d = lo; d <= hi + 0.01; d += 0.42) {
-    if (Math.abs(d - waveDist) < 0.18) continue;
-    const t = (d - lo) / span;
-    drawRotatedPalmStampAlong(ctx, b.aiPath, d, CELL * (0.26 + 0.14 * t), 0.18 + 0.42 * t);
-  }
-
-  const wp = posAlong(b.aiPath, waveDist);
-  const { x, y } = cellCenterPx(wp.c, wp.r);
-  const pushAngle = pathPushBackAngleAlong(b.aiPath, waveDist);
-  ctx.save();
-  ctx.globalAlpha = 0.35 * (1 - prog * 0.4);
-  ctx.strokeStyle = '#ffe27a';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(x, y, 10 + prog * 16, pushAngle + Math.PI * 0.55, pushAngle + Math.PI * 1.45);
-  ctx.stroke();
-  ctx.restore();
-
-  const mainSize = CELL * (0.5 + 0.08 * Math.sin(prog * Math.PI));
-  drawRotatedPalmStampAlong(ctx, b.aiPath, waveDist, mainSize, 0.96);
+  drawPalmPushWaveFx(ctx, b.aiPath, waveDist, fx.frontStartDist, prog);
 }
 
 function skillFxFade(prog: number): number {
@@ -3630,23 +3623,25 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   for (const u of b.units.values()) {
     if (ui.dragFrom && ui.dragFrom.c === u.cell.c && ui.dragFrom.r === u.cell.r) continue; // 拖拽中隐藏原位
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+    const drop = placeDropMotion(b, 'player', u.cell.c, u.cell.r);
     const fallen = u.knockdownT > 0;
     // 地面阴影（贴格底略偏前，不随 bob/开火上跳，与怪物同风格）
-    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.28, fallen ? 0.18 : 0.28);
+    drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, fallen ? 0.18 : 0.28);
     // 待机微动：轻微起伏，按格错相位避免整齐划一，让在场武器"活"起来（倒下时停 bob）
     const bob = fallen ? 0 : Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     // 开火脉冲：放大 + 上跳
     const pulse = fallen ? 0 : u.firePulse;
-    const uy = y - pulse * 4 + bob;
+    const uy = y + drop.dy - pulse * 4 + bob;
+    const unitSize = CELL * 0.72 * (1 + pulse * 0.16) * drop.scale;
     drawUnit(
       ctx,
       u.type,
       u.tier,
       x,
       uy,
-      CELL * 0.72 * (1 + pulse * 0.16),
+      unitSize,
       u.fireDir != null && Math.cos(u.fireDir) < 0,
-      { x, y, s: CELL * 0.72 },
+      { x, y: y + drop.dy, s: CELL * 0.72 * drop.scale },
       fallen,
     );
     // 攻击瞬间：字→兵器形变，朝目标出招（倒下时不画）
@@ -4315,6 +4310,8 @@ function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTre
 /** 激活武将整体绘制：开火脉冲放大+上跳（与兵器 firePulse 一致） */
 function drawActiveGeneralGroup(
   ctx: CanvasRenderingContext2D,
+  b: Battle,
+  side: 'player' | 'ai',
   g: ActiveGeneral,
   getWord: (c: number, r: number) => { char: string; tier: number } | undefined,
   opts?: { showBondLabel?: boolean },
@@ -4327,7 +4324,8 @@ function drawActiveGeneralGroup(
 
   for (const c of g.cells) {
     const { x, y } = cellCenterPx(c.c, c.r);
-    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.32, 0.26);
+    const drop = placeDropMotion(b, side, c.c, c.r);
+    drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.32, 0.26);
   }
 
   ctx.save();
@@ -4341,7 +4339,8 @@ function drawActiveGeneralGroup(
     const w = getWord(c.c, c.r);
     if (!w) continue;
     const { x, y } = cellCenterPx(c.c, c.r);
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, false, g.tier);
+    const drop = placeDropMotion(b, side, c.c, c.r);
+    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, false, g.tier);
   }
 
   const bx = Math.min(a.x, z.x) - CELL / 2 + 2;
@@ -4395,14 +4394,17 @@ function drawGenerals(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     const qTier = activeTier.get(key) ?? 0;
     if (qTier > 0) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, true, 0);
-    drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
+    const drop = placeDropMotion(b, 'player', w.cell.c, w.cell.r);
+    drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
+    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
+    drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
   }
   // 激活武将：双字+品质框随 firePulse 放大上跳
   for (const g of b.activeGenerals()) {
     drawActiveGeneralGroup(
       ctx,
+      b,
+      'player',
       g,
       (c, r) => b.words.get(`${c},${r}`),
       { showBondLabel: true },
@@ -5087,19 +5089,21 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   const t = performance.now() / 1000;
   for (const u of b.aiUnits) {
     const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
-    drawGroundShadow(ctx, x, y + CELL * 0.06, CELL * 0.28, 0.28);
+    const drop = placeDropMotion(b, 'ai', u.cell.c, u.cell.r);
+    drawGroundShadow(ctx, x, y + CELL * 0.06 + drop.dy, CELL * 0.28, 0.28);
     const bob = Math.sin(t * 2 + (u.cell.c * 0.9 + u.cell.r * 1.7)) * 1.3;
     const pulse = u.firePulse;
-    const uy = y - pulse * 4 + bob;
+    const uy = y + drop.dy - pulse * 4 + bob;
+    const unitSize = CELL * 0.72 * (1 + pulse * 0.16) * drop.scale;
     drawUnit(
       ctx,
       u.type,
       u.tier,
       x,
       uy,
-      CELL * 0.72 * (1 + pulse * 0.16),
+      unitSize,
       u.fireDir != null && Math.cos(u.fireDir) < 0,
-      { x, y, s: CELL * 0.72 },
+      { x, y: y + drop.dy, s: CELL * 0.72 * drop.scale },
     );
     drawUnitWeapon(ctx, u.type, u.tier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
   }
@@ -5124,12 +5128,13 @@ function drawAiGenerals(ctx: CanvasRenderingContext2D, b: Battle) {
     const qTier = activeTier.get(key) ?? 0;
     if (qTier > 0) continue;
     const { x, y } = cellCenterPx(w.cell.c, w.cell.r);
-    drawGroundShadow(ctx, x, y, CELL * 0.32, 0.26);
-    drawWordTile(ctx, w.char, w.tier, x, y, CELL * 0.78, true, 0);
-    drawSleepingZ(ctx, x, y, CELL * 0.78, performance.now());
+    const drop = placeDropMotion(b, 'ai', w.cell.c, w.cell.r);
+    drawGroundShadow(ctx, x, y + drop.dy, CELL * 0.32, 0.26);
+    drawWordTile(ctx, w.char, w.tier, x, y + drop.dy, CELL * 0.78 * drop.scale, true, 0);
+    drawSleepingZ(ctx, x, y + drop.dy, CELL * 0.78 * drop.scale, performance.now());
   }
   for (const g of b.aiActiveGenerals()) {
-    drawActiveGeneralGroup(ctx, g, (c, r) => b.aiWords.get(`${c},${r}`));
+    drawActiveGeneralGroup(ctx, b, 'ai', g, (c, r) => b.aiWords.get(`${c},${r}`));
   }
 }
 
@@ -5442,7 +5447,7 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     if (it.kind === 'active' && it.slot && !it.slot.ready && it.slot.cdMax > 0) {
       const frac = it.slot.cd / it.slot.cdMax;
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillStyle = ACTIVE_CD_OVERLAY;
       ctx.beginPath();
       ctx.moveTo(it.x, it.y);
       ctx.arc(it.x, it.y, it.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
@@ -5682,18 +5687,13 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       // 剩余冷却扇形（从 12 点方向顺时针覆盖，比例=剩余CD），半径与圆一致
       const frac = slot.cdMax > 0 ? slot.cd / slot.cdMax : 0;
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillStyle = ACTIVE_CD_OVERLAY;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 16px "PingFang SC", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(String(Math.ceil(slot.cd)), cx, cy);
     } else {
       // 就绪：与征兵提示同色系、更慢更淡的金边脉冲
       const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
