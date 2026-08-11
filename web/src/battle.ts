@@ -127,8 +127,11 @@ export const TUNING = {
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
-  earlyWaveHpTo: 5, // 波 1–earlyWaveHpTo：HP × earlyWaveHpMul
-  earlyWaveHpMul: 0.8,
+  earlyWaveHpStrongTo: 3, // 波 1–earlyWaveHpStrongTo：HP × earlyWaveHpStrongMul
+  earlyWaveHpStrongMul: 0.6,
+  earlyWaveHpMul4: 0.7, // 第 4 波软血
+  earlyWaveHpTo: 5, // 其后至 earlyWaveHpTo（不含已单独配置的波）：HP × earlyWaveHpMul
+  earlyWaveHpMul: 0.8, // 第 5 波软血（波 4 见 earlyWaveHpMul4）
   earlyWaveHpMul6: 0.9, // 第 6 波软血
   earlyWaveHpMul7: 0.95, // 第 7 波软血；第 8 波起满血
   wave1Bonus: 1, // 第一波在减量后再 +1
@@ -3859,9 +3862,11 @@ export class Battle {
     return 1 + (wave - 10) / 100;
   }
 
-  /** 前期软血：波 1–5 ×0.8，波 6 ×0.9，波 7 ×0.95，其后满血 */
+  /** 前期软血：波 1–3 ×0.6，波 4 ×0.7，波 5 ×0.8，波 6 ×0.9，波 7 ×0.95，其后满血 */
   earlyWaveHpMul(wave: number = this.wave): number {
     const w = Math.max(1, Math.floor(wave));
+    if (w <= TUNING.earlyWaveHpStrongTo) return TUNING.earlyWaveHpStrongMul;
+    if (w === 4) return TUNING.earlyWaveHpMul4;
     if (w <= TUNING.earlyWaveHpTo) return TUNING.earlyWaveHpMul;
     if (w === 6) return TUNING.earlyWaveHpMul6;
     if (w === 7) return TUNING.earlyWaveHpMul7;

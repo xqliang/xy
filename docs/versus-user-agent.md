@@ -54,7 +54,9 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | `TANGSENG_INITIAL_HP` | **3** | 唐僧初始血量（道具可再加） |
-| `earlyWaveHpTo` / `earlyWaveHpMul` | **5** / **0.8** | 波 1–5 小怪 HP × **80%** |
+| `earlyWaveHpStrongTo` / `earlyWaveHpStrongMul` | **3** / **0.6** | 波 1–3 小怪 HP × **60%** |
+| `earlyWaveHpMul4` | **0.7** | 波 4 × **70%** |
+| `earlyWaveHpTo` / `earlyWaveHpMul` | **5** / **0.8** | 波 5 × **80%** |
 | `earlyWaveHpMul6` / `7` | **0.9** / **0.95** | 波 6 ×90%、波 7 ×95%；波 8 起满血 |
 | `eliteFromWave` | **4** | 第 4 波起可能刷精英 |
 

@@ -321,9 +321,11 @@ describe('planWavePressure', () => {
 });
 
 describe('Battle 接入压力规划', () => {
-  it('软血阶梯：1–5×0.8，6×0.9，7×0.95，8+满血', () => {
+  it('软血阶梯：1–3×0.6，4×0.7，5×0.8，6×0.9，7×0.95，8+满血', () => {
     const b = new Battle(1);
-    expect(b.earlyWaveHpMul(1)).toBe(0.8);
+    expect(b.earlyWaveHpMul(1)).toBe(0.6);
+    expect(b.earlyWaveHpMul(3)).toBe(0.6);
+    expect(b.earlyWaveHpMul(4)).toBe(0.7);
     expect(b.earlyWaveHpMul(5)).toBe(0.8);
     expect(b.earlyWaveHpMul(6)).toBe(0.9);
     expect(b.earlyWaveHpMul(7)).toBe(0.95);
