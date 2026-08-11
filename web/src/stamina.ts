@@ -68,3 +68,9 @@ export function spendStamina(s: Stamina): { ok: boolean; state: Stamina } {
   const lastTick = s.value >= STAMINA_MAX ? Date.now() : s.lastTick;
   return { ok: true, state: save({ value, lastTick }) };
 }
+
+/** DevTools：直接设定体力值 */
+export function setStaminaValue(value: number): Stamina {
+  const v = Math.max(0, Math.min(STAMINA_MAX, Math.floor(value)));
+  return save({ value: v, lastTick: Date.now() });
+}

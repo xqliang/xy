@@ -72,6 +72,13 @@ export function markTutorialSeen(state: TutorialState, sequenceId: string): Tuto
   return next;
 }
 
+/** DevTools：清空/写入引导进度 */
+export function writeTutorialState(state: TutorialState): TutorialState {
+  const next = normalizeTutorialState(state) ?? { seen: {} };
+  saveTutorialState(next);
+  return next;
+}
+
 /** 若当前无引导展示中且该序列未展示过，则开始展示；否则原样返回 active（不打断正在展示的引导）。 */
 export function maybeStartTutorial(
   state: TutorialState,

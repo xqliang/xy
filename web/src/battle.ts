@@ -7,13 +7,7 @@ import {
   canMerge,
   merge as mergeUnits,
   MAX_TIER,
-  INITIAL_PEACH,
-  PEACH_PER_KILL,
-  PEACH_PER_BLEED,
-  PEACH_PER_BOSS,
-  PEACH_PER_ELITE,
-  PEACH_PER_MINI_BOSS,
-  TANGSENG_INITIAL_HP,
+  ECONOMY,
   monstersInWave,
   monsterPOW,
 } from '@core';
@@ -28,11 +22,10 @@ import {
   matchGeneral,
   partnerChars,
   BOND_GENERAL,
-  BOND_ATK_BONUS,
   BOND_NAME,
+  GENERAL_TUNING,
   ultTypeOf,
   heroAttackFxTtl,
-  CRIT_MULT,
   type GeneralDef,
 } from './generals';
 import {
@@ -48,8 +41,7 @@ import {
 import {
   rollWeaponDrop,
   weaponById,
-  BATTLE_FRAGMENT_ELIGIBLE_CHANCE,
-  HERO_ATTACK_FRAGMENT_CHANCE,
+  WEAPON_TUNING,
   type WeaponBonuses,
 } from './weapons';
 import { drawSummonTray } from './summon-draw';
@@ -64,7 +56,7 @@ import {
   planWavePressure,
   pressureRatioForWave,
   spawnBatchCap,
-  SPAWN_DIST_JITTER,
+  BOARD_POWER,
   type BoardPowerResult,
   type PressurePlan,
 } from './board-power';
@@ -232,6 +224,8 @@ export const TUNING = {
   heroBossIntervalMaxBase: 15, // 间隔上界基数（秒）
   heroBossIntervalShrinkCap: 4, // 英雄越多上界越压，最多压 shrinkCap 秒
   heroBossMaxPerWave: 4, // 每波最多额外引妖王次数（与英雄数取 min，防长波连刷）
+  /** 清波后自动开下一波的等待秒数 */
+  waveGapSec: 5,
 };
 
 /**
@@ -244,7 +238,7 @@ function heroSkillFocusDps(def: GeneralDef, atk: number): number {
   if (def.skill === 'none' || cd <= 0) return 0;
   switch (def.skill) {
     case 'burst': return (atk * 3) / cd;
-    case 'ranged': return (atk * 5 * CRIT_MULT) / cd;
+    case 'ranged': return (atk * 5 * GENERAL_TUNING.CRIT_MULT) / cd;
     case 'stun': {
       const isCharge = def.id === 'niumowang' || def.id === 'qingniu';
       const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
@@ -471,9 +465,17 @@ export interface PeachTree {
   growT: number; // 距下次产桃已累积秒数
 }
 // 各等级产 1 桃的间隔（秒）：1级20s / 2级10s / 3级5s / 4级3s / 5级2s
-export const PEACH_TREE_INTERVALS = [20, 10, 5, 3, 2];
-export const PEACH_TREE_MAX_LEVEL = 5;
-export const PEACH_TREE_PLANT_INTERVAL = 40; // 蟠桃园每 40s 自动种 1 棵
+/** 蟠桃园可调参数（DevTools 可改；intervals 为同一数组引用） */
+export const PEACH_TREE = {
+  intervals: [20, 10, 5, 3, 2] as number[],
+  maxLevel: 5,
+  plantInterval: 40, // 蟠桃园每 40s 自动种 1 棵
+};
+export const PEACH_TREE_INTERVALS = PEACH_TREE.intervals;
+/** @deprecated 快照；运行时请读 PEACH_TREE.maxLevel */
+export const PEACH_TREE_MAX_LEVEL = PEACH_TREE.maxLevel;
+/** @deprecated 快照；运行时请读 PEACH_TREE.plantInterval */
+export const PEACH_TREE_PLANT_INTERVAL = PEACH_TREE.plantInterval;
 
 /** 地图上全是 N 级树时，蟠桃园累计多少棵「虚拟树」才合并升级 1 棵（N→N+1） */
 export function peachTreeMergeBankNeed(level: number): number {
@@ -632,11 +634,20 @@ export const DAMAGE_FLOAT_GRAVITY_CRIT = 11;
 export const DAMAGE_FLOAT_VX = 0.72; // 左右抛物线初速（格/秒）
 export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
-export const DIG_DUR = 0.5; // 铲子挖坑动画时长（来回挖两下）
-export const PLACE_DROP_DUR = 0.03; // AI 落子：自半场顶加速落入格心的时长（秒）；着地时播 sfx
-export const PLACE_DRAG_DUR = 0.22; // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
-export const PLACE_DROP_STAGGER_MIN = 0.5; // 连续落子之间的最短间隔（秒）
-export const PLACE_DROP_STAGGER_MAX = 0.8; // 连续落子之间的最长间隔（秒）
+/** 布阵动画 / 间隔（DevTools 可改） */
+export const PLACE_TIMING = {
+  digDur: 0.5, // 铲子挖坑动画时长（来回挖两下）
+  dropDur: 0.03, // AI 落子：自半场顶加速落入格心的时长（秒）
+  dragDur: 0.22, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
+  staggerMin: 0.5, // 连续落子之间的最短间隔（秒）
+  staggerMax: 0.8, // 连续落子之间的最长间隔（秒）
+};
+/** @deprecated 快照；运行时请读 PLACE_TIMING.* */
+export const DIG_DUR = PLACE_TIMING.digDur;
+export const PLACE_DROP_DUR = PLACE_TIMING.dropDur;
+export const PLACE_DRAG_DUR = PLACE_TIMING.dragDur;
+export const PLACE_DROP_STAGGER_MIN = PLACE_TIMING.staggerMin;
+export const PLACE_DROP_STAGGER_MAX = PLACE_TIMING.staggerMax;
 
 /** 布阵拖拽缓动：先快后慢（ease-out） */
 export function placeDragEase(p: number): number {
@@ -713,8 +724,8 @@ export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, 
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
 export class Battle {
-  peach = INITIAL_PEACH;
-  tangsengHP = TANGSENG_INITIAL_HP;
+  peach = ECONOMY.INITIAL_PEACH;
+  tangsengHP = ECONOMY.TANGSENG_INITIAL_HP;
   wave = 0;
   status: Status = 'ready';
   summonCost = TUNING.summonCostStart;
@@ -919,12 +930,12 @@ export class Battle {
     const delay = this.placeDropStagger[side];
     const rng = side === 'ai' ? this.aiRng : this.rng;
     this.placeDropStagger[side] +=
-      PLACE_DROP_STAGGER_MIN + rng.next() * (PLACE_DROP_STAGGER_MAX - PLACE_DROP_STAGGER_MIN);
+      PLACE_TIMING.staggerMin + rng.next() * (PLACE_TIMING.staggerMax - PLACE_TIMING.staggerMin);
     return delay;
   }
 
   private rollAutoPlaceStagger(): number {
-    return PLACE_DROP_STAGGER_MIN + this.rng.next() * (PLACE_DROP_STAGGER_MAX - PLACE_DROP_STAGGER_MIN);
+    return PLACE_TIMING.staggerMin + this.rng.next() * (PLACE_TIMING.staggerMax - PLACE_TIMING.staggerMin);
   }
 
   private playerUseAutoPlaceDrag(): boolean {
@@ -1078,7 +1089,7 @@ export class Battle {
   }
 
   private aiPlaceAnimBusy(): boolean {
-    return this.placeDropFx.some((d) => d.side === 'ai' && (d.delay > 0 || d.t < PLACE_DROP_DUR))
+    return this.placeDropFx.some((d) => d.side === 'ai' && (d.delay > 0 || d.t < PLACE_TIMING.dropDur))
       || this.aiPendingPlace.length > 0
       || this.aiDigFx.length > 0;
   }
@@ -1384,7 +1395,7 @@ export class Battle {
     }
   }
 
-  tangsengMaxHP = TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
+  tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
   healUsedThisWave = false; // 观音甘露每波限回一次
 
   // —— 主动技能（功德购买、每日装备，最多 2 个；CD 制、手动触发）——
@@ -1410,7 +1421,7 @@ export class Battle {
   private aiPathLen: number;
   private entranceDist = 0; // 玩家出怪口沿路距离
   private aiEntranceDist = 0; // AI 出怪口沿路距离
-  aiTangsengHP = TANGSENG_INITIAL_HP;
+  aiTangsengHP = ECONOMY.TANGSENG_INITIAL_HP;
   aiFrqMul = 1; // AI 侧全体攻速倍率（含道具加成）
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
@@ -1430,7 +1441,7 @@ export class Battle {
   unlocked = new Set<string>(); // 已解锁阵位的 key 集合
 
   // —— AI 对手真玩家化：与玩家平行的经济/候选/资源（后续 C2-C5 使用）——
-  aiPeach = INITIAL_PEACH;                 // 基础经济（不加 meta.bonusPeach）
+  aiPeach = ECONOMY.INITIAL_PEACH;                 // 基础经济（不加 meta.bonusPeach）
   private aiSummonCost = TUNING.summonCostStart; // 同玩家初始征兵成本
   aiShovels = TUNING.initialShovels;
   aiTray: TrayToken[] = [];
@@ -2123,7 +2134,7 @@ export class Battle {
       return true;
     }
     if (a.kind === 'tree' && b.kind === 'tree') {
-      if (a.level === b.level && b.level < PEACH_TREE_MAX_LEVEL) {
+      if (a.level === b.level && b.level < PEACH_TREE.maxLevel) {
         this.tray[to] = { kind: 'tree', level: b.level + 1, growT: 0 };
         this.clearTraySlot(from);
         this.message = `候选区桃树升为 ${b.level + 1} 级`;
@@ -2492,12 +2503,12 @@ export class Battle {
   // AI 击杀产桃（基础值，无 mods.killBonus/摸金/蟠桃园）
   private creditAiKill(isBoss: boolean, isElite: boolean, isMiniBoss = false): void {
     const base = isBoss
-      ? PEACH_PER_BOSS
+      ? ECONOMY.PEACH_PER_BOSS
       : isMiniBoss
-        ? PEACH_PER_MINI_BOSS
+        ? ECONOMY.PEACH_PER_MINI_BOSS
         : isElite
-          ? PEACH_PER_ELITE
-          : PEACH_PER_KILL;
+          ? ECONOMY.PEACH_PER_ELITE
+          : ECONOMY.PEACH_PER_KILL;
     this.aiPeach += base + this.aiMods.killBonus;
   }
 
@@ -3096,7 +3107,7 @@ export class Battle {
       const k = cellKey(to.c, to.r);
       const exist = this.trees.get(k);
       if (exist) {
-        if (exist.level === token.level && exist.level < PEACH_TREE_MAX_LEVEL) {
+        if (exist.level === token.level && exist.level < PEACH_TREE.maxLevel) {
           exist.level += 1;
           exist.growT = 0;
           this.clearTraySlot(index);
@@ -3632,20 +3643,20 @@ export class Battle {
   private updatePeachTrees(dt: number): void {
     if (this.gardenOn) {
       this.plantTimer += dt;
-      if (this.plantTimer >= PEACH_TREE_PLANT_INTERVAL) {
+      if (this.plantTimer >= PEACH_TREE.plantInterval) {
         if (this.plantTree()) {
           this.plantTimer = 0;
           this.plantBank = 0;
         } else if (this.tryAutoMergePlant()) {
           this.plantTimer = 0;
         } else {
-          this.plantTimer = PEACH_TREE_PLANT_INTERVAL; // 全 5 级：封顶不再合并
+          this.plantTimer = PEACH_TREE.plantInterval; // 全 5 级：封顶不再合并
         }
       }
     }
     for (const t of this.trees.values()) {
       t.growT += dt;
-      const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+      const iv = PEACH_TREE.intervals[Math.min(t.level, PEACH_TREE.maxLevel) - 1]!;
       if (t.growT >= iv) {
         t.growT -= iv;
         this.peach += 1;
@@ -3668,14 +3679,14 @@ export class Battle {
   private tryAutoMergePlant(): boolean {
     const trees = [...this.trees.values()];
     if (trees.length === 0) return false;
-    if (trees.every((t) => t.level >= PEACH_TREE_MAX_LEVEL)) return false;
+    if (trees.every((t) => t.level >= PEACH_TREE.maxLevel)) return false;
 
     const minLevel = Math.min(...trees.map((t) => t.level));
     const allSame = trees.every((t) => t.level === minLevel);
 
     if (!allSame) {
       const target = trees.find((t) => t.level === minLevel);
-      if (!target || target.level >= PEACH_TREE_MAX_LEVEL) return false;
+      if (!target || target.level >= PEACH_TREE.maxLevel) return false;
       target.level += 1;
       target.growT = 0;
       this.burstTreeMerge(target.cell);
@@ -3703,7 +3714,7 @@ export class Battle {
 
   // 距下次产桃剩余秒数（供 UI 进度条），无树返回 null
   treeCountdown(t: PeachTree): number {
-    const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+    const iv = PEACH_TREE.intervals[Math.min(t.level, PEACH_TREE.maxLevel) - 1]!;
     return Math.max(0, iv - t.growT);
   }
 
@@ -3721,7 +3732,7 @@ export class Battle {
     const kTo = cellKey(to.c, to.r);
     const tt = this.trees.get(kTo);
     if (tt) {
-      if (tt.level === t.level && tt.level < PEACH_TREE_MAX_LEVEL) {
+      if (tt.level === t.level && tt.level < PEACH_TREE.maxLevel) {
         tt.level += 1;
         tt.growT = 0;
         this.trees.delete(kFrom);
@@ -3789,7 +3800,7 @@ export class Battle {
   planBattleFragmentDrop(): void {
     this.battleFragmentDropId = null;
     this.battleFragmentDropped = false;
-    if (this.rng.next() >= BATTLE_FRAGMENT_ELIGIBLE_CHANCE) return;
+    if (this.rng.next() >= WEAPON_TUNING.battleFragmentEligibleChance) return;
     this.battleFragmentDropId = rollWeaponDrop(this.rng.next());
   }
 
@@ -3798,7 +3809,7 @@ export class Battle {
     const id = this.battleFragmentDropId;
     if (!id || this.battleFragmentDropped) return;
     if (!this.weaponPickupVisible(id)) return;
-    if (this.rng.next() >= HERO_ATTACK_FRAGMENT_CHANCE) return;
+    if (this.rng.next() >= WEAPON_TUNING.heroAttackFragmentChance) return;
     this.battleFragmentDropped = true;
     this.pendingWeaponPickups.push(id);
     const wname = weaponById(id)?.name ?? id;
@@ -4055,7 +4066,7 @@ export class Battle {
       hp *= TUNING.miniBossHpMul;
     } else {
       if (isElite) {
-        // 精英击杀给普通妖 4 倍蟠桃，血量需相应更高，否则性价比失衡（见 PEACH_PER_ELITE）
+        // 精英击杀给普通妖 4 倍蟠桃，血量需相应更高，否则性价比失衡（见 ECONOMY.PEACH_PER_ELITE）
         hp *= TUNING.eliteHpMul;
       }
       if (isCavalry) hp *= TUNING.cavalryHpMul;
@@ -4130,7 +4141,7 @@ export class Battle {
       const escortPlayerSpd = this.normalMonsterSpeed();
       const escortAiSpd = this.endlessMonsterBaseSpeed() * this.aiMods.monsterSpdMul;
       for (let i = 0; i < bossEscortCount; i++) {
-        const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * SPAWN_DIST_JITTER;
+        const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * BOARD_POWER.SPAWN_DIST_JITTER;
         this.monsters.push(makeOne(this.entranceDist + escortOff, escortPlayerSpd, escortSpec));
         if (!this.endless) {
           this.aiMonsters.push(makeOne(this.aiEntranceDist + escortOff, escortAiSpd, escortSpec));
@@ -4436,7 +4447,7 @@ export class Battle {
     return this.activeGenerals().some((g) => g.def.id === BOND_GENERAL);
   }
   private bondAtkMul(): number {
-    return this.bondActive() ? 1 + BOND_ATK_BONUS : 1;
+    return this.bondActive() ? 1 + GENERAL_TUNING.BOND_ATK_BONUS : 1;
   }
 
   aiBondActive(): boolean {
@@ -4444,7 +4455,7 @@ export class Battle {
   }
 
   private aiBondAtkMul(): number {
-    return this.aiBondActive() ? 1 + BOND_ATK_BONUS : 1;
+    return this.aiBondActive() ? 1 + GENERAL_TUNING.BOND_ATK_BONUS : 1;
   }
 
   private aiDpsPieceCount(): number {
@@ -4523,7 +4534,7 @@ export class Battle {
   private generalActivateMessage(name: string, generalId: string): string {
     let msg = `${name} 已激活！(金框生效)`;
     if (generalId === BOND_GENERAL) {
-      msg += ` · ${BOND_NAME}：全队攻击+${Math.round(BOND_ATK_BONUS * 100)}%`;
+      msg += ` · ${BOND_NAME}：全队攻击+${Math.round(GENERAL_TUNING.BOND_ATK_BONUS * 100)}%`;
     }
     return msg;
   }
@@ -4663,9 +4674,9 @@ export class Battle {
         break;
       }
       case 'ranged': {
-        // 暴击：单体高倍 ×(5×CRIT_MULT)
+        // 暴击：单体高倍 ×(5×GENERAL_TUNING.CRIT_MULT)
         const t = inRange[0]!;
-        const dmg = damage(atk * 5 * CRIT_MULT);
+        const dmg = damage(atk * 5 * GENERAL_TUNING.CRIT_MULT);
         this.hurtMonster(t.m, dmg, t.p, 0.2, true);
         break;
       }
@@ -5203,12 +5214,12 @@ export class Battle {
       if (m.hp <= 0) {
         const isElite = !m.isBoss && !m.isMiniBoss && m.skill !== null; // 精英=非BOSS/非小Boss但带词条
         const base = m.isBoss
-          ? PEACH_PER_BOSS
+          ? ECONOMY.PEACH_PER_BOSS
           : m.isMiniBoss
-            ? PEACH_PER_MINI_BOSS
+            ? ECONOMY.PEACH_PER_MINI_BOSS
             : isElite
-              ? PEACH_PER_ELITE
-              : PEACH_PER_KILL;
+              ? ECONOMY.PEACH_PER_ELITE
+              : ECONOMY.PEACH_PER_KILL;
         const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英4 / 小Boss6 / 大Boss10，+道具）
         this.peach += amount;
         const dp = posAtDistance(this.map, m.dist);
@@ -5248,7 +5259,7 @@ export class Battle {
       if (m.dist >= this.pathLen) {
         // 撞到唐僧：扣血 + 舍身饲魔补偿蟠桃
         this.tangsengHP -= 1;
-        this.peach += PEACH_PER_BLEED;
+        this.peach += ECONOMY.PEACH_PER_BLEED;
         this.emit('hurt');
         if (this.tangsengHP <= 0) {
           this.tangsengHP = 0;
@@ -5324,13 +5335,13 @@ export class Battle {
     }
     this.damageFloats = this.damageFloats.filter((d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);
     for (const d of this.digFx) d.t += dt;
-    this.digFx = this.digFx.filter((d) => d.t < DIG_DUR);
+    this.digFx = this.digFx.filter((d) => d.t < PLACE_TIMING.digDur);
     for (const d of this.aiDigFx) d.t += dt;
-    this.aiDigFx = this.aiDigFx.filter((d) => d.t < DIG_DUR);
+    this.aiDigFx = this.aiDigFx.filter((d) => d.t < PLACE_TIMING.digDur);
     for (let i = this.autoPlaceDragFx.length - 1; i >= 0; i--) {
       const d = this.autoPlaceDragFx[i]!;
       d.t += dt;
-      if (d.t >= PLACE_DRAG_DUR) {
+      if (d.t >= PLACE_TIMING.dragDur) {
         this.commitAutoPlaceDrag(d);
         this.autoPlaceDragFx.splice(i, 1);
       }
@@ -5341,12 +5352,12 @@ export class Battle {
         continue;
       }
       d.t += dt;
-      if (!d.landed && d.t >= PLACE_DROP_DUR) {
+      if (!d.landed && d.t >= PLACE_TIMING.dropDur) {
         d.landed = true;
         if (d.playSfx !== false) this.emit(d.sfx);
       }
     }
-    this.placeDropFx = this.placeDropFx.filter((d) => d.delay > 0 || d.t < PLACE_DROP_DUR + 0.04);
+    this.placeDropFx = this.placeDropFx.filter((d) => d.delay > 0 || d.t < PLACE_TIMING.dropDur + 0.04);
     this.tickAutoPlacePlayback(dt);
     this.tickAiAutoPlacePlayback(dt);
     this.updatePendingPlace(); // 开格动画结束后落下预占的兵/字牌
@@ -5396,7 +5407,7 @@ export class Battle {
         const cap = spawnBatchCap(this.wave);
         const n = Math.min(this.spawnRemaining, 1 + this.rng.int(cap));
         for (let i = 0; i < n; i++) {
-          const offset = i === 0 ? 0 : -this.rng.next() * SPAWN_DIST_JITTER;
+          const offset = i === 0 ? 0 : -this.rng.next() * BOARD_POWER.SPAWN_DIST_JITTER;
           this.spawnMonster(offset);
           this.spawnRemaining -= 1;
         }
@@ -5443,7 +5454,7 @@ export class Battle {
       this.waveActive = false;
       this.clearWaveCombatFx();
       this.status = 'ready';
-      this.nextWaveTimer = 5; // 5秒后自动开下一波
+      this.nextWaveTimer = TUNING.waveGapSec;
       this.message = `第 ${this.wave} 波已清！`;
     }
   }

@@ -14,10 +14,10 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE_INTERVALS, PEACH_TREE_MAX_LEVEL, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, DIG_DUR, PLACE_DROP_DUR, PLACE_DRAG_DUR, placeDragEase, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx } from './battle';
+import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById } from './passives';
 import { activeById, isPillActiveEffect } from './actives';
-import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, BOND_ATK_BONUS, BOND_GENERAL } from './generals';
+import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
@@ -385,7 +385,7 @@ function formatRemainT(t: number): string {
 }
 
 function bondAtkPctLabel(): string {
-  return `+${Math.round(BOND_ATK_BONUS * 100)}%`;
+  return `+${Math.round(GENERAL_TUNING.BOND_ATK_BONUS * 100)}%`;
 }
 
 function bondBuffText(): string {
@@ -2023,7 +2023,7 @@ function placeDropMotion(b: Battle, side: 'player' | 'ai', c: number, r: number)
   if (!fx) return { dy: 0, scale: 1, visible: true };
   const startDy = placeDropStartDy(side, r);
   if (fx.delay > 0) return { dy: startDy, scale: 0.76, visible: false };
-  const p = Math.min(1, fx.t / PLACE_DROP_DUR);
+  const p = Math.min(1, fx.t / PLACE_TIMING.dropDur);
   const eased = p ** 2.6; // 重力加速
   const dy = startDy * (1 - eased);
   let scale = 0.76 + 0.24 * eased;
@@ -2644,7 +2644,7 @@ function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number
   const spr = sprite('item-shovel');
   for (const d of fxList) {
     const { x, y } = cellCenterPx(d.c, d.r);
-    const phase = Math.min(1, d.t / DIG_DUR); // 0→1
+    const phase = Math.min(1, d.t / PLACE_TIMING.digDur); // 0→1
     const chop = Math.abs(Math.sin(phase * Math.PI * 2 * 2)); // 两个周期=来回挖两下
     const tilt = Math.sin(phase * Math.PI * 2 * 2) * 0.5; // 随挖左右摆
     const s = CELL * 0.6;
@@ -4240,7 +4240,7 @@ function drawPeachTree(ctx: CanvasRenderingContext2D, x: number, y: number, size
   ctx.fillStyle = '#49a24e'; // 高光团
   ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.35 - s * 0.02, r * 0.7, 0, Math.PI * 2); ctx.fill();
   // 桃子：数量 = 等级（1..5），用生成的桃图
-  const peachN = Math.min(level, PEACH_TREE_MAX_LEVEL);
+  const peachN = Math.min(level, PEACH_TREE.maxLevel);
   const pr = s * 0.16;
   for (let i = 0; i < peachN; i++) {
     const a = -Math.PI / 2 + (i - (peachN - 1) / 2) * 0.7;
@@ -4262,12 +4262,12 @@ function drawPeachTree(ctx: CanvasRenderingContext2D, x: number, y: number, size
 
 // 选中桃树：信息面板（名称/等级/产桃间隔 + 「还差 Xs 产桃」进度条），固定 AI 半场中央
 function drawTreeSelection(ctx: CanvasRenderingContext2D, b: Battle, t: PeachTree) {
-  const iv = PEACH_TREE_INTERVALS[Math.min(t.level, PEACH_TREE_MAX_LEVEL) - 1]!;
+  const iv = PEACH_TREE.intervals[Math.min(t.level, PEACH_TREE.maxLevel) - 1]!;
   const remain = b.treeCountdown(t);
   const ratio = Math.max(0, Math.min(1, 1 - remain / iv));
   const pw = 220;
   const pad = 12;
-  const desc = `每 ${iv}s 产 1 蟠桃 · 同级拖动可合并升级(≤${PEACH_TREE_MAX_LEVEL})`;
+  const desc = `每 ${iv}s 产 1 蟠桃 · 同级拖动可合并升级(≤${PEACH_TREE.maxLevel})`;
   ctx.save();
   ctx.font = '12px "PingFang SC", sans-serif';
   const descLines = wrapText(ctx, desc, pw - pad * 2);
@@ -6017,7 +6017,7 @@ function trayTokenCanMergeSlot(a: TrayToken, b: TrayToken | undefined): boolean 
     return canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
   }
   if (a.kind === 'tree' && b.kind === 'tree') {
-    return a.level === b.level && a.level < PEACH_TREE_MAX_LEVEL;
+    return a.level === b.level && a.level < PEACH_TREE.maxLevel;
   }
   return true; // 字/兵/铲/桃异类 → 交换
 }
@@ -6216,7 +6216,7 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 function drawAutoPlaceDrag(ctx: CanvasRenderingContext2D, b: Battle) {
   const d = b.autoPlaceDragFx[0];
   if (!d) return;
-  const p = d.t / PLACE_DRAG_DUR;
+  const p = d.t / PLACE_TIMING.dragDur;
   const eased = placeDragEase(p);
   const src = traySlotCenter(d.trayIndex);
   const dst = cellCenterPx(d.c, d.r);
@@ -6283,4 +6283,174 @@ function drawBanner(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.font = '18px "PingFang SC", sans-serif';
   ctx.fillStyle = '#fff';
   ctx.fillText(b.message, VIEW_W / 2, VIEW_H / 2 + 30);
+}
+
+// —— DevTools 特效预览：在独立 canvas 上播放战斗 FX（复用局内绘制） ——
+export type DevFxPreviewSpec =
+  | { kind: 'heroAttack'; heroId: string; tier?: number }
+  | { kind: 'heroUlt'; heroId: string; tier?: number }
+  | { kind: 'unitAttack'; unit: UnitType; tier?: number }
+  | { kind: 'activeSkill'; skill: SkillFxKind }
+  | { kind: 'burst'; burst: 'hit' | 'death' | 'merge' };
+
+interface FxPreviewStub {
+  fx: HitFx[];
+  heroUltFx: HeroUltFx[];
+  playerSkillFx: SkillFx | null;
+  bursts: Burst[];
+}
+
+let _devFxPreviewStop: (() => void) | null = null;
+
+/** 在 canvas 上播放一次特效；返回 stop。再次调用会打断上一次。 */
+export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSpec): () => void {
+  _devFxPreviewStop?.();
+  const fromC = 2;
+  const fromR = 10;
+  const toC = 5;
+  const toR = 8;
+  const midC = 3.5;
+  const midR = 9;
+  const stub: FxPreviewStub = { fx: [], heroUltFx: [], playerSkillFx: null, bursts: [] };
+
+  if (spec.kind === 'heroAttack') {
+    const def = generalById(spec.heroId);
+    const tier = Math.max(1, Math.min(def?.maxTier ?? 5, spec.tier ?? def?.maxTier ?? 5));
+    const ttl = def ? heroAttackFxTtl(def, tier) : 0.4;
+    stub.fx.push({
+      from: { c: fromC, r: fromR },
+      to: { c: toC, r: toR },
+      ttl,
+      maxTtl: ttl,
+      color: qualityColor(tier),
+      tier,
+      heroId: spec.heroId,
+    });
+  } else if (spec.kind === 'heroUlt') {
+    const def = generalById(spec.heroId);
+    const tier = Math.max(1, Math.min(def?.maxTier ?? 5, spec.tier ?? def?.maxTier ?? 5));
+    const rge = def?.rge ?? 2.5;
+    const crit = def ? (def.skill === 'ranged') : false;
+    const ttl = spec.heroId === 'dasheng' ? 0.9 : 0.6;
+    stub.heroUltFx.push({
+      heroId: spec.heroId,
+      c: toC,
+      r: toR,
+      ttl,
+      maxTtl: ttl,
+      tier,
+      rge,
+      crit,
+      ...(spec.heroId === 'dasheng' || spec.heroId === 'erlang' || spec.heroId === 'niulang'
+        ? { fromC, fromR }
+        : {}),
+    });
+  } else if (spec.kind === 'unitAttack') {
+    const tier = Math.max(1, Math.min(5, spec.tier ?? 3));
+    const ttl = 0.28 + tier * 0.04;
+    stub.fx.push({
+      from: { c: fromC, r: fromR },
+      to: { c: toC, r: toR },
+      ttl,
+      maxTtl: ttl,
+      color: '#e8d090',
+      wtype: spec.unit,
+      tier,
+    });
+  } else if (spec.kind === 'activeSkill') {
+    const dur = spec.skill === 'atkBuff' || spec.skill === 'frqBuff' ? BUFF_SKILL_FX_DUR : SKILL_FX_DUR;
+    stub.playerSkillFx = { kind: spec.skill, t: 0, dur, c: midC, r: midR };
+  } else {
+    const ttl = spec.burst === 'death' ? 0.55 : 0.4;
+    stub.bursts.push({
+      kind: spec.burst,
+      c: toC,
+      r: toR,
+      ttl,
+      maxTtl: ttl,
+      big: spec.burst === 'death',
+      color: spec.burst === 'merge' ? '#7ec46a' : '#ffcf5a',
+    });
+  }
+
+  const fromPx = cellCenterPx(fromC, fromR);
+  const toPx = cellCenterPx(toC, toR);
+  const focusX = (fromPx.x + toPx.x) / 2;
+  const focusY = (fromPx.y + toPx.y) / 2;
+  let raf = 0;
+  let last = performance.now();
+  let alive = true;
+
+  const stop = () => {
+    alive = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    if (_devFxPreviewStop === stop) _devFxPreviewStop = null;
+  };
+  _devFxPreviewStop = stop;
+
+  const tick = (now: number) => {
+    if (!alive) return;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    for (const f of stub.fx) f.ttl -= dt;
+    stub.fx = stub.fx.filter((f) => f.ttl > 0);
+    for (const f of stub.heroUltFx) f.ttl -= dt;
+    stub.heroUltFx = stub.heroUltFx.filter((f) => f.ttl > 0);
+    for (const b of stub.bursts) b.ttl -= dt;
+    stub.bursts = stub.bursts.filter((b) => b.ttl > 0);
+    if (stub.playerSkillFx) {
+      stub.playerSkillFx.t += dt;
+      if (stub.playerSkillFx.t >= stub.playerSkillFx.dur) stub.playerSkillFx = null;
+    }
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = canvas.clientWidth || 360;
+    const cssH = canvas.clientHeight || 220;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#1a1510';
+      ctx.fillRect(0, 0, cssW, cssH);
+      // 网格点缀
+      ctx.strokeStyle = 'rgba(232,208,144,0.08)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 8; i++) {
+        ctx.beginPath();
+        ctx.moveTo((cssW / 8) * i, 0);
+        ctx.lineTo((cssW / 8) * i, cssH);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, (cssH / 6) * i);
+        ctx.lineTo(cssW, (cssH / 6) * i);
+        ctx.stroke();
+      }
+      const scale = Math.min(cssW / (CELL * 6), cssH / (CELL * 4)) * 0.95;
+      ctx.save();
+      ctx.translate(cssW / 2 - focusX * scale, cssH / 2 - focusY * scale);
+      ctx.scale(scale, scale);
+      const fake = stub as unknown as Battle;
+      drawFx(ctx, fake);
+      drawHeroUlt(ctx, fake);
+      drawSkillFx(ctx, stub.playerSkillFx);
+      drawBursts(ctx, fake);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(248,239,216,0.55)';
+      ctx.font = '11px "PingFang SC", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('特效预览', 10, 16);
+    }
+
+    const done = stub.fx.length === 0 && stub.heroUltFx.length === 0
+      && !stub.playerSkillFx && stub.bursts.length === 0;
+    if (done) {
+      stop();
+      return;
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  return stop;
 }

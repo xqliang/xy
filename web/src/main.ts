@@ -49,7 +49,7 @@ import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type E
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
-import { loadMerit, metaBonuses, meritReward, addMerit, setMerit, buyUpgrade, type MeritState } from './merit';
+import { loadMerit, metaBonuses, meritReward, addMerit, buyUpgrade, type MeritState } from './merit';
 import {
   loadLoadout,
   buyActive,
@@ -114,7 +114,6 @@ import {
 import {
   merchantClosed,
   openMerchant,
-  openMerchantTest,
   drawMerchant,
   merchantHitAt,
   merchantMaxScroll,
@@ -138,6 +137,7 @@ import {
   type TutorialSequence,
   type TutorialStep,
 } from './tutorial';
+import { openDevTools, type ApplyUserResult } from './devtools';
 
 /** 选中态是否指向同一单位：同格，或同属已激活武将的左右字 */
 function isSameSelection(b: Battle, selected: Cell | null, target: Cell): boolean {
@@ -266,7 +266,7 @@ let loadout: LoadoutState = safePersisted(loadLoadout, {
   equipped: [],
   passives: [],
 });
-let bag: BagState = safePersisted(loadBag, { owned: {}, equipped: [] });
+let bag: BagState = safePersisted(loadBag, { owned: {}, fragments: {}, equipped: [] });
 let bagToast = '';
 let bagPopup: string | null = null; // 打开详情 tips 的神兵 id（null=未开）
 let menuToast = '';
@@ -274,7 +274,7 @@ let menuToast = '';
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
 let menuHoverId: string | null = null;
-/** 连续点版本号 → 神秘商人测试入口 */
+/** 连续点版本号 → DevTools */
 const VERSION_SECRET_TAPS = 7;
 const VERSION_SECRET_TAP_MS = 2500;
 let versionTapCount = 0;
@@ -757,7 +757,7 @@ function abortBattleToMenu(): void {
   screen = 'menu';
 }
 
-/** 首页连点版本号 7 次：功德设为 500 并打开神秘商人（测试用） */
+/** 首页连点版本号 7 次：打开 DevTools 调参面板 */
 function handleVersionSecretTap(): void {
   const now = performance.now();
   if (now - versionTapLastAt > VERSION_SECRET_TAP_MS) versionTapCount = 0;
@@ -766,9 +766,21 @@ function handleVersionSecretTap(): void {
   if (versionTapCount < VERSION_SECRET_TAPS) return;
   versionTapCount = 0;
   playSfx('click');
-  merit = setMerit(merit, 500);
-  merchant = openMerchantTest(loadout);
-  menuToast = '测试入口：功德 500 · 全部技能';
+  openDevTools({
+    onUserApplied: applyDevUserResult,
+  });
+  menuToast = '已打开 DevTools';
+  scheduleFrame();
+}
+
+function applyDevUserResult(r: ApplyUserResult): void {
+  stamina = r.stamina;
+  merit = r.merit;
+  rank = r.rank;
+  loadout = r.loadout;
+  bag = r.bag;
+  tutorial = loadTutorialState();
+  setHudRank(rankName(rank.level));
   scheduleFrame();
 }
 
@@ -1861,6 +1873,7 @@ interface GameHook {
   grantWeapon: (id: string) => void;
   grantMerit: (n: number) => void;
   tuning: typeof TUNING;
+  openDevTools: () => void;
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
@@ -1902,6 +1915,7 @@ const hook: GameHook = {
   grantWeapon: (id: string) => { bag = addWeapon(bag, id).state; },
   grantMerit: (n: number) => { merit = addMerit(merit, n); },
   tuning: TUNING,
+  openDevTools: () => openDevTools({ onUserApplied: applyDevUserResult }),
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill());
     bindBattleWeaponPickup();

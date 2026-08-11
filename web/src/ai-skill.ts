@@ -120,6 +120,23 @@ export function loadPlayerLossStreak(): number {
   return loadStreak(LOSS_STREAK_KEY);
 }
 
+/** DevTools 模拟：快照 / 恢复 AI skill 与连胜连败，避免污染真实进度 */
+export function exportAiPersistState(): { skill: number; winStreak: number; lossStreak: number } {
+  return {
+    skill: loadAiSkill(),
+    winStreak: loadPlayerWinStreak(),
+    lossStreak: loadPlayerLossStreak(),
+  };
+}
+
+export function importAiPersistState(s: { skill: number; winStreak: number; lossStreak: number }): void {
+  saveAiSkill(s.skill);
+  try {
+    storeSet(WIN_STREAK_KEY, String(Math.max(0, Math.floor(s.winStreak))));
+    storeSet(LOSS_STREAK_KEY, String(Math.max(0, Math.floor(s.lossStreak))));
+  } catch { /* ignore */ }
+}
+
 /** 对战结算：胜则 win+1/loss 清零，负则 loss+1/win 清零 */
 export function recordVersusOutcome(playerWon: boolean): { win: number; loss: number } {
   if (playerWon) {

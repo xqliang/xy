@@ -5,29 +5,41 @@ import { getUnitStat, type UnitType } from '@core';
 import { exitDistToPath, posAlong, posAtDistance, type Cell, type GameMap } from './board';
 import { placeCellScore } from './autoplace';
 
-/**
- * 压力比下限（第 PRESSURE_FROM_WAVE 波起）：怪物总血 ≈ 最优输出 × 该比例。
- * @deprecated 请用 pressureRatioForWave(wave)；保留作默认/兼容别名。
- */
-export const PRESSURE_RATIO = 0.60;
-/** 压力比上限（第 PRESSURE_RATIO_FULL_WAVE 波及以后） */
-export const PRESSURE_RATIO_MAX = 0.90;
-/** 压力比爬满的波次（与高级局 15+ 对齐） */
-export const PRESSURE_RATIO_FULL_WAVE = 16;
-/** 压力窗口（秒）：用窗口内产出血量 vs 武器输出比来调数量 */
-export const PRESSURE_WINDOW_SEC = 10;
-/** 第几波起按最优输出抬高出怪数 / 允许单次叠多只（此前只用基准） */
-export const PRESSURE_FROM_WAVE = 6;
-/** 门口路段长度（格）：用于判断会不会在出怪口被秒 */
-export const ENTRANCE_ZONE_LEN = 2.5;
-/** 出怪间隔下限（秒） */
-export const SPAWN_INTERVAL_MIN = 0.35;
-/** 门口段集火伤害超过怪血该比例时，视为会门口灭队 → 加快叠怪 */
-export const GATE_WIPE_HP_RATIO = 0.85;
-/** 同批「多出」的怪相对出怪口沿路后退的最大格数（随机落在 [-jitter, 0]） */
-export const SPAWN_DIST_JITTER = 0.5;
-/** 单次出怪批次上限封顶（无尽后期仍需继续叠怪，不宜过早封死） */
-export const SPAWN_BATCH_CAP_MAX = 10;
+/** 承压 / 出怪批次等可调参数（DevTools 可改；函数内读此对象） */
+export const BOARD_POWER = {
+  /** 压力比下限（第 fromWave 波起） */
+  PRESSURE_RATIO: 0.60,
+  /** 压力比上限（满波及以后） */
+  PRESSURE_RATIO_MAX: 0.90,
+  /** 压力比爬满的波次 */
+  PRESSURE_RATIO_FULL_WAVE: 16,
+  /** 压力窗口（秒） */
+  PRESSURE_WINDOW_SEC: 10,
+  /** 第几波起按最优输出抬高出怪数 */
+  PRESSURE_FROM_WAVE: 6,
+  /** 门口路段长度（格） */
+  ENTRANCE_ZONE_LEN: 2.5,
+  /** 出怪间隔下限（秒） */
+  SPAWN_INTERVAL_MIN: 0.35,
+  /** 门口秒杀判定血量比例 */
+  GATE_WIPE_HP_RATIO: 0.85,
+  /** 同批多出怪沿路后退抖动（格） */
+  SPAWN_DIST_JITTER: 0.5,
+  /** 单次出怪批次上限封顶 */
+  SPAWN_BATCH_CAP_MAX: 10,
+};
+
+/** @deprecated 快照；运行时请读 BOARD_POWER.* */
+export const PRESSURE_RATIO = BOARD_POWER.PRESSURE_RATIO;
+export const PRESSURE_RATIO_MAX = BOARD_POWER.PRESSURE_RATIO_MAX;
+export const PRESSURE_RATIO_FULL_WAVE = BOARD_POWER.PRESSURE_RATIO_FULL_WAVE;
+export const PRESSURE_WINDOW_SEC = BOARD_POWER.PRESSURE_WINDOW_SEC;
+export const PRESSURE_FROM_WAVE = BOARD_POWER.PRESSURE_FROM_WAVE;
+export const ENTRANCE_ZONE_LEN = BOARD_POWER.ENTRANCE_ZONE_LEN;
+export const SPAWN_INTERVAL_MIN = BOARD_POWER.SPAWN_INTERVAL_MIN;
+export const GATE_WIPE_HP_RATIO = BOARD_POWER.GATE_WIPE_HP_RATIO;
+export const SPAWN_DIST_JITTER = BOARD_POWER.SPAWN_DIST_JITTER;
+export const SPAWN_BATCH_CAP_MAX = BOARD_POWER.SPAWN_BATCH_CAP_MAX;
 
 /**
  * 随波次升高的压力比：波 6 ≈ 60% → 波 16+ ≈ 90%（线性）。
@@ -35,10 +47,16 @@ export const SPAWN_BATCH_CAP_MAX = 10;
  */
 export function pressureRatioForWave(wave: number): number {
   const w = Math.max(1, Math.floor(wave));
-  if (w <= PRESSURE_FROM_WAVE) return PRESSURE_RATIO;
-  const span = Math.max(1, PRESSURE_RATIO_FULL_WAVE - PRESSURE_FROM_WAVE);
-  const t = Math.min(1, (w - PRESSURE_FROM_WAVE) / span);
-  return PRESSURE_RATIO + t * (PRESSURE_RATIO_MAX - PRESSURE_RATIO);
+  const {
+    PRESSURE_RATIO: lo,
+    PRESSURE_RATIO_MAX: hi,
+    PRESSURE_RATIO_FULL_WAVE: full,
+    PRESSURE_FROM_WAVE: from,
+  } = BOARD_POWER;
+  if (w <= from) return lo;
+  const span = Math.max(1, full - from);
+  const t = Math.min(1, (w - from) / span);
+  return lo + t * (hi - lo);
 }
 
 /**
@@ -46,8 +64,9 @@ export function pressureRatioForWave(wave: number): number {
  * 波 6–7 → 2，8–9 → 3，…，约波 22 起封顶 10。
  */
 export function spawnBatchCap(wave: number): number {
-  if (wave < PRESSURE_FROM_WAVE) return 1;
-  return Math.min(SPAWN_BATCH_CAP_MAX, 2 + Math.floor((wave - PRESSURE_FROM_WAVE) / 2));
+  const { PRESSURE_FROM_WAVE: from, SPAWN_BATCH_CAP_MAX: cap } = BOARD_POWER;
+  if (wave < from) return 1;
+  return Math.min(cap, 2 + Math.floor((wave - from) / 2));
 }
 
 const PATH_SAMPLE_STEP = 0.25;
@@ -294,7 +313,7 @@ export function estimateOptimalBoardPower(input: BoardPowerInput): BoardPowerRes
     return dmg;
   };
 
-  const entranceEnd = Math.min(input.pathLen, input.entranceDist + ENTRANCE_ZONE_LEN);
+  const entranceEnd = Math.min(input.pathLen, input.entranceDist + BOARD_POWER.ENTRANCE_ZONE_LEN);
   const entranceDps = zoneAverageFocusDps(
     placed,
     input.map,
@@ -416,8 +435,8 @@ export function planSpawnInterval(input: {
   entranceZoneLen?: number;
 }): number {
   void input.wave;
-  const minItv = input.minInterval ?? SPAWN_INTERVAL_MIN;
-  const zoneLen = input.entranceZoneLen ?? ENTRANCE_ZONE_LEN;
+  const minItv = input.minInterval ?? BOARD_POWER.SPAWN_INTERVAL_MIN;
+  const zoneLen = input.entranceZoneLen ?? BOARD_POWER.ENTRANCE_ZONE_LEN;
   const diffFactor = Math.max(1, input.difficultySpawnFactor ?? 1);
 
   let itv = input.baseInterval / diffFactor;
@@ -427,7 +446,7 @@ export function planSpawnInterval(input: {
   const timeInZone = zoneLen / spd;
   const dmgInZone = input.entranceDps * timeInZone;
   const hp = Math.max(1, input.normalHp);
-  if (input.entranceDps > 0 && dmgInZone > hp * GATE_WIPE_HP_RATIO) {
+  if (input.entranceDps > 0 && dmgInZone > hp * BOARD_POWER.GATE_WIPE_HP_RATIO) {
     const needStack = Math.min(6, Math.max(2, Math.ceil(dmgInZone / hp)));
     itv = Math.min(itv, timeInZone / needStack);
   }
@@ -444,8 +463,8 @@ export function planSpawnInterval(input: {
  */
 export function planWavePressure(input: PressurePlanInput): PressurePlan {
   const ratio = input.pressureRatio ?? pressureRatioForWave(input.wave);
-  const window = input.windowSec ?? PRESSURE_WINDOW_SEC;
-  const fromWave = input.fromWave ?? PRESSURE_FROM_WAVE;
+  const window = input.windowSec ?? BOARD_POWER.PRESSURE_WINDOW_SEC;
+  const fromWave = input.fromWave ?? BOARD_POWER.PRESSURE_FROM_WAVE;
 
   const { power, normalHp, baselineCount, isBossWave } = input;
   const optimalDps = power.optimalDps;

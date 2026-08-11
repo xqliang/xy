@@ -28,6 +28,16 @@ export function storeSet(key: string, val: string): void {
   }
 }
 
+/** 删除键（DevTools 重置本地进度用） */
+export function storeRemove(key: string): void {
+  try {
+    if (useWxStore) { wx.removeStorageSync(key); return; }
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 有限数值：非 number / NaN / Infinity 时回退 fallback，并可 clamp */
 export function safeNumber(value: unknown, fallback: number, min?: number, max?: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
