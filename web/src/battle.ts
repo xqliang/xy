@@ -228,8 +228,8 @@ export const TUNING = {
   heroBurnDur: 3, // 灼烧持续时间（秒）
   heroBuffAtkMulMain: 1.35, // 老君：友军攻击倍率
   heroBuffAtkMulTransit: 1.2, // 丹君：友军攻击倍率
-  heroBuffDurMain: 4, // 老君增益时长（秒）
-  heroBuffDurTransit: 2.5, // 丹君增益时长（秒）
+  heroBuffDurMain: 5, // 老君增益时长（秒）
+  heroBuffDurTransit: 3.5, // 丹君增益时长（秒）
   heroCdrSecMain: 4, // 文殊：其他武将大招剩余 CD 缩短（秒）
   heroCdrSecTransit: 2.5, // 慧殊：缩短秒数
   tangsengHurtImmuneDur: 0.5, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）

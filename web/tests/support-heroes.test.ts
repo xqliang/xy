@@ -206,13 +206,13 @@ describe('验收：文档与 TUNING 一致', () => {
       'utf8',
     );
     expect(doc).toContain('heroBuffAtkMulMain = 1.35');
-    expect(doc).toContain('heroBuffDurMain = 4');
+    expect(doc).toContain('heroBuffDurMain = 5');
     expect(doc).toContain('heroCdrSecMain = 4');
     expect(doc).toContain('tangsengHurtImmuneDur = 0.5');
     expect(TUNING.heroBuffAtkMulMain).toBe(1.35);
-    expect(TUNING.heroBuffDurMain).toBe(4);
+    expect(TUNING.heroBuffDurMain).toBe(5);
     expect(TUNING.heroBuffAtkMulTransit).toBe(1.2);
-    expect(TUNING.heroBuffDurTransit).toBe(2.5);
+    expect(TUNING.heroBuffDurTransit).toBe(3.5);
     expect(TUNING.heroCdrSecMain).toBe(4);
     expect(TUNING.heroCdrSecTransit).toBe(2.5);
     expect(TUNING.tangsengHurtImmuneDur).toBe(0.5);
