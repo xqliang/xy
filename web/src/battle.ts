@@ -510,11 +510,14 @@ export const SKILL_FX_DUR = 0.8; // 主动技能爆发特效时长（秒）
 export const BUFF_SKILL_FX_DUR = 1.25; // 仙丹/风火轮施放冲击特效（秒，略长便于感知）
 /** @deprecated 使用 SKILL_FX_DUR */
 export const PALM_PUSH_DUR = SKILL_FX_DUR;
+/** 推到底后残影快速淡出时长（秒） */
+export const PALM_PUSH_FADE_DUR = 0.2;
 
 // 如来神掌沿路回推动画：从最前怪沿路径逐格回推
 export interface PalmPushFx {
   t: number;
   dur: number;
+  fadeT: number;
   cells: number;
   frontStartDist: number;
   snapshots: { id: number; startDist: number }[];
@@ -3596,6 +3599,7 @@ export class Battle {
     const fx: PalmPushFx = {
       t: 0,
       dur: SKILL_FX_DUR,
+      fadeT: 0,
       cells,
       frontStartDist,
       snapshots: list.map((m) => ({ id: m.id, startDist: m.dist })),
@@ -3615,20 +3619,24 @@ export class Battle {
     if (!fx) return null;
     fx.t += dt;
     const p = Math.min(1, fx.t / fx.dur);
-    const eased = 1 - (1 - p) ** 2;
-    const pushed = fx.cells * eased;
     const snapById = new Map(fx.snapshots.map((s) => [s.id, s.startDist]));
-    for (const m of monsters) {
-      const start = snapById.get(m.id);
-      if (start !== undefined) m.dist = Math.max(0, start - pushed);
+    if (p < 1) {
+      const eased = 1 - (1 - p) ** 2;
+      const pushed = fx.cells * eased;
+      for (const m of monsters) {
+        const start = snapById.get(m.id);
+        if (start !== undefined) m.dist = Math.max(0, start - pushed);
+      }
+      return fx;
     }
-    if (p >= 1) {
+    if (fx.fadeT === 0) {
       for (const m of monsters) {
         const start = snapById.get(m.id);
         if (start !== undefined) m.dist = Math.max(0, start - fx.cells);
       }
-      return null;
     }
+    fx.fadeT += dt;
+    if (fx.fadeT >= PALM_PUSH_FADE_DUR) return null;
     return fx;
   }
 

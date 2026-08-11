@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
+import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById } from './passives';
 import { activeById, isPillActiveEffect } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
@@ -2363,26 +2363,34 @@ function drawRotatedPalmStampAlong(
 }
 
 // 如来神掌：skill-act-palm 图标沿取经路逐格回推，掌缘朝向路径切线
-const PALM_TRAIL_MAX = 3;
+const PALM_TRAIL_MAX = 2;
 const PALM_TRAIL_STEP = 0.42; // 残影间距（格）
 
-/** 波前 + 最多 3 枚渐变残影 + 推进弧光（玩家/AI 共用） */
+/** 波前 + 最多 2 枚渐变残影 + 推进弧光（玩家/AI 共用） */
 function drawPalmPushWaveFx(
   ctx: CanvasRenderingContext2D,
   path: Cell[],
   waveDist: number,
   frontStartDist: number,
   prog: number,
+  fadeT: number,
 ): void {
-  // 残影在波前后方（已掠过路段），越远越淡越小
+  const trailFade = fadeT > 0
+    ? Math.max(0, 1 - fadeT / PALM_PUSH_FADE_DUR) ** 1.6
+    : 1;
+
+  // 残影在波前后方（已掠过路段），越远越淡越小；推到底后整体快速淡出
   for (let i = PALM_TRAIL_MAX; i >= 1; i--) {
     const d = waveDist + i * PALM_TRAIL_STEP;
     if (d > frontStartDist + 0.05) continue;
-    const fade = (PALM_TRAIL_MAX - i + 1) / PALM_TRAIL_MAX; // 近→远：1, 2/3, 1/3
-    const alpha = 0.14 + fade * 0.36;
+    const fade = (PALM_TRAIL_MAX - i + 1) / PALM_TRAIL_MAX;
+    const alpha = (0.14 + fade * 0.36) * trailFade;
+    if (alpha < 0.02) continue;
     const size = CELL * (0.28 + fade * 0.14);
     drawRotatedPalmStampAlong(ctx, path, d, size, alpha);
   }
+
+  if (fadeT > 0) return;
 
   const wp = posAlong(path, waveDist);
   const { x, y } = cellCenterPx(wp.c, wp.r);
@@ -2405,7 +2413,7 @@ function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   const waveDist = b.palmPushWaveDist();
   if (!fx || waveDist === null) return;
   const prog = Math.min(1, fx.t / fx.dur);
-  drawPalmPushWaveFx(ctx, b.map.path, waveDist, fx.frontStartDist, prog);
+  drawPalmPushWaveFx(ctx, b.map.path, waveDist, fx.frontStartDist, prog, fx.fadeT);
 }
 
 // AI 半场如来神掌：沿 aiPath 逐格回推
@@ -2414,7 +2422,7 @@ function drawAiPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   const waveDist = b.aiPalmPushWaveDist();
   if (!fx || waveDist === null) return;
   const prog = Math.min(1, fx.t / fx.dur);
-  drawPalmPushWaveFx(ctx, b.aiPath, waveDist, fx.frontStartDist, prog);
+  drawPalmPushWaveFx(ctx, b.aiPath, waveDist, fx.frontStartDist, prog, fx.fadeT);
 }
 
 function skillFxFade(prog: number): number {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { lenOf } from '../src/board';
-import { Battle, TUNING, PALM_PUSH_DUR } from '../src/battle';
+import { Battle, TUNING, PALM_PUSH_DUR, PALM_PUSH_FADE_DUR } from '../src/battle';
 
 describe('如来神掌沿路回推', () => {
   it('击退格数为 6', () => {
@@ -44,7 +44,7 @@ describe('如来神掌沿路回推', () => {
     expect(b.palmPushFx).not.toBeNull();
     expect(b.monsters[0]!.dist).toBe(12);
 
-    const dur = PALM_PUSH_DUR + 0.05;
+    const dur = PALM_PUSH_DUR + PALM_PUSH_FADE_DUR + 0.05;
     for (let t = 0; t < dur; t += 1 / 60) b.step(1 / 60);
 
     expect(b.palmPushFx).toBeNull();
@@ -97,7 +97,7 @@ describe('如来神掌沿路回推', () => {
     expect(b.aiPalmPushFx).not.toBeNull();
     expect(b.aiMonsters[0]!.dist).toBe(d0);
 
-    const dur = PALM_PUSH_DUR + 0.05;
+    const dur = PALM_PUSH_DUR + PALM_PUSH_FADE_DUR + 0.05;
     for (let t = 0; t < dur; t += 1 / 60) b.step(1 / 60);
 
     expect(b.aiPalmPushFx).toBeNull();
