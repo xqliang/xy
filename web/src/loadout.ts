@@ -226,3 +226,8 @@ export function grantPassive(loadout: LoadoutState, id: string): LoadoutState {
     : [...loadout.passives, id];
   return save(normalize({ ...loadout, day: today(), ownedPassives, passives }));
 }
+
+/** DevTools：直接写入装备状态（规范化后持久化） */
+export function writeLoadout(s: LoadoutState): LoadoutState {
+  return save(normalize({ ...s, day: today() }));
+}

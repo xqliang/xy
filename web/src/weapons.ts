@@ -124,11 +124,20 @@ export function weaponOfGeneral(generalId: string): WeaponDef | undefined {
   return WEAPONS.find((w) => w.general === generalId);
 }
 
-export const WEAPON_RANGE_STEP = 0.35; // 神兵范围：每品质阶 +0.35 格（金阶 +1.75）
+/** 神兵加成可调（DevTools 可改） */
+export const WEAPON_TUNING = {
+  rangeStep: 0.35,
+  pctPerTier: 0.04, // 攻击/攻速：每品质阶 +4%（金阶 +20%）
+  battleFragmentEligibleChance: 0.35,
+  heroAttackFragmentChance: 0.10,
+};
+
+/** @deprecated 快照；运行时请读 WEAPON_TUNING.rangeStep */
+export const WEAPON_RANGE_STEP = WEAPON_TUNING.rangeStep;
 
 // 品质 → 攻击/攻速比例加成（+4%/级，金阶 +20%）
 export function weaponPctBonus(tier: number): number {
-  return 0.04 * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
+  return WEAPON_TUNING.pctPerTier * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
 }
 
 /** 兼容旧名：攻击/攻速比例加成 */
@@ -136,9 +145,9 @@ export function weaponBonus(tier: number): number {
   return weaponPctBonus(tier);
 }
 
-/** 神兵范围：每品质阶 +0.35 格（白 +0.35 … 金 +1.75） */
+/** 神兵范围：每品质阶 +rangeStep 格（白 +0.35 … 金 +1.75） */
 export function weaponRangeBonusGrids(tier: number): number {
-  return WEAPON_RANGE_STEP * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
+  return WEAPON_TUNING.rangeStep * Math.max(1, Math.min(MAX_WEAPON_TIER, tier));
 }
 
 /** 背包/UI 用加成文案 */
@@ -288,10 +297,10 @@ export function rollWeaponDrop(rand: number): string {
   return WEAPONS[i]!.id;
 }
 
-/** 开局判定本局是否「可能」掉碎片（通过后再在武将攻击时 10% 触发，整局最多 1 次） */
-export const BATTLE_FRAGMENT_ELIGIBLE_CHANCE = 0.35;
+/** 开局判定本局是否「可能」掉碎片（通过后再在武将攻击时触发，整局最多 1 次） */
+export const BATTLE_FRAGMENT_ELIGIBLE_CHANCE = WEAPON_TUNING.battleFragmentEligibleChance;
 /** 武将攻击命中时，在已预排的本局碎片掉落上掷骰 */
-export const HERO_ATTACK_FRAGMENT_CHANCE = 0.10;
+export const HERO_ATTACK_FRAGMENT_CHANCE = WEAPON_TUNING.heroAttackFragmentChance;
 
 export function generalNameOfWeapon(id: string): string {
   const def = weaponById(id);

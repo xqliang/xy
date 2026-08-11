@@ -157,13 +157,23 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
 
-/** AI 战中调位（正常对局）：兵器 1–2.5s；待补英雄配对字 0.4–0.7s */
-export const AI_WEAPON_ADJUST_INTERVAL_MIN = 1;
-export const AI_WEAPON_ADJUST_INTERVAL_MAX = 2.5;
-export const AI_PARTNER_ADJUST_INTERVAL_MIN = 0.4;
-export const AI_PARTNER_ADJUST_INTERVAL_MAX = 0.7;
+/** AI 战中调位间隔（DevTools 可改）：兵器 1–2.5s；待补英雄配对字 0.4–0.7s */
+export const AI_TIMING = {
+  weaponAdjustMin: 1,
+  weaponAdjustMax: 2.5,
+  partnerAdjustMin: 0.4,
+  partnerAdjustMax: 0.7,
+  /** versus-agent 10× 物理子步进时传给 Battle 的间隔缩放 */
+  adjustFastScale: 0.1,
+};
+
+/** @deprecated 快照；运行时请读 AI_TIMING.* */
+export const AI_WEAPON_ADJUST_INTERVAL_MIN = AI_TIMING.weaponAdjustMin;
+export const AI_WEAPON_ADJUST_INTERVAL_MAX = AI_TIMING.weaponAdjustMax;
+export const AI_PARTNER_ADJUST_INTERVAL_MIN = AI_TIMING.partnerAdjustMin;
+export const AI_PARTNER_ADJUST_INTERVAL_MAX = AI_TIMING.partnerAdjustMax;
 /** versus-agent 10× 物理子步进时传给 Battle 的间隔缩放（1–2.5s × 0.1 ≈ 旧快放体感） */
-export const AI_ADJUST_INTERVAL_FAST_SCALE = 0.1;
+export const AI_ADJUST_INTERVAL_FAST_SCALE = AI_TIMING.adjustFastScale;
 
 export function rollAiAdjustInterval(
   partnerPending: boolean,
@@ -172,8 +182,8 @@ export function rollAiAdjustInterval(
 ): number {
   const r = rng();
   const base = partnerPending
-    ? AI_PARTNER_ADJUST_INTERVAL_MIN + r * (AI_PARTNER_ADJUST_INTERVAL_MAX - AI_PARTNER_ADJUST_INTERVAL_MIN)
-    : AI_WEAPON_ADJUST_INTERVAL_MIN + r * (AI_WEAPON_ADJUST_INTERVAL_MAX - AI_WEAPON_ADJUST_INTERVAL_MIN);
+    ? AI_TIMING.partnerAdjustMin + r * (AI_TIMING.partnerAdjustMax - AI_TIMING.partnerAdjustMin)
+    : AI_TIMING.weaponAdjustMin + r * (AI_TIMING.weaponAdjustMax - AI_TIMING.weaponAdjustMin);
   return base * scale;
 }
 

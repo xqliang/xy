@@ -243,10 +243,18 @@ export function heroEntranceBand(def: GeneralDef, tier: number): number {
   return 1;
 }
 
-// 羁绊：大圣上场 → 全队攻击 +5%
+// 羁绊：大圣上场 → 全队攻击 +GENERAL_TUNING.BOND_ATK_BONUS
 export const BOND_GENERAL = 'dasheng';
 export const BOND_NAME = '大圣护法';
-export const BOND_ATK_BONUS = 0.05;
+
+/** 武将战斗可调参数（DevTools 可改） */
+export const GENERAL_TUNING = {
+  CRIT_MULT: 1.5,
+  BOND_ATK_BONUS: 0.05,
+};
+
+/** @deprecated 快照；运行时请读 GENERAL_TUNING.BOND_ATK_BONUS */
+export const BOND_ATK_BONUS = GENERAL_TUNING.BOND_ATK_BONUS;
 
 // 字牌掉落基础池（按 weight 展开）；实际抽字见 word-draw.ts（阶段权重 + 孤儿）
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>
@@ -275,4 +283,5 @@ export function heroAttackFxTtl(def: GeneralDef, tier: number): number {
   return base + (tier - 1) * 0.055 * s;
 }
 
-export const CRIT_MULT = 1.5;
+/** @deprecated 快照；运行时请读 GENERAL_TUNING.CRIT_MULT */
+export const CRIT_MULT = GENERAL_TUNING.CRIT_MULT;
