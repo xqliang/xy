@@ -43,11 +43,6 @@ export function createOffscreenCanvas(width: number, height: number): HTMLCanvas
   return c;
 }
 
-// 资源路径：Web = '/assets/..'（vite public 根）；微信 = 包内相对路径 'assets/..'（无 URL 根）。
-export function assetUrl(p: string): string {
-  return isWeChat ? p.replace(/^\/+/, '') : p;
-}
-
 // 应用前后台生命周期：仅微信下生效（对齐"切后台/看广告时暂停"）；Web 下为 no-op，行为不变。
 export function onAppHide(cb: () => void): void {
   if (isWeChat && typeof wx.onHide === 'function') wx.onHide(cb);

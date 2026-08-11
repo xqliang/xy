@@ -77,16 +77,28 @@ export interface AssetLoadProgress {
 
 export type AssetLoadProgressCb = (p: AssetLoadProgress) => void;
 
+// CDN 加载兜底超时：单个资源卡死（弱网/连接被中间设备吞掉）不应让 Promise.all 永远不 resolve、
+// 把玩家卡在加载页出不去——超时后按失败处理（sprite 缺失，与 onerror 行为一致），游戏仍可进入。
+const ASSET_LOAD_TIMEOUT_MS = 15000;
+
 function loadOne(key: string): Promise<void> {
   return new Promise((resolve) => {
     const url = ASSET_URLS[key];
     if (!url) { resolve(); return; }
-    const img = createImage();
-    img.onload = () => {
-      cache[key] = img; // 素材已是离线抠好的透明 PNG，直接使用
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve();
     };
-    img.onerror = () => resolve();
+    const timer = setTimeout(finish, ASSET_LOAD_TIMEOUT_MS);
+    const img = createImage();
+    img.onload = () => {
+      cache[key] = img; // 素材已是离线抠好的透明 PNG，直接使用；即使超时后才到达也补上，好过永远缺失
+      finish();
+    };
+    img.onerror = () => finish();
     img.src = url;
   });
 }

@@ -1,82 +1,11 @@
-// 微信小游戏构建的资源清单：包内相对路径 assets/<name>.<ext>
-// （由 start.sh wx 从 src/game-assets/ 拷贝到 wechat/assets/，不带哈希）。
-// 小游戏是本地包、无 HTTP 缓存问题，不需要内容指纹；此文件让微信构建绕开 Vite 的资源指纹处理。
-// vite.wx.config.ts 的别名把 '@asset-manifest' 指到这里。
-export const ASSET_URLS: Record<string, string> = {
-  tangseng: 'assets/tangseng.png',
-  'unit-monkey': 'assets/unit-monkey.png',
-  'unit-spear': 'assets/unit-spear.png',
-  'unit-cavalry': 'assets/unit-cavalry.png',
-  'unit-archer': 'assets/unit-archer.png',
-  'monster-minion': 'assets/monster-minion.png',
-  'monster-boss': 'assets/monster-boss.png',
-  'monster-minion-huoyanshan': 'assets/monster-minion-huoyanshan.png',
-  'monster-boss-huoyanshan': 'assets/monster-boss-huoyanshan.png',
-  'monster-minion-liushahe': 'assets/monster-minion-liushahe.png',
-  'monster-boss-liushahe': 'assets/monster-boss-liushahe.png',
-  'monster-minion-baiguling': 'assets/monster-minion-baiguling.png',
-  'monster-boss-baiguling': 'assets/monster-boss-baiguling.png',
-  'monster-minion-pansidong': 'assets/monster-minion-pansidong.png',
-  'monster-boss-pansidong': 'assets/monster-boss-pansidong.png',
-  'item-shovel': 'assets/item-shovel.png',
-  'hero-wukong': 'assets/hero-wukong.png',
-  'hero-bajie': 'assets/hero-bajie.png',
-  'hero-shaseng': 'assets/hero-shaseng.png',
-  'hero-guanyin': 'assets/hero-guanyin.png',
-  'hero-nezha': 'assets/hero-nezha.png',
-  'hero-erlang': 'assets/hero-erlang.png',
-  'hero-tangseng-hero': 'assets/hero-tangseng-hero.png',
-  'hero-honghaier': 'assets/hero-honghaier.png',
-  'hero-tieshan': 'assets/hero-tieshan.png',
-  'hero-baigujing': 'assets/hero-baigujing.png',
-  'hero-niumowang': 'assets/hero-niumowang.png',
-  'hero-mile': 'assets/hero-mile.png',
-  'map-huoyanshan': 'assets/map-huoyanshan.jpg',
-  'map-liushahe': 'assets/map-liushahe.jpg',
-  'map-baiguling': 'assets/map-baiguling.jpg',
-  'map-pansidong': 'assets/map-pansidong.jpg',
-  'menu-home': 'assets/menu-home.jpg',
-  'menu-btn-settings': 'assets/menu-btn-settings.png',
-  'menu-btn-codex': 'assets/menu-btn-codex.png',
-  'menu-btn-rank': 'assets/menu-btn-rank.png',
-  'menu-btn-bag': 'assets/menu-btn-bag.png',
-  'menu-btn-start': 'assets/menu-btn-start.png',
-  'menu-btn-stamina-plus': 'assets/menu-btn-stamina-plus.png',
-  'menu-btn-map': 'assets/menu-btn-map.png',
-  'menu-btn-stamina-ad': 'assets/menu-btn-stamina-ad.png',
-  'menu-btn-stamina-share': 'assets/menu-btn-stamina-share.png',
-  'rank-star-on': 'assets/rank-star-on.png',
-  'rank-star-off': 'assets/rank-star-off.png',
-  'icon-merit': 'assets/icon-merit.png',
-  'icon-stamina': 'assets/icon-stamina.png',
-  'skill-act-palm': 'assets/skill-act-palm.png',
-  'skill-act-meteor': 'assets/skill-act-meteor.png',
-  'skill-act-atk': 'assets/skill-act-atk.png',
-  'skill-act-frq': 'assets/skill-act-frq.png',
-  'skill-act-freeze': 'assets/skill-act-freeze.png',
-  'skill-act-jinggu': 'assets/skill-act-jinggu.png',
-  'skill-pas-pantao': 'assets/skill-pas-pantao.png',
-  'skill-pas-xiandan': 'assets/skill-pas-xiandan.png',
-  'skill-pas-fenghuolun': 'assets/skill-pas-fenghuolun.png',
-  'skill-pas-fabaofu': 'assets/skill-pas-fabaofu.png',
-  'skill-pas-zhaoxian': 'assets/skill-pas-zhaoxian.png',
-  'skill-pas-mojin': 'assets/skill-pas-mojin.png',
-  'skill-pas-luoyangchan': 'assets/skill-pas-luoyangchan.png',
-  'skill-pas-yunshi': 'assets/skill-pas-yunshi.png',
-  'skill-pas-yuni': 'assets/skill-pas-yuni.png',
-  'skill-pas-xianyuan': 'assets/skill-pas-xianyuan.png',
-  'skill-pas-jubaopen': 'assets/skill-pas-jubaopen.png',
-  'skill-pas-hushen': 'assets/skill-pas-hushen.png',
-  'skill-pas-zhuwang': 'assets/skill-pas-zhuwang.png',
-  'skill-pas-tongxin': 'assets/skill-pas-tongxin.png',
-  'skill-pas-dinghai': 'assets/skill-pas-dinghai.png',
-  'fence-baiguling': 'assets/fence-baiguling.png',
-  'fence-liushahe': 'assets/fence-liushahe.png',
-  'fence-pansidong': 'assets/fence-pansidong.png',
-  'gate-liushahe': 'assets/gate-liushahe.png',
-  'bgm-pansidong': 'assets/bgm-pansidong.mp3',
-  'bgm-menu': 'assets/bgm-menu.mp3',
-  'bgm-huoyanshan': 'assets/bgm-huoyanshan.mp3',
-  'bgm-baiguling': 'assets/bgm-baiguling.mp3',
-  'bgm-liushahe': 'assets/bgm-liushahe.mp3',
-};
+// 微信小游戏构建的资源清单：与 Web 一样全部走 CDN（火山引擎 TOS），不再把 game-assets 拷进
+// wechat/assets 包体 —— 大幅减小小游戏包大小，且素材可随时热更新（无需重新提审发版）。
+// 前提：需在小程序后台「开发管理 → 开发设置 → 服务器域名」把 CDN 域名加入
+// downloadFile 合法域名（wx.createImage/InnerAudioContext 走网络图片时会走该白名单校验）。
+// vite.wx.config.ts 的别名把 '@asset-manifest' 指到这里；文件名清单与 Web 共用一份（见 asset-manifest.names.ts）。
+import { ASSET_FILENAMES, CDN_BASE } from './asset-manifest.names';
+
+export const ASSET_URLS: Record<string, string> = {};
+for (const [key, name] of Object.entries(ASSET_FILENAMES)) {
+  ASSET_URLS[key] = CDN_BASE + name;
+}

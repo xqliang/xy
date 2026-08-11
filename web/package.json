@@ -13,6 +13,7 @@
     "versus-agent": "vitest run tests/versus-user-agent.test.ts --reporter=verbose"
   },
   "devDependencies": {
+    "@volcengine/tos-sdk": "^2.9.1",
     "puppeteer-core": "^23.11.1",
     "typescript": "^5.5.0",
     "vite": "^5.4.0",

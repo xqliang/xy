@@ -341,16 +341,16 @@ case "$CMD" in
     echo "✅ 类型检查通过"
     ;;
   wx)
-    # 微信小游戏构建：把 web/src 打成单文件 bundle → wechat/game.bundle.js，并同步资源。
+    # 微信小游戏构建：把 web/src 打成单文件 bundle → wechat/game.bundle.js。
+    # 素材（立绘/地图/BGM）已改走 CDN（见 asset-manifest.wx.ts），不再拷进包体，
+    # 需先用 `node web/tools/tos-upload.mjs` 把 web/src/game-assets 上传到 TOS。
     # 与 web 的 dev/build/deploy 完全分离，不影响本地调试与服务器部署。需微信开发者工具人工联调。
     ensure_deps "$ROOT/web"
     echo "🔨 构建微信小游戏 bundle（wechat/game.bundle.js）…"
     (cd "$ROOT/web" && npx vite build --config vite.wx.config.ts)
-    echo "🖼  同步资源 → wechat/assets"
-    mkdir -p "$ROOT/wechat/assets"
-    cp -R "$ROOT/web/src/game-assets/." "$ROOT/wechat/assets/" 2>/dev/null || true
     echo "✅ 微信构建完成：wechat/game.bundle.js"
     echo "   下一步：把 weapp-adapter.js 放到 wechat/（见 wechat/README.md），用「微信开发者工具」打开 wechat/ 联调"
+    echo "   ⚠️  首次联调前需在小程序后台「开发管理→开发设置→服务器域名」把 CDN 域名加入 downloadFile 合法域名"
     ;;
   deploy)
     # 一键部署：构建生产产物 → 打包经 ssh 传到 ECS 静态目录 → 健康检查。
