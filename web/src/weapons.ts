@@ -8,7 +8,8 @@ import { storeGet, storeSet, parseStoredJson, safeStringArray } from './storage'
 const KEY = 'dasheng.bag';
 
 export const WEAPON_QUALITY_NAMES = ['白', '绿', '蓝', '紫', '金'] as const;
-export const WEAPON_QUALITY_COLORS = ['#cfd3d8', '#7ec46a', '#4a9be0', '#a86ad0', '#e8c22c'] as const;
+// 白阶略提亮，避免深色底上像「未标注」；金阶与稀有「高级」分色
+export const WEAPON_QUALITY_COLORS = ['#e8edf2', '#7ec46a', '#4a9be0', '#a86ad0', '#e8c22c'] as const;
 export const MAX_WEAPON_TIER = 5;
 export const MAX_EQUIPPED = 3; // 同时可装备的神兵数
 
@@ -21,7 +22,7 @@ export const WEAPON_GRADE_FRAGMENTS: Record<WeaponGrade, number> = {
   low: 1, normal: 2, mid: 3, high: 4,
 };
 export const WEAPON_GRADE_COLORS: Record<WeaponGrade, string> = {
-  low: '#9a9588', normal: '#7ec46a', mid: '#4a9be0', high: '#e8c22c',
+  low: '#9a9588', normal: '#7ec46a', mid: '#4a9be0', high: '#b87333', // 铜色，与品质金阶 #e8c22c 区分
 };
 
 export function weaponQualityName(tier: number): string {
@@ -50,6 +51,16 @@ export function weaponGradeColor(id: string): string {
   return def ? WEAPON_GRADE_COLORS[weaponGrade(def)] : '#9a9588';
 }
 
+/** 未激活：稀有度行（背包/弹窗） */
+export function weaponGradeSubline(id: string, gname: string): string {
+  return `稀有·${weaponGradeName(id)} · 需${weaponFragmentsRequired(id)}片 · 专属「${gname}」`;
+}
+
+/** 已激活：品质阶行（背包/弹窗） */
+export function weaponQualitySubline(tier: number, gname: string): string {
+  return `品质·${weaponQualityName(tier)}阶 · 专属「${gname}」`;
+}
+
 export function weaponFragmentsRequired(id: string): number {
   const def = weaponById(id);
   return def ? WEAPON_GRADE_FRAGMENTS[weaponGrade(def)] : 1;
@@ -63,9 +74,11 @@ export function isWeaponActivated(s: BagState, id: string): boolean {
   return (s.owned[id] ?? 0) > 0;
 }
 
-/** 碎片已集齐或神兵已激活 → 对局内不再展示掉落卡片（仍参与随机） */
+/** 对局内不再展示掉落：未激活且碎片集齐，或已激活且品质已满阶 */
 export function isWeaponFragmentsComplete(s: BagState, id: string): boolean {
-  if (isWeaponActivated(s, id)) return true;
+  const tier = s.owned[id] ?? 0;
+  if (tier >= MAX_WEAPON_TIER) return true;
+  if (tier > 0) return false;
   return weaponFragmentCount(s, id) >= weaponFragmentsRequired(id);
 }
 
@@ -191,6 +204,13 @@ export function addWeaponFragment(
 ): { state: BagState; activated: boolean; upgraded: boolean; fragments: number; required: number; tier: number } {
   const req = weaponFragmentsRequired(id);
   if (isWeaponActivated(s, id)) {
+    const cur = s.owned[id] ?? 0;
+    if (cur >= MAX_WEAPON_TIER) {
+      return {
+        state: s, activated: false, upgraded: false,
+        fragments: req, required: req, tier: cur,
+      };
+    }
     const r = addWeapon(s, id);
     return { ...r, activated: false, fragments: req, required: req };
   }

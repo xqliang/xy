@@ -24,7 +24,7 @@ import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
 import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
-import { drawSkillGlyph } from './skill-icon';
+import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
@@ -768,6 +768,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawSkillFx(ctx, b.aiSkillFx);
   drawUnits(ctx, b, ui);
   drawGenerals(ctx, b, ui);
+  drawTeamBuffAuras(ctx, b);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
   drawDigFx(ctx, b.digFx);
@@ -780,6 +781,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b, ui);
+  drawBattleBuffBanner(ctx, b);
   drawTray(ctx, b, ui);
   drawButtons(ctx, b);
   drawActiveIcons(ctx, b);
@@ -2181,53 +2183,78 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
-// 如来神掌：从最前怪沿取经路逐格回推的金色掌印波
+// 如来神掌资源图默认「自上而下拍击」，+Y 为推出方向；rotate 后与沿路回推切线对齐
+const PALM_PUSH_ICON_ROT_OFFSET = -Math.PI / 2;
+
+/** 沿路 dist 处、朝向 dist 减小（回推）方向的切线角（像素坐标） */
+function pathPushBackAnglePx(map: GameMap, dist: number): number {
+  const eps = 0.12;
+  const p0 = posAtDistance(map, dist);
+  const p1 = posAtDistance(map, Math.max(0, dist - eps));
+  const c0 = cellCenterPx(p0.c, p0.r);
+  const c1 = cellCenterPx(p1.c, p1.r);
+  const dx = c1.x - c0.x;
+  const dy = c1.y - c0.y;
+  if (dx * dx + dy * dy < 1e-4) return 0;
+  return Math.atan2(dy, dx);
+}
+
+function drawRotatedPalmStamp(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  dist: number,
+  size: number,
+  alpha: number,
+): void {
+  const p = posAtDistance(map, dist);
+  const { x, y } = cellCenterPx(p.c, p.r);
+  const angle = pathPushBackAnglePx(map, dist) + PALM_PUSH_ICON_ROT_OFFSET;
+  const img = sprite(skillAssetKey('act_palm'));
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = alpha;
+  if (img) {
+    ctx.shadowColor = 'rgba(255,210,80,0.55)';
+    ctx.shadowBlur = size * 0.22;
+    ctx.drawImage(img, -size / 2, -size / 2, size, size);
+  } else {
+    drawSkillGlyph(ctx, 0, 0, size * 0.48, '掌', '#ffd54a', true, 'act_palm');
+  }
+  ctx.restore();
+}
+
+// 如来神掌：skill-act-palm 图标沿取经路逐格回推，掌缘朝向路径切线
 function drawPalmPushFx(ctx: CanvasRenderingContext2D, b: Battle) {
   const fx = b.palmPushFx;
   const waveDist = b.palmPushWaveDist();
   if (!fx || waveDist === null) return;
 
-  const tailDist = fx.frontStartDist;
-  const lo = Math.min(tailDist, waveDist);
-  const hi = Math.max(tailDist, waveDist);
+  const lo = Math.min(fx.frontStartDist, waveDist);
+  const hi = Math.max(fx.frontStartDist, waveDist);
   const span = Math.max(0.01, hi - lo);
-  ctx.save();
-  for (let d = lo; d <= hi + 0.01; d += 0.32) {
-    const p = posAtDistance(b.map, d);
-    const { x, y } = cellCenterPx(p.c, p.r);
+  const prog = Math.min(1, fx.t / fx.dur);
+
+  for (let d = lo; d <= hi + 0.01; d += 0.42) {
+    if (Math.abs(d - waveDist) < 0.18) continue;
     const t = (d - lo) / span;
-    ctx.globalAlpha = 0.2 + 0.5 * t;
-    ctx.fillStyle = '#ffe8a0';
-    ctx.beginPath();
-    ctx.arc(x, y, 4 + t * 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,210,90,0.55)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, y, 8 + t * 14, 0, Math.PI * 2);
-    ctx.stroke();
+    drawRotatedPalmStamp(ctx, b.map, d, CELL * (0.26 + 0.14 * t), 0.18 + 0.42 * t);
   }
 
   const wp = posAtDistance(b.map, waveDist);
   const { x, y } = cellCenterPx(wp.c, wp.r);
-  const prog = Math.min(1, fx.t / fx.dur);
-  const palmR = CELL * (0.34 + 0.06 * Math.sin(prog * Math.PI));
-  ctx.globalAlpha = 0.9;
-  ctx.fillStyle = '#ffd54a';
-  ctx.strokeStyle = '#fff8dc';
-  ctx.lineWidth = 3;
+  const pushAngle = pathPushBackAnglePx(b.map, waveDist);
+  ctx.save();
+  ctx.globalAlpha = 0.35 * (1 - prog * 0.4);
+  ctx.strokeStyle = '#ffe27a';
+  ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.arc(x, y - palmR * 0.12, palmR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  // 掌纹
-  ctx.strokeStyle = 'rgba(180,120,20,0.65)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x - palmR * 0.35, y - palmR * 0.05);
-  ctx.quadraticCurveTo(x, y + palmR * 0.15, x + palmR * 0.35, y - palmR * 0.05);
+  ctx.arc(x, y, 10 + prog * 16, pushAngle + Math.PI * 0.55, pushAngle + Math.PI * 1.45);
   ctx.stroke();
   ctx.restore();
+
+  const mainSize = CELL * (0.5 + 0.08 * Math.sin(prog * Math.PI));
+  drawRotatedPalmStamp(ctx, b.map, waveDist, mainSize, 0.96);
 }
 
 function skillFxFade(prog: number): number {
@@ -2349,47 +2376,219 @@ function drawFreezeSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, 
 }
 
 function drawAtkBuffSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
-  const maxR = CELL * 2.4;
-  const g = ctx.createRadialGradient(x, y, 0, x, y, maxR * (0.4 + prog * 0.7));
-  g.addColorStop(0, `rgba(255,90,70,${0.45 * fade})`);
-  g.addColorStop(0.6, `rgba(255,50,40,${0.18 * fade})`);
+  const maxR = CELL * 3.2;
+  const wave = 0.35 + prog * 0.95;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, maxR * wave);
+  g.addColorStop(0, `rgba(255,120,80,${0.55 * fade})`);
+  g.addColorStop(0.45, `rgba(255,60,40,${0.28 * fade})`);
   g.addColorStop(1, 'rgba(255,30,30,0)');
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(x, y, maxR * (0.4 + prog * 0.7), 0, Math.PI * 2);
+  ctx.arc(x, y, maxR * wave, 0, Math.PI * 2);
   ctx.fill();
-  ctx.globalAlpha = fade * 0.75;
-  ctx.strokeStyle = '#ff8060';
-  ctx.lineWidth = 3;
+  // 丹气粒子：自中心向外扩散
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + prog * Math.PI * 2;
+    const dist = CELL * (0.4 + prog * 2.2);
+    ctx.globalAlpha = fade * (1 - prog * 0.35);
+    ctx.fillStyle = i % 2 === 0 ? '#ff9070' : '#ffd0c0';
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * dist, y + Math.sin(a) * dist, 3 + (1 - prog) * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = fade * 0.85;
+  ctx.strokeStyle = '#ff6040';
+  ctx.lineWidth = 3.5;
   ctx.beginPath();
-  ctx.arc(x, y, maxR * prog * 0.85, 0, Math.PI * 2);
+  ctx.arc(x, y, maxR * prog * 0.9, 0, Math.PI * 2);
   ctx.stroke();
   drawSkillGlyphPulse(ctx, x, y, '丹', prog, fade, '#ff7060', '#ffd0c8');
 }
 
 function drawFrqBuffSkillFx(ctx: CanvasRenderingContext2D, x: number, y: number, prog: number, fade: number) {
-  const spin = prog * Math.PI * 4;
-  for (let ring = 0; ring < 2; ring++) {
-    const r = CELL * (0.55 + ring * 0.22);
-    ctx.globalAlpha = fade * (0.8 - ring * 0.15);
-    ctx.strokeStyle = ring === 0 ? '#ffb830' : '#ff8c20';
-    ctx.lineWidth = 4 - ring;
+  const spin = prog * Math.PI * 5;
+  for (let ring = 0; ring < 3; ring++) {
+    const r = CELL * (0.5 + ring * 0.28 + prog * 0.35);
+    ctx.globalAlpha = fade * (0.85 - ring * 0.18);
+    ctx.strokeStyle = ring === 0 ? '#ffe060' : ring === 1 ? '#ffb830' : '#ff8c20';
+    ctx.lineWidth = 5 - ring;
     ctx.beginPath();
-    ctx.arc(x, y, r, spin + ring * 0.6, spin + Math.PI * 1.35 + ring * 0.6);
+    ctx.arc(x, y, r, spin + ring * 0.5, spin + Math.PI * 1.4 + ring * 0.5);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(x, y, r, spin + Math.PI + ring * 0.6, spin + Math.PI * 2.35 + ring * 0.6);
+    ctx.arc(x, y, r, spin + Math.PI + ring * 0.5, spin + Math.PI * 2.4 + ring * 0.5);
     ctx.stroke();
   }
-  ctx.globalAlpha = fade * 0.35;
-  const g = ctx.createRadialGradient(x, y, 0, x, y, CELL * 1.8);
-  g.addColorStop(0, 'rgba(255,200,60,0.5)');
+  ctx.globalAlpha = fade * 0.45;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, CELL * 2.4);
+  g.addColorStop(0, 'rgba(255,220,80,0.65)');
+  g.addColorStop(0.55, 'rgba(255,140,30,0.25)');
   g.addColorStop(1, 'rgba(255,120,20,0)');
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(x, y, CELL * 1.8, 0, Math.PI * 2);
+  ctx.arc(x, y, CELL * 2.4, 0, Math.PI * 2);
   ctx.fill();
+  // 火星尾迹
+  for (let i = 0; i < 8; i++) {
+    const a = spin * 1.2 + i * (Math.PI * 2 / 8);
+    const dist = CELL * (0.8 + prog * 1.6);
+    ctx.globalAlpha = fade * (0.7 - prog * 0.3);
+    ctx.fillStyle = '#ffd850';
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * dist, y + Math.sin(a) * dist, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   drawSkillGlyphPulse(ctx, x, y, '轮', prog, fade, '#ffd050', '#fff0b0');
+}
+
+type TeamBuffKind = 'atk' | 'frq';
+
+/** 仙丹/风火轮持续期间：单位脚底脉冲光环 */
+function drawUnitBuffAura(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  kind: TeamBuffKind,
+  remain: number,
+  maxDur: number,
+) {
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160);
+  const life = maxDur > 0 ? remain / maxDur : 0;
+  const r = CELL * (0.38 + pulse * 0.06);
+  ctx.save();
+  if (kind === 'atk') {
+    ctx.globalAlpha = 0.22 + pulse * 0.18;
+    ctx.strokeStyle = '#ff6040';
+    ctx.fillStyle = `rgba(255,90,60,${0.12 + pulse * 0.1})`;
+  } else {
+    ctx.globalAlpha = 0.22 + pulse * 0.18;
+    ctx.strokeStyle = '#ffb830';
+    ctx.fillStyle = `rgba(255,180,40,${0.12 + pulse * 0.1})`;
+  }
+  ctx.lineWidth = 2 + pulse;
+  ctx.beginPath();
+  ctx.ellipse(x, y + CELL * 0.22, r, r * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // 快结束时略闪
+  if (life < 0.25) {
+    ctx.globalAlpha = (0.25 - life) * 2;
+    ctx.strokeStyle = '#fff8e0';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** 棋盘上方增益条：持续 buff 倒计时 + 进度条 */
+function drawBattleBuffBanner(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.status !== 'playing' && b.status !== 'ready') return;
+  const entries: { label: string; pct: number; remain: number; max: number; fill: string; stroke: string }[] = [];
+  if (b.atkBuffT > 0) {
+    entries.push({
+      label: `仙丹 攻击+${Math.round((b.atkBuffMul - 1) * 100)}%`,
+      pct: b.atkBuffT / TUNING.atkBuffDur,
+      remain: b.atkBuffT,
+      max: TUNING.atkBuffDur,
+      fill: '#ff6040',
+      stroke: '#ffd0c0',
+    });
+  }
+  if (b.frqBuffT > 0) {
+    entries.push({
+      label: `风火轮 攻速+${Math.round((b.frqBuffMul - 1) * 100)}%`,
+      pct: b.frqBuffT / TUNING.frqBuffDur,
+      remain: b.frqBuffT,
+      max: TUNING.frqBuffDur,
+      fill: '#ffb830',
+      stroke: '#fff0b0',
+    });
+  }
+  if (entries.length === 0) return;
+
+  const barW = 168;
+  const barH = 8;
+  const rowH = 28;
+  const totalH = entries.length * rowH + 8;
+  const bx = VIEW_W / 2 - barW / 2;
+  let by = HUD_H + 6;
+
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  roundRect(ctx, bx - 10, by - 4, barW + 20, totalH, 10);
+  ctx.fillStyle = 'rgba(40,24,12,0.72)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  for (const e of entries) {
+    ctx.fillStyle = e.stroke;
+    ctx.font = 'bold 13px "PingFang SC", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(e.label, bx, by + 10);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffe8c8';
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.fillText(formatRemainT(e.remain), bx + barW, by + 10);
+    const trackY = by + 18;
+    roundRect(ctx, bx, trackY, barW, barH, 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+    if (e.pct > 0.01) {
+      roundRect(ctx, bx, trackY, barW * e.pct, barH, 4);
+      ctx.fillStyle = e.fill;
+      ctx.fill();
+    }
+    by += rowH;
+  }
+  ctx.restore();
+}
+
+/** 玩家 + AI 半场：buff 持续期间全体 DPS 单位脚底光环 */
+function drawTeamBuffAuras(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.atkBuffT > 0) {
+    for (const u of b.units.values()) {
+      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+      drawUnitBuffAura(ctx, x, y, 'atk', b.atkBuffT, TUNING.atkBuffDur);
+    }
+    for (const g of b.activeGenerals()) {
+      for (const c of g.cells) {
+        const { x, y } = cellCenterPx(c.c, c.r);
+        drawUnitBuffAura(ctx, x, y, 'atk', b.atkBuffT, TUNING.atkBuffDur);
+      }
+    }
+  }
+  if (b.frqBuffT > 0) {
+    for (const u of b.units.values()) {
+      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+      drawUnitBuffAura(ctx, x, y, 'frq', b.frqBuffT, TUNING.frqBuffDur);
+    }
+    for (const g of b.activeGenerals()) {
+      for (const c of g.cells) {
+        const { x, y } = cellCenterPx(c.c, c.r);
+        drawUnitBuffAura(ctx, x, y, 'frq', b.frqBuffT, TUNING.frqBuffDur);
+      }
+    }
+  }
+  const aiAtk = b.aiAtkBuffRemaining();
+  const aiFrq = b.aiFrqBuffRemaining();
+  if (aiAtk > 0 || aiFrq > 0) {
+    for (const u of b.aiUnits) {
+      const { x, y } = cellCenterPx(u.cell.c, u.cell.r);
+      if (aiAtk > 0) drawUnitBuffAura(ctx, x, y, 'atk', aiAtk, TUNING.atkBuffDur);
+      if (aiFrq > 0) drawUnitBuffAura(ctx, x, y, 'frq', aiFrq, TUNING.frqBuffDur);
+    }
+    for (const g of b.aiActiveGenerals()) {
+      for (const c of g.cells) {
+        const { x, y } = cellCenterPx(c.c, c.r);
+        if (aiAtk > 0) drawUnitBuffAura(ctx, x, y, 'atk', aiAtk, TUNING.atkBuffDur);
+        if (aiFrq > 0) drawUnitBuffAura(ctx, x, y, 'frq', aiFrq, TUNING.frqBuffDur);
+      }
+    }
+  }
 }
 
 /** 主动技能爆发特效（紧箍咒 / 陨石 / 冰封 / 仙丹 / 风火轮） */
@@ -2650,9 +2849,15 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillStyle = d.crit ? '#ff5a3c' : '#fff8e8';
+    const atkBoosted = b.atkBuffT > 0;
+    ctx.fillStyle = d.crit ? '#ff5a3c' : atkBoosted ? '#ffb070' : '#fff8e8';
+    if (atkBoosted && !d.crit) {
+      ctx.shadowColor = 'rgba(255,100,50,0.55)';
+      ctx.shadowBlur = 6;
+    }
     ctx.strokeText(text, px, py);
     ctx.fillText(text, px, py);
+    ctx.shadowBlur = 0;
     ctx.restore();
   }
 }
@@ -3573,7 +3778,7 @@ function drawWordSelection(
     ctx.textAlign = 'left';
     ctx.fillStyle = weaponQualityColor(tier);
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`神兵「${wdef.name}」${weaponQualityName(tier)}阶`, px + 12, weaponRowY);
+    ctx.fillText(`神兵「${wdef.name}」品质·${weaponQualityName(tier)}阶`, px + 12, weaponRowY);
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(255,240,210,0.82)';
     ctx.fillText(weaponBonusLabel(wdef.stat, tier), px + pw - 12, weaponRowY);
@@ -5422,6 +5627,24 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // buff 持续中：对应技能图标常亮描边 + 进度弧
+    const buffActive =
+      (slot.id === 'act_atk' && b.atkBuffT > 0) ||
+      (slot.id === 'act_frq' && b.frqBuffT > 0);
+    if (buffActive) {
+      const remain = slot.id === 'act_atk' ? b.atkBuffT : b.frqBuffT;
+      const maxDur = slot.id === 'act_atk' ? TUNING.atkBuffDur : TUNING.frqBuffDur;
+      const frac = maxDur > 0 ? remain / maxDur : 0;
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
+      ctx.save();
+      ctx.globalAlpha = 0.55 + pulse * 0.25;
+      ctx.strokeStyle = slot.id === 'act_atk' ? '#ff7050' : '#ffc040';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
       ctx.stroke();
       ctx.restore();
     }

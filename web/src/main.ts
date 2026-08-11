@@ -1549,7 +1549,9 @@ function frame(now: number): void {
     else if (menuPopup === 'help') drawHelpPopup(ctx, helpScrollY);
     if (merchant.open) {
       updateMerchantFloatToasts(dt);
-      drawMerchant(ctx, merchant, loadout, merit);
+      drawMerchant(ctx, merchant, loadout, merit, {
+        equipTutorialPreview: tutorialOverlay?.sequenceId === 'merchantFirstOpen',
+      });
       drawMerchantFloatToasts(ctx);
     }
     drawMenuFloatToasts(ctx);

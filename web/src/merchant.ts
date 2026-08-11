@@ -512,6 +512,7 @@ function drawFilledEquipSlot(
   radius: number,
   stroke: string,
   skillId: string,
+  showUnequip = true,
 ): void {
   roundRect(ctx, r.x, r.y, r.w, r.h, radius);
   ctx.fillStyle = 'rgba(48,28,12,0.55)';
@@ -521,7 +522,7 @@ function drawFilledEquipSlot(
   ctx.stroke();
   const glyphR = Math.min(r.w, r.h) * 0.42;
   drawSkillGlyph(ctx, r.x + r.w / 2, r.y + r.h / 2, glyphR, icon, stroke, true, skillId);
-  drawUnequipX(ctx, unequipBtnRect(r));
+  if (showUnequip) drawUnequipX(ctx, unequipBtnRect(r));
 }
 
 export type MerchantHit =
@@ -804,7 +805,66 @@ function drawEquipRowLabel(
   ctx.restore();
 }
 
-function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
+function tutorialPreviewPool(kind: SkillKind, offers: MerchantOffer[]): string[] {
+  const fromOffers = offers.filter((o) => o.kind === kind).map((o) => o.id);
+  const fallback = kind === 'active'
+    ? enabledActives().map((a) => a.id)
+    : enabledPassives().map((p) => p.id);
+  const pool: string[] = [];
+  for (const id of [...fromOffers, ...fallback]) {
+    if (!pool.includes(id)) pool.push(id);
+  }
+  return pool;
+}
+
+/** 引导期「我的道具」展示用：空槽填入示例技能（不写 loadout，引导结束即消失） */
+function displayEquipSlots(
+  loadout: LoadoutState,
+  offers: MerchantOffer[],
+  tutorialPreview: boolean,
+): { actives: (string | null)[]; passives: (string | null)[]; previewIds: Set<string> } {
+  const actives: (string | null)[] = Array.from(
+    { length: MAX_EQUIPPED_ACTIVES },
+    (_, i) => loadout.equipped[i] ?? null,
+  );
+  const passives: (string | null)[] = Array.from(
+    { length: MAX_EQUIPPED_PASSIVES },
+    (_, i) => loadout.passives[i] ?? null,
+  );
+  const previewIds = new Set<string>();
+  if (!tutorialPreview) return { actives, passives, previewIds };
+
+  const actPool = tutorialPreviewPool('active', offers);
+  const pasPool = tutorialPreviewPool('passive', offers);
+  let ai = 0;
+  let pi = 0;
+  for (let i = 0; i < MAX_EQUIPPED_ACTIVES; i++) {
+    if (actives[i]) continue;
+    const id = actPool[ai++ % Math.max(1, actPool.length)];
+    if (!id) break;
+    actives[i] = id;
+    previewIds.add(id);
+  }
+  // 被动行展示 3 个示例即可，避免满屏占位
+  const pasPreviewCap = 3;
+  let filled = 0;
+  for (let i = 0; i < MAX_EQUIPPED_PASSIVES && filled < pasPreviewCap; i++) {
+    if (passives[i]) continue;
+    const id = pasPool[pi++ % Math.max(1, pasPool.length)];
+    if (!id) break;
+    passives[i] = id;
+    previewIds.add(id);
+    filled += 1;
+  }
+  return { actives, passives, previewIds };
+}
+
+function drawEquippedSection(
+  ctx: CanvasRenderingContext2D,
+  loadout: LoadoutState,
+  offers: MerchantOffer[],
+  tutorialPreview: boolean,
+): void {
   roundRect(ctx, PX + EQUIP_PANEL_SIDE, EQUIP_TOP, PW - EQUIP_PANEL_SIDE * 2, EQUIP_PANEL_H, 10);
   const panel = ctx.createLinearGradient(PX, EQUIP_TOP, PX, EQUIP_TOP + EQUIP_PANEL_H);
   panel.addColorStop(0, 'rgba(55,32,14,0.38)');
@@ -815,8 +875,9 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  const actSlots = activeSlotRects(loadout);
-  const pasSlots = passiveSlotRects(loadout);
+  const { actives, passives, previewIds } = displayEquipSlots(loadout, offers, tutorialPreview);
+  const actSlots = activeSlotRects(loadout).map((r, i) => ({ ...r, id: actives[i] ?? null }));
+  const pasSlots = passiveSlotRects(loadout).map((r, i) => ({ ...r, id: passives[i] ?? null }));
   const titleX = PX + EQUIP_PANEL_SIDE + 6;
 
   ctx.textBaseline = 'top';
@@ -828,12 +889,22 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
   ctx.fillStyle = 'rgba(255,240,210,0.6)';
   ctx.fillText('道具仅当天有效 · 点击 × 卸下', titleX, EQUIP_TOP + 26);
 
-  drawEquipRowLabel(ctx, ACT_ROW_Y, ACT_SLOT, ['主', '动'], loadout.equipped.length, MAX_EQUIPPED_ACTIVES);
-  drawEquipRowLabel(ctx, PAS_ROW_Y, PAS_SLOT, ['被', '动'], loadout.passives.length, MAX_EQUIPPED_PASSIVES);
+  const actCount = tutorialPreview ? actives.filter(Boolean).length : loadout.equipped.length;
+  const pasCount = tutorialPreview ? passives.filter(Boolean).length : loadout.passives.length;
+  drawEquipRowLabel(ctx, ACT_ROW_Y, ACT_SLOT, ['主', '动'], actCount, MAX_EQUIPPED_ACTIVES);
+  drawEquipRowLabel(ctx, PAS_ROW_Y, PAS_SLOT, ['被', '动'], pasCount, MAX_EQUIPPED_PASSIVES);
 
   for (const r of actSlots) {
     if (r.id) {
-      drawFilledEquipSlot(ctx, r, activeById(r.id)?.icon ?? '?', 8, '#5a7088', r.id);
+      drawFilledEquipSlot(
+        ctx,
+        r,
+        activeById(r.id)?.icon ?? '?',
+        8,
+        '#5a7088',
+        r.id,
+        !previewIds.has(r.id),
+      );
     } else {
       drawEmptyEquipSlot(ctx, r, 8, 'rgba(90,112,136,0.55)');
     }
@@ -841,7 +912,15 @@ function drawEquippedSection(ctx: CanvasRenderingContext2D, loadout: LoadoutStat
 
   for (const r of pasSlots) {
     if (r.id) {
-      drawFilledEquipSlot(ctx, r, passiveById(r.id)?.icon ?? '?', 7, '#6a8050', r.id);
+      drawFilledEquipSlot(
+        ctx,
+        r,
+        passiveById(r.id)?.icon ?? '?',
+        7,
+        '#6a8050',
+        r.id,
+        !previewIds.has(r.id),
+      );
     } else {
       drawEmptyEquipSlot(ctx, r, 7, 'rgba(106,128,80,0.55)');
     }
@@ -890,18 +969,15 @@ function drawOfferConfirmPopup(
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#4a2808';
   ctx.font = 'bold 18px "PingFang SC", "STKaiti", serif';
-  ctx.fillText('确认购买', CONF_PX + 18, CONF_PY + 16);
+  ctx.fillText(def.name, CONF_PX + 18, CONF_PY + 16);
   const kindMeta = skillKindMeta(offer.kind);
   ctx.fillStyle = kindMeta.color;
   ctx.font = 'bold 12px "PingFang SC", "STKaiti", serif';
   ctx.fillText(`${kindMeta.label}技能`, CONF_PX + 18, CONF_PY + 40);
-  ctx.fillStyle = '#5a3a12';
-  ctx.font = '14px "PingFang SC", serif';
-  ctx.fillText(`购买「${def.name}」`, CONF_PX + 18, CONF_PY + 58);
   ctx.fillStyle = 'rgba(70,45,15,0.82)';
   ctx.font = '13px "PingFang SC", serif';
-  ctx.fillText(`将扣除 ${cost} 功德（当前 ${merit.merit}）`, CONF_PX + 18, CONF_PY + 86);
-  ctx.fillText('道具仅当天有效，下局结束后刷新商品。', CONF_PX + 18, CONF_PY + 110);
+  ctx.fillText(`将扣除 ${cost} 功德（当前 ${merit.merit}）`, CONF_PX + 18, CONF_PY + 62);
+  ctx.fillText('道具仅当天有效，下局结束后刷新商品。', CONF_PX + 18, CONF_PY + 86);
 
   drawInkActionButton(ctx, CONF_CANCEL, '取消', false, 'secondary');
   drawInkActionButton(ctx, CONF_OK, '确认购买', false, merit.merit >= cost ? 'primary' : 'secondary');
@@ -913,6 +989,7 @@ export function drawMerchant(
   m: MerchantUiState,
   loadout: LoadoutState,
   merit: MeritState,
+  opts?: { equipTutorialPreview?: boolean },
 ): void {
   if (!m.open) return;
 
@@ -929,7 +1006,7 @@ export function drawMerchant(
     drawLotteryGrid(ctx, m);
   }
 
-  drawEquippedSection(ctx, loadout);
+  drawEquippedSection(ctx, loadout, m.offers, opts?.equipTutorialPreview === true);
   drawInkActionButton(ctx, CONTINUE_R, '关闭', false, 'secondary');
 
   if (m.confirmOffer !== null) drawOfferConfirmPopup(ctx, m, merit);

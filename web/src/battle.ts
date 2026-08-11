@@ -192,8 +192,10 @@ export const TUNING = {
   meteorRadius: 1.4, // 主动陨石半径
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
-  atkBuffMul: 1.3, // 主动仙丹攻击倍率（与风火轮对齐，收窄叠乘峰值）
-  frqBuffMul: 1.3, // 主动风火轮攻速倍率
+  atkBuffMul: 1.4, // 主动仙丹攻击倍率（与风火轮对齐）
+  frqBuffMul: 1.4, // 主动风火轮攻速倍率
+  atkBuffDur: 8, // 仙丹持续（秒）
+  frqBuffDur: 8, // 风火轮持续（秒）
   freezeStunDur: 2.5, // 冰封定身时长（全场；CD 24s）
   // —— 武将大招控制分档 ——
   heroStunDurMain: 1.5, // 满5 定身时长
@@ -468,6 +470,7 @@ export function peachTreeMergeBankNeed(level: number): number {
 }
 
 export const SKILL_FX_DUR = 0.8; // 主动技能爆发特效时长（秒）
+export const BUFF_SKILL_FX_DUR = 1.25; // 仙丹/风火轮施放冲击特效（秒，略长便于感知）
 /** @deprecated 使用 SKILL_FX_DUR */
 export const PALM_PUSH_DUR = SKILL_FX_DUR;
 
@@ -2540,7 +2543,8 @@ export class Battle {
   }
 
   private setSkillFx(kind: SkillFxKind, cell: { c: number; r: number }, ai: boolean): void {
-    const fx: SkillFx = { kind, t: 0, dur: SKILL_FX_DUR, c: cell.c, r: cell.r };
+    const dur = kind === 'atkBuff' || kind === 'frqBuff' ? BUFF_SKILL_FX_DUR : SKILL_FX_DUR;
+    const fx: SkillFx = { kind, t: 0, dur, c: cell.c, r: cell.r };
     if (ai) this.aiSkillFx = fx;
     else this.playerSkillFx = fx;
   }
@@ -3924,11 +3928,11 @@ export class Battle {
         this.doAiMeteor(TUNING.meteorDmgMul, true);
         break;
       case 'atkBuff':
-        this.aiAtkBuffT = 5;
+        this.aiAtkBuffT = TUNING.atkBuffDur;
         this.setSkillFx('atkBuff', this.aiTangseng, true);
         break;
       case 'frqBuff':
-        this.aiFrqBuffT = 5;
+        this.aiFrqBuffT = TUNING.frqBuffDur;
         this.setSkillFx('frqBuff', this.aiTangseng, true);
         break;
       case 'freeze': {
@@ -3995,15 +3999,15 @@ export class Battle {
         this.emit('ult');
         break;
       case 'atkBuff':
-        this.atkBuffT = 5; this.atkBuffMul = TUNING.atkBuffMul;
+        this.atkBuffT = TUNING.atkBuffDur; this.atkBuffMul = TUNING.atkBuffMul;
         this.setSkillFx('atkBuff', this.tangsengRenderPos(), false);
-        this.message = '仙丹！全体攻击提升';
+        this.message = '仙丹！全体攻击 +40%（8秒）';
         this.emit('item');
         break;
       case 'frqBuff':
-        this.frqBuffT = 5; this.frqBuffMul = TUNING.frqBuffMul;
+        this.frqBuffT = TUNING.frqBuffDur; this.frqBuffMul = TUNING.frqBuffMul;
         this.setSkillFx('frqBuff', this.tangsengRenderPos(), false);
-        this.message = '风火轮！全体攻速提升';
+        this.message = '风火轮！全体攻速 +40%（8秒）';
         this.emit('item');
         break;
       case 'freeze': {
@@ -4025,6 +4029,10 @@ export class Battle {
     slot.flash = 0.6;
     return true;
   }
+
+  /** AI 半场仙丹/风火轮剩余（渲染用） */
+  aiAtkBuffRemaining(): number { return this.aiAtkBuffT; }
+  aiFrqBuffRemaining(): number { return this.aiFrqBuffT; }
 
   // 紧箍咒：以最靠前妖怪为中心的大范围 AOE 爆发（复用原英雄绝招效果）。
   private doJingu(): void {

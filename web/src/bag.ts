@@ -4,6 +4,7 @@ import {
   WEAPONS, weaponById, weaponQualityName, weaponQualityColor, weaponBonusLabel,
   weaponPctBonus, weaponRangeBonusGrids, STAT_LABEL,
   MAX_EQUIPPED, MAX_WEAPON_TIER, weaponGradeName, weaponGradeColor,
+  weaponGradeSubline, weaponQualitySubline,
   weaponFragmentCount, weaponFragmentsRequired, isWeaponActivated,
   type BagState,
 } from './weapons';
@@ -134,9 +135,7 @@ function drawBagRow(
   ctx.fillStyle = has ? weaponQualityColor(tier) : gradeColor;
   ctx.font = '12px "PingFang SC", sans-serif';
   const gname = generalById(w.general)?.name ?? '';
-  const sub = has
-    ? `${weaponQualityName(tier)}阶 · 专属「${gname}」`
-    : `${weaponGradeName(w.id)} · 专属「${gname}」`;
+  const sub = has ? weaponQualitySubline(tier, gname) : weaponGradeSubline(w.id, gname);
   ctx.fillText(sub, LEFT + 14, y + ROW_H / 2 + 12);
 
   const bw = 72;
@@ -200,7 +199,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, bag: BagState, toast: str
   ctx.font = '11px "PingFang SC", sans-serif';
   // 稀有度=激活所需碎片；品质阶=已激活后白→金升阶（与行内「白阶」等一致）
   const sub =
-    `武将攻击掉碎片·左下角领取 · 低1/普2/中3/高4片激活 · ` +
+    `武将攻击掉碎片·左下角领取 · 稀有低1/普2/中3/高4片激活 · ` +
     `品质白→绿→蓝→紫→金（重复掉落升阶） · 已装备 ${bag.equipped.length}/${MAX_EQUIPPED}`;
   let sy = SUBTITLE_TOP;
   for (const ln of wrapText(ctx, sub, VIEW_W - 36).slice(0, 3)) {
@@ -275,8 +274,7 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
   ctx.fillStyle = color;
   ctx.font = '13px "PingFang SC", sans-serif';
   ctx.fillText(
-    has ? `${weaponQualityName(tier)}阶 · 专属「${gname}」`
-      : `${weaponGradeName(id)} · 专属「${gname}」 · 需 ${req} 片`,
+    has ? weaponQualitySubline(tier, gname) : weaponGradeSubline(id, gname),
     PX + PAD, PY + 52,
   );
 
@@ -321,12 +319,12 @@ export function drawBagPopup(ctx: CanvasRenderingContext2D, bag: BagState, id: s
     ? `范围每升一阶 +0.35 格（金阶满 ${maxBonus}）`
     : `随品质提升（金阶满 ${maxBonus}）`;
   const usage =
-    `专属「${gname}」神兵（${weaponGradeName(id)}），装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
-    (has ? `当前 ${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} ${curBonus}。${bonusExplain}。\n`
+    `专属「${gname}」神兵（稀有·${weaponGradeName(id)}），装备后仅对该武将生效：提升「${STAT_LABEL[w.stat]}」。\n` +
+    (has ? `当前品质·${weaponQualityName(tier)}阶：${STAT_LABEL[w.stat]} ${curBonus}。${bonusExplain}。\n`
          : frags > 0
-           ? `收集中：碎片 ${frags}/${req}，集齐后激活。${STAT_LABEL[w.stat]} ${bonusExplain}。\n`
-           : `尚未获得。${weaponGradeName(id)}需 ${req} 片激活：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
-    `武将攻击10%概率掉碎片（每局最多1次）；左下角点击领取。已集齐的神兵仍参与随机但不显示。最多同时装备 ${MAX_EQUIPPED} 件。`;
+           ? `收集中：碎片 ${frags}/${req}，集齐后激活为品质·白阶。${STAT_LABEL[w.stat]} ${bonusExplain}。\n`
+           : `尚未获得。稀有·${weaponGradeName(id)}需 ${req} 片激活：${STAT_LABEL[w.stat]} ${bonusExplain}。\n`) +
+    `武将攻击10%概率掉碎片（每局最多1次）；左下角点击领取。满阶后不再显示掉落。最多同时装备 ${MAX_EQUIPPED} 件。`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.9)';

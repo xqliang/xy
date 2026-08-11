@@ -72,6 +72,6 @@ export function drawWeaponPickups(ctx: CanvasRenderingContext2D, ids: string[], 
     ctx.fillText(def.name, r.x + 56, r.y + r.h / 2 - 8);
     ctx.fillStyle = '#ffd76a';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(`${weaponGradeName(id)} · 碎片 ${cur + 1}/${req}`, r.x + 56, r.y + r.h / 2 + 12);
+    ctx.fillText(`稀有·${weaponGradeName(id)} · 碎片 ${cur + 1}/${req}`, r.x + 56, r.y + r.h / 2 + 12);
   }
 }

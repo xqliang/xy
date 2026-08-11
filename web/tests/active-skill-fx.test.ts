@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, SKILL_FX_DUR } from '../src/battle';
+import { Battle, TUNING, SKILL_FX_DUR } from '../src/battle';
 
 describe('主动技能专属特效', () => {
   it('天降陨石触发 playerSkillFx', () => {
@@ -21,7 +21,7 @@ describe('主动技能专属特效', () => {
     expect(b.playerSkillFx).toBeNull();
   });
 
-  it('仙丹触发 atkBuff 特效', () => {
+  it('仙丹触发 atkBuff 特效与 8s +40% 增益', () => {
     const b = new Battle(1, 1, undefined, undefined, undefined, ['act_atk'], [], false);
     b.introDone = true;
     b.status = 'playing';
@@ -29,6 +29,8 @@ describe('主动技能专属特效', () => {
     b.activeSlots[0]!.ready = true;
     expect(b.triggerActive(0)).toBe(true);
     expect(b.playerSkillFx?.kind).toBe('atkBuff');
+    expect(b.atkBuffT).toBe(TUNING.atkBuffDur);
+    expect(b.atkBuffMul).toBe(TUNING.atkBuffMul);
   });
 
   it('冰封定身触发 freeze 特效', () => {

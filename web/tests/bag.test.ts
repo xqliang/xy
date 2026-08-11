@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { bagDisplayOrder, bagMaxScroll } from '../src/bag';
-import { WEAPONS, addWeaponFragment, weaponFragmentsRequired, isWeaponFragmentsComplete } from '../src/weapons';
+import { WEAPONS, addWeaponFragment, weaponFragmentsRequired, isWeaponFragmentsComplete, addWeapon, MAX_WEAPON_TIER } from '../src/weapons';
 
 describe('bag display order', () => {
   it('已装备按最近在前，未装备保持 WEAPONS 自然顺序', () => {
@@ -50,6 +50,26 @@ describe('bag display order', () => {
     r = addWeaponFragment(s, 'sanjianliangrendao');
     expect(r.activated).toBe(true);
     expect(r.state.owned['sanjianliangrendao']).toBe(1);
-    expect(isWeaponFragmentsComplete(r.state, 'sanjianliangrendao')).toBe(true);
+    expect(isWeaponFragmentsComplete(r.state, 'sanjianliangrendao')).toBe(false);
+  });
+
+  it('已激活未满阶可继续升阶；满阶后不再掉落', () => {
+    let s = { owned: { xiaodingpa: 1 }, fragments: { xiaodingpa: 1 }, equipped: ['xiaodingpa'] };
+    expect(isWeaponFragmentsComplete(s, 'xiaodingpa')).toBe(false);
+    const up = addWeaponFragment(s, 'xiaodingpa');
+    expect(up.upgraded).toBe(true);
+    expect(up.state.owned['xiaodingpa']).toBe(2);
+    s = up.state;
+    let tier = 2;
+    while (tier < MAX_WEAPON_TIER) {
+      const r = addWeapon(s, 'xiaodingpa');
+      s = r.state;
+      tier++;
+    }
+    expect(s.owned['xiaodingpa']).toBe(MAX_WEAPON_TIER);
+    expect(isWeaponFragmentsComplete(s, 'xiaodingpa')).toBe(true);
+    const noop = addWeaponFragment(s, 'xiaodingpa');
+    expect(noop.upgraded).toBe(false);
+    expect(noop.state.owned['xiaodingpa']).toBe(MAX_WEAPON_TIER);
   });
 });
