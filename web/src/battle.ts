@@ -144,7 +144,7 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
   shovelPityAfter: 2, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
-  wordDrawChance: 0.10, // 候选中出现武将字牌的概率（每兵槽独立判定）
+  wordDrawChance: 0.03, // 候选中出现武将字牌的概率（每兵槽独立判定）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
@@ -810,6 +810,8 @@ export class Battle {
   playerSkillFx: SkillFx | null = null; // 玩家半场主动技能爆发特效
   aiSkillFx: SkillFx | null = null; // AI 半场主动技能爆发特效
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
+  private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD
+  /** 上一帧已激活对，用于检测新激活并重置大招 CD 为满 */
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
@@ -1066,6 +1068,7 @@ export class Battle {
         if (!wa || !wb) break;
         wa.tier += 1;
         wb.tier += 1;
+        this.resetHeroSkillCd([d.generalCells[0]!, d.generalCells[1]!]);
         for (const cc of d.generalCells) {
           this.bursts.push({
             kind: 'merge',
@@ -1521,6 +1524,7 @@ export class Battle {
   private aiWordCharCounts = new Map<string, number>(); // AI 字出现次数（抽字打压）
   private aiSummonCount = 0;
   private aiGeneralStates = new Map<string, GeneralState>();
+  private lastAiActivePairKeys = new Set<string>();
   private aiRng!: RNG;                      // 独立随机源（构造里派生）
   private aiSummonTimer = 0;                // 距下次可征兵计时
   private aiRepositionTimer = 0;            // 战中调整节流（兵器 1–2.5s / 补配对字 0.3–0.5s 随机）
@@ -2253,11 +2257,22 @@ export class Battle {
     return k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
   }
 
-  private stateOfPair(cells: [Cell, Cell]): GeneralState {
+  private static initialHeroSkillCd(def: GeneralDef): number {
+    return def.skill !== 'none' && def.skillCd > 0 ? def.skillCd : 0;
+  }
+
+  private stateOfPair(cells: [Cell, Cell], def: GeneralDef): GeneralState {
     const key = Battle.heroPairKey(cells[0], cells[1]);
     let s = this.generalStates.get(key);
     if (!s) {
-      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, skillFlash: 0 };
+      s = {
+        level: 1,
+        exp: 0,
+        cooldown: 0,
+        skillCd: Battle.initialHeroSkillCd(def),
+        firePulse: 0,
+        skillFlash: 0,
+      };
       this.generalStates.set(key, s);
     }
     return s;
@@ -2267,6 +2282,12 @@ export class Battle {
     for (const k of [...store.keys()]) {
       if (!activePairKeys.has(k)) store.delete(k);
     }
+  }
+
+  private resetHeroSkillCd(cells: [Cell, Cell], ai = false): void {
+    const key = Battle.heroPairKey(cells[0], cells[1]);
+    const s = (ai ? this.aiGeneralStates : this.generalStates).get(key);
+    if (s) s.skillCd = 0;
   }
 
   // 扫描棋盘：左右紧邻且 chars 序对匹配某武将 → 激活（按字匹配，支持门派共享字）
@@ -2304,7 +2325,8 @@ export class Battle {
           if (right.tier < cap) right.tier += 1;
         }
       }
-      const state = this.stateOfPair(cells);
+      const state = this.stateOfPair(cells, def);
+      if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = 0;
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
@@ -2314,6 +2336,7 @@ export class Battle {
         pillFrq: state.pillFrq,
       });
     }
+    this.lastActivePairKeys = activePairKeys;
     this.pruneHeroStates(activePairKeys, this.generalStates);
     return out;
   }
@@ -2358,7 +2381,8 @@ export class Battle {
           if (right.tier < cap) right.tier += 1;
         }
       }
-      const aiState = this.stateOfPairForAi(cells);
+      const aiState = this.stateOfPairForAi(cells, def);
+      if (!this.lastAiActivePairKeys.has(pairKey)) aiState.skillCd = 0;
       out.push({
         def,
         tier: Math.min(w.tier, right.tier, cap),
@@ -2368,15 +2392,24 @@ export class Battle {
         pillFrq: aiState.pillFrq,
       });
     }
+    this.lastAiActivePairKeys = activePairKeys;
     this.pruneHeroStates(activePairKeys, this.aiGeneralStates);
     return out;
   }
 
-  private stateOfPairForAi(cells: [Cell, Cell]): GeneralState {
+  private stateOfPairForAi(cells: [Cell, Cell], def: GeneralDef): GeneralState {
     const key = Battle.heroPairKey(cells[0], cells[1]);
     let s = this.aiGeneralStates.get(key);
     if (!s) {
-      s = { level: 1, exp: 0, cooldown: 0, skillCd: 0, firePulse: 0, fireDir: undefined, skillFlash: 0 };
+      s = {
+        level: 1,
+        exp: 0,
+        cooldown: 0,
+        skillCd: Battle.initialHeroSkillCd(def),
+        firePulse: 0,
+        fireDir: undefined,
+        skillFlash: 0,
+      };
       this.aiGeneralStates.set(key, s);
     }
     return s;
@@ -3267,6 +3300,7 @@ export class Battle {
           }
           wa.tier += 1;
           wb.tier += 1;
+          this.resetHeroSkillCd(g.cells);
           this.clearTraySlot(index);
           this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
           this.bursts.push({ kind: 'merge', c: g.cells[1].c, r: g.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
@@ -3437,6 +3471,7 @@ export class Battle {
       if (wa && wb && wa.tier === wb.tier && w.tier === wa.tier && wa.tier < cap) {
         wa.tier += 1;
         wb.tier += 1;
+        this.resetHeroSkillCd(gTo.cells);
         this.words.delete(kFrom); // 消耗被拖入的字牌
         this.bursts.push({ kind: 'merge', c: gTo.cells[0].c, r: gTo.cells[0].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wa.tier) });
         this.bursts.push({ kind: 'merge', c: gTo.cells[1].c, r: gTo.cells[1].r, ttl: 0.35, maxTtl: 0.35, big: false, color: qualityColor(wb.tier) });
@@ -4727,6 +4762,7 @@ export class Battle {
       s.exp -= Battle.expToNext(s.level, g.def);
       if (wa2.tier < cap) wa2.tier += 1;
       if (wb2.tier < cap) wb2.tier += 1;
+      this.resetHeroSkillCd(g.cells, ai);
       s.level += 1;
       if (!ai) {
         this.bursts.push({ kind: 'merge', c: g.cells[0].c, r: g.cells[0].r, ttl: 0.4, maxTtl: 0.4, big: false, color: '#ffe27a' });

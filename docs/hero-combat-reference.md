@@ -36,10 +36,11 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 流程：
 
 1. 每帧对 `GeneralState.skillCd` 倒数；配置冷却为 `GeneralDef.skillCd`（秒）。
-2. CD 归零后，若满足上表条件 → 调用 `castGeneralSkill`，再把 `skillCd` **重置为** `def.skillCd`。
-3. 对怪大招：圈内无怪时**憋招**（CD 停在 0，进怪立刻放）。
-4. `buff`/`cdr`：CD 好即放，与怪是否在圈无关；普攻仍吃同一射程环与 `targets`。
-5. 升阶经验：普攻走 `combatExpFromHits`；每次大招另加固定 `heroSkillExp = 1.5`（友军大招空放也给）。
+2. **新激活**（含拆开再合并）与**喂字/战斗升阶**时，`skillCd` 置为 `0`（就绪，可立刻放）。
+3. CD 归零后，若满足上表条件 → 调用 `castGeneralSkill`，再把 `skillCd` **重置为** `def.skillCd`。
+4. 对怪大招：圈内无怪时**憋招**（CD 停在 0，进怪立刻放）。
+5. `buff`/`cdr`：CD 好即放，与怪是否在圈无关；普攻仍吃同一射程环与 `targets`。
+6. 升阶经验：普攻走 `combatExpFromHits`；每次大招另加固定 `heroSkillExp = 1.5`（友军大招空放也给）。
 
 动画类型：`ultTypeOf(def)` — `ranged → crit`，其余 → `aoe`（仅影响表现）。
 
@@ -200,12 +201,17 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ## 8. 征兵前期字/铲配额（`TUNING`，2026-08-11）
 
-字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定。另有连续无字/无铲/半对保底。
+字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定，单次征兵最多 `SUMMON_MAX_WORD_SLOTS` 字。另有连续无字/无铲/半对保底。
 
 | 常量 | 值 | 含义 |
 |------|----|------|
+| `wordDrawChance` | 0.03 | 每兵槽独立转字概率 |
+| `SUMMON_MAX_WORD_SLOTS` | 2 | 单次征兵最多出几个字 |
+| `PARTNER_BOOST` | 0.05 | 半对孤儿所需配对字的抽字权重倍率 |
+| `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制配对字 |
+| `wordPityAfter` | 10 | 连续 N 次无字 → 下次强制 1 字 |
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
-| `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 5 / 1 | 第 5 波征兵时若仍无字则强制 1 字 |
+| `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
 
 实现：`summon-early.ts` → `Battle.summon` / `aiSummon`。

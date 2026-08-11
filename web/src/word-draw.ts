@@ -12,7 +12,9 @@ import {
 } from './generals';
 
 export const PAIR_PITY_AFTER = 6;
-export const SUMMON_MAX_WORD_SLOTS_GROWING = 4;
+export const SUMMON_MAX_WORD_SLOTS = 2;
+/** @deprecated 用 SUMMON_MAX_WORD_SLOTS */
+export const SUMMON_MAX_WORD_SLOTS_GROWING = SUMMON_MAX_WORD_SLOTS;
 /** 缺角色时抽字加权（输出/控制/辅助） */
 export const ROLE_DIVERSITY_BOOST = 2.8;
 
@@ -20,8 +22,8 @@ export const CORE_HERO_ROLES: GeneralRole[] = ['输出', '控制', '辅助'];
 
 /** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
-/** 配对字相对基础权重的倍率 */
-export const PARTNER_BOOST = 24;
+/** 半对孤儿所需配对字相对基础权重的倍率（forcePartner 保底仍必出） */
+export const PARTNER_BOOST = 0.05;
 /** 无配对需求时，满5 相对满3 的额外倍率（叠在 phaseWeight 之上） */
 export const HIGH_TIER_BIAS = 1.75;
 export const LOW_TIER_BIAS = 0.65;
@@ -271,7 +273,7 @@ export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWor
       wordSlotChanceMul: 1,
       allowForceWord: true,
       allowForcePartner: true,
-      maxWordSlots: SUMMON_MAX_WORD_SLOTS_GROWING,
+      maxWordSlots: SUMMON_MAX_WORD_SLOTS,
       wordTier: 1,
       tier5CapableOnly: true,
       excludeChars: activeHeroChars,
@@ -283,7 +285,7 @@ export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWor
     wordSlotChanceMul: 1,
     allowForceWord: true,
     allowForcePartner: true,
-    maxWordSlots: 5,
+    maxWordSlots: SUMMON_MAX_WORD_SLOTS,
     wordTier: 1,
     tier5CapableOnly: false,
     excludeChars: activeHeroChars,

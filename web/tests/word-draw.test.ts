@@ -164,7 +164,7 @@ describe('征兵字牌策略', () => {
     expect(policy.allowForceWord).toBe(false);
   });
 
-  it('有未升满将 → 最多4张满5字，排除已在将上的字', () => {
+  it('有未升满将 → 最多2张满5字，排除已在将上的字', () => {
     const policy = computeSummonWordPolicy({
       wave: 6,
       freeCellCount: 2,
