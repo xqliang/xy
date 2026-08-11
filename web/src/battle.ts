@@ -4732,7 +4732,9 @@ export class Battle {
       tier: g.tier,
       rge: this.generalRge(g),
       crit,
-      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' ? { fromC: gAx, fromR: gAy } : {}),
+      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' || g.def.id === 'niumowang'
+        ? { fromC: gAx, fromR: gAy }
+        : {}),
     });
     this.addGeneralCombatExp(g, Battle.heroSkillExp);
     this.tryRollFragmentOnHeroAttack();
