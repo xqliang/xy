@@ -510,18 +510,19 @@ function drawMiniMapBoard(
     }
   }
 
-  // 半场分界（白骨岭用台阶线）
+  // 半场分界（白骨岭：左低右高的直角台阶，与局内 drawBaigulingBoneFence 同形）
   ctx.strokeStyle = 'rgba(70,48,24,0.55)';
   ctx.lineWidth = Math.max(1, cell * 0.12);
+  ctx.lineJoin = 'miter';
   ctx.beginPath();
   if (map.id === 'baiguling') {
-    for (let col = 0; col < COLS; col++) {
-      const fr = baigulingFenceRow(col);
-      const fx0 = ox + col * cell;
-      const fy = oy + (fr + 1) * cell;
-      if (col === 0) ctx.moveTo(fx0, fy);
-      ctx.lineTo(fx0 + cell, fy);
-    }
+    const yLeft = oy + (baigulingFenceRow(0) + 1) * cell; // 左列栅栏下沿 r=6
+    const yRight = oy + (baigulingFenceRow(COLS - 1) + 1) * cell; // 右列 r=4
+    const xMid = ox + 4 * cell; // c=3|4 竖阶
+    ctx.moveTo(ox, yLeft);
+    ctx.lineTo(xMid, yLeft);
+    ctx.lineTo(xMid, yRight);
+    ctx.lineTo(ox + bw, yRight);
   } else {
     const fy = oy + FENCE_ROW * cell;
     ctx.moveTo(ox, fy);
