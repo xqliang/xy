@@ -4528,9 +4528,11 @@ export class Battle {
     return msg;
   }
 
-  // 武将升阶进度：5×3^level（15/45/135/405…）；满条时双字各 +1 阶
-  static expToNext(level: number): number {
-    return 5 * 3 ** level;
+  // 武将升阶进度：5×3^level（15/45/135/405…）；可按武将 expCostMul 放大（大圣 1.2×）
+  static expToNext(level: number, def?: Pick<GeneralDef, 'expCostMul'> | null): number {
+    const base = 5 * 3 ** level;
+    const mul = def?.expCostMul ?? 1;
+    return Math.round(base * mul);
   }
   /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
   static combatExpFromHits(dmg: number, hit: number): number {
@@ -4550,7 +4552,7 @@ export class Battle {
 
     const s = g.state;
     s.exp += amount;
-    while (s.exp >= Battle.expToNext(s.level)) {
+    while (s.exp >= Battle.expToNext(s.level, g.def)) {
       const wa2 = wordAt(g.cells[0].c, g.cells[0].r);
       const wb2 = wordAt(g.cells[1].c, g.cells[1].r);
       if (!wa2 || !wb2) break;
@@ -4559,7 +4561,7 @@ export class Battle {
         s.exp = 0; // 升阶过程中触顶：清掉剩余进度，避免拆开后多段连升
         break;
       }
-      s.exp -= Battle.expToNext(s.level);
+      s.exp -= Battle.expToNext(s.level, g.def);
       if (wa2.tier < cap) wa2.tier += 1;
       if (wb2.tier < cap) wb2.tier += 1;
       s.level += 1;

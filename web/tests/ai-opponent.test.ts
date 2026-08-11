@@ -73,7 +73,7 @@ describe('AI 落子与激活', () => {
     b.aiWords.set(`${right!.c},${right!.r}`, { char: '戒', general: 'bajie', tier: 1, cell: right! });
     const g = b.aiActiveGenerals()[0]!;
     expect(g.tier).toBe(1);
-    b.addGeneralCombatExp(g, Battle.expToNext(g.state.level), true);
+    b.addGeneralCombatExp(g, Battle.expToNext(g.state.level, g.def), true);
     expect(b.aiWords.get(`${left!.c},${left!.r}`)?.tier).toBe(2);
     expect(b.aiWords.get(`${right!.c},${right!.r}`)?.tier).toBe(2);
     expect(b.aiActiveGenerals()[0]!.tier).toBe(2);

@@ -37,7 +37,7 @@ describe('攻击升品质阶', () => {
     const [g1, g2] = gs;
     expect(g1!.state).not.toBe(g2!.state);
 
-    const need = Battle.expToNext(g1!.state.level);
+    const need = Battle.expToNext(g1!.state.level, g1!.def);
     b.addGeneralCombatExp(g1!, need);
     expect(b.words.get(`${a1.c},${a1.r}`)?.tier).toBe(3);
     expect(b.words.get(`${a2.c},${a2.r}`)?.tier).toBe(2);
@@ -53,7 +53,7 @@ describe('攻击升品质阶', () => {
     expect(g.tier).toBe(3);
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(3);
-    const need = Battle.expToNext(g.state.level);
+    const need = Battle.expToNext(g.state.level, g.def);
     b.addGeneralCombatExp(g, need);
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(4);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(4);
@@ -64,7 +64,7 @@ describe('攻击升品质阶', () => {
     const b = new Battle(1);
     const { a, right } = placeErlang(b, 5, 4);
     const g = b.activeGenerals()[0]!;
-    b.addGeneralCombatExp(g, Battle.expToNext(g.state.level));
+    b.addGeneralCombatExp(g, Battle.expToNext(g.state.level, g.def));
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(5);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(5);
   });
@@ -105,7 +105,7 @@ describe('攻击升品质阶', () => {
     placeErlang(b, 2, 2);
     const g2 = b.activeGenerals()[0]!;
     expect(g2.state.exp).toBe(0);
-    b.addGeneralCombatExp(g2, Battle.expToNext(g2.state.level));
+    b.addGeneralCombatExp(g2, Battle.expToNext(g2.state.level, g2.def));
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(3);
   });
@@ -116,11 +116,14 @@ describe('攻击升品质阶', () => {
     expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
   });
 
-  it('expToNext：5×3^level', () => {
+  it('expToNext：5×3^level；大圣 ×1.2', () => {
     expect(Battle.expToNext(1)).toBe(15);
     expect(Battle.expToNext(2)).toBe(45);
     expect(Battle.expToNext(3)).toBe(135);
     expect(Battle.expToNext(4)).toBe(405);
+    const dasheng = { expCostMul: 1.2 };
+    expect(Battle.expToNext(1, dasheng)).toBe(18);
+    expect(Battle.expToNext(2, dasheng)).toBe(54);
   });
 
   it('heroSkillExp 低于首档升阶阈值', () => {

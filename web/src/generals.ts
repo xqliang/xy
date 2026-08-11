@@ -39,13 +39,15 @@ export interface GeneralDef {
   maxTier: 3 | 5;
   atkStyle: string;
   family: string; // 门派共享字
+  /** 升阶经验需求倍率（默认 1；大圣略高以拉长养成） */
+  expCostMul?: number;
 }
 
 export const GENERALS: GeneralDef[] = [
   // ——— 大：快攻贯穿 ———
   { id: 'dasheng', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',
     skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
-    maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
+    maxTier: 5, atkStyle: '快攻贯穿', family: '大', expCostMul: 1.2 },
   { id: 'damang', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
     skillName: '钉耙小扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-bajie',
     maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
@@ -241,10 +243,10 @@ export function heroEntranceBand(def: GeneralDef, tier: number): number {
   return 1;
 }
 
-// 羁绊：大圣上场 → 全队攻击 +8%
+// 羁绊：大圣上场 → 全队攻击 +5%
 export const BOND_GENERAL = 'dasheng';
 export const BOND_NAME = '大圣护法';
-export const BOND_ATK_BONUS = 0.08;
+export const BOND_ATK_BONUS = 0.05;
 
 // 字牌掉落基础池（按 weight 展开）；实际抽字见 word-draw.ts（阶段权重 + 孤儿）
 export const WORD_POOL: { char: string; general: string }[] = GENERALS.flatMap((g) =>

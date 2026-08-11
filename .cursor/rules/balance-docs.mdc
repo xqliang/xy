@@ -1,0 +1,15 @@
+---
+description: 数值平衡调整后必须同步更新相关文档
+alwaysApply: true
+---
+
+# 数值调整须更新文档
+
+修改游戏数值（伤害、冷却、羁绊、升阶经验、掉落、波次压力、软血、AI 强度、道具效果等）时：
+
+1. **同步更新权威文档**，至少检查并改正：
+   - `docs/hero-combat-reference.md`（武将 / 羁绊 / 升阶 / TUNING）
+   - 其它被改常量直接引用的 `docs/**/*.md`、README 说明
+2. **文档中的数字与常量名**必须与代码一致（如 `BOND_ATK_BONUS`、`expCostMul`、`TUNING.*`）。
+3. 若仅改代码未改文档，视为任务未完成；提交前确认文档 diff 已包含。
+4. 历史 `docs/superpowers/plans|specs` 里过时设计稿可不动；**现行参考文档**（尤其 `hero-combat-reference.md`）必须跟上。
