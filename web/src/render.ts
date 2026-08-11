@@ -3075,21 +3075,78 @@ function drawUltHonghaier(ctx: CanvasRenderingContext2D, x: number, y: number, p
 }
 
 // —— 控制群攻 ——
-// 八戒 钉耙震地·同心裂纹冲击波
+// 八戒 九齿钉耙·举耙下砸震地：耙头从上方砸落 → 落地闪光 → 同心裂纹冲击波
 function drawUltBajie(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  // 耙头（扇形九齿）+ 木柄：全程可见，前段举高下砸，落地后钉在冲击波中心
+  const slamP = Math.min(1, p / 0.4);
+  const drop = easeIn(slamP);
+  const rakeSize = R * (0.46 + tier * 0.03);
+  const headY = y - R * 0.85 * (1 - drop);
+  ctx.save();
+  ctx.translate(x, headY);
+  ctx.rotate((1 - drop) * 0.18); // 举起时略斜，砸下瞬间摆正
+  ctx.globalAlpha = fade * (0.55 + drop * 0.45);
+  const barY = -rakeSize * 0.55; // 横梁位置（耙头顶部）
+  const barHalfW = rakeSize * 0.5;
+  // 木柄：从上方一路接到横梁中点，不留断点
+  ctx.strokeStyle = '#6a4a26';
+  ctx.lineWidth = 4.5 + tier * 0.6;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, -rakeSize * 1.9); ctx.lineTo(0, barY); ctx.stroke();
+  // 耙头横梁：一条实木横杠（微弧，两端略上翘）
+  ctx.strokeStyle = '#8a6a3a';
+  ctx.lineWidth = 5 + tier * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(-barHalfW, barY + rakeSize * 0.05);
+  ctx.quadraticCurveTo(0, barY - rakeSize * 0.05, barHalfW, barY + rakeSize * 0.05);
+  ctx.stroke();
+  // 九齿：并排直齿，均垂直于横梁向下扎（钉耙的核心识别特征）
+  const teeth = 7 + Math.min(4, tier);
+  const tineLen = rakeSize * 0.95;
+  ctx.strokeStyle = '#f0d99a';
+  ctx.lineWidth = 2.3 + tier * 0.3;
+  ctx.lineCap = 'round';
+  for (let t = 0; t < teeth; t++) {
+    const tx0 = -barHalfW + (barHalfW * 2) * (t + 0.5) / teeth;
+    const by = barY + rakeSize * 0.05 * (1 - Math.pow((tx0 / barHalfW), 2)); // 贴合横梁弧度
+    ctx.beginPath();
+    ctx.moveTo(tx0, by);
+    ctx.lineTo(tx0, by + tineLen);
+    ctx.stroke();
+  }
+  // 齿尖高光点
+  ctx.fillStyle = '#fff6d8';
+  for (let t = 0; t < teeth; t++) {
+    const tx0 = -barHalfW + (barHalfW * 2) * (t + 0.5) / teeth;
+    const by = barY + rakeSize * 0.05 * (1 - Math.pow((tx0 / barHalfW), 2)) + tineLen;
+    ctx.beginPath(); ctx.arc(tx0, by, 1.4 + tier * 0.15, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+  // 落地闪光：砸中瞬间的一次性亮爆
+  if (slamP > 0.75) {
+    const flash = 1 - (slamP - 0.75) / 0.25;
+    ctx.globalAlpha = fade * flash * 0.8;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, rakeSize * 0.9);
+    g.addColorStop(0, 'rgba(255,238,180,0.9)');
+    g.addColorStop(1, 'rgba(255,211,77,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, rakeSize * 0.9, 0, Math.PI * 2); ctx.fill();
+  }
+  // 冲击波同心圈
   ctx.globalAlpha = fade;
   for (let k = 0; k < 3; k++) {
-    const pk = Math.max(0, Math.min(1, p - k * 0.15));
+    const pk = Math.max(0, Math.min(1, p - 0.35 - k * 0.15));
     const rad = easeOut(pk) * R * 0.9;
     ctx.strokeStyle = k === 0 ? '#ffd34d' : 'rgba(255,211,77,0.55)';
     ctx.lineWidth = 5 - k * 1.2;
     ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
   }
+  // 地裂纹
   const cracks = 6 + tier;
   ctx.strokeStyle = 'rgba(120,80,30,0.6)'; ctx.lineWidth = 2;
   for (let i = 0; i < cracks; i++) {
     const a = (i / cracks) * Math.PI * 2;
-    const rr = easeOut(p) * R * 0.7;
+    const rr = easeOut(Math.max(0, p - 0.35)) * R * 0.7;
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); ctx.stroke();
   }
 }
@@ -3115,7 +3172,7 @@ function drawUltTieshan(ctx: CanvasRenderingContext2D, x: number, y: number, p: 
 }
 
 // —— 击退群攻 ——
-// 沙僧大佛珠单颗：骨色珠 + 骷髅面
+// 沙僧大佛珠单颗：骨色珠 + 骷髅面（圆顶脑颅 + 收窄下颌，而非正圆）
 function drawShasengBead(ctx: CanvasRenderingContext2D, bx: number, by: number, r: number, fade: number) {
   ctx.save();
   ctx.translate(bx, by);
@@ -3123,22 +3180,47 @@ function drawShasengBead(ctx: CanvasRenderingContext2D, bx: number, by: number, 
   ctx.fillStyle = '#e8dcc8';
   ctx.strokeStyle = '#6a5038';
   ctx.lineWidth = 1.3;
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  // 眼窝
-  ctx.fillStyle = '#2e261c';
-  ctx.beginPath(); ctx.ellipse(-r * 0.3, -r * 0.12, r * 0.2, r * 0.24, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(r * 0.3, -r * 0.12, r * 0.2, r * 0.24, 0, 0, Math.PI * 2); ctx.fill();
-  // 鼻孔三角
+  // 头骨轮廓：圆顶颅骨（上 2/3）收窄到下颌（下 1/3），下颌中央留浅凹（颌缝）
   ctx.beginPath();
-  ctx.moveTo(0, r * 0.02);
-  ctx.lineTo(-r * 0.12, r * 0.32);
-  ctx.lineTo(r * 0.12, r * 0.32);
+  ctx.moveTo(-r * 0.78, -r * 0.06);
+  ctx.quadraticCurveTo(-r * 0.86, -r * 0.78, 0, -r * 0.96);
+  ctx.quadraticCurveTo(r * 0.86, -r * 0.78, r * 0.78, -r * 0.06);
+  ctx.quadraticCurveTo(r * 0.72, r * 0.34, r * 0.34, r * 0.56);
+  ctx.quadraticCurveTo(r * 0.16, r * 0.7, 0, r * 0.68);
+  ctx.quadraticCurveTo(-r * 0.16, r * 0.7, -r * 0.34, r * 0.56);
+  ctx.quadraticCurveTo(-r * 0.72, r * 0.34, -r * 0.78, -r * 0.06);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 颧骨浅凹（两侧太阳穴，增加立体感）
+  ctx.fillStyle = 'rgba(90,70,48,0.22)';
+  ctx.beginPath(); ctx.ellipse(-r * 0.62, -r * 0.28, r * 0.14, r * 0.22, -0.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r * 0.62, -r * 0.28, r * 0.14, r * 0.22, 0.3, 0, Math.PI * 2); ctx.fill();
+  // 眼窝（倒泪滴形，更像骷髅眼洞）
+  ctx.fillStyle = '#2e261c';
+  for (const side of [-1, 1] as const) {
+    ctx.beginPath();
+    ctx.moveTo(side * r * 0.1, -r * 0.16);
+    ctx.quadraticCurveTo(side * r * 0.4, -r * 0.3, side * r * 0.4, -r * 0.06);
+    ctx.quadraticCurveTo(side * r * 0.38, r * 0.14, side * r * 0.2, r * 0.1);
+    ctx.quadraticCurveTo(side * r * 0.08, r * 0.02, side * r * 0.1, -r * 0.16);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // 鼻孔（倒心形凹口）
+  ctx.beginPath();
+  ctx.moveTo(0, r * 0.06);
+  ctx.lineTo(-r * 0.12, r * 0.3);
+  ctx.quadraticCurveTo(0, r * 0.38, r * 0.12, r * 0.3);
   ctx.closePath();
   ctx.fill();
-  // 齿缝
-  ctx.strokeStyle = 'rgba(60,45,30,0.7)';
+  // 下颌牙缝：几条竖线切出牙齿
+  ctx.strokeStyle = 'rgba(60,45,30,0.75)';
   ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(-r * 0.28, r * 0.42); ctx.lineTo(r * 0.28, r * 0.42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-r * 0.3, r * 0.42); ctx.lineTo(r * 0.3, r * 0.42); ctx.stroke();
+  for (let i = -2; i <= 2; i++) {
+    const tx = i * r * 0.12;
+    ctx.beginPath(); ctx.moveTo(tx, r * 0.42); ctx.lineTo(tx * 0.82, r * 0.6); ctx.stroke();
+  }
   ctx.restore();
 }
 
