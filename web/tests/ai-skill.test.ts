@@ -175,6 +175,32 @@ describe('rollAiLoadout', () => {
     };
     expect(debuffRate(AI_SKILL_MAX)).toBeGreaterThan(debuffRate(AI_SKILL_MIN));
   });
+
+  it('主动 ≤2、被动 ≤6（补足总数时不得突破上限）', () => {
+    const playerA = ['act_palm', 'act_meteor'];
+    const playerP = ['xiandan', 'fenghuolun', 'fabaofu', 'zhaoxian', 'mojin', 'jubaopen'];
+    for (let seed = 0; seed < 80; seed++) {
+      const roll = rollAiLoadout(
+        playerA,
+        playerP,
+        AI_SKILL_MAX,
+        (n) => (seed * 31 + n) % n,
+        { itemBonus: 2, activeRatioBoost: -0.4 },
+      );
+      expect(roll.actives.length).toBeLessThanOrEqual(2);
+      expect(roll.passives.length).toBeLessThanOrEqual(6);
+      expect(roll.actives.length + roll.passives.length).toBeLessThanOrEqual(8);
+    }
+    // 回归：旧逻辑在「少主动、多补被动」时会滚出 7 个被动
+    const buggyShape = rollAiLoadout(
+      [],
+      playerP,
+      AI_SKILL_MAX,
+      (n) => n - 1,
+      { itemBonus: 2, activeRatioBoost: -0.5 },
+    );
+    expect(buggyShape.passives.length).toBeLessThanOrEqual(6);
+  });
 });
 
 describe('aiWeaponScale', () => {
