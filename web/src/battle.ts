@@ -100,9 +100,11 @@ import {
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
-  monsterHpBase: 14, // 第 n 波固定公式 HP = base + step*n（前 monsterHpNoDiffTo 波）
-  monsterHpStep: 6,
-  monsterHpNoDiffTo: 3, // 波 1–3 仅用固定公式；其后朝目标血量爬坡
+  monsterHpBase: 10, // 第 n 波静态公式 HP = base + step*n（爬坡期目标用）
+  monsterHpStep: 15,
+  monsterHpNoDiffTo: 3, // 波 1–3 用 monsterHpEarlyFixed；其后朝目标血量爬坡
+  /** 前 monsterHpNoDiffTo 波绝对血量（不含境界）；爬坡起点取最后一档 */
+  monsterHpEarlyFixed: [20, 40, 65],
   // 爬坡每波上限 = monsterHpStep × monsterHpRampMul + (wave − rampFrom)；rampFrom = NoDiffTo+1
   monsterHpRampMul: 2,
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
@@ -4238,9 +4240,12 @@ export class Battle {
     return monstersInWave(wave);
   }
 
-  /** 前 monsterHpNoDiffTo 波固定公式血量（不含境界 / DPS 缩放） */
+  /** 前 monsterHpNoDiffTo 波固定血量（不含境界 / DPS 缩放）；表外回退 base+step×wave */
   private fixedMonsterHp(wave: number): number {
-    return (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.wavePostMul(wave);
+    const w = Math.max(1, Math.floor(wave));
+    const early = TUNING.monsterHpEarlyFixed[w - 1];
+    const baseHp = early ?? TUNING.monsterHpBase + TUNING.monsterHpStep * w;
+    return baseHp * this.wavePostMul(w);
   }
 
   /**
@@ -4270,7 +4275,7 @@ export class Battle {
 
   /**
    * 普通怪基础血量（不含 Boss/精英倍乘）：
-   * - 波 ≤ monsterHpNoDiffTo：固定公式
+   * - 波 ≤ monsterHpNoDiffTo：monsterHpEarlyFixed
    * - 其后：从上波实际血量朝 targetMonsterHp 爬坡，每波最多 +monsterHpRampMaxStep(wave)
    */
   private normalMonsterHp(wave: number = this.wave): number {

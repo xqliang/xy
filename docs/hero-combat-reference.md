@@ -257,11 +257,13 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ### 9.1 小怪基础血量 `normalMonsterHp(wave)`
 
-**前 3 波（≤ `monsterHpNoDiffTo`）固定公式**：
+**前 3 波（≤ `monsterHpNoDiffTo`）绝对血量**（`monsterHpEarlyFixed`，不含境界）：
 
 ```
-fixed = (monsterHpBase + monsterHpStep × wave) × wavePostMul
+fixed(w) = monsterHpEarlyFixed[w−1] × wavePostMul
 ```
+
+当前表：**20 / 40 / 65**。
 
 **第 4 波起目标血量**（含境界；第 `MONSTER_HP_FROM_WAVE` 波起再与 DPS 公式取 max）：
 
@@ -280,9 +282,10 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `monsterHpBase` | **14** | 血量基数 |
-| `monsterHpStep` | **6** | 每波固定公式 +6；爬坡步长基准 |
-| `monsterHpNoDiffTo` | 3 | 波 1–3 仅用固定公式 |
+| `monsterHpEarlyFixed` | **[20, 40, 65]** | 波 1–3 绝对血量 |
+| `monsterHpBase` | **10** | 爬坡期静态公式基数 |
+| `monsterHpStep` | **15** | 静态公式每波 +15；爬坡步长基准 |
+| `monsterHpNoDiffTo` | 3 | 波 1–3 用 EarlyFixed |
 | `monsterHpRampMul` | **2** | 爬坡：`step×2 + (wave−rampFrom)` |
 | `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
 
@@ -291,7 +294,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | `MONSTER_HP_FROM_WAVE` | 2 |
 | `MONSTER_HP_KILL_SEC` | 3 |
 
-例（目标境界 1.5、空板）：波 1–3 = 20/26/32；波 4 maxStep=`6×2+(4−4)=12` → min(57, 32+12)=44；波 5 maxStep=13… 直至追上 target。
+例（目标境界 1.5、空板）：波 1–3 = 20/40/65；波 4 maxStep=`15×2+(4−4)=30` → min(105, 65+30)=95；波 5 maxStep=31… 直至追上 target。
 
 ### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
 

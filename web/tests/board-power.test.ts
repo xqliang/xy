@@ -338,8 +338,12 @@ describe('monsterHpFromBoardPower', () => {
 });
 
 describe('Battle 接入压力规划', () => {
-  const fixedHp = (b: Battle, wave: number) =>
-    (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * b.wavePostMul(wave);
+  const fixedHp = (b: Battle, wave: number) => {
+    const w = Math.max(1, Math.floor(wave));
+    const early = TUNING.monsterHpEarlyFixed[w - 1];
+    const base = early ?? TUNING.monsterHpBase + TUNING.monsterHpStep * w;
+    return base * b.wavePostMul(w);
+  };
   const rampFrom = () => TUNING.monsterHpNoDiffTo + 1;
   const maxRamp = (wave: number) =>
     TUNING.monsterHpStep * TUNING.monsterHpRampMul + (wave - rampFrom());
@@ -369,24 +373,26 @@ describe('Battle 接入压力规划', () => {
     expect(hp).toBeCloseTo(fixedHp(b, 1), 5);
   });
 
-  it('前 3 波固定公式，第 4 波起按 step×2+(波−起始波) 爬向目标', () => {
+  it('前 3 波 EarlyFixed，第 4 波起按 step×mul+(波−起始波) 爬向目标', () => {
     const b = new Battle(1, 1.5);
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
     expect(rampFrom()).toBe(4);
     const hp = (w: number) =>
       (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(w);
+    expect(TUNING.monsterHpEarlyFixed).toEqual([20, 40, 65]);
     expect(hp(1)).toBeCloseTo(20, 5);
-    expect(hp(3)).toBeCloseTo(32, 5);
-    // target4 = 38×1.5 = 57；maxStep = 6×2+(4−4)=12 → 44
-    expect(maxRamp(4)).toBe(12);
-    expect(maxRamp(5)).toBe(13);
-    expect(hp(4)).toBeCloseTo(32 + maxRamp(4), 5);
+    expect(hp(2)).toBeCloseTo(40, 5);
+    expect(hp(3)).toBeCloseTo(65, 5);
+    // target4 = 70×1.5 = 105；maxStep = 15×2+(4−4)=30 → min(105, 65+30)=95
+    expect(maxRamp(4)).toBe(30);
+    expect(maxRamp(5)).toBe(31);
+    expect(hp(4)).toBeCloseTo(95, 5);
     expect(hp(4)).toBeCloseTo(expectedHp(b, 4), 5);
     expect(hp(5)).toBeCloseTo(expectedHp(b, 5), 5);
     expect(hp(8)).toBeCloseTo(expectedHp(b, 8), 5);
   });
 
-  it('第 2 波空板仍用固定公式', () => {
+  it('第 2 波空板仍用 EarlyFixed', () => {
     const b = new Battle(2);
     const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(2);
     expect(hp).toBeCloseTo(fixedHp(b, 2), 5);

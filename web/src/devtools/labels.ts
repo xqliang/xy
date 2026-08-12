@@ -61,6 +61,7 @@ export const PARAM_ZH: Record<string, string> = {
   dangerRemaining: '危险提示剩余格数',
   monsterHpBase: '怪物血量基数',
   monsterHpStep: '怪物血量每波递增',
+  monsterHpEarlyFixed: '前几波固定血量表',
   monsterHpNoDiffTo: '小怪HP固定公式截止波',
   monsterHpRampMul: '小怪HP爬坡step倍数',
   bossFirstSegLo: '首段妖王波下界',

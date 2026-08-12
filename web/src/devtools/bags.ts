@@ -102,7 +102,7 @@ export function exportChangedConfig(): Record<string, Record<string, { from: unk
 
 /** TUNING 字段分组（怪物 / 系统），便于 Tab 筛选 */
 export const TUNING_MONSTER_KEYS = new Set([
-  'monsterSpd', 'monsterHpBase', 'monsterHpStep', 'monsterHpNoDiffTo', 'monsterHpRampMul',
+  'monsterSpd', 'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMul',
   'bossFirstSegLo', 'bossFirstSegHi', 'bossFirstSegMin', 'bossFirstSegMax',
   'bossSegMin', 'bossSegMax', 'bossHpMul', 'bossHpMulEarly', 'bossSpdMul',
   'bossHpRampWaves', 'bossEscortMin', 'bossEscortMax', 'bossEscortHpShare', 'bossEscortSpacing',
