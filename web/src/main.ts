@@ -1672,9 +1672,9 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
-      if (trayTarget !== null && !battle.tray[trayTarget]) {
-        battle.recallToTray(ui.dragFrom, trayTarget);
-        clearBoardSelect();
+      // 棋盘→候选区：空槽放入；槽内有武器/字牌则交换（见 Battle.recallToTray）
+      if (trayTarget !== null) {
+        if (battle.recallToTray(ui.dragFrom, trayTarget)) clearBoardSelect();
       } else if (target) {
         if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
           // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）

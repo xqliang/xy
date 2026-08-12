@@ -49,7 +49,7 @@ import {
 } from './weapons';
 import { drawSummonTray } from './summon-draw';
 import { earlySummonGates } from './summon-early';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -99,8 +99,8 @@ import {
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
-  monsterHpBase: 20, // 第 n 波固定公式 HP = base + step*n（前 monsterHpNoDiffTo 波）
-  monsterHpStep: 3,
+  monsterHpBase: 14, // 第 n 波固定公式 HP = base + step*n（前 monsterHpNoDiffTo 波）
+  monsterHpStep: 6,
   monsterHpNoDiffTo: 3, // 波 1–3 仅用固定公式；其后朝目标血量爬坡
   // 爬坡每波上限 = monsterHpStep × monsterHpRampMul + (wave − rampFrom)；rampFrom = NoDiffTo+1
   monsterHpRampMul: 2,
@@ -747,7 +747,8 @@ export type AutoPlacePlaybackStep =
   | { kind: 'swapUnitWord'; unitCell: Cell; wordCell: Cell }
   | { kind: 'moveWord'; from: Cell; to: Cell }
   | { kind: 'swapWords'; from: Cell; to: Cell }
-  | { kind: 'displaceToTray'; cell: Cell };
+  | { kind: 'displaceToTray'; cell: Cell }
+  | { kind: 'removeWord'; cell: Cell };
 
 /** 棋盘落子掉落动效（AI 布阵与用户点「布阵」） */
 export interface PlaceDropFx {
@@ -1391,6 +1392,9 @@ export class Battle {
       case 'displaceToTray':
         this.displaceToTray(step.cell);
         return null;
+      case 'removeWord':
+        this.removeOrphanWord(step.cell);
+        return null;
       default: {
         const _exhaustive: never = step;
         void _exhaustive;
@@ -1917,12 +1921,15 @@ export class Battle {
       const word = idx >= 0 ? drawOneWord(true) : null;
       if (word) draws[idx] = word;
     }
-    // 跨局 / 波段匹配保底：强制推进可组合双字
+    // 跨局 / 波段匹配保底：强制推进「尚未计入本局」的可组合双字
+    const freshMatchAlready = matchedHeroIds(trayWordsSoFar, ownedBoard)
+      .some((id) => !this.matchedHeroIdsThisGame.has(id));
     if (
       !firstSummon
       && wordPolicy.allowForceWord
       && wordSlotsCap > 0
       && this.needsHeroMatchPity()
+      && !freshMatchAlready
     ) {
       const forced = forcedMatchWordChars(
         this.rng,
@@ -1942,6 +1949,15 @@ export class Battle {
         this.bumpWordCharCount(w.char);
         if (orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
         draws[idx] = { kind: 'word', char: w.char, general: w.general, tier: wordPolicy.wordTier };
+      }
+      // 槽未满却仍无字可塞 → 已无未匹配武将可抽，结束保底以免空转
+      if (
+        forced.length === 0
+        && trayWordsSoFar.length < wordSlotsCap
+        && this.needsHeroMatchPity()
+      ) {
+        this.heroMatchWaves.push(this.effectiveSummonWave());
+        this.forceMatchThisGame = false;
       }
     }
     this.tray = draws;
@@ -1976,6 +1992,13 @@ export class Battle {
   /** 测试：挂上跨局匹配保底 */
   forceHeroMatchPityForTest(): void {
     this.forceMatchThisGame = true;
+  }
+
+  /** 测试：预设本局已匹配武将与记波（用于波段保底回归） */
+  seedHeroMatchForTest(heroId: string, wave: number): void {
+    this.matchedHeroIdsThisGame.add(heroId);
+    this.heroMatchWaves.push(wave);
+    this.forceMatchThisGame = false;
   }
 
   /** 波间 ready 时 wave 仍为上一波，征兵保底按「即将进入的波」计 */
@@ -2020,41 +2043,97 @@ export class Battle {
     delete this.tray[index];
   }
 
-  /** 棋盘单位/字牌/桃树拖回候选区空槽（已激活武将不可收回） */
+  /**
+   * 棋盘单位/字牌/桃树拖到候选区：
+   * - 空槽：直接放入
+   * - 槽内是武器(unit)或字牌：与棋盘交换（铲子/桃树槽不交换）
+   * - 已激活武将的单字可拖回：拆开后武将失活（另一字留在棋盘）
+   */
   recallToTray(from: Cell, slot: number): boolean {
     if (slot < 0 || slot >= TUNING.traySize) return false;
-    if (this.tray[slot]) {
-      this.message = '该候选槽已有令牌';
-      return false;
-    }
-    if (this.activeGenerals().some((g) => g.cells.some((c) => c.c === from.c && c.r === from.r))) {
-      this.message = '已激活武将不能收回候选区';
-      return false;
-    }
     const k = cellKey(from.c, from.r);
-    const tree = this.trees.get(k);
-    if (tree) {
-      this.trees.delete(k);
-      this.tray[slot] = { kind: 'tree', level: tree.level, growT: tree.growT };
-      this.message = '桃树已收回候选区（暂停产桃）';
-      return true;
+    const wasActiveHero = this.activeGenerals().some((g) => g.cells.some((c) => c.c === from.c && c.r === from.r));
+    const occupy = this.tray[slot];
+    if (!occupy) {
+      const tree = this.trees.get(k);
+      if (tree) {
+        this.trees.delete(k);
+        this.tray[slot] = { kind: 'tree', level: tree.level, growT: tree.growT };
+        this.message = '桃树已收回候选区（暂停产桃）';
+        this.clearAutoPlaceLayoutMemory();
+        return true;
+      }
+      const w = this.words.get(k);
+      if (w) {
+        this.words.delete(k);
+        this.tray[slot] = trayWordFromPlaced(w);
+        this.message = wasActiveHero
+          ? `拆开武将，字牌「${w.char}」已收回候选区`
+          : `字牌「${w.char}」已收回候选区`;
+        this.clearAutoPlaceLayoutMemory();
+        return true;
+      }
+      const u = this.units.get(k);
+      if (u) {
+        this.units.delete(k);
+        this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier };
+        this.message = `${UNITS[u.type].name} 已收回候选区`;
+        this.emit('place');
+        this.clearAutoPlaceLayoutMemory();
+        return true;
+      }
+      return false;
     }
-    const w = this.words.get(k);
-    if (w) {
-      this.words.delete(k);
-      this.tray[slot] = trayWordFromPlaced(w);
-      this.message = `字牌「${w.char}」已收回候选区`;
-      return true;
+
+    // —— 与候选槽交换：仅 unit / word（铲子、桃树无法落到已占用解锁格）——
+    if (occupy.kind !== 'unit' && occupy.kind !== 'word') {
+      this.message = occupy.kind === 'shovel' ? '铲子不能与棋盘单位交换' : '该候选槽不能与棋盘交换';
+      return false;
     }
-    const u = this.units.get(k);
-    if (u) {
-      this.units.delete(k);
-      this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier };
-      this.message = `${UNITS[u.type].name} 已收回候选区`;
-      this.emit('place');
-      return true;
+    if (!this.isUnlocked(from.c, from.r)) {
+      this.message = '只能与已解锁格上的单位/字牌交换';
+      return false;
     }
-    return false;
+
+    const boardWord = this.words.get(k);
+    const boardUnit = this.units.get(k);
+    if (!boardWord && !boardUnit) {
+      this.message = '该格没有可交换的武器或字牌';
+      return false;
+    }
+
+    // 棋盘件 → 候选槽
+    const recalled: TrayToken = boardWord
+      ? trayWordFromPlaced(boardWord)
+      : { kind: 'unit', type: boardUnit!.type, tier: boardUnit!.tier };
+
+    // 候选件 → 棋盘格（先清格再落子，保证 maps 一致）
+    if (boardWord) this.words.delete(k);
+    if (boardUnit) this.units.delete(k);
+
+    if (occupy.kind === 'word') {
+      this.words.set(k, placedWordFromTray(occupy, { c: from.c, r: from.r }));
+    } else {
+      this.units.set(k, makePlacedUnit(occupy.type, occupy.tier, { c: from.c, r: from.r }, this.unitFaceGate()));
+    }
+    this.tray[slot] = recalled;
+
+    if (boardWord && occupy.kind === 'word') {
+      this.message = wasActiveHero
+        ? `拆开武将，字牌「${boardWord.char}」与「${occupy.char}」交换`
+        : `字牌「${boardWord.char}」与「${occupy.char}」交换`;
+    } else if (boardUnit && occupy.kind === 'unit') {
+      this.message = `${UNITS[boardUnit.type].name} 与 ${UNITS[occupy.type].name} 交换`;
+    } else if (boardWord && occupy.kind === 'unit') {
+      this.message = wasActiveHero
+        ? `拆开武将，字牌「${boardWord.char}」与 ${UNITS[occupy.type].name} 交换`
+        : `字牌「${boardWord.char}」与 ${UNITS[occupy.type].name} 交换`;
+    } else {
+      this.message = `${UNITS[boardUnit!.type].name} 与字牌「${occupy.char}」交换`;
+    }
+    this.emit('place');
+    this.clearAutoPlaceLayoutMemory();
+    return true;
   }
 
   private aiWordAt(c: number, r: number): PlacedWord | undefined {
@@ -2110,6 +2189,23 @@ export class Battle {
       this.aiTray.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
       return true;
     }
+    return true;
+  }
+
+  /** AI 孤儿裁剪：直接移除未激活字（不进候选区） */
+  private aiRemoveOrphanWord(cell: Cell): boolean {
+    if (this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r))) return false;
+    const k = cellKey(cell.c, cell.r);
+    if (!this.aiWords.has(k)) return false;
+    this.aiWords.delete(k);
+    return true;
+  }
+
+  private removeOrphanWord(cell: Cell): boolean {
+    if (this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r))) return false;
+    const k = cellKey(cell.c, cell.r);
+    if (!this.words.has(k)) return false;
+    this.words.delete(k);
     return true;
   }
 
@@ -2865,6 +2961,11 @@ export class Battle {
         if (ok) this.recordAiAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
         return ok;
       },
+      removeWord: (cell) => {
+        const ok = this.aiRemoveOrphanWord(cell);
+        if (ok) this.recordAiAutoPlaceStep({ kind: 'removeWord', cell: { c: cell.c, r: cell.r } });
+        return ok;
+      },
       isActiveHeroCell: (cell) =>
         this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       dangerNear: () => this.aiDangerNear(),
@@ -2873,9 +2974,7 @@ export class Battle {
       monstersPresent: () => this.aiMonsters.length > 0,
       heroRosterComplete: () => this.aiSummonWordPolicyNow().maxWordSlots === 0,
       unitEngageScore: (cell, type, tier) =>
-        this.aiMonsters.length > 0
-          ? this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear())
-          : 0,
+        this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear()),
       mergeTray: (from, to) => {
         const ok = this.aiMergeTrayTokens(from, to);
         if (ok) this.recordAiAutoPlaceStep({ kind: 'mergeTray', from, to });
@@ -3235,6 +3334,7 @@ export class Battle {
         rng: () => this.aiRng.next(),
         pSubOptimal,
         randomDigExitWeight: true,
+        maxOrphanWords: AI_MAX_ORPHAN_WORDS,
         maxSteps: 1,
       });
     } else {
@@ -4542,6 +4642,7 @@ export class Battle {
           rng: () => this.aiRng.next(),
           pSubOptimal: knobs.pSubOptimal,
           randomDigExitWeight: true,
+          maxOrphanWords: AI_MAX_ORPHAN_WORDS,
           maxSteps: AI_PLACE_MAX_STEPS,
           maxGuard: AI_PLACE_MAX_GUARD,
         });
@@ -5977,9 +6078,7 @@ export class Battle {
       },
       dangerEngageAt: (ax, ay, rge, atk) => this.dangerEngageAtPlayer(ax, ay, rge, atk),
       unitEngageScore: (cell, type, tier) =>
-        this.monsters.length > 0
-          ? this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear())
-          : 0,
+        this.engageScoreAt(this.monsters, this.map.path, this.entranceDist, cell, type, tier, this.dangerNear()),
       wordChars: (general) => generalById(general)?.chars,
       place: (i, cell) => {
         const token = this.tray[i];
