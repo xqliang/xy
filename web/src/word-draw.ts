@@ -13,6 +13,12 @@ import {
 } from './generals';
 
 export const PAIR_PITY_AFTER = 6;
+/** 半对保底聚焦：场上独特单字 ≥ 该数时，随机选一个提高其配对权重 */
+export const PAIR_PITY_FOCUS_MIN_ORPHANS = 3;
+/** 半对保底：聚焦孤儿所需配对字的相对权重 */
+export const PAIR_PITY_FOCUS_W = 0.4;
+/** 半对保底：非聚焦（或孤儿不足时全部）配对字的相对权重 */
+export const PAIR_PITY_OTHER_W = 0.2;
 export const SUMMON_MAX_WORD_SLOTS = 2;
 /** @deprecated 用 SUMMON_MAX_WORD_SLOTS */
 export const SUMMON_MAX_WORD_SLOTS_GROWING = SUMMON_MAX_WORD_SLOTS;
@@ -23,7 +29,7 @@ export const CORE_HERO_ROLES: GeneralRole[] = ['输出', '控制', '辅助'];
 
 /** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
-/** 半对孤儿所需配对字相对基础权重的倍率（forcePartner 保底仍必出） */
+/** 半对孤儿所需配对字相对基础权重的倍率（非 forcePartner 软加权；保底见 PAIR_PITY_*） */
 export const PARTNER_BOOST = 0.12;
 /** 无配对需求时，满5 相对满3 的额外倍率（叠在 phaseWeight 之上） */
 export const HIGH_TIER_BIAS = 1.75;
@@ -555,8 +561,39 @@ function pickForcedIncompleteHeroChars(
 }
 
 /**
+ * 半对保底：在仍缺的配对字中加权抽取。
+ * - 场上独特单字 ≥ PAIR_PITY_FOCUS_MIN_ORPHANS：随机选一个孤儿，其配对字权重 PAIR_PITY_FOCUS_W，其余配对字 PAIR_PITY_OTHER_W
+ * - 否则：全部配对字等权 PAIR_PITY_OTHER_W
+ */
+export function pickForcedPartnerChar(
+  rng: Rng,
+  orphanChars: string[],
+  need: string[],
+): WordPick {
+  if (need.length === 0) {
+    const g = GENERALS[0]!;
+    return { char: g.chars[0]!, general: g.id };
+  }
+  const needSet = new Set(need);
+  const uniqueOrphans = [...new Set(orphanChars)].filter((o) =>
+    partnerChars(o).some((p) => needSet.has(p)),
+  );
+  let focusPartners: Set<string> | null = null;
+  if (uniqueOrphans.length >= PAIR_PITY_FOCUS_MIN_ORPHANS) {
+    const focus = rng.pick(uniqueOrphans);
+    focusPartners = new Set(partnerChars(focus).filter((p) => needSet.has(p)));
+  }
+  const entries = need.map((c) => ({
+    char: c,
+    general: hintGeneralForChar(c),
+    w: focusPartners?.has(c) ? PAIR_PITY_FOCUS_W : PAIR_PITY_OTHER_W,
+  }));
+  return pickFromWeighted(rng, entries);
+}
+
+/**
  * 抽一张字牌。
- * - forcePartner：只从仍缺的配对字中抽
+ * - forcePartner：只从仍缺的配对字中抽（≥3 单字时聚焦其一，见 pickForcedPartnerChar）
  * - 否则：配对加权 ≫ 不重复的高级字 ≫ 重复字（接近不抽）
  * - ownedChars：棋盘已有字（含已激活），用于去重
  * - 同盘 trayCharsAlready：本盘已抽字，绝不再出相同字
@@ -585,8 +622,7 @@ export function pickWordChar(
       (c) => !isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts),
     );
     if (need.length > 0) {
-      const char = rng.pick(need);
-      return { char, general: hintGeneralForChar(char) };
+      return pickForcedPartnerChar(rng, orphanChars, need);
     }
   }
   return pickFromWeighted(

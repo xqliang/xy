@@ -289,7 +289,8 @@ export function aiItemTargetCount(
   }
   if (aiSkill >= DEFAULT_AI_SKILL * 1.2) target = Math.min(playerCount + 2, target + 1);
   target += itemBonus;
-  return Math.max(minItems, Math.min(playerCount + 2, target));
+  const maxTotal = MAX_EQUIPPED_ACTIVES + MAX_EQUIPPED_PASSIVES;
+  return Math.max(minItems, Math.min(maxTotal, playerCount + 2, target));
 }
 
 function passiveWeight(id: string, aiSkill: number, debuffBias = 1): number {
@@ -383,8 +384,13 @@ export function rollAiLoadout(
     passivePool.length,
     target - targetActives,
   );
+  // 补足总数时仍须遵守主动≤2 / 被动≤6（旧逻辑只 clamp 了 pool.length，会滚出 7 个被动）
   if (targetActives + targetPassives < target) {
-    targetPassives = Math.min(passivePool.length, target - targetActives);
+    targetPassives = Math.min(
+      MAX_EQUIPPED_PASSIVES,
+      passivePool.length,
+      target - targetActives,
+    );
   }
   if (targetActives + targetPassives < target && activePool.length > targetActives) {
     targetActives = Math.min(activePool.length, MAX_EQUIPPED_ACTIVES, target - targetPassives);
@@ -399,5 +405,8 @@ export function rollAiLoadout(
   );
   passives = ensureDebuffPassive(passives, passivePool, targetPassives, aiSkill, pick);
 
-  return { actives, passives };
+  return {
+    actives: actives.slice(0, MAX_EQUIPPED_ACTIVES),
+    passives: passives.slice(0, MAX_EQUIPPED_PASSIVES),
+  };
 }

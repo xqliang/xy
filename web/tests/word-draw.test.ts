@@ -3,7 +3,11 @@ import {
   phaseWeight,
   phaseWeightRatio,
   pickWordChar,
+  pickForcedPartnerChar,
   PAIR_PITY_AFTER,
+  PAIR_PITY_FOCUS_MIN_ORPHANS,
+  PAIR_PITY_FOCUS_W,
+  PAIR_PITY_OTHER_W,
   neededPartnerChars,
   pendingPartnerChars,
   wordDrawEntries,
@@ -48,6 +52,43 @@ describe('征兵阶段权重', () => {
     const pick = pickWordChar(rng, 3, ['大'], [], true);
     expect(neededPartnerChars(['大'])).toEqual(expect.arrayContaining(['圣', '蟒']));
     expect(['圣', '蟒']).toContain(pick.char);
+  });
+
+  it('半对保底：≥3 单字时聚焦孤儿配对权重大于其它配对', () => {
+    expect(PAIR_PITY_FOCUS_MIN_ORPHANS).toBe(3);
+    expect(PAIR_PITY_FOCUS_W).toBe(0.4);
+    expect(PAIR_PITY_OTHER_W).toBe(0.2);
+    const orphans = ['大', '哪', '铁'];
+    const need = pendingPartnerChars(orphans, []);
+    // 大→圣/蟒；哪→吒；铁→扇/背。首抽固定聚焦「大」(pick index 0)
+    let focusHits = 0;
+    let otherHits = 0;
+    for (let i = 0; i < 800; i++) {
+      const rng = new FakeRng([0, i / 800]);
+      const pick = pickForcedPartnerChar(rng, orphans, need);
+      if (pick.char === '圣' || pick.char === '蟒') focusHits++;
+      else otherHits++;
+    }
+    // 聚焦侧 0.4×2、其它 0.2×3 → P(聚焦)≈0.4/0.7≈0.57
+    expect(focusHits).toBeGreaterThan(otherHits);
+    expect(focusHits / (focusHits + otherHits)).toBeGreaterThan(0.48);
+    expect(focusHits / (focusHits + otherHits)).toBeLessThan(0.72);
+  });
+
+  it('半对保底：单字不足 3 时配对字等权', () => {
+    const orphans = ['大', '哪'];
+    const need = pendingPartnerChars(orphans, []);
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 600; i++) {
+      const rng = new FakeRng([i / 600]);
+      const pick = pickForcedPartnerChar(rng, orphans, need);
+      counts.set(pick.char, (counts.get(pick.char) ?? 0) + 1);
+    }
+    const vals = [...counts.values()];
+    const max = Math.max(...vals);
+    const min = Math.min(...vals);
+    // 等权 0.2：各配对字出现次数不应差太多
+    expect(max - min).toBeLessThan(120);
   });
 
   it('有孤儿时 pendingPartner 排除本盘已抽到的配对字', () => {
@@ -340,14 +381,7 @@ describe('征兵匹配保底', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
     b.grantPeach(100_000);
-    const cell = b.unlockedCells()[0]!;
-    b.words.set(`${cell.c},${cell.r}`, {
-      char: '大',
-      general: hintGeneralForChar('大'),
-      tier: 1,
-      cell,
-    });
-    // 早年曾凑齐大圣（已计入匹配），「圣」已不在场；波20窗口仍要新匹配
+    // 早年曾凑齐大圣（已计入匹配）；场上不留「大」孤儿，避免半对保底合法补「圣」
     b.seedHeroMatchForTest('dasheng', 5);
     b.setWaveForTest(19);
     b.status = 'ready';

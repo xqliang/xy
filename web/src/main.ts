@@ -14,6 +14,7 @@ import {
   hitPauseBtn,
   hitMonsterAt,
   hitAiItemChip,
+  hitPeachHud,
   isPlayerTangsengCell,
   isAiTangsengCell,
   pauseBtnRect,
@@ -450,6 +451,7 @@ const ui: UiState = {
   activePopup: null,
   activePopupUntil: 0,
   aiItemPopup: null,
+  peachPopup: false,
   paused: false,
 };
 
@@ -794,6 +796,7 @@ function newGame() {
   ui.passivePopupUntil = 0;
   ui.activePopup = null;
   ui.aiItemPopup = null;
+  ui.peachPopup = false;
   pendingFirstSummonTutorial = false;
 }
 
@@ -804,6 +807,7 @@ function abortBattleToMenu(): void {
   ui.passivePopupUntil = 0;
   ui.activePopup = null;
   ui.aiItemPopup = null;
+  ui.peachPopup = false;
   settleChange = null;
   endlessResult = null;
   clearBoardSelect();
@@ -1293,6 +1297,7 @@ function handleButton(x: number, y: number): boolean {
       }
       else if (btn.id.startsWith('pas')) {
         ui.aiItemPopup = null;
+        ui.peachPopup = false;
         ui.passivePopup = Number(btn.id.slice(3));
         ui.passivePopupUntil = performance.now() + 2500;
       } // 点击被动图标看详情
@@ -1436,12 +1441,22 @@ function onPointerDown(e: PointerEvent) {
     clearActiveDrag();
     return;
   }
-  // AI 道具详情弹窗：任意点击先关闭（消费本次点击）
+  // 我方蟠桃 / AI 道具详情：任意点击先关闭（消费本次点击）
+  if (ui.peachPopup) { ui.peachPopup = false; return; }
   if (ui.aiItemPopup !== null) { ui.aiItemPopup = null; return; }
+  if (hitPeachHud(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {
+    ui.passivePopup = null;
+    ui.activePopup = null;
+    ui.aiItemPopup = null;
+    ui.peachPopup = true;
+    clearBoardSelect();
+    return;
+  }
   const aiChip = hitAiItemChip(x, y, battle);
   if (aiChip !== null) {
     ui.passivePopup = null;
     ui.activePopup = null;
+    ui.peachPopup = false;
     ui.aiItemPopup = ui.aiItemPopup === aiChip ? null : aiChip;
     clearBoardSelect();
     return;

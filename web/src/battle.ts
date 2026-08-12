@@ -1795,13 +1795,13 @@ export class Battle {
           debuffPassiveBias: this.versusBand.aiDebuffPassiveBias,
         },
       );
-      for (const id of aiRoll.actives) {
+      for (const id of aiRoll.actives.slice(0, MAX_EQUIPPED_ACTIVES)) {
         const def = activeById(id);
         if (!def || def.disabled) continue;
         this.aiActiveSlots.push({ id, cd: def.cd, cdMax: def.cd, ready: false, flash: 0 });
         this.aiPickedItems.push(id);
       }
-      for (const id of aiRoll.passives) {
+      for (const id of aiRoll.passives.slice(0, MAX_EQUIPPED_PASSIVES)) {
         if (!isPassiveEnabled(id)) continue;
         this.applyAiItem(id);
         this.aiPickedItems.push(id);
@@ -5260,6 +5260,17 @@ export class Battle {
     const wb = this.weaponBonuses[g.def.id];
     const atkBuffMul = (g.state.buffAtkT ?? 0) > 0 ? (g.state.buffAtkMul ?? 1) : 1;
     return base * (1 + (wb?.atk ?? 0)) * this.mods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul() * atkBuffMul;
+  }
+
+  /** 场上兵器实际攻击力（含羁绊 / 仙丹 / 老君炼丹 / 减益） */
+  unitAtk(u: PlacedUnit): number {
+    const stat = getUnitStat(u.type, u.tier);
+    const heroAtkBuff = (u.buffAtkT ?? 0) > 0 ? (u.buffAtkMul ?? 1) : 1;
+    return stat.atk * this.mods.atkMul
+      * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1)
+      * (u.pillAtk ? TUNING.atkBuffMul : 1)
+      * this.bondAtkMul()
+      * heroAtkBuff;
   }
 
   // 计入神兵加成的武将攻速/范围

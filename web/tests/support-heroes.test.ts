@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Battle, TUNING, makePlacedUnit } from '../src/battle';
 import { GENERALS, generalById } from '../src/generals';
 import { WEAPONS } from '../src/weapons';
-import { ECONOMY } from '@core';
+import { ECONOMY, getUnitStat } from '@core';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -137,6 +137,8 @@ describe('验收：老君 buff', () => {
     castSkill(b, laojun);
     expect(unit.buffAtkT).toBeCloseTo(TUNING.heroBuffDurMain, 5);
     expect(unit.buffAtkMul).toBe(TUNING.heroBuffAtkMulMain);
+    const base = getUnitStat(unit.type, unit.tier).atk;
+    expect(b.unitAtk(unit)).toBeCloseTo(base * TUNING.heroBuffAtkMulMain, 5);
   });
 
   it('无怪时 CD 就绪仍可施放 buff', () => {

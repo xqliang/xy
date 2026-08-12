@@ -199,12 +199,6 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 - 免疫期内再有怪越线：移除该怪，**不扣血、不给**舍身饲魔蟠桃（防同帧连扣 / 免疫窗刷桃）。
 - AI 唐僧对称（`aiTangsengHurtImmuneT`）。
 
-### 被动「陨石」择时（`yunshi` / `mods.meteor`）
-
-- 每波 `meteorPending` 置位后，**不**在怪刚出口时砸。
-- 待场上最前活怪走过长度 `max(dist) − entranceDist ≥ meteorRadius`（**2**）后再砸最前群（伤害 × `meteorPassiveDmgMul` = **1.4**）。
-- 便于怪叠进半径后再覆盖一波；玩家 / AI 对称。
-
 ---
 
 ## 8. 征兵字/铲、武将匹配与布阵对称（`TUNING` / `word-draw.ts` / `autoplace.ts`，2026-08-12）
@@ -219,14 +213,19 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 |------|----|------|
 | `wordDrawChance` | **0.08** | 每兵槽独立转字概率（英雄随机） |
 | `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
-| `PARTNER_BOOST` | **0.12** | 半对孤儿所需配对字的抽字权重倍率（单字补齐） |
-| `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制配对字 |
+| `PARTNER_BOOST` | **0.12** | 非保底时：半对孤儿所需配对字的抽字权重倍率（软加权） |
+| `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制抽一张配对字 |
+| `PAIR_PITY_FOCUS_MIN_ORPHANS` | **3** | 半对保底聚焦阈值：场上独特单字 ≥ 该数 |
+| `PAIR_PITY_FOCUS_W` | **0.4** | 保底时随机选中的孤儿，其配对字相对权重 |
+| `PAIR_PITY_OTHER_W` | **0.2** | 保底时其余配对字相对权重（孤儿不足 3 时全部用此权） |
 | `wordPityAfter` | **8** | 连续 N 次无字 → 下次强制 1 字 |
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
 | `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（阵位未全开时） |
 | `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（阵位未全开时；在匹配保底之后落定） |
+
+半对保底触发时（`forcePartner`）：只从仍缺的配对字中抽。若场上独特单字 ≥ **3**，随机选一个孤儿，其配对字权重 **0.4**、其余配对字 **0.2**；不足 3 个则全部配对字等权 **0.2**（玩家 / AI 相同，`pickForcedPartnerChar`）。
 
 ### 8.2 匹配口径与软权重（玩家 / AI）
 

@@ -15,10 +15,10 @@ import {
   type GameMap,
 } from './board';
 import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
-import { passiveById } from './passives';
-import { activeById, isPillActiveEffect } from './actives';
+import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
+import { activeById, isPillActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
-import { UNITS, getUnitStat, damage, canMerge, MAX_TIER } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite } from './assets';
 import { getBestWave } from './endless';
@@ -145,6 +145,7 @@ export interface UiState {
   activePopup: number | null; // 点击的主动技能槽下标（CD中点击显示介绍弹窗，定时自动淡出）
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
   aiItemPopup: number | null; // 点击 HUD 右上角 AI 道具图标（aiPickedItems 下标）
+  peachPopup: boolean; // 点击我方 HUD 蟠桃：显示数量与获取途径
   paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
 }
 
@@ -159,13 +160,24 @@ export function hitPauseBtn(x: number, y: number): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-/** HUD 蟠桃图标+数字的大致包围盒（暂停钮右侧），供新手引导高亮定位 */
+/** HUD 蟠桃图标+数字的大致包围盒（暂停钮右侧），供新手引导高亮定位 / 点击弹窗 */
 export function peachHudRect(): { x: number; y: number; w: number; h: number } {
   const pauseR = pauseBtnRect();
   const iconSize = PEACH_UI_ICON_SIZE;
   const x = pauseR.x + pauseR.w + 10;
   const y = HUD_H / 2 - iconSize / 2 - 4;
-  return { x, y, w: iconSize + 6 + 44, h: iconSize + 8 };
+  return { x, y, w: iconSize + 6 + 56, h: iconSize + 8 };
+}
+
+export function hitPeachHud(x: number, y: number): boolean {
+  const r = peachHudRect();
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+/** AI 对手桃数占用的右缘宽度（图标+数字），供道具芯片左移避让 */
+function aiPeachHudWidth(peach: number): number {
+  const digits = String(Math.max(0, Math.floor(peach))).length;
+  return PEACH_UI_ICON_SIZE + 6 + Math.max(18, digits * 14);
 }
 
 // HUD 显示的境界名（由 main 设置）
@@ -353,7 +365,14 @@ function unitStatusItems(u: {
   weakenT: number;
   rangeCutT: number;
   knockdownT: number;
+  buffAtkT?: number;
+  pillAtk?: boolean;
+  pillFrq?: boolean;
 }): { icon: string; color: string }[] {
+  const items: { icon: string; color: string }[] = [];
+  if ((u.buffAtkT ?? 0) > 0) items.push({ icon: '炼', color: '#e8a830' });
+  if (u.pillAtk) items.push({ icon: '丹', color: '#ff6040' });
+  if (u.pillFrq) items.push({ icon: '轮', color: '#ffb830' });
   const order: UnitStatusId[] = ['knockdown', 'stun', 'slow', 'weaken', 'webbind'];
   const on: Record<UnitStatusId, boolean> = {
     knockdown: u.knockdownT > 0,
@@ -362,7 +381,8 @@ function unitStatusItems(u: {
     weaken: u.weakenT > 0,
     webbind: u.rangeCutT > 0,
   };
-  return order.filter((id) => on[id]).map((id) => UNIT_STATUS_META[id]);
+  items.push(...order.filter((id) => on[id]).map((id) => UNIT_STATUS_META[id]));
+  return items;
 }
 
 function monsterStatusItems(m: {
@@ -441,6 +461,12 @@ function formatStatusLine(
   return entries.map((e) => `${e.meta.icon}${e.meta.name} ${formatRemainT(e.remain)}`).join(' · ');
 }
 
+function alchemyBuffLine(buffAtkT: number, buffAtkMul?: number): string | null {
+  if (buffAtkT <= 0) return null;
+  const mul = buffAtkMul ?? 1;
+  return `⚗炼丹 攻击×${mul.toFixed(2)} ·${Math.ceil(buffAtkT)}s`;
+}
+
 /** 单体仙丹/风火轮：信息弹窗用图标条目（不再画在棋盘格角，避免挡等级） */
 type PillBuffEntry = { icon: string; name: string; color: string; label: string };
 
@@ -495,6 +521,7 @@ function battleBuffLines(
   monster?: Monster,
   monsterSide: 'player' | 'ai' = 'player',
   general?: ActiveGeneral,
+  unit?: PlacedUnit,
 ): string[] {
   const lines: string[] = [];
   if (ctx !== 'monster') {
@@ -502,10 +529,13 @@ function battleBuffLines(
     if (b.mods.atkMul > 1.001) lines.push(`💊被动 攻击×${b.mods.atkMul.toFixed(2)}`);
     if (b.mods.frqMul > 1.001) lines.push(`💨被动 攻速×${b.mods.frqMul.toFixed(2)}`);
   }
-  if (ctx === 'general' && general && (general.state.buffAtkT ?? 0) > 0) {
-    const mul = general.state.buffAtkMul ?? 1;
-    const rem = Math.ceil(general.state.buffAtkT ?? 0);
-    lines.push(`⚗炼丹 攻击×${mul.toFixed(2)} ·${rem}s`);
+  if (ctx === 'general' && general) {
+    const line = alchemyBuffLine(general.state.buffAtkT ?? 0, general.state.buffAtkMul);
+    if (line) lines.push(line);
+  }
+  if (ctx === 'unit' && unit) {
+    const line = alchemyBuffLine(unit.buffAtkT ?? 0, unit.buffAtkMul);
+    if (line) lines.push(line);
   }
   if (ctx === 'monster' && monsterSide === 'player') {
     if (b.mods.monsterSpdMul < 0.999) {
@@ -864,6 +894,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
   drawAiItemPopup(ctx, b, ui);
+  drawPeachPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
   drawAutoPlaceDrag(ctx, b);
   drawBanner(ctx, b);
@@ -7458,7 +7489,7 @@ function drawUnitInfoPanel(
   const cfg = UNITS[type];
   const stat = getUnitStat(type, tier);
   const statusEntries = opts?.unit ? unitStatusEntries(opts.unit) : [];
-  const buffLines = opts?.b && opts?.unit ? battleBuffLines(opts.b, 'unit') : [];
+  const buffLines = opts?.b && opts?.unit ? battleBuffLines(opts.b, 'unit', undefined, 'player', undefined, opts.unit) : [];
   const pills = opts?.unit ? pillBuffEntries({ unit: opts.unit }) : [];
   const extraRows = (statusEntries.length > 0 ? 1 : 0) + buffLines.length + pills.length;
   // 有仙丹/风火轮时略加宽，给「风火轮·攻速+40%」图标行留空；底边多留 6px 避免贴边
@@ -7488,7 +7519,7 @@ function drawUnitInfoPanel(
   ctx.fillText(`Lv.${tier}`, px + pw - 12, py + 18);
   // 属性行
   const rows: [string, string][] = [
-    ['攻击力', damage(stat.atk).toFixed(2)],
+    ['攻击力', opts?.b && opts?.unit ? damage(opts.b.unitAtk(opts.unit)).toFixed(2) : damage(stat.atk).toFixed(2)],
     ['攻速', `${stat.frq.toFixed(2)}/s`],
     ['攻击范围', stat.rge.toFixed(1)],
     ['目标数', stat.targets.toFixed(1)],
@@ -8856,6 +8887,8 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
       { x, y: y + drop.dy, s: CELL * 0.72 * drop.scale },
     );
     drawUnitWeapon(ctx, u.type, drawTier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
+    const statuses = unitStatusItems(u);
+    if (statuses.length > 0) drawStatusRow(ctx, x, y - CELL * 0.42, statuses, 8);
   }
   // AI 字牌 / 激活武将（与玩家侧 drawGenerals 同视觉，便于点击查看范围与 tips）
   drawAiGenerals(ctx, b);
@@ -9124,7 +9157,7 @@ type AiItemChip = {
   slot?: { cd: number; cdMax: number; ready: boolean; flash: number };
 };
 
-/** HUD 右上角 AI 道具：上行 2 个主动（大），下行最多 6 个被动（小），右对齐避免与波次重叠 */
+/** HUD 右上角 AI 道具：上行最多 2 个主动（大），下行最多 6 个被动（小）；左侧让出 AI 桃数 */
 function aiItemChipLayout(b: Battle): AiItemChip[] {
   if (b.endless || b.aiPickedItems.length === 0) return [];
   if (b.status !== 'ready' && b.status !== 'playing') return [];
@@ -9132,7 +9165,8 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
   const pasR = 9;
   const actY = HUD_H / 2 - 16;
   const pasY = HUD_H / 2 + 16;
-  const rightX = VIEW_W - 12;
+  const peachW = aiPeachHudWidth(b.aiPeach);
+  const rightX = VIEW_W - 12 - peachW - 8;
   const actGap = actR * 2 + 5;
   const pasGap = pasR * 2 + 3;
   const out: AiItemChip[] = [];
@@ -9142,6 +9176,7 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
     const id = b.aiPickedItems[i]!;
     const act = activeById(id);
     if (act) {
+      if (actIdx >= MAX_EQUIPPED_ACTIVES) continue;
       out.push({
         index: i,
         x: rightX - actR - actIdx * actGap,
@@ -9158,6 +9193,7 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
     }
     const pas = passiveById(id);
     if (pas) {
+      if (pasIdx >= MAX_EQUIPPED_PASSIVES) continue;
       out.push({
         index: i,
         x: rightX - pasR - pasIdx * pasGap,
@@ -9172,6 +9208,26 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
     }
   }
   return out;
+}
+
+function drawAiPeachHud(ctx: CanvasRenderingContext2D, b: Battle) {
+  if (b.endless) return;
+  if (b.status !== 'ready' && b.status !== 'playing') return;
+  const iconSize = PEACH_UI_ICON_SIZE;
+  const text = String(b.aiPeach);
+  ctx.save();
+  ctx.font = 'bold 22px "PingFang SC", sans-serif';
+  const tw = ctx.measureText(text).width;
+  const totalW = iconSize + 6 + tw;
+  const right = VIEW_W - 12;
+  const iconCx = right - totalW + iconSize / 2;
+  const cy = HUD_H / 2;
+  drawPeachIcon(ctx, iconCx, cy, iconSize);
+  ctx.fillStyle = '#7a3b12';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, iconCx + iconSize / 2 + 6, cy);
+  ctx.restore();
 }
 
 /** HUD 右上角 AI 对手道具图标命中（返回 aiPickedItems 下标） */
@@ -9254,6 +9310,15 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(b.peach), peachX + peachIconSize + 6, peachCy);
+  if (ui.peachPopup) {
+    const pr = peachHudRect();
+    ctx.save();
+    ctx.strokeStyle = '#ffe27a';
+    ctx.lineWidth = 2;
+    roundRect(ctx, pr.x - 2, pr.y, pr.w + 4, pr.h, 8);
+    ctx.stroke();
+    ctx.restore();
+  }
   // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
@@ -9264,6 +9329,7 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
   }
   drawAiItemsHud(ctx, b, ui);
+  drawAiPeachHud(ctx, b);
   drawBondHudChip(ctx, b);
 }
 
@@ -9560,6 +9626,51 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   }
   for (const ln of statusLines) {
     ctx.fillStyle = '#a0e8b0';
+    ctx.fillText(ln, x + pad, ty);
+    ty += lineH;
+  }
+  ctx.restore();
+}
+
+// 我方 HUD 蟠桃：当前数量 + 获取途径（点击桃子打开）
+function drawPeachPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
+  if (!ui.peachPopup) return;
+  const w = 320, pad = 16, lineH = 18;
+  const lines = [
+    `当前蟠桃：${b.peach}`,
+    `征兵费用：${b.effectiveSummonCost()}（用桃召募士兵与武将）`,
+    '',
+    '获取途径：',
+    `· 开局赠送 ${ECONOMY.INITIAL_PEACH} 桃（功德可额外加成）`,
+    `· 击杀妖怪：普通 +${ECONOMY.PEACH_PER_KILL} / 精英 +${ECONOMY.PEACH_PER_ELITE} / 小Boss +${ECONOMY.PEACH_PER_MINI_BOSS} / 妖王 +${ECONOMY.PEACH_PER_BOSS}`,
+    `· 唐僧漏怪掉血：+${ECONOMY.PEACH_PER_BLEED}（舍身饲魔）`,
+    '· 被动加成：蟠桃园产桃、聚宝盆击杀多桃、摸金校尉挖地加桃等',
+  ];
+  ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const wrapped: string[] = [];
+  for (const ln of lines) {
+    if (!ln) { wrapped.push(''); continue; }
+    wrapped.push(...wrapText(ctx, ln, w - pad * 2));
+  }
+  const h = 52 + wrapped.length * lineH + 12;
+  const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
+  roundRect(ctx, x, y, w, h, 12);
+  ctx.fillStyle = 'rgba(30,24,18,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = '#e8a060';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = SKILL_TITLE_COLOR;
+  ctx.font = 'bold 18px "PingFang SC", sans-serif';
+  ctx.fillText('蟠桃', x + pad, y + 14);
+  ctx.fillStyle = 'rgba(255,255,255,0.88)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  let ty = y + 44;
+  for (const ln of wrapped) {
+    if (ln === '') { ty += lineH * 0.45; continue; }
     ctx.fillText(ln, x + pad, ty);
     ty += lineH;
   }
