@@ -82,10 +82,31 @@ export async function runVersusSessionAsync(opts: SimRunOpts): Promise<VersusSes
   };
 
   try {
+    // 先让出一帧，确保「模拟中…」按钮/进度条已上屏，再跑可能长达数十秒的同步对局
+    await yieldToUi();
     for (let i = 0; i < games; i++) {
       if (opts.signal?.aborted) break;
       const matchSkill = rollMatchAiSkill(aiSkill, () => sessionRng.next());
-      const r = playVersusMatch(seedBase + i, matchSkill, opts);
+      let r: VersusMatchResult;
+      try {
+        r = playVersusMatch(seedBase + i, matchSkill, opts);
+      } catch (err) {
+        // 单局逻辑异常不应让整个 DevTools 模拟「点了没反应」；记超时并继续
+        console.error(`[DevTools 胜率模拟] 第 ${i + 1} 局失败 seed=${seedBase + i}:`, err);
+        r = {
+          seed: seedBase + i,
+          outcome: 'timeout',
+          wave: 0,
+          frames: 0,
+          simSeconds: 0,
+          playerHp: 0,
+          aiHp: 0,
+          baseAiSkill: matchSkill,
+          matchAiSkill: matchSkill,
+          winStreak: 0,
+          lossStreak: 0,
+        };
+      }
       results.push(r);
       if (r.outcome === 'won') wins++;
       else if (r.outcome === 'lost') losses++;

@@ -352,6 +352,8 @@ export class DevToolsPanel {
   private simAbort: AbortController | null = null;
   private simProgress: SimProgress | null = null;
   private simReport: VersusSessionReport | null = null;
+  /** 最近一次模拟异常文案（render 后仍展示，避免 finally 重建 UI 把错误冲掉） */
+  private simError: string | null = null;
   private simStatusEl: HTMLElement | null = null;
   private simProgressBar: HTMLElement | null = null;
   private simOutcomeCanvas: HTMLCanvasElement | null = null;
@@ -965,11 +967,13 @@ export class DevToolsPanel {
 
     const status = document.createElement('div');
     status.className = 'xy-dt-sim-status';
-    status.textContent = this.simReport
-      ? summarizeReport(this.simReport)
-      : this.simProgress
-        ? summarizeProgress(this.simProgress, AI_TARGET_WINRATE)
-        : `就绪 · 目标胜率约 ${(AI_TARGET_WINRATE * 100).toFixed(0)}% · 默认 AI ${DEFAULT_AI_SKILL}`;
+    status.textContent = this.simError
+      ? `模拟失败：${this.simError}`
+      : this.simReport
+        ? summarizeReport(this.simReport)
+        : this.simProgress
+          ? summarizeProgress(this.simProgress, AI_TARGET_WINRATE)
+          : `就绪 · 目标胜率约 ${(AI_TARGET_WINRATE * 100).toFixed(0)}% · 默认 AI ${DEFAULT_AI_SKILL}`;
     body.appendChild(status);
     this.simStatusEl = status;
 
@@ -1025,7 +1029,9 @@ export class DevToolsPanel {
     if (this.simWaveCanvas) drawWaveHistogram(this.simWaveCanvas, results);
     if (this.simSkillCanvas) drawAiSkillSeries(this.simSkillCanvas, results, skillStart);
     if (this.simLogEl) {
-      if (results.length === 0) {
+      if (this.simError && results.length === 0) {
+        this.simLogEl.textContent = `模拟异常（已中止）\n${this.simError}`;
+      } else if (results.length === 0) {
         this.simLogEl.textContent = '（尚无逐局结果）';
       } else {
         const lines = results.slice(-40).map((r, idx) => {
@@ -1044,6 +1050,7 @@ export class DevToolsPanel {
     this.simRunning = true;
     this.simReport = null;
     this.simProgress = null;
+    this.simError = null;
     this.simAbort?.abort();
     this.simAbort = new AbortController();
     if (this.tab === 'sim') this.renderBody();
@@ -1081,6 +1088,10 @@ export class DevToolsPanel {
       };
       if (this.simStatusEl) this.simStatusEl.textContent = summarizeReport(report);
       this.paintSimCharts();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.simError = msg;
+      console.error('[DevTools 胜率模拟]', err);
     } finally {
       this.simRunning = false;
       this.simAbort = null;

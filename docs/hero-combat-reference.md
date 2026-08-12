@@ -199,6 +199,12 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 - 免疫期内再有怪越线：移除该怪，**不扣血、不给**舍身饲魔蟠桃（防同帧连扣 / 免疫窗刷桃）。
 - AI 唐僧对称（`aiTangsengHurtImmuneT`）。
 
+### 被动「陨石」择时（`yunshi` / `mods.meteor`）
+
+- 每波 `meteorPending` 置位后，**不**在怪刚出口时砸。
+- 待场上最前活怪走过长度 `max(dist) − entranceDist ≥ meteorRadius`（**2**）后再砸最前群（伤害 × `meteorPassiveDmgMul` = **1.4**）。
+- 便于怪叠进半径后再覆盖一波；玩家 / AI 对称。
+
 ---
 
 ## 8. 征兵字/铲、武将匹配与布阵对称（`TUNING` / `word-draw.ts` / `autoplace.ts`，2026-08-12）

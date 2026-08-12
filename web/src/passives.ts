@@ -29,7 +29,7 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
   { id: 'zhaoxian', name: '招贤榜', icon: '贤', cost: 50, desc: '武将字牌掉率 +10%' },
   { id: 'mojin', name: '摸金校尉', icon: '金', cost: 45, desc: '每次用铲子额外 +6 蟠桃' },
   { id: 'luoyangchan', name: '洛阳铲', icon: '铲', cost: 50, desc: '每 45 秒自动获得 1 把铲子' },
-  { id: 'yunshi', name: '陨石', icon: '陨', cost: 65, desc: '每波开始对最前妖怪造成较弱陨石伤害（×1.4）' },
+  { id: 'yunshi', name: '陨石', icon: '陨', cost: 65, desc: '每波待最前活怪走过约 2 格后再砸最前妖怪（×1.4），便于打中一波' },
   { id: 'yuni', name: '淤泥', icon: '泥', cost: 50, desc: '出怪口附近妖怪移速 -18%' },
   { id: 'xianyuan', name: '仙缘幡', icon: '缘', cost: 45, desc: '召唤成本 -1' },
   { id: 'jubaopen', name: '聚宝盆', icon: '盆', cost: 55, desc: '击杀额外 +1 蟠桃' },

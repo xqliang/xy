@@ -206,7 +206,7 @@ export const TUNING = {
   // —— 主动技能数值 ——
   palmPushCells: 6, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
-  meteorRadius: 2, // 主动陨石半径
+  meteorRadius: 2, // 陨石半径；被动「陨石」亦等最前活怪走过 ≥ 该值后再砸
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
   atkBuffMul: 1.4, // 仙丹单体攻击倍率
@@ -780,7 +780,7 @@ interface Modifiers {
   wordRateBonus: number; // 招贤榜：字牌掉率加成
   shovelPeach: number; // 摸金校尉：每次开挖额外蟠桃
   autoShovel: boolean; // 洛阳铲：定期产铲
-  meteor: boolean; // 陨石：每波开始砸最前妖怪
+  meteor: boolean; // 陨石：每波待最前活怪走过 ≥ 半径后再砸（便于砸中一波）
   mud: boolean; // 淤泥：出怪口附近减速
   generalTierDelta: number; // 法宝符：武将首次激活时双字品质阶 +N
 }
@@ -1651,7 +1651,7 @@ export class Battle {
   // 道具与修正器
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   private shovelTimer = 0; // 洛阳铲产铲计时
-  private meteorPending = false; // 本波陨石是否待触发
+  private meteorPending = false; // 本波被动陨石是否待触发（等最前活怪走过 ≥ meteorRadius）
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
   aiWeaponBonuses: WeaponBonuses = {}; // AI 神兵：按 aiSkill 缩放玩家神兵
   pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵碎片
@@ -4034,7 +4034,7 @@ export class Battle {
     const heroCount = this.activeGenerals().length;
     this.heroBossTimer =
       heroCount >= TUNING.heroBossFromCount ? this.rollHeroBossInterval(heroCount) : -1;
-    this.meteorPending = this.mods.meteor; // 本波陨石待触发（等首批怪出现）
+    this.meteorPending = this.mods.meteor; // 本波被动陨石待触发（等最前活怪走过 ≥ meteorRadius）
     this.aiMeteorPending = this.aiMods.meteor;
     // 开波提示（波次号顶部 HUD 已显示，底部只报类型）：BOSS 优先，其次小 Boss/骑兵，否则普通
     if (bossWave) this.message = '⚠ 妖王携护卫来袭！';
@@ -4319,7 +4319,23 @@ export class Battle {
     return true;
   }
 
-  // 陨石：每波开始时砸向最前妖怪（容错保险）。被动「陨石」道具触发，带 mods.meteor 守卫。
+  /**
+   * 被动陨石就绪：场上有活怪，且「走过最长」的活怪已离开口 ≥ meteorRadius（攻击范围）。
+   * 避免刚出怪口就砸（只能打到 1～2 只）；等怪走进射程圈后再砸，便于覆盖一波。
+   */
+  private passiveMeteorReady(
+    monsters: { dist: number }[],
+    entranceDist: number,
+  ): boolean {
+    if (monsters.length === 0) return false;
+    let maxDist = monsters[0]!.dist;
+    for (let i = 1; i < monsters.length; i++) {
+      if (monsters[i]!.dist > maxDist) maxDist = monsters[i]!.dist;
+    }
+    return maxDist - entranceDist >= TUNING.meteorRadius;
+  }
+
+  // 陨石：被动「陨石」道具触发，带 mods.meteor 守卫。
   private castMeteor(): void {
     if (!this.mods.meteor || this.monsters.length === 0) return;
     this.doMeteor(TUNING.meteorPassiveDmgMul);
@@ -4914,7 +4930,7 @@ export class Battle {
       }
     }
     // 3) 战斗：AI 兵 + AI 武将攻击 aiMonsters
-    if (this.aiMeteorPending && this.aiMonsters.length >= 3) {
+    if (this.aiMeteorPending && this.passiveMeteorReady(this.aiMonsters, this.aiEntranceDist)) {
       this.aiMeteorPending = false;
       this.castAiMeteor();
     }
@@ -6162,7 +6178,10 @@ export class Battle {
       }
     }
     this.updateUnits(dt);
-    if (this.meteorPending && this.monsters.length >= 3) { this.meteorPending = false; this.castMeteor(); }
+    if (this.meteorPending && this.passiveMeteorReady(this.monsters, this.entranceDist)) {
+      this.meteorPending = false;
+      this.castMeteor();
+    }
     this.updateMonsterSkills(dt);
     this.updateGenerals(dt);
     this.updateActives(dt);
