@@ -33,8 +33,7 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
 // —— 设置弹窗 —— //
 const SET_PW = 400;
 const SET_PAD = 28;
-const SET_PH_NO_UID = 220;
-const SET_PH_WITH_UID = 260;
+const SET_PH = 220;
 const SET_DAMAGE_TOP = 10;
 const SET_DAMAGE_H = 20;
 const SET_AFTER_DAMAGE = 16;
@@ -45,13 +44,6 @@ const SET_ENABLE_SIZE = 20;
 const SET_ENABLE_GAP = 12;
 const SET_TRACK_H = 16;
 const SET_KNOB = { w: 22, h: 22 };
-const SET_COPY_BTN = { w: 52, h: 28 };
-
-let lastSettingsCopyRect: { x: number; y: number; w: number; h: number } | null = null;
-
-function isDisplayUid(uid: string | null | undefined): uid is string {
-  return typeof uid === 'string' && uid.length > 0 && uid !== 'undefined' && /^\d{8,20}$/.test(uid);
-}
 
 type SettingsLayout = {
   px: number;
@@ -67,13 +59,10 @@ type SettingsLayout = {
   sfxTrack: { x: number; y: number; w: number; h: number };
   musicEnable: { x: number; y: number; w: number; h: number };
   sfxEnable: { x: number; y: number; w: number; h: number };
-  uidY: number;
-  hasUid: boolean;
 };
 
-function settingsLayout(uid: string | null | undefined): SettingsLayout {
-  const hasUid = isDisplayUid(uid);
-  const ph = hasUid ? SET_PH_WITH_UID : SET_PH_NO_UID;
+function settingsLayout(): SettingsLayout {
+  const ph = SET_PH;
   const px = (VIEW_W - SET_PW) / 2;
   const py = (VIEW_H - ph) / 2 - 16;
   const body = py + 58;
@@ -101,8 +90,6 @@ function settingsLayout(uid: string | null | undefined): SettingsLayout {
     sfxTrack: trackAt(sfxRowY),
     musicEnable: enableAt(musicRowY),
     sfxEnable: enableAt(sfxRowY),
-    uidY: py + ph - 30,
-    hasUid,
   };
 }
 
@@ -119,13 +106,13 @@ function settingsKnobRect(track: { x: number; y: number; w: number; h: number },
   };
 }
 
-export function settingsMusicKnobRect(settings: GameSettings, uid: string | null | undefined): { x: number; y: number; w: number; h: number } {
-  const layout = settingsLayout(uid);
+export function settingsMusicKnobRect(settings: GameSettings): { x: number; y: number; w: number; h: number } {
+  const layout = settingsLayout();
   return settingsKnobRect(layout.musicTrack, settings.musicVolume);
 }
 
-export function settingsSfxKnobRect(settings: GameSettings, uid: string | null | undefined): { x: number; y: number; w: number; h: number } {
-  const layout = settingsLayout(uid);
+export function settingsSfxKnobRect(settings: GameSettings): { x: number; y: number; w: number; h: number } {
+  const layout = settingsLayout();
   return settingsKnobRect(layout.sfxTrack, settings.sfxVolume);
 }
 
@@ -136,19 +123,7 @@ export type SettingsHit =
   | { kind: 'toggleSfx' }
   | { kind: 'musicKnob' }
   | { kind: 'sfxKnob' }
-  | { kind: 'copyUid' }
   | null;
-
-function settingsCopyUidRect(ctx: CanvasRenderingContext2D, layout: SettingsLayout, uid: string): { x: number; y: number; w: number; h: number } {
-  ctx.font = '13px "PingFang SC", sans-serif';
-  const labelW = ctx.measureText(`uid: ${uid}`).width;
-  return {
-    x: layout.px + SET_PAD + labelW + 10,
-    y: layout.uidY - SET_COPY_BTN.h / 2,
-    w: SET_COPY_BTN.w,
-    h: SET_COPY_BTN.h,
-  };
-}
 
 function settingsEnableHit(box: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
   return { x: box.x - 6, y: box.y - 6, w: box.w + 12, h: box.h + 12 };
@@ -207,38 +182,16 @@ function drawSettingsVolumeRow(
   drawInkCheckbox(ctx, enableBox, '', enabled, 'none');
 }
 
-function drawSettingsUidRow(ctx: CanvasRenderingContext2D, layout: SettingsLayout, uid: string): void {
-  const x0 = layout.px + SET_PAD;
-  const x1 = layout.px + SET_PW - SET_PAD;
-  ctx.strokeStyle = 'rgba(90,60,30,0.22)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x0, layout.uidY - 22);
-  ctx.lineTo(x1, layout.uidY - 22);
-  ctx.stroke();
-
-  const uidLabel = `uid: ${uid}`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#5a3a12';
-  ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText(uidLabel, x0, layout.uidY);
-  const copyRect = settingsCopyUidRect(ctx, layout, uid);
-  lastSettingsCopyRect = copyRect;
-  drawInkActionButton(ctx, copyRect, '复制', false, 'secondary');
-}
-
-export function settingsHitAt(x: number, y: number, settings: GameSettings, uid: string | null | undefined): SettingsHit {
-  const layout = settingsLayout(uid);
+export function settingsHitAt(x: number, y: number, settings: GameSettings): SettingsHit {
+  const layout = settingsLayout();
   if (inRect(x, y, layout.close)) return { kind: 'close' };
-  if (layout.hasUid && lastSettingsCopyRect && inRect(x, y, lastSettingsCopyRect)) return { kind: 'copyUid' };
   if (inRect(x, y, layout.damageCheck) || inRect(x, y, { x: layout.damageCheck.x, y: layout.damageCheck.y, w: 140, h: 24 })) {
     return { kind: 'toggleDamage' };
   }
-  if (inRect(x, y, settingsMusicKnobRect(settings, uid)) || inRect(x, y, settingsTrackHit(layout.musicTrack))) {
+  if (inRect(x, y, settingsMusicKnobRect(settings)) || inRect(x, y, settingsTrackHit(layout.musicTrack))) {
     return { kind: 'musicKnob' };
   }
-  if (inRect(x, y, settingsSfxKnobRect(settings, uid)) || inRect(x, y, settingsTrackHit(layout.sfxTrack))) {
+  if (inRect(x, y, settingsSfxKnobRect(settings)) || inRect(x, y, settingsTrackHit(layout.sfxTrack))) {
     return { kind: 'sfxKnob' };
   }
   if (inRect(x, y, settingsEnableHit(layout.musicEnable))) return { kind: 'toggleMusic' };
@@ -251,18 +204,18 @@ export function settingsVolumeFromX(trackX: number, trackW: number, knobW: numbe
   return Math.max(0, Math.min(1, (px - trackX - knobW / 2) / (trackW - knobW)));
 }
 
-export function settingsMusicVolumeFromX(px: number, uid: string | null | undefined): number {
-  const layout = settingsLayout(uid);
+export function settingsMusicVolumeFromX(px: number): number {
+  const layout = settingsLayout();
   return settingsVolumeFromX(layout.musicTrack.x, layout.musicTrack.w, SET_KNOB.w, px);
 }
 
-export function settingsSfxVolumeFromX(px: number, uid: string | null | undefined): number {
-  const layout = settingsLayout(uid);
+export function settingsSfxVolumeFromX(px: number): number {
+  const layout = settingsLayout();
   return settingsVolumeFromX(layout.sfxTrack.x, layout.sfxTrack.w, SET_KNOB.w, px);
 }
 
-export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameSettings, uid: string | null | undefined): void {
-  const layout = settingsLayout(uid);
+export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameSettings): void {
+  const layout = settingsLayout();
   drawInkPopupFrame(ctx, layout.px, layout.py, SET_PW, layout.ph, '设置', layout.close);
   drawInkCheckbox(ctx, layout.damageCheck, '显示伤害数字', settings.showDamageNumbers, 'none');
   drawSettingsDivider(ctx, layout);
@@ -273,7 +226,7 @@ export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameS
     '音乐',
     settings.musicEnabled,
     layout.musicTrack,
-    settingsMusicKnobRect(settings, uid),
+    settingsMusicKnobRect(settings),
     settings.musicVolume,
     layout.musicEnable,
   );
@@ -284,12 +237,10 @@ export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameS
     '音效',
     settings.sfxEnabled,
     layout.sfxTrack,
-    settingsSfxKnobRect(settings, uid),
+    settingsSfxKnobRect(settings),
     settings.sfxVolume,
     layout.sfxEnable,
   );
-  if (layout.hasUid && isDisplayUid(uid)) drawSettingsUidRow(ctx, layout, uid);
-  else lastSettingsCopyRect = null;
 }
 
 // —— 获取体力弹窗 —— //

@@ -6,6 +6,7 @@ import { applyServerProfile, loadProfile } from './profile';
 import { loadRank } from './rank';
 import { ensureUserId } from './user-id';
 import { maskUid } from './avatar-catalog';
+import { clampNickname } from './nickname';
 
 const SAVE_TS_KEY = 'dasheng.saveUpdatedAt';
 const KEYS = [
@@ -145,7 +146,7 @@ export async function updateProfile(opts: {
   avatarId?: string;
 }): Promise<boolean> {
   const body: Record<string, unknown> = {};
-  if ('nickname' in opts) body.nickname = opts.nickname;
+  if ('nickname' in opts) body.nickname = opts.nickname != null ? clampNickname(opts.nickname.trim()) || null : null;
   if (opts.avatarId) body.avatarId = opts.avatarId;
   const res = await apiFetch<{
     nickname: string | null;

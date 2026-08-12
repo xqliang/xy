@@ -86,10 +86,11 @@ import {
   profilePopupHitAt,
   applyProfileScrollDrag,
   clampProfileScroll,
-  promptNickname,
   type ProfilePopupState,
   type ProfileScrollDrag,
 } from './profile-popup';
+import { openNicknameEditor, closeNicknameEditor } from './nickname-editor';
+import { clampNickname } from './nickname';
 import { loadAiSkill, recordVersusOutcome, rollMatchAiSkill } from './ai-skill';
 import { loadHeroMatchHistory, recordHeroMatchGame } from './hero-match-history';
 import {
@@ -916,16 +917,28 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     }
     playSfx('click');
     if (hit.kind === 'close') {
+      closeNicknameEditor();
       menuPopup = 'none';
       profilePopup = null;
       profileScrollDrag = null;
       return true;
     }
     if (hit.kind === 'nickname') {
-      const next = promptNickname(profilePopup.nicknameDraft);
-      if (next !== null) {
-        profilePopup.nicknameDraft = next;
+      openNicknameEditor(profilePopup.nicknameDraft, (next) => {
+        if (next !== null && profilePopup) {
+          profilePopup.nicknameDraft = clampNickname(next);
+        }
         scheduleFrame();
+      });
+      return true;
+    }
+    if (hit.kind === 'copyUid') {
+      const uid = loadUserId();
+      if (uid) {
+        void copyUserId(uid).then((ok) => {
+          pushMenuFloatToast(ok ? '复制成功' : '复制失败');
+          scheduleFrame();
+        });
       }
       return true;
     }
@@ -940,6 +953,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       void updateProfile({ avatarId: sel, nickname: nick }).then((ok) => {
         menuToast = ok ? '资料已更新' : '资料同步失败（已保留本地选择）';
         if (ok) {
+          closeNicknameEditor();
           menuPopup = 'none';
           profilePopup = null;
         }
@@ -951,7 +965,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
   }
   if (menuPopup === 'settings') {
     const pop = menuPopupsLazy.get()!;
-    const hit = pop.settingsHitAt(x, y, gameSettings, loadUserId());
+    const hit = pop.settingsHitAt(x, y, gameSettings);
     if (hit === null) return true;
     playSfx('click');
     if (hit.kind === 'close') {
@@ -974,25 +988,15 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       syncAudioFromSettings();
       return true;
     }
-    if (hit.kind === 'copyUid') {
-      const uid = loadUserId();
-      if (uid) {
-        void copyUserId(uid).then((ok) => {
-          menuToast = ok ? 'UID 已复制' : '复制失败';
-          scheduleFrame();
-        });
-      }
-      return true;
-    }
     if (hit.kind === 'musicKnob') {
       menuSliderDrag = 'music';
-      gameSettings = setMusicVolume(gameSettings, pop.settingsMusicVolumeFromX(x, loadUserId()));
+      gameSettings = setMusicVolume(gameSettings, pop.settingsMusicVolumeFromX(x));
       syncAudioFromSettings();
       return true;
     }
     if (hit.kind === 'sfxKnob') {
       menuSliderDrag = 'sfx';
-      gameSettings = setSfxVolume(gameSettings, pop.settingsSfxVolumeFromX(x, loadUserId()));
+      gameSettings = setSfxVolume(gameSettings, pop.settingsSfxVolumeFromX(x));
       syncAudioFromSettings();
       return true;
     }
@@ -1081,9 +1085,8 @@ function handleMenuPopupDrag(x: number): void {
     return;
   }
   if (menuPopup !== 'settings' || !menuSliderDrag) return;
-  const uid = loadUserId();
   const pop = menuPopupsLazy.get()!;
-  const v = menuSliderDrag === 'music' ? pop.settingsMusicVolumeFromX(x, uid) : pop.settingsSfxVolumeFromX(x, uid);
+  const v = menuSliderDrag === 'music' ? pop.settingsMusicVolumeFromX(x) : pop.settingsSfxVolumeFromX(x);
   if (menuSliderDrag === 'music') {
     gameSettings = setMusicVolume(gameSettings, v);
   } else {
@@ -1803,7 +1806,7 @@ function frame(now: number): void {
         avatarArt: art,
       });
     }
-    if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings, loadUserId());
+    if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings);
     else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name);
     else if (menuPopup === 'help') menuHelpLazy.get()!.drawHelpPopup(ctx, helpScrollY);

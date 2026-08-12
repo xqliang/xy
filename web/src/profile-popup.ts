@@ -1,22 +1,15 @@
-// 设置头像弹层：横向卷轴选头像 + 可选昵称。
+// 个人信息弹层：横向卷轴选头像 + 昵称 + UID。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { AVATARS, unlockHint, type AvatarDef } from './avatar-catalog';
 import { loadProfile } from './profile';
+import { drawInkActionButton, roundRect } from './menu-ui';
+import { loadUserId } from './user-id';
+import { clampNickname } from './nickname';
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-const PANEL = { x: 40, y: 160, w: VIEW_W - 80, h: 560 };
+const PANEL = { x: 40, y: 140, w: VIEW_W - 80, h: 600 };
 const CLOSE = { x: PANEL.x + 16, y: PANEL.y + 14, w: 44, h: 44 };
-const CONFIRM = { x: VIEW_W / 2 - 70, y: PANEL.y + PANEL.h - 72, w: 140, h: 48 };
+const CONFIRM = { x: VIEW_W / 2 - 70, y: PANEL.y + PANEL.h - 64, w: 140, h: 48 };
 /** 横向滚动视口 */
 const SCROLL = { x: PANEL.x + 24, y: PANEL.y + 88, w: PANEL.w - 48, h: 196 };
 /** 卡片：上图下文，避免立绘压字 */
@@ -25,6 +18,21 @@ const CELL_H = 168;
 const GAP = 14;
 const NAME_H = 28;
 const IMG_PAD = 8;
+const COPY_BTN = { w: 56, h: 30 };
+
+function nickFieldY(): number {
+  return SCROLL.y + SCROLL.h + 52;
+}
+
+function uidRowY(): number {
+  return nickFieldY() + 44 + 28;
+}
+
+let lastCopyUidRect: { x: number; y: number; w: number; h: number } | null = null;
+
+function isDisplayUid(uid: string | null | undefined): uid is string {
+  return typeof uid === 'string' && uid.length > 0 && uid !== 'undefined' && /^\d{8,20}$/.test(uid);
+}
 
 export interface ProfilePopupState {
   selectedId: string;
@@ -51,7 +59,7 @@ export function createProfilePopupState(): ProfilePopupState {
   );
   const st: ProfilePopupState = {
     selectedId,
-    nicknameDraft: p.nickname || '',
+    nicknameDraft: clampNickname(p.nickname || ''),
     scrollX: 0,
     unlocked,
   };
@@ -68,6 +76,7 @@ export type ProfilePopupHit =
   | { kind: 'confirm' }
   | { kind: 'avatar'; id: string }
   | { kind: 'nickname' }
+  | { kind: 'copyUid' }
   | { kind: 'scroll' }
   | null;
 
@@ -81,7 +90,11 @@ export function profilePopupHitAt(x: number, y: number, st: ProfilePopupState): 
   if (x >= CONFIRM.x && x <= CONFIRM.x + CONFIRM.w && y >= CONFIRM.y && y <= CONFIRM.y + CONFIRM.h) {
     return { kind: 'confirm' };
   }
-  const nickY = SCROLL.y + SCROLL.h + 52;
+  if (lastCopyUidRect && x >= lastCopyUidRect.x && x <= lastCopyUidRect.x + lastCopyUidRect.w
+    && y >= lastCopyUidRect.y && y <= lastCopyUidRect.y + lastCopyUidRect.h) {
+    return { kind: 'copyUid' };
+  }
+  const nickY = nickFieldY();
   if (y >= nickY && y <= nickY + 44 && x >= SCROLL.x && x <= SCROLL.x + SCROLL.w) {
     return { kind: 'nickname' };
   }
@@ -132,7 +145,7 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   ctx.font = 'bold 26px "PingFang SC", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('设置头像', PANEL.x + PANEL.w / 2, PANEL.y + 32);
+  ctx.fillText('个人信息', PANEL.x + PANEL.w / 2, PANEL.y + 32);
 
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 28px sans-serif';
@@ -192,7 +205,7 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   }
 
   // nickname field
-  const nickY = SCROLL.y + SCROLL.h + 52;
+  const nickY = nickFieldY();
   roundRect(ctx, SCROLL.x, nickY, SCROLL.w, 44, 10);
   ctx.fillStyle = '#fff8e8';
   ctx.fill();
@@ -203,7 +216,39 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   ctx.font = '18px "PingFang SC", sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(st.nicknameDraft || '昵称（可选，点此输入）', SCROLL.x + 14, nickY + 22);
+  ctx.fillText(st.nicknameDraft || '昵称（可选，点此修改）', SCROLL.x + 14, nickY + 22);
+
+  // UID row
+  const uid = loadUserId();
+  if (isDisplayUid(uid)) {
+    const uy = uidRowY();
+    const x0 = SCROLL.x;
+    const x1 = SCROLL.x + SCROLL.w;
+    ctx.strokeStyle = 'rgba(90,60,30,0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, uy - 14);
+    ctx.lineTo(x1, uy - 14);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#5a3a12';
+    ctx.font = '14px "PingFang SC", sans-serif';
+    const uidLabel = `UID：${uid}`;
+    ctx.fillText(uidLabel, x0, uy);
+    const labelW = ctx.measureText(uidLabel).width;
+    const copyRect = {
+      x: Math.min(x0 + labelW + 12, x1 - COPY_BTN.w),
+      y: uy - COPY_BTN.h / 2,
+      w: COPY_BTN.w,
+      h: COPY_BTN.h,
+    };
+    lastCopyUidRect = copyRect;
+    drawInkActionButton(ctx, copyRect, '复制', false, 'secondary');
+  } else {
+    lastCopyUidRect = null;
+  }
 
   roundRect(ctx, CONFIRM.x, CONFIRM.y, CONFIRM.w, CONFIRM.h, 12);
   ctx.fillStyle = '#6b4420';
@@ -272,11 +317,4 @@ function drawAvatarCell(
     ctx.textBaseline = 'middle';
     ctx.fillText('🔒', x + CELL_W / 2, imgY + imgH / 2);
   }
-}
-
-export function promptNickname(current: string): string | null {
-  if (typeof window === 'undefined' || typeof window.prompt !== 'function') return current;
-  const v = window.prompt('设置昵称（可留空）', current);
-  if (v === null) return null;
-  return v.trim().slice(0, 32);
 }

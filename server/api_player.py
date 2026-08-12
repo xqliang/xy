@@ -6,6 +6,29 @@ from avatar_catalog import by_id, default_ids, unlockable
 from db import DB
 from httputil import client_ip, read_json, require_uid, send_json
 
+NICKNAME_MAX_WEIGHT = 20
+
+
+def _char_nickname_weight(ch: str) -> int:
+    code = ord(ch)
+    if (
+        0x4E00 <= code <= 0x9FFF
+        or 0x3400 <= code <= 0x4DBF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x3000 <= code <= 0x303F
+        or 0xFF00 <= code <= 0xFFEF
+    ):
+        return 2
+    return 1
+
+
+def _nickname_weight(s: str) -> int:
+    return sum(_char_nickname_weight(ch) for ch in s)
+
+
+def _nickname_ok(s: str) -> bool:
+    return _nickname_weight(s.strip()) <= NICKNAME_MAX_WEIGHT
+
 
 def _player_row(db: DB, uid: str) -> dict[str, Any] | None:
     with db.cursor() as cur:
@@ -163,7 +186,7 @@ def handle_profile(handler, db: DB) -> None:
         if nickname is None or nickname == "":
             updates.append("nickname=NULL")
         else:
-            if not isinstance(nickname, str) or len(nickname) > 32:
+            if not isinstance(nickname, str) or not _nickname_ok(nickname):
                 send_json(handler, 400, {"error": {"code": "bad_nickname", "msg": "nickname too long"}})
                 return
             updates.append("nickname=%s")

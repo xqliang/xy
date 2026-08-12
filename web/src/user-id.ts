@@ -1,4 +1,4 @@
-// 本地用户标识：缺失时自动生成匿名 UID；设置页可展示/复制。
+// 本地用户标识：缺失时自动生成匿名 UID；个人信息页可展示/复制。
 import { storeGet, storeSet } from './storage';
 
 const KEY = 'dasheng.uid';
