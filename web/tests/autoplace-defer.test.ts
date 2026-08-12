@@ -1,7 +1,7 @@
 // web/tests/autoplace-defer.test.ts
 // 验证「挖格后等开格动画播完再落子」的延迟落子机制（玩家侧 autoPlaceApply + updatePendingPlace）。
 import { describe, it, expect } from 'vitest';
-import { Battle, DIG_DUR } from '../src/battle';
+import { Battle, DIG_DUR, PLACE_TIMING } from '../src/battle';
 
 describe('挖格后延迟落子（玩家侧）', () => {
   it('目标格开格动画未完 → 预占延迟；动画(DIG_DUR)结束后由 step/updateFx 真正落下', () => {
@@ -27,6 +27,52 @@ describe('挖格后延迟落子（玩家侧）', () => {
     expect(ok).toBe(true);
     expect(b.units.has(`${cell.c},${cell.r}`)).toBe(true);
     expect(b.pendingPlace.length).toBe(0);
+  });
+
+  it('挖坑动画进行中可并行落其他格；新坑等挖完再落', () => {
+    const b = new Battle(1) as any;
+    const digCell = b.lockedCells().find((c: { c: number; r: number }) => !b.trees.has(`${c.c},${c.r}`))!;
+    const other = b.unlockedCells()[0]!;
+    b.tray = [
+      { kind: 'shovel' },
+      { kind: 'unit', type: 'dao', tier: 1 },
+      { kind: 'unit', type: 'gun', tier: 1 },
+    ];
+    b.autoPlacePlayback = [
+      { kind: 'place', trayIndex: 0, cell: { c: digCell.c, r: digCell.r }, token: { kind: 'shovel' } },
+      { kind: 'place', trayIndex: 1, cell: { c: other.c, r: other.r }, token: { kind: 'unit', type: 'dao', tier: 1 } },
+      { kind: 'place', trayIndex: 2, cell: { c: digCell.c, r: digCell.r }, token: { kind: 'unit', type: 'gun', tier: 1 } },
+    ];
+    b.autoPlacePlaying = true;
+    b.placeDropAnimDepth = 1;
+    b.tickAutoPlacePlayback(0);
+
+    let sawOtherWhileDigging = false;
+    let sawDigPending = false;
+    const horizon = PLACE_TIMING.dragDur + PLACE_TIMING.staggerMax + DIG_DUR + 0.5;
+    for (let t = 0; t < horizon; t += 0.02) {
+      b.step(0.02);
+      const digging = b.digFx.some((d: { c: number; r: number }) => d.c === digCell.c && d.r === digCell.r);
+      const otherBusy =
+        b.units.has(`${other.c},${other.r}`)
+        || b.autoPlaceDragFx.some((d: { c: number; r: number }) => d.c === other.c && d.r === other.r);
+      if (digging && otherBusy) sawOtherWhileDigging = true;
+      if (
+        digging
+        && (
+          b.pendingPlace.some((p: { c: number; r: number }) => p.c === digCell.c && p.r === digCell.r)
+          || b.autoPlaceDragFx.some((d: { c: number; r: number; commit: string }) =>
+            d.c === digCell.c && d.r === digCell.r && d.commit !== 'digShovel')
+        )
+      ) {
+        sawDigPending = true;
+      }
+    }
+    expect(sawOtherWhileDigging).toBe(true);
+    expect(sawDigPending).toBe(true);
+    expect(b.units.has(`${digCell.c},${digCell.r}`)).toBe(true);
+    expect(b.units.get(`${digCell.c},${digCell.r}`)?.type).toBe('gun');
+    expect(b.units.has(`${other.c},${other.r}`)).toBe(true);
   });
 });
 
