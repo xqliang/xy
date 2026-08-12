@@ -321,7 +321,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 |------|-----|------|
 | `monsterHpEarlyFixed` | **[20, 40, 65]** | 波 1–3 绝对血量 |
 | `monsterHpBase` | **10** | 爬坡期静态公式基数 |
-| `monsterHpStep` | **15** | 静态公式每波 +15；爬坡步长基准 |
+| `monsterHpStep` | **13** | 静态公式每波 +13；爬坡步长基准 |
 | `monsterHpNoDiffTo` | 3 | 波 1–3 用 EarlyFixed |
 | `monsterHpRampMul` | **2** | 爬坡：`step×2 + (wave−rampFrom)` |
 | `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
@@ -331,7 +331,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | `MONSTER_HP_FROM_WAVE` | 2 |
 | `MONSTER_HP_KILL_SEC` | 3 |
 
-例（目标境界 1.5、空板）：波 1–3 = 20/40/65；波 4 maxStep=`15×2+(4−4)=30` → min(105, 65+30)=95；波 5 maxStep=31… 直至追上 target。
+例（目标境界 1.5、空板）：波 1–3 = 20/40/65；波 4 maxStep=`13×2+(4−4)=26` → min(93, 65+26)=91；波 5 maxStep=27… 直至追上 target。
 
 ### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
 

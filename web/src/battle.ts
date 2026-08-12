@@ -101,7 +101,7 @@ export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
   monsterHpBase: 10, // 第 n 波静态公式 HP = base + step*n（爬坡期目标用）
-  monsterHpStep: 15,
+  monsterHpStep: 13,
   monsterHpNoDiffTo: 3, // 波 1–3 用 monsterHpEarlyFixed；其后朝目标血量爬坡
   /** 前 monsterHpNoDiffTo 波绝对血量（不含境界）；爬坡起点取最后一档 */
   monsterHpEarlyFixed: [20, 40, 65],
