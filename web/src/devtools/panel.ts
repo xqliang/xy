@@ -1,9 +1,15 @@
 import { formatDiffValue } from './clone';
 import {
   TUNABLE_BAGS,
-  TUNING_ATTACK_KEYS,
-  TUNING_MONSTER_KEYS,
-  TUNING_SYSTEM_KEYS,
+  TUNING_SKILL_KEYS,
+  TUNING_MONSTER_WAVE_KEYS,
+  TUNING_MONSTER_ELITE_KEYS,
+  TUNING_MONSTER_SKILL_KEYS,
+  TUNING_SUMMON_KEYS,
+  TUNING_AI_KEYS,
+  ECONOMY_LIVE_PEACH_KEYS,
+  ECONOMY_START_KEYS,
+  ECONOMY_REFERENCE_KEYS,
   allDiffs,
   exportChangedConfig,
   exportDefaultsConfig,
@@ -82,9 +88,9 @@ const ROOT_ID = 'xy-devtools-root';
 const TABS: { id: DevTab; label: string }[] = [
   { id: 'user', label: '用户' },
   { id: 'preview', label: '预览' },
-  { id: 'attack', label: '攻击' },
-  { id: 'monster', label: '怪物' },
-  { id: 'system', label: '系统' },
+  { id: 'attack', label: '武将技能' },
+  { id: 'monster', label: '出怪承压' },
+  { id: 'system', label: '征兵AI' },
   { id: 'dps', label: '输出对比' },
   { id: 'sim', label: '胜率模拟' },
   { id: 'diff', label: 'Diff' },
@@ -310,6 +316,14 @@ function objectFields(
         onEdited?.();
       });
       wrap.appendChild(fieldRow(key, input));
+    } else if (Array.isArray(val) && val.every((x) => typeof x === 'number')) {
+      const arr = val as number[];
+      arr.forEach((n, i) => {
+        wrap.appendChild(fieldRow(`${key}[${i}]`, numInput(n, (next) => {
+          arr[i] = next;
+          onEdited?.();
+        }), String(n)));
+      });
     }
   }
   return wrap;
@@ -731,32 +745,29 @@ export class DevToolsPanel {
     body.appendChild(section('经济速览'));
     const eco = document.createElement('div');
     eco.className = 'xy-dt-card';
-    eco.textContent = `开局桃 ${ECONOMY.INITIAL_PEACH} · 击杀 ${ECONOMY.PEACH_PER_KILL}/${ECONOMY.PEACH_PER_ELITE}/${ECONOMY.PEACH_PER_MINI_BOSS}/${ECONOMY.PEACH_PER_BOSS} · 怪基 ${ECONOMY.MONSTER_BASE}+n · 唐僧血 ${ECONOMY.TANGSENG_INITIAL_HP}`;
+    eco.textContent = `开局桃 ${ECONOMY.INITIAL_PEACH} · 击杀 ${ECONOMY.PEACH_PER_KILL}/${ECONOMY.PEACH_PER_ELITE}/${ECONOMY.PEACH_PER_MINI_BOSS}/${ECONOMY.PEACH_PER_BOSS} · 征兵成本 ${TUNING.summonCostStart}+${TUNING.summonCostStep}/次 · 唐僧血 ${ECONOMY.TANGSENG_INITIAL_HP}`;
     body.appendChild(eco);
   }
 
   private renderAttack(body: HTMLElement): void {
     const hint = document.createElement('p');
     hint.className = 'xy-dt-hint';
-    hint.textContent = '攻击相关：武将属性 / 大招倍率 / 主动 CD / 神兵加成 / 兵器基础。改完即时生效（已开对局需重开或等下一波公式读取）。';
+    hint.textContent = '武将 / 兵器 / 神兵 / 主动·被动价格 / 大招与主动倍率。每项只出现一次。改完即时生效（已开对局建议重开）。';
     body.appendChild(hint);
     const actions = document.createElement('div');
     actions.className = 'xy-dt-actions';
-    for (const id of ['generalTuning', 'weaponTuning', 'generals', 'actives', 'units', 'tuning'] as TunableBagId[]) {
+    for (const id of ['generalTuning', 'weaponTuning', 'generals', 'units', 'actives', 'passives', 'tuning'] as TunableBagId[]) {
       actions.appendChild(btn(`重置 ${id}`, () => { resetBag(id); this.renderBody(); }));
     }
     body.appendChild(actions);
 
-    body.appendChild(section('GENERAL_TUNING'));
+    body.appendChild(section('武将全局 GENERAL_TUNING'));
     body.appendChild(objectFields(GENERAL_TUNING as unknown as Record<string, unknown>));
 
-    body.appendChild(section('WEAPON_TUNING'));
+    body.appendChild(section('神兵 WEAPON_TUNING'));
     body.appendChild(objectFields(WEAPON_TUNING as unknown as Record<string, unknown>));
 
-    body.appendChild(section('TUNING · 攻击/控制倍率'));
-    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_ATTACK_KEYS.has(k)));
-
-    body.appendChild(section('GENERALS（逐将）'));
+    body.appendChild(section('武将逐条 GENERALS'));
     for (let i = 0; i < GENERALS.length; i++) {
       const g = GENERALS[i]!;
       body.appendChild(section(`${g.name} (${g.id})`));
@@ -765,7 +776,15 @@ export class DevToolsPanel {
       )));
     }
 
-    body.appendChild(section('ACTIVE_SKILLS CD / cost'));
+    body.appendChild(section('兵器 UNITS'));
+    for (const type of Object.keys(UNITS) as UnitType[]) {
+      body.appendChild(section(`${UNITS[type].name} (${type})`));
+      body.appendChild(objectFields(UNITS[type] as unknown as Record<string, unknown>, (k) => (
+        ['baseAtk', 'baseFrq', 'rge', 'targets'].includes(k)
+      )));
+    }
+
+    body.appendChild(section('主动技能 ACTIVE（CD / 价格 / 下架）'));
     for (const a of ACTIVE_SKILLS) {
       body.appendChild(section(`${a.name} (${a.id})`));
       body.appendChild(objectFields(a as unknown as Record<string, unknown>, (k) => (
@@ -773,75 +792,86 @@ export class DevToolsPanel {
       )));
     }
 
-    body.appendChild(section('UNITS'));
-    for (const type of Object.keys(UNITS) as UnitType[]) {
-      body.appendChild(section(`${UNITS[type].name} (${type})`));
-      body.appendChild(objectFields(UNITS[type] as unknown as Record<string, unknown>, (k) => (
-        ['baseAtk', 'baseFrq', 'rge', 'targets'].includes(k)
-      )));
-    }
-  }
-
-  private renderMonster(body: HTMLElement): void {
-    const hint = document.createElement('p');
-    hint.className = 'xy-dt-hint';
-    hint.textContent = '怪物血量 / 前几波数量 / 承压比 / 精英 / 掉桃。';
-    body.appendChild(hint);
-    const actions = document.createElement('div');
-    actions.className = 'xy-dt-actions';
-    actions.appendChild(btn('重置 TUNING', () => { resetBag('tuning'); this.renderBody(); }));
-    actions.appendChild(btn('重置 BOARD_POWER', () => { resetBag('boardPower'); this.renderBody(); }));
-    actions.appendChild(btn('重置 ECONOMY 掉桃', () => { resetBag('economy'); this.renderBody(); }));
-    body.appendChild(actions);
-
-    body.appendChild(section('掉桃 ECONOMY'));
-    body.appendChild(objectFields(ECONOMY as unknown as Record<string, unknown>, (k) => k.startsWith('PEACH_') || k === 'MONSTER_BASE'));
-
-    body.appendChild(section('承压 BOARD_POWER'));
-    body.appendChild(objectFields(BOARD_POWER as unknown as Record<string, unknown>));
-
-    body.appendChild(section('TUNING · 怪物'));
-    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_KEYS.has(k)));
-  }
-
-  private renderSystem(body: HTMLElement): void {
-    const hint = document.createElement('p');
-    hint.className = 'xy-dt-hint';
-    hint.textContent = '波次间隔、征兵保底、布阵间隔、蟠桃园、经济开局等。';
-    body.appendChild(hint);
-    const actions = document.createElement('div');
-    actions.className = 'xy-dt-actions';
-    for (const id of ['tuning', 'economy', 'placeTiming', 'peachTree', 'aiTiming', 'passives'] as TunableBagId[]) {
-      actions.appendChild(btn(`重置 ${id}`, () => { resetBag(id); this.renderBody(); }));
-    }
-    body.appendChild(actions);
-
-    body.appendChild(section('ECONOMY'));
-    body.appendChild(objectFields(ECONOMY as unknown as Record<string, unknown>));
-
-    body.appendChild(section('PLACE_TIMING（自动布置间隔）'));
-    body.appendChild(objectFields(PLACE_TIMING as unknown as Record<string, unknown>));
-
-    body.appendChild(section('AI_TIMING'));
-    body.appendChild(objectFields(AI_TIMING as unknown as Record<string, unknown>));
-
-    body.appendChild(section('PEACH_TREE'));
-    body.appendChild(fieldRow('maxLevel', numInput(PEACH_TREE.maxLevel, (n) => { PEACH_TREE.maxLevel = Math.max(1, Math.floor(n)); })));
-    body.appendChild(fieldRow('plantInterval', numInput(PEACH_TREE.plantInterval, (n) => { PEACH_TREE.plantInterval = Math.max(1, n); })));
-    PEACH_TREE.intervals.forEach((iv, i) => {
-      body.appendChild(fieldRow(`intervals[${i}] (Lv${i + 1})`, numInput(iv, (n) => { PEACH_TREE.intervals[i] = n; })));
-    });
-
-    body.appendChild(section('TUNING · 系统'));
-    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_SYSTEM_KEYS.has(k)));
-
-    body.appendChild(section('PASSIVE_SKILLS cost'));
+    body.appendChild(section('被动技能 PASSIVE（价格 / 下架）'));
     for (const p of PASSIVE_SKILLS) {
       body.appendChild(section(`${p.name} (${p.id})`));
       body.appendChild(objectFields(p as unknown as Record<string, unknown>, (k) => (
         ['cost', 'disabled'].includes(k)
       )));
     }
+
+    body.appendChild(section('TUNING · 主动与大招倍率'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_SKILL_KEYS.has(k)));
+  }
+
+  private renderMonster(body: HTMLElement): void {
+    const hint = document.createElement('p');
+    hint.className = 'xy-dt-hint';
+    hint.textContent = '出怪血量波次、精英/Boss、怪物技能、承压比、击杀掉桃。SPAWN_INTERVAL_MIN（BOARD_POWER）与 spawnIntervalMin（TUNING）不同源：实战读后者。';
+    body.appendChild(hint);
+    const actions = document.createElement('div');
+    actions.className = 'xy-dt-actions';
+    actions.appendChild(btn('重置 TUNING', () => { resetBag('tuning'); this.renderBody(); }));
+    actions.appendChild(btn('重置 BOARD_POWER', () => { resetBag('boardPower'); this.renderBody(); }));
+    actions.appendChild(btn('重置 ECONOMY', () => { resetBag('economy'); this.renderBody(); }));
+    body.appendChild(actions);
+
+    body.appendChild(section('TUNING · 血量 / 波次 / 移速'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_WAVE_KEYS.has(k)));
+
+    body.appendChild(section('TUNING · 精英 / Boss / 骑兵 / 引妖王'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_ELITE_KEYS.has(k)));
+
+    body.appendChild(section('TUNING · 怪物技能与控制'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_SKILL_KEYS.has(k)));
+
+    body.appendChild(section('承压 BOARD_POWER'));
+    body.appendChild(objectFields(BOARD_POWER as unknown as Record<string, unknown>));
+
+    body.appendChild(section('掉桃（实战）'));
+    body.appendChild(objectFields(ECONOMY as unknown as Record<string, unknown>, (k) => ECONOMY_LIVE_PEACH_KEYS.has(k)));
+  }
+
+  private renderSystem(body: HTMLElement): void {
+    const hint = document.createElement('p');
+    hint.className = 'xy-dt-hint';
+    hint.textContent = '征兵成本与保底、蟠桃园、布阵节奏、AI。实战征兵读 TUNING.summonCost*，不是 ECONOMY.PEACH_COST_*。';
+    body.appendChild(hint);
+    const actions = document.createElement('div');
+    actions.className = 'xy-dt-actions';
+    for (const id of ['tuning', 'economy', 'placeTiming', 'peachTree', 'aiTiming'] as TunableBagId[]) {
+      actions.appendChild(btn(`重置 ${id}`, () => { resetBag(id); this.renderBody(); }));
+    }
+    body.appendChild(actions);
+
+    body.appendChild(section('ECONOMY · 开局'));
+    body.appendChild(objectFields(ECONOMY as unknown as Record<string, unknown>, (k) => ECONOMY_START_KEYS.has(k)));
+
+    const refNote = document.createElement('p');
+    refNote.className = 'xy-dt-hint';
+    refNote.textContent = '以下为 game-core 参考曲线，改了也不会进实战：出怪基数硬编码 10+n−1；征兵成本用 TUNING.summonCost*。';
+    body.appendChild(section('ECONOMY · 未接线（仅参考）'));
+    body.appendChild(refNote);
+    body.appendChild(objectFields(ECONOMY as unknown as Record<string, unknown>, (k) => ECONOMY_REFERENCE_KEYS.has(k)));
+
+    body.appendChild(section('TUNING · 征兵与保底'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_SUMMON_KEYS.has(k)));
+
+    body.appendChild(section('蟠桃园 PEACH_TREE'));
+    body.appendChild(fieldRow('maxLevel', numInput(PEACH_TREE.maxLevel, (n) => { PEACH_TREE.maxLevel = Math.max(1, Math.floor(n)); })));
+    body.appendChild(fieldRow('plantInterval', numInput(PEACH_TREE.plantInterval, (n) => { PEACH_TREE.plantInterval = Math.max(1, n); })));
+    PEACH_TREE.intervals.forEach((iv, i) => {
+      body.appendChild(fieldRow(`intervals[${i}] (Lv${i + 1})`, numInput(iv, (n) => { PEACH_TREE.intervals[i] = n; })));
+    });
+
+    body.appendChild(section('布阵间隔 PLACE_TIMING'));
+    body.appendChild(objectFields(PLACE_TIMING as unknown as Record<string, unknown>));
+
+    body.appendChild(section('AI 调位间隔 AI_TIMING'));
+    body.appendChild(objectFields(AI_TIMING as unknown as Record<string, unknown>));
+
+    body.appendChild(section('TUNING · AI 部署 / 清场 / 择时'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_AI_KEYS.has(k)));
   }
 
   private renderDps(body: HTMLElement): void {

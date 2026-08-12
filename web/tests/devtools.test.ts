@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { ECONOMY } from '@core';
 import { TUNING } from '../src/battle';
-import { allDiffs, exportChangedConfig, exportLiveConfig, resetAllBags, resetBag } from '../src/devtools/bags';
+import {
+  ECONOMY_LIVE_PEACH_KEYS,
+  ECONOMY_REFERENCE_KEYS,
+  ECONOMY_START_KEYS,
+  TUNING_AI_KEYS,
+  TUNING_MONSTER_KEYS,
+  TUNING_SKILL_KEYS,
+  TUNING_SUMMON_KEYS,
+  allDiffs,
+  allTuningFilterKeys,
+  exportChangedConfig,
+  exportLiveConfig,
+  resetAllBags,
+  resetBag,
+} from '../src/devtools/bags';
 import { collectDiffs, deepClone } from '../src/devtools/clone';
 import { computeHeroDps, computeUnitDps, computeWeaponDps } from '../src/devtools/dps';
 import { paramLabel, PARAM_ZH } from '../src/devtools/labels';
@@ -69,5 +83,34 @@ describe('devtools bags', () => {
     expect(PARAM_ZH.monsterHpBase).toBeTruthy();
     expect(paramLabel('monsterHpBase')).toContain('怪物血量');
     expect(paramLabel('monsterHpBase')).toContain('monsterHpBase');
+  });
+
+  it('TUNING 功能分组互斥且覆盖全部字段', () => {
+    const groups = [TUNING_MONSTER_KEYS, TUNING_SKILL_KEYS, TUNING_SUMMON_KEYS, TUNING_AI_KEYS];
+    const seen = new Set<string>();
+    for (const g of groups) {
+      for (const k of g) {
+        expect(seen.has(k), `重复键 ${k}`).toBe(false);
+        seen.add(k);
+      }
+    }
+    const liveKeys = Object.keys(TUNING);
+    const filtered = allTuningFilterKeys();
+    for (const k of liveKeys) {
+      expect(filtered.has(k), `TUNING.${k} 未进任何分组`).toBe(true);
+    }
+    for (const k of filtered) {
+      expect(liveKeys.includes(k), `分组含未知键 ${k}`).toBe(true);
+    }
+  });
+
+  it('ECONOMY 实战/开局/参考键互斥且覆盖全部', () => {
+    const all = new Set([...ECONOMY_LIVE_PEACH_KEYS, ...ECONOMY_START_KEYS, ...ECONOMY_REFERENCE_KEYS]);
+    expect(all.size).toBe(
+      ECONOMY_LIVE_PEACH_KEYS.size + ECONOMY_START_KEYS.size + ECONOMY_REFERENCE_KEYS.size,
+    );
+    for (const k of Object.keys(ECONOMY)) {
+      expect(all.has(k), `ECONOMY.${k} 未分类`).toBe(true);
+    }
   });
 });

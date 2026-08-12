@@ -100,9 +100,19 @@ export function exportChangedConfig(): Record<string, Record<string, { from: unk
   return out;
 }
 
-/** TUNING 字段分组（怪物 / 系统），便于 Tab 筛选 */
-export const TUNING_MONSTER_KEYS = new Set([
-  'monsterSpd', 'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMul',
+// —— TUNING 按功能互斥分组（每键只出现在一处，便于 Tab 筛选）——
+
+/** 出怪：血量 / 波次数量 / 移速危险 */
+export const TUNING_MONSTER_WAVE_KEYS = new Set([
+  'monsterSpd', 'dangerRemaining',
+  'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMul',
+  'lateWaveFrom', 'lateWaveExtraPerWave', 'earlyWaveTo', 'earlyWaveReduce',
+  'wave1Bonus', 'minWaveMonsters', 'spawnInterval', 'spawnIntervalMin',
+  'endlessWavesPerCycle', 'endlessCycleStep',
+]);
+
+/** 出怪：妖王 / 骑兵 / 精英 / 小 Boss / 双雄引妖王 */
+export const TUNING_MONSTER_ELITE_KEYS = new Set([
   'bossFirstSegLo', 'bossFirstSegHi', 'bossFirstSegMin', 'bossFirstSegMax',
   'bossSegMin', 'bossSegMax', 'bossHpMul', 'bossHpMulEarly', 'bossSpdMul',
   'bossHpRampWaves', 'bossEscortMin', 'bossEscortMax', 'bossEscortHpShare', 'bossEscortSpacing',
@@ -110,40 +120,30 @@ export const TUNING_MONSTER_KEYS = new Set([
   'cavalryRatioRampLoWave', 'cavalryRatioRampHiWave', 'cavalryRatioRampStart', 'cavalryRatioRampEnd',
   'cavalryRatioLateLo', 'cavalryRatioLateHi',
   'cavalrySpdMul', 'cavalryHpMul',
-  'lateWaveFrom', 'lateWaveExtraPerWave', 'earlyWaveTo', 'earlyWaveReduce',
-  'wave1Bonus', 'minWaveMonsters', 'spawnInterval', 'spawnIntervalMin',
   'eliteFromWave', 'eliteChance', 'eliteMinGap', 'eliteHpMul',
-  'skillRadius', 'skillTargetMin', 'skillTargetMax', 'skillInterval', 'skillFirstDelay',
-  'stunDur', 'slowDur', 'slowCooldownMul', 'weakenDur', 'weakenAtkMul',
-  'webbindDur', 'webbindRangeCut', 'debuffImmuneDur',
   'miniBossFromWave', 'miniBossChance', 'miniBossHpMul', 'miniBossSpdMul',
   'miniBossRadius', 'miniBossInterval', 'miniBossFirstDelay',
-  'knockdownDur', 'hasteDur', 'hasteSpdMul', 'healPct',
-  'dangerRemaining', 'endlessWavesPerCycle', 'endlessCycleStep',
   'heroBossFromCount', 'heroBossIntervalMin', 'heroBossIntervalMaxBase',
   'heroBossIntervalShrinkCap', 'heroBossMaxPerWave',
 ]);
 
-export const TUNING_SYSTEM_KEYS = new Set([
-  'summonCostStart', 'summonCostStep', 'summonDraws',
-  'shovelDrawChance', 'shovelPityAfter', 'wordDrawChance', 'wordPityAfter', 'pairPityAfter',
-  'earlyWordCapWave', 'earlyWordCap', 'earlyWordGuaranteeWave', 'earlyWordGuarantee',
-  'earlyShovelWave', 'earlyShovelMin', 'earlyShovelMax',
-  'summonMaxPerKey', 'summonMaxPerKeyAllOpen', 'traySize', 'initialShovels', 'initialOpenSlots',
-  'aiDpsBase', 'aiDpsPerWave', 'aiClearChargeTime', 'aiClearRadius', 'aiClearDmgMul',
-  'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
-  'atkBuffMul', 'frqBuffMul', 'freezeStunDur',
-  'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
-  'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
-  'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',
-  'heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur',
-  'heroBuffAtkMulMain', 'heroBuffAtkMulTransit', 'heroBuffDurMain', 'heroBuffDurTransit',
-  'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
-  'rangeTolerance', 'aiDeployBase', 'aiDeployPerWave', 'aiDeployInterval',
-  'waveGapSec',
+/** 出怪：怪物技能与对兵器控制 */
+export const TUNING_MONSTER_SKILL_KEYS = new Set([
+  'skillRadius', 'skillTargetMin', 'skillTargetMax', 'skillInterval', 'skillFirstDelay',
+  'stunDur', 'slowDur', 'slowCooldownMul', 'weakenDur', 'weakenAtkMul',
+  'webbindDur', 'webbindRangeCut', 'debuffImmuneDur',
+  'knockdownDur', 'hasteDur', 'hasteSpdMul', 'healPct',
 ]);
 
-export const TUNING_ATTACK_KEYS = new Set([
+/** 怪物 Tab：上述三组并集 */
+export const TUNING_MONSTER_KEYS = new Set([
+  ...TUNING_MONSTER_WAVE_KEYS,
+  ...TUNING_MONSTER_ELITE_KEYS,
+  ...TUNING_MONSTER_SKILL_KEYS,
+]);
+
+/** 武将技能 Tab：主动技能数值 + 武将大招分档 + 命中容差 */
+export const TUNING_SKILL_KEYS = new Set([
   'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
   'atkBuffMul', 'frqBuffMul', 'freezeStunDur',
   'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
@@ -154,3 +154,66 @@ export const TUNING_ATTACK_KEYS = new Set([
   'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
   'rangeTolerance',
 ]);
+
+/** @deprecated 用 TUNING_SKILL_KEYS；保留别名以免外部旧引用断裂 */
+export const TUNING_ATTACK_KEYS = TUNING_SKILL_KEYS;
+
+/** 征兵 AI Tab：征兵成本 / 字铲保底 / 候选区 */
+export const TUNING_SUMMON_KEYS = new Set([
+  'summonCostStart', 'summonCostStep', 'summonDraws',
+  'shovelDrawChance', 'shovelPityAfter', 'wordDrawChance', 'wordPityAfter', 'pairPityAfter',
+  'earlyWordCapWave', 'earlyWordCap', 'earlyWordGuaranteeWave', 'earlyWordGuarantee',
+  'earlyShovelWave', 'earlyShovelMin', 'earlyShovelMax',
+  'summonMaxPerKey', 'summonMaxPerKeyAllOpen', 'traySize', 'initialShovels', 'initialOpenSlots',
+  'waveGapSec',
+]);
+
+/** 征兵 AI Tab：AI 部署 / 清场 / 主动择时 */
+export const TUNING_AI_KEYS = new Set([
+  'aiDpsBase', 'aiDpsPerWave',
+  'aiClearChargeTime', 'aiClearRadius', 'aiClearDmgMul',
+  'aiDeployBase', 'aiDeployPerWave', 'aiDeployInterval',
+  'aiOffensiveActiveMinDist', 'aiOffensiveActiveDelayMax',
+]);
+
+/** @deprecated 旧「系统」并集；现已拆成 SUMMON + AI，且不再含技能键 */
+export const TUNING_SYSTEM_KEYS = new Set([
+  ...TUNING_SUMMON_KEYS,
+  ...TUNING_AI_KEYS,
+]);
+
+/** 实战会读的掉桃键（击杀 / 漏怪补偿） */
+export const ECONOMY_LIVE_PEACH_KEYS = new Set([
+  'PEACH_PER_KILL',
+  'PEACH_PER_ELITE',
+  'PEACH_PER_MINI_BOSS',
+  'PEACH_PER_BOSS',
+  'PEACH_PER_BLEED',
+]);
+
+/** 开局经济（征兵 Tab） */
+export const ECONOMY_START_KEYS = new Set([
+  'INITIAL_PEACH',
+  'TANGSENG_INITIAL_HP',
+]);
+
+/**
+ * 仅供 game-core 参考曲线 / 单测；实战征兵用 TUNING.summonCost*，
+ * 出怪基数用 monstersInWave 硬编码，改这些不会改对局。
+ */
+export const ECONOMY_REFERENCE_KEYS = new Set([
+  'MONSTER_BASE',
+  'PEACH_COST_BASE',
+  'PEACH_COST_STEP',
+  'REMAINING_INTERCEPT',
+]);
+
+/** DevTools 筛选用到的全部 TUNING 键（应覆盖 TUNING 全部字段） */
+export function allTuningFilterKeys(): Set<string> {
+  return new Set([
+    ...TUNING_MONSTER_KEYS,
+    ...TUNING_SKILL_KEYS,
+    ...TUNING_SUMMON_KEYS,
+    ...TUNING_AI_KEYS,
+  ]);
+}
