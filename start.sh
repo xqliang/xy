@@ -420,10 +420,15 @@ systemctl enable --now xy-web.service
 systemctl enable --now xy-backup.timer
 systemctl restart xy-web.service
 echo '✅ xy-web restarted'
-systemctl --no-pager --full status xy-web.service | head -n 20 || true
-# 冒烟：API 必须不是 404
-api_code=\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'X-Uid: 12345678' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8082/api/player/login || echo 000)
+# 等进程完成 migrate/listen，再冒烟（立刻 curl 易得 000）
+api_code=000
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 0.5
+  api_code=\$(curl -s -m 3 -o /dev/null -w '%{http_code}' -H 'X-Uid: 12345678' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8082/api/player/login || echo 000)
+  if [[ \"\$api_code\" == \"200\" ]]; then break; fi
+done
 echo \"API login HTTP \$api_code\"
+systemctl --no-pager --full status xy-web.service | head -n 20 || true
 if [[ \"\$api_code\" != \"200\" ]]; then
   echo '⚠️  API 未就绪，最近日志：'
   journalctl -u xy-web -n 40 --no-pager || true
