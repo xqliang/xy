@@ -109,8 +109,6 @@ export const TUNING_MONSTER_KEYS = new Set([
   'cavalryFromWave', 'cavalryWaveChance', 'cavalryRatioBase', 'cavalryRatioWaveBonusCap',
   'cavalryRatioWaveDiv', 'cavalryRatioMaxSpread', 'cavalryRatioCap', 'cavalrySpdMul', 'cavalryHpMul',
   'lateWaveFrom', 'lateWaveExtraPerWave', 'earlyWaveTo', 'earlyWaveReduce',
-  'earlyWaveHpStrongTo', 'earlyWaveHpStrongMul', 'earlyWaveHpMul4',
-  'earlyWaveHpTo', 'earlyWaveHpMul', 'earlyWaveHpMul6', 'earlyWaveHpMul7',
   'wave1Bonus', 'minWaveMonsters', 'spawnInterval', 'spawnIntervalMin',
   'eliteFromWave', 'eliteChance', 'eliteMinGap', 'eliteHpMul',
   'skillRadius', 'skillTargetMin', 'skillTargetMax', 'skillInterval', 'skillFirstDelay',

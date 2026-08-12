@@ -220,13 +220,13 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ## 9. 波次压力与移速（`TUNING` / `board-power.ts`，2026-08-12）
 
-**移速固定**：普通妖基础移速恒为 `TUNING.monsterSpd`（0.6 格/s），**不**随境界、分圈、波次 >10 或 `effectiveDifficulty` 升高。Boss/骑兵/小 Boss 仍用各自倍率（相对此固定基准）；被动蛛网/淤泥、技能疾风/减速照常叠加。
+**移速固定**：普通妖基础移速恒为 `TUNING.monsterSpd`（0.6 格/s），**不**随境界、分圈、波次 >10 或 `effectiveDifficulty` 升高。Boss/小 Boss 仍用各自倍率；**骑兵怪**移速 × `cavalrySpdMul`（**1.35**）；被动蛛网/淤泥、技能疾风/减速照常叠加。
 
 **后期加压只走两条**（第 `PRESSURE_FROM_WAVE` 波起，默认 6）：
 
 | 机制 | 说明 |
 |------|------|
-| **小怪血量（波 ≥2）** | `monsterHpFromBoardPower`：`max(静态公式, 最优 DPS × MONSTER_HP_KILL_SEC × 压力比)`，再乘境界/前期软血/波>10；空板仍用静态保底 |
+| **小怪血量（波 ≥2）** | `monsterHpFromBoardPower`：`max(静态公式, 最优 DPS × MONSTER_HP_KILL_SEC × 压力比)`，再乘境界/波>10；空板仍用静态保底 |
 | **出怪总量** | `planWavePressure`：按战场最优 DPS × 压力比（60%→90%）规划本波小怪总血预算，数量不低于 `monstersInWave(wave)`（10+n−1） |
 | **同批叠怪** | `spawnBatchCap(wave)`：单次出怪随机 1..N 只（波 6 起 N≥2，约波 22 封顶 10） |
 
@@ -234,7 +234,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 出怪**间隔**不再随难度缩短（`difficultySpawnFactor = 1`）；仅保留基础 `spawnInterval` 与门口防秒杀压间隔。
 
-第 1 波血量仍仅走静态公式（`monsterHpBase + monsterHpStep × wave`）；第 2 波起与武器攻击挂钩时，仍叠加境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）、前期软血等。
+第 1 波血量仍仅走静态公式（`monsterHpBase + monsterHpStep × wave`）；第 2 波起与武器攻击挂钩时，仍叠加境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）。**已取消**前期软血（`earlyWaveHp*`）。
 
 ---
 

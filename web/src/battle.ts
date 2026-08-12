@@ -113,7 +113,7 @@ export const TUNING = {
   bossEscortMax: 8, // 妖王出场护卫最多只数
   bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
-  // —— 骑兵波（后期随机某波：比例随波次升高；移速翻倍、血量略低）——
+  // —— 骑兵波（后期随机某波：比例随波次升高；移速 ×cavalrySpdMul、血量略低）——
   cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
   cavalryWaveChance: 0.5, // 达到后期后，每波成为骑兵波的概率
   cavalryRatioBase: 0.35, // 本波骑兵比例下界：base + min(waveBonusCap, 波次/100)
@@ -121,7 +121,7 @@ export const TUNING = {
   cavalryRatioWaveDiv: 100,
   cavalryRatioMaxSpread: 0.2, // 上界 = min(cap, 下界 + spread)，开波时在 [下界, 上界] 随机
   cavalryRatioCap: 0.7,
-  cavalrySpdMul: 1.5, // 骑兵移速倍率：比普通妖快 50%
+  cavalrySpdMul: 1.35, // 骑兵移速倍率：比普通妖快 35%
   cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
@@ -129,13 +129,6 @@ export const TUNING = {
   // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
   earlyWaveTo: 2, // 前 2 波享受减量
   earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
-  earlyWaveHpStrongTo: 3, // 波 1–earlyWaveHpStrongTo：HP × earlyWaveHpStrongMul
-  earlyWaveHpStrongMul: 0.6,
-  earlyWaveHpMul4: 0.7, // 第 4 波软血
-  earlyWaveHpTo: 5, // 其后至 earlyWaveHpTo（不含已单独配置的波）：HP × earlyWaveHpMul
-  earlyWaveHpMul: 0.8, // 第 5 波软血（波 4 见 earlyWaveHpMul4）
-  earlyWaveHpMul6: 0.9, // 第 6 波软血
-  earlyWaveHpMul7: 0.95, // 第 7 波软血；第 8 波起满血
   wave1Bonus: 1, // 第一波在减量后再 +1
   minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
   spawnInterval: 1.25, // 秒/批（基础出怪节奏；同批可随机 1..N 只）
@@ -598,7 +591,7 @@ export interface Monster {
   isBoss: boolean;
   isMiniBoss: boolean; // 小 Boss：跨地图头目，带独立光环技能
   miniBossKind: MiniBossKind | null; // 小 Boss 种类（非小 Boss 为 null）
-  isCavalry: boolean; // 骑兵：移速翻倍、血量 ×cavalryHpMul（骑兵波中按本波随机比例，BOSS 不会是骑兵）
+  isCavalry: boolean; // 骑兵：移速 ×cavalrySpdMul、血量 ×cavalryHpMul（骑兵波中按本波随机比例，BOSS 不会是骑兵）
   hitFlash: number; // 受击闪白(秒)
   skill: MonsterSkill | null; // 精英/BOSS 携带的减益技能（普通妖/小 Boss 为 null）
   skillCd: number; // 距下次施法的秒数
@@ -3970,21 +3963,10 @@ export class Battle {
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
   }
 
-  /** 波 >10：基础血量 × (1 + (wave-10)/100)；移速固定不乘此系数 */
+  /** 波 >10 后 HP 线性加成（每波 +1%）；移速固定不乘此系数 */
   wavePostMul(wave: number = this.wave): number {
     if (wave <= 10) return 1;
     return 1 + (wave - 10) / 100;
-  }
-
-  /** 前期软血：波 1–3 ×0.6，波 4 ×0.7，波 5 ×0.8，波 6 ×0.9，波 7 ×0.95，其后满血 */
-  earlyWaveHpMul(wave: number = this.wave): number {
-    const w = Math.max(1, Math.floor(wave));
-    if (w <= TUNING.earlyWaveHpStrongTo) return TUNING.earlyWaveHpStrongMul;
-    if (w === 4) return TUNING.earlyWaveHpMul4;
-    if (w <= TUNING.earlyWaveHpTo) return TUNING.earlyWaveHpMul;
-    if (w === 6) return TUNING.earlyWaveHpMul6;
-    if (w === 7) return TUNING.earlyWaveHpMul7;
-    return 1;
   }
 
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
@@ -4040,7 +4022,7 @@ export class Battle {
   private normalMonsterHp(wave: number = this.wave): number {
     const staticBase =
       (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
-    const staticHp = staticBase * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
+    const staticHp = staticBase * this.wavePostMul(wave);
     if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE) return staticHp;
     const powerBase = monsterHpFromBoardPower(
       wave,
@@ -4048,8 +4030,7 @@ export class Battle {
       pressureRatioForWave(wave),
     );
     if (powerBase <= 0) return staticHp;
-    const powerHp =
-      powerBase * this.effectiveDifficulty(wave) * this.earlyWaveHpMul(wave) * this.wavePostMul(wave);
+    const powerHp = powerBase * this.effectiveDifficulty(wave) * this.wavePostMul(wave);
     return Math.max(staticHp, powerHp);
   }
 

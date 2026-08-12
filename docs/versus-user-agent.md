@@ -49,15 +49,11 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 
 下列常量会改浏览器内实际体验，不只是测试脚本。
 
-### 唐僧与前期软血
+### 唐僧与前期
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | `TANGSENG_INITIAL_HP` | **3** | 唐僧初始血量（道具可再加） |
-| `earlyWaveHpStrongTo` / `earlyWaveHpStrongMul` | **3** / **0.6** | 波 1–3 小怪 HP × **60%** |
-| `earlyWaveHpMul4` | **0.7** | 波 4 × **70%** |
-| `earlyWaveHpTo` / `earlyWaveHpMul` | **5** / **0.8** | 波 5 × **80%** |
-| `earlyWaveHpMul6` / `7` | **0.9** / **0.95** | 波 6 ×90%、波 7 ×95%；波 8 起满血 |
 | `eliteFromWave` | **4** | 第 4 波起可能刷精英 |
 
 ### 压力比（随波次升高）
@@ -126,7 +122,7 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | `web/src/ai-skill.ts` | AI skill、rubber-band、目标胜率 |
 | `web/src/board-power.ts` | `pressureRatioForWave`、出怪压力 |
 | `web/src/autoplace.ts` | AI 调位间隔常量 |
-| `web/src/battle.ts` | `TUNING.earlyWaveHp*`、精英波、压力接入 |
+| `web/src/battle.ts` | 精英波、压力接入、`cavalrySpdMul` |
 
 ---
 
