@@ -122,7 +122,7 @@ export const TUNING = {
   cavalryRatioRampEnd: 0.55, // 第 20 波 55%
   cavalryRatioLateLo: 0.56, // 第 21 波起每波在 [lateLo, lateHi] 随机
   cavalryRatioLateHi: 0.7,
-  cavalrySpdMul: 1.35, // 骑兵移速倍率：比普通妖快 35%
+  cavalrySpdMul: 1.25, // 骑兵移速倍率：比普通妖快 25%
   cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
