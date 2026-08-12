@@ -7,11 +7,10 @@ import { drawInkActionButton, roundRect } from './menu-ui';
 import { loadUserId } from './user-id';
 import { clampNickname } from './nickname';
 
-const PANEL = { x: 40, y: 140, w: VIEW_W - 80, h: 600 };
+const PANEL = { x: 40, y: 120, w: VIEW_W - 80, h: 500 };
 const CLOSE = { x: PANEL.x + 16, y: PANEL.y + 14, w: 44, h: 44 };
-const CONFIRM = { x: VIEW_W / 2 - 70, y: PANEL.y + PANEL.h - 64, w: 140, h: 48 };
 /** 横向滚动视口 */
-const SCROLL = { x: PANEL.x + 24, y: PANEL.y + 88, w: PANEL.w - 48, h: 196 };
+const SCROLL = { x: PANEL.x + 24, y: PANEL.y + 80, w: PANEL.w - 48, h: 196 };
 /** 卡片：上图下文，避免立绘压字 */
 const CELL_W = 108;
 const CELL_H = 168;
@@ -20,15 +19,31 @@ const NAME_H = 28;
 const IMG_PAD = 8;
 const COPY_BTN = { w: 56, h: 30 };
 
+/** 卷轴下方留出「左右滑动 / 已解锁」两行，避免被昵称框盖住 */
 function nickFieldY(): number {
-  return SCROLL.y + SCROLL.h + 52;
+  return SCROLL.y + SCROLL.h + 56;
 }
 
 function uidRowY(): number {
-  return nickFieldY() + 44 + 28;
+  return nickFieldY() + 44 + 18;
+}
+
+function confirmRect(): { x: number; y: number; w: number; h: number } {
+  return { x: VIEW_W / 2 - 70, y: uidRowY() + 36, w: 140, h: 48 };
+}
+
+/** 保存失败等飘字 / 保存资料飘字：确认按钮上方 */
+export function profileConfirmToastAnchorY(): number {
+  return confirmRect().y - 12;
 }
 
 let lastCopyUidRect: { x: number; y: number; w: number; h: number } | null = null;
+
+/** 复制成功飘字起点：复制按钮上缘再往上一点 */
+export function profileCopyToastAnchorY(): number {
+  if (lastCopyUidRect) return lastCopyUidRect.y - 8;
+  return uidRowY() - 20;
+}
 
 function isDisplayUid(uid: string | null | undefined): uid is string {
   return typeof uid === 'string' && uid.length > 0 && uid !== 'undefined' && /^\d{8,20}$/.test(uid);
@@ -87,7 +102,8 @@ function contentWidth(): number {
 export function profilePopupHitAt(x: number, y: number, st: ProfilePopupState): ProfilePopupHit {
   if (x < PANEL.x || x > PANEL.x + PANEL.w || y < PANEL.y || y > PANEL.y + PANEL.h) return { kind: 'close' };
   if (x >= CLOSE.x && x <= CLOSE.x + CLOSE.w && y >= CLOSE.y && y <= CLOSE.y + CLOSE.h) return { kind: 'close' };
-  if (x >= CONFIRM.x && x <= CONFIRM.x + CONFIRM.w && y >= CONFIRM.y && y <= CONFIRM.y + CONFIRM.h) {
+  const confirm = confirmRect();
+  if (x >= confirm.x && x <= confirm.x + confirm.w && y >= confirm.y && y <= confirm.y + confirm.h) {
     return { kind: 'confirm' };
   }
   if (lastCopyUidRect && x >= lastCopyUidRect.x && x <= lastCopyUidRect.x + lastCopyUidRect.w
@@ -194,14 +210,14 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
 
   ctx.fillStyle = '#8a6a40';
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText('左右滑动查看更多', VIEW_W / 2, SCROLL.y + SCROLL.h + 18);
+  ctx.fillText('左右滑动查看更多', VIEW_W / 2, SCROLL.y + SCROLL.h + 16);
 
   const sel = AVATARS.find((a) => a.id === st.selectedId);
   ctx.fillStyle = '#4a3218';
-  ctx.font = '16px "PingFang SC", sans-serif';
+  ctx.font = '15px "PingFang SC", sans-serif';
   if (sel) {
     const locked = !st.unlocked.has(sel.id);
-    ctx.fillText(locked ? unlockHint(sel) : '已解锁', VIEW_W / 2, SCROLL.y + SCROLL.h + 38);
+    ctx.fillText(locked ? unlockHint(sel) : '已解锁', VIEW_W / 2, SCROLL.y + SCROLL.h + 36);
   }
 
   // nickname field
@@ -218,46 +234,49 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   ctx.textBaseline = 'middle';
   ctx.fillText(st.nicknameDraft || '昵称（可选，点此修改）', SCROLL.x + 14, nickY + 22);
 
-  // UID row
+  // UID row（无分割线）
   const uid = loadUserId();
   if (isDisplayUid(uid)) {
     const uy = uidRowY();
     const x0 = SCROLL.x;
     const x1 = SCROLL.x + SCROLL.w;
-    ctx.strokeStyle = 'rgba(90,60,30,0.22)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x0, uy - 14);
-    ctx.lineTo(x1, uy - 14);
-    ctx.stroke();
+
+    const copyRect = {
+      x: x1 - COPY_BTN.w,
+      y: uy - COPY_BTN.h / 2,
+      w: COPY_BTN.w,
+      h: COPY_BTN.h,
+    };
+    lastCopyUidRect = copyRect;
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#5a3a12';
     ctx.font = '14px "PingFang SC", sans-serif';
     const uidLabel = `UID：${uid}`;
-    ctx.fillText(uidLabel, x0, uy);
-    const labelW = ctx.measureText(uidLabel).width;
-    const copyRect = {
-      x: Math.min(x0 + labelW + 12, x1 - COPY_BTN.w),
-      y: uy - COPY_BTN.h / 2,
-      w: COPY_BTN.w,
-      h: COPY_BTN.h,
-    };
-    lastCopyUidRect = copyRect;
+    const maxLabelW = Math.max(40, copyRect.x - x0 - 14);
+    let drawLabel = uidLabel;
+    if (ctx.measureText(drawLabel).width > maxLabelW) {
+      while (drawLabel.length > 4 && ctx.measureText(`${drawLabel}…`).width > maxLabelW) {
+        drawLabel = drawLabel.slice(0, -1);
+      }
+      drawLabel = `${drawLabel}…`;
+    }
+    ctx.fillText(drawLabel, x0, uy);
     drawInkActionButton(ctx, copyRect, '复制', false, 'secondary');
   } else {
     lastCopyUidRect = null;
   }
 
-  roundRect(ctx, CONFIRM.x, CONFIRM.y, CONFIRM.w, CONFIRM.h, 12);
+  const confirm = confirmRect();
+  roundRect(ctx, confirm.x, confirm.y, confirm.w, confirm.h, 12);
   ctx.fillStyle = '#6b4420';
   ctx.fill();
   ctx.fillStyle = '#7dcea0';
   ctx.font = 'bold 28px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('✓', CONFIRM.x + CONFIRM.w / 2, CONFIRM.y + CONFIRM.h / 2);
+  ctx.fillText('✓', confirm.x + confirm.w / 2, confirm.y + confirm.h / 2);
 }
 
 function drawAvatarCell(

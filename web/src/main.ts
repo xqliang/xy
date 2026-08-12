@@ -87,6 +87,8 @@ import {
   profilePopupHitAt,
   applyProfileScrollDrag,
   clampProfileScroll,
+  profileCopyToastAnchorY,
+  profileConfirmToastAnchorY,
   type ProfilePopupState,
   type ProfileScrollDrag,
 } from './profile-popup';
@@ -395,6 +397,7 @@ type MenuPopup = 'none' | 'settings' | 'stamina' | 'map' | 'help' | 'profile';
 let menuPopup: MenuPopup = 'none';
 let profilePopup: ProfilePopupState | null = null;
 let profileScrollDrag: ProfileScrollDrag | null = null;
+let profileCopyBusy = false;
 let staminaPopupToast = '';
 let menuSliderDrag: 'music' | 'sfx' | null = null;
 let helpScrollY = 0;
@@ -938,10 +941,16 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     }
     if (hit.kind === 'copyUid') {
       const uid = loadUserId();
-      if (uid) {
+      if (uid && !profileCopyBusy) {
+        profileCopyBusy = true;
         void copyUserId(uid).then((ok) => {
-          pushMenuFloatToast(ok ? '复制成功' : '复制失败');
+          pushMenuFloatToast(ok ? '复制成功' : '复制失败', {
+            replace: true,
+            anchorY: profileCopyToastAnchorY(),
+          });
           scheduleFrame();
+        }).finally(() => {
+          profileCopyBusy = false;
         });
       }
       return true;
@@ -950,12 +959,17 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       const sel = profilePopup.selectedId;
       if (!profilePopup.unlocked.has(sel)) {
         menuToast = '该头像尚未解锁';
-        pushMenuFloatToast('头像未解锁');
+        pushMenuFloatToast('头像未解锁', { replace: true, anchorY: profileConfirmToastAnchorY() });
         return true;
       }
       const nick = profilePopup.nicknameDraft.trim() || null;
       void updateProfile({ avatarId: sel, nickname: nick }).then((ok) => {
         menuToast = ok ? '资料已更新' : '资料同步失败（已保留本地选择）';
+        pushMenuFloatToast(ok ? '资料已更新' : '资料同步失败', {
+          replace: true,
+          // 失败时弹层仍开着，锚在确认按钮上方；成功已关层，用默认起点
+          ...(ok ? {} : { anchorY: profileConfirmToastAnchorY() }),
+        });
         if (ok) {
           closeNicknameEditor();
           menuPopup = 'none';

@@ -44,23 +44,37 @@ export function ensureUserId(): string {
 }
 
 export async function copyUserId(uid: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(uid);
-      return true;
-    }
+  const tryClipboard = async (): Promise<boolean> => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(uid);
+    return true;
+  };
+  const tryExecCommand = (): boolean => {
     if (typeof document === 'undefined') return false;
     const ta = document.createElement('textarea');
     ta.value = uid;
+    ta.setAttribute('readonly', '');
     ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.focus();
     ta.select();
-    const ok = document.execCommand('copy');
+    ta.setSelectionRange(0, uid.length);
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
     document.body.removeChild(ta);
     return ok;
+  };
+  try {
+    if (await tryClipboard()) return true;
   } catch {
-    return false;
+    // insecure context / permission → fall through
   }
+  return tryExecCommand();
 }

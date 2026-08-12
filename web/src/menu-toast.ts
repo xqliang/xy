@@ -16,8 +16,9 @@ const STACK_STEP = BAR_H + BAR_GAP;
 
 const toasts: MenuFloatToast[] = [];
 
-export function pushMenuFloatToast(text: string): void {
-  const baseY = menuStartToastAnchorY();
+export function pushMenuFloatToast(text: string, opts?: { replace?: boolean; anchorY?: number }): void {
+  if (opts?.replace) toasts.length = 0;
+  const baseY = opts?.anchorY ?? menuStartToastAnchorY();
   for (const t of toasts) t.y -= STACK_STEP;
   toasts.push({ text, y: baseY, age: 0, maxAge: 2.4 });
 }

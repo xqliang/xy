@@ -258,7 +258,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
 
   const platY = 350 + rankBlockDy;
   const bob = Math.sin(performance.now() / 1000 * 2.1) * 5;
-  const heroSpr = sprite('hero-wukong');
+  const heroSpr = sprite(info.avatarArt || 'hero-wukong');
   let heroFootY = platY + 118;
   if (heroSpr) {
     const size = 240;
