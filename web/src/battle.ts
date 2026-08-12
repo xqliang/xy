@@ -712,8 +712,8 @@ export const PLACE_TIMING = {
   digDur: 0.4, // 铲子挖坑动画时长（铲两下）
   dropDur: 0.03, // AI 落子：自半场顶加速落入格心的时长（秒）
   dragDur: 0.18, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
-  staggerMin: 0.1, // 连续落子之间的最短间隔（秒）
-  staggerMax: 0.2, // 连续落子之间的最长间隔（秒）
+  staggerMin: 0.18, // 连续落子之间的最短间隔（秒）
+  staggerMax: 0.25, // 连续落子之间的最长间隔（秒）
 };
 /** @deprecated 快照；运行时请读 PLACE_TIMING.* */
 export const DIG_DUR = PLACE_TIMING.digDur;

@@ -266,7 +266,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `PLAYER_REPOSITION_MAX_STEPS` | **100** | 玩家一键布阵后的战中调位步数上限 |
 | `PLACE_TIMING.digDur` | **0.4** | 挖坑动画（铲两下；每铲播 `shovel` 音效） |
 | `PLACE_TIMING.dragDur` | **0.18** | 玩家一键布阵虚线拖拽时长（秒） |
-| `PLACE_TIMING.staggerMin` / `staggerMax` | **0.1 / 0.2** | 连续落子间隔（秒） |
+| `PLACE_TIMING.staggerMin` / `staggerMax` | **0.18 / 0.25** | 连续落子间隔（秒） |
 
 挖坑进行中可并行落**其他格**；新挖格预占，挖完后再落武器（`pendingPlace` / `digFx`）。
 
