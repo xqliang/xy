@@ -21,11 +21,14 @@ import {
   matchGeneral,
   generalById,
   heroEntranceBand,
+  hintGeneralForChar,
   isWideRangeMaxHero,
   mainGeneralForVariantChar,
+  maxTierForChar,
   transitGeneralInFamily,
   variantChar,
   type GeneralDef,
+  type GeneralRole,
 } from './generals';
 
 export interface Cell { c: number; r: number; }
@@ -114,6 +117,8 @@ export interface AutoPlaceView {
    * 已激活武将格必须失败。空格视为成功。
    */
   displaceToTray(cell: Cell): boolean;
+  /** 直接移除场上未激活字（候选区满时 AI 孤儿裁剪用；已激活格须失败） */
+  removeWord?(cell: Cell): boolean;
   /** 该格是否属于已激活武将（禁止拆散） */
   isActiveHeroCell(cell: Cell): boolean;
   /** 危险提示：怪物逼近唐僧，布阵/调位优先往唐僧方向靠拢 */
@@ -147,6 +152,11 @@ export interface AutoPlaceOpts {
   maxGuard?: number;
   /** 绝对时间戳（ms）；超时则停止继续布阵步（分帧预算） */
   deadlineMs?: number;
+  /**
+   * 场上未激活英雄单字上限（仅 AI 布阵传 `AI_MAX_ORPHAN_WORDS`）。
+   * 超出则按保留分裁剪；达上限时低分单字可留在 tray。
+   */
+  maxOrphanWords?: number;
 }
 
 /** 玩家一键布阵：落子步数 / 循环上限 / 战后调位步数 */
@@ -156,6 +166,64 @@ export const PLAYER_REPOSITION_MAX_STEPS = 100;
 /** AI 征兵后布阵：步数/循环上限（在 battle.step 内同步执行，须轻量） */
 export const AI_PLACE_MAX_STEPS = 24;
 export const AI_PLACE_MAX_GUARD = 48;
+/** AI 场上未激活英雄单字最多保留数 */
+export const AI_MAX_ORPHAN_WORDS = 4;
+
+/** 抽字提示武将所属门派（满5优先） */
+export function charHeroFamily(char: string): string {
+  const g = generalById(hintGeneralForChar(char));
+  return g?.family ?? char;
+}
+
+/** 抽字提示武将角色 */
+export function charHeroRole(char: string): GeneralRole {
+  const g = generalById(hintGeneralForChar(char));
+  return g?.role ?? '过渡';
+}
+
+/**
+ * 孤儿单字保留分（越高越优先留下）。
+ * 满5 ≫ 满3；补齐缺失职业；同字/同门派（满3·满5 同组）降权。
+ */
+export function orphanKeepScore(
+  w: { char: string; tier?: number },
+  selected: readonly { char: string; tier?: number }[],
+): number {
+  let s = 0;
+  s += maxTierForChar(w.char) >= 5 ? 100 : 25;
+  s += (w.tier ?? 1) * 8;
+  const role = charHeroRole(w.char);
+  const roles = new Set(selected.map((x) => charHeroRole(x.char)));
+  if (role !== '过渡' && !roles.has(role)) s += 45;
+  else if (role === '过渡') s -= 20;
+  if (selected.some((x) => x.char === w.char)) s -= 90;
+  const fam = charHeroFamily(w.char);
+  if (selected.some((x) => charHeroFamily(x.char) === fam)) s -= 55;
+  return s;
+}
+
+/** 从孤儿中贪心选出至多 maxKeep 个保留（按 orphanKeepScore） */
+export function selectOrphansToKeep<T extends { char: string; tier?: number }>(
+  orphans: readonly T[],
+  maxKeep: number,
+): T[] {
+  if (maxKeep <= 0) return [];
+  const kept: T[] = [];
+  const pool = [...orphans];
+  while (kept.length < maxKeep && pool.length > 0) {
+    let bestI = 0;
+    let bestS = orphanKeepScore(pool[0]!, kept);
+    for (let i = 1; i < pool.length; i++) {
+      const sc = orphanKeepScore(pool[i]!, kept);
+      if (sc > bestS) {
+        bestS = sc;
+        bestI = i;
+      }
+    }
+    kept.push(pool.splice(bestI, 1)[0]!);
+  }
+  return kept;
+}
 
 /** AI 战中调位间隔（DevTools 可改）：兵器 1–2.5s；待补英雄配对字 0.3–0.5s */
 export const AI_TIMING = {
@@ -394,6 +462,7 @@ export const IMMINENT_PLACE_WEIGHT = 3;
 /**
  * 格对 imminent 路段的贴近分（越高越好）。
  * 采样最靠前怪附近路径点，欧氏越近、越靠近怪头分越高。
+ * 场上无怪时按出怪口（entranceDist）有一只怪计。
  */
 export function imminentPathScore(
   path: { c: number; r: number }[],
@@ -403,8 +472,9 @@ export function imminentPathScore(
   cell: Cell,
   opts?: { lookahead?: number; lookback?: number },
 ): number {
-  if (monsterDists.length === 0 || pathLen <= entranceDist) return 0;
-  const front = Math.max(...monsterDists);
+  if (pathLen <= entranceDist) return 0;
+  const dists = monsterDists.length > 0 ? monsterDists : [entranceDist];
+  const front = Math.max(...dists);
   const lookAhead = opts?.lookahead ?? IMMINENT_LOOKAHEAD;
   const lookBack = opts?.lookback ?? IMMINENT_LOOKBACK;
   const zoneStart = Math.max(entranceDist, front - lookBack);
@@ -457,7 +527,7 @@ function cellInAttackRange(ax: number, ay: number, rge: number, p: { c: number; 
 
 /**
  * 有怪时：沿路位置权重，最前怪(dist 最大)≈1，队尾衰减。
- * 无怪时不调用（落位改走出怪口段 pathCoverEarly / pathFirstEngage）。
+ * 无怪时由 engageThreatAt 在出怪口注入假想怪后再算。
  */
 export function frontMonsterEngageWeight(mDist: number, frontDist: number, entranceDist: number): number {
   if (frontDist <= entranceDist + 1e-6) return 1;
@@ -466,7 +536,12 @@ export function frontMonsterEngageWeight(mDist: number, frontDist: number, entra
   return 0.15 + 0.85 * rel;
 }
 
-/** 圆心 (ax,ay) 对怪群的交战威胁分（范围内 atk×最前怪加权×残血加权之和） */
+/** 场上无怪时用于射程/交战分的假想怪（站在出怪口） */
+export function exitPhantomMonster(entranceDist: number): MonsterEngageLite {
+  return { dist: entranceDist, hp: 1, maxHp: 1 };
+}
+
+/** 圆心 (ax,ay) 对怪群的交战威胁分（范围内 atk×最前怪加权×残血加权之和）；无怪时按出怪口有一只怪计 */
 export function engageThreatAt(
   monsters: MonsterEngageLite[],
   path: { c: number; r: number }[],
@@ -478,10 +553,10 @@ export function engageThreatAt(
   danger: boolean,
   unitType?: UnitType,
 ): number {
-  if (monsters.length === 0) return 0;
-  const frontDist = Math.max(...monsters.map((m) => m.dist));
+  const list = monsters.length > 0 ? monsters : [exitPhantomMonster(entranceDist)];
+  const frontDist = Math.max(...list.map((m) => m.dist));
   let score = 0;
-  for (const m of monsters) {
+  for (const m of list) {
     const p = posAlong(path, m.dist);
     if (cellInAttackRange(ax, ay, rge, p)) {
       score += atk
@@ -1263,22 +1338,73 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.heroRosterComplete?.() ?? false;
   }
 
-  /** 有空格时 tray 不得留字/兵（铲子除外） */
+  /** 有空格时 tray 不得留字/兵（铲子除外）；AI 孤儿达上限且无可部署字时可留字 */
   function mustEmptyTray(): boolean {
     if (heroRosterComplete() && trayHasWords()) return false;
-    return hasFreeCells() && (trayHasWords() || trayUnitEntries().length > 0);
+    if (!hasFreeCells()) return false;
+    if (trayUnitEntries().length > 0) return true;
+    return pendingTrayWordDeploy();
   }
 
-  /** 该 tray 字可留候选区：满盘且地图上已有同字 */
+  /** 该 tray 字可留候选区：满盘且地图上已有同字；或 AI 孤儿上限下不宜再上板 */
   function mayLeaveWordInTray(_t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    if (opts.maxOrphanWords != null && !canDeployTrayWordAsOrphanOrMate(_t)) return true;
     if (hasFreeCells()) return false;
     return view.placedWords().some((w) => w.char === _t.char);
   }
 
-  /** 有空格且 tray 仍有字 → 必须先处理字（单字落位或凑对激活） */
+  /** 有空格且 tray 仍有可部署字 → 必须先处理字（单字落位或凑对激活） */
   function pendingTrayWordDeploy(): boolean {
     if (heroRosterComplete()) return false;
-    return hasFreeCells() && trayHasWords();
+    if (!hasFreeCells() || !trayHasWords()) return false;
+    if (opts.maxOrphanWords == null) return true;
+    for (const t of filledTrayTokens(view.tray())) {
+      if (t.kind !== 'word') continue;
+      if (canDeployTrayWordAsOrphanOrMate(t)) return true;
+    }
+    return false;
+  }
+
+  /** tray 字可凑对激活，或作为孤儿上板后仍能进入保留名单 */
+  function canDeployTrayWordAsOrphanOrMate(t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    const idx = trayFindIndex(view.tray(), (x) => x === t);
+    if (bestTrayPartnerForWord(view, t, idx >= 0 ? idx : undefined)) return true;
+    if (pickBestBoardMateView(view, t.char, t.general)) return true;
+    return canAcceptOrphanChar(t.char, t.tier);
+  }
+
+  /** 再上一枚孤儿后，该字是否仍会被保留分选中 */
+  function canAcceptOrphanChar(char: string, tier: number): boolean {
+    const maxKeep = opts.maxOrphanWords;
+    if (maxKeep == null) return true;
+    const orphans = orphanWordsView(view);
+    if (orphans.length < maxKeep) return true;
+    const candidate: PlacedWordLite = {
+      char,
+      tier,
+      general: hintGeneralForChar(char),
+      cell: { c: -999, r: -999 },
+    };
+    return selectOrphansToKeep([...orphans, candidate], maxKeep).includes(candidate);
+  }
+
+  /** 超出 AI 孤儿上限：低分单字顶回候选区，满则移除 */
+  function tryCullExcessOrphans(): boolean {
+    const maxKeep = opts.maxOrphanWords;
+    if (maxKeep == null) return false;
+    const orphans = orphanWordsView(view);
+    if (orphans.length <= maxKeep) return false;
+    const keepKeys = new Set(
+      selectOrphansToKeep(orphans, maxKeep).map((w) => cellKey(w.cell)),
+    );
+    const eject = orphans
+      .filter((w) => !keepKeys.has(cellKey(w.cell)) && !view.isActiveHeroCell(w.cell))
+      .sort((a, b) => orphanKeepScore(a, []) - orphanKeepScore(b, []));
+    for (const w of eject) {
+      if (view.displaceToTray(w.cell)) return true;
+      if (view.removeWord?.(w.cell)) return true;
+    }
+    return false;
   }
 
   /** 有空格且 tray 仍有兵 → 优先落子；tray 字未清完则暂缓落兵 */
@@ -1321,7 +1447,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     );
   }
 
-  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；有怪追最前路段，无怪追出怪口 */
+  /** 某兵种在某格的座位分：覆盖 + 近出口(按射程) + 离路；交战分无怪时按出怪口假想怪计 */
   function scoreCell(cell: Cell, type: UnitType, tier: number): number {
     const rge = getUnitStat(type, tier).rge;
     let s = seatScore(
@@ -1631,6 +1757,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && tryPromoteTrayUnitOverLowerOther()) return true;
     // 2c) 重复孤儿只留最高阶：低阶用 tray 异字换回候选区
     if (!subopt() && tryEjectLowerDuplicateOrphans()) { markHeroLayoutChanged(); return true; }
+    // 2c*) AI：场上未激活单字超过上限则裁剪（满5/职业多样/避同字同门派）
+    if (!subopt() && tryCullExcessOrphans()) { markHeroLayoutChanged(); return true; }
     // 2c+) 有空格：tray 字先于普通武器上板（单字落位 / 满盘顶兵腾位）
     if (tryLateTrayWordDeploy()) { markHeroLayoutChanged(); return true; }
     // 3–5b) 有空格时落 tray 兵（tray 字未清完则暂缓）
@@ -2649,6 +2777,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
       if (!t || t.kind !== 'word') continue;
       if (bestTrayPartnerForWord(view, t, i)) continue;
       if (pickBestBoardMate(t.char, t.general)) continue;
+      if (!canAcceptOrphanChar(t.char, t.tier)) continue;
       if (placeSingleWord(i)) return true;
     }
     return false;
@@ -2692,6 +2821,10 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!force) {
       if (bestTrayPartnerForWord(view, t, i)) return false;
       if (pickBestBoardMate(t.char, t.general)) return false;
+      if (!canAcceptOrphanChar(t.char, t.tier)) return false;
+    } else if (opts.maxOrphanWords != null && !canAcceptOrphanChar(t.char, t.tier)) {
+      // force 清空 tray 时仍遵守 AI 孤儿上限
+      return false;
     }
     const free = view.freeCells();
     if (free.length === 0) return false;

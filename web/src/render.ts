@@ -6933,8 +6933,8 @@ function drawWordSelection(
   const pw = active
     ? (pills.length > 0 ? 210 : 194)
     : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
-  // 激活多 1 行「大招CD」；未激活也展示配置 CD
-  const ph = (active ? 180 : 176) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
+  // 激活多「大招CD」+「经验」；未激活也展示配置 CD
+  const ph = (active ? 196 : 176) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -6994,6 +6994,13 @@ function drawWordSelection(
     if (rem <= 0) return `就绪 · ${def.skillCd}s`;
     return `${Math.ceil(rem)}s / ${def.skillCd}s`;
   })();
+  const expText = (() => {
+    if (!active) return '';
+    if (active.tier >= def.maxTier) return '满级';
+    const need = Battle.expToNext(active.state.level, def);
+    const cur = Math.max(0, Math.min(need, active.state.exp));
+    return `${cur.toFixed(1)} / ${need.toFixed(1)}`;
+  })();
   const rows: [string, string][] = active
     ? fromAi
       ? (() => {
@@ -7004,6 +7011,7 @@ function drawWordSelection(
             ['范围', st.rge.toFixed(1)],
             ['大招CD', skillCdText],
             ['等级', `Lv.${active.state.level}`],
+            ['经验', expText],
           ];
         })()
       : [
@@ -7012,6 +7020,7 @@ function drawWordSelection(
           ['范围', b.generalRge(active).toFixed(1)],
           ['大招CD', skillCdText],
           ['等级', `Lv.${active.state.level}`],
+          ['经验', expText],
         ]
     : [
         ['基础攻击', def.atk.toFixed(1)],

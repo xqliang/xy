@@ -4,6 +4,7 @@
 import {
   GENERALS,
   charHeroCapacity,
+  generalsWithChar,
   hintGeneralForChar,
   maxTierForChar,
   partnerChars,
@@ -41,6 +42,8 @@ export const RECENT_HERO_HISTORY_LEN = 10;
 export const YIN_SUPPORT_CHARS = new Set(['观', '音', '梵']);
 /** 被音系软压的门派 */
 export const YIN_PRESS_FAMILIES = new Set(['君', '殊']);
+/** 匹配保底：有半对可补时，补场上单字的概率；其余直接出一对新英雄 */
+export const FORCE_MATCH_HALF_PAIR_P = 0.6;
 
 /** 波段对满3/满5的相对权重（需压过满3基础 weight≈3、满5≈1 的差距） */
 export function phaseWeight(wave: number, maxTier: 3 | 5): number {
@@ -388,7 +391,31 @@ export function wordDrawEntries(
 }
 
 /**
- * 保底推进匹配：优先补齐现有半对；否则一次给出某武将双字（slots≥2）或首字。
+ * 补上该字后，是否能让某个「尚未计入 excludeHeroIds」的武将达成匹配。
+ * 用于波段保底：避免反复补齐早已匹配过的半对（如已记过大圣仍强塞「圣」），导致窗口匹配永远不推进。
+ */
+export function charCompletesNewHeroMatch(
+  char: string,
+  counts: ReadonlyMap<string, number>,
+  excludeHeroIds: ReadonlySet<string>,
+): boolean {
+  for (const g of generalsWithChar(char)) {
+    if (excludeHeroIds.has(g.id)) continue;
+    const a = g.chars[0]!;
+    const b = g.chars[1]!;
+    const hasA = (counts.get(a) ?? 0) >= 1;
+    const hasB = (counts.get(b) ?? 0) >= 1;
+    if (hasA && hasB) continue;
+    const nextA = hasA || a === char;
+    const nextB = hasB || b === char;
+    if (nextA && nextB) return true;
+  }
+  return false;
+}
+
+/**
+ * 保底推进匹配：有半对可补时 `FORCE_MATCH_HALF_PAIR_P` 补场上单字，否则（及无半对时）
+ * 尽量一次给出某未匹配武将双字（slots≥2）或首字。
  * 返回 0–2 个尚未在 tray 中的字（调用方负责写入 tray）。
  */
 export function forcedMatchWordChars(
@@ -409,16 +436,86 @@ export function forcedMatchWordChars(
   const t5Only = opts?.tier5CapableOnly ?? false;
   const excludeHeroes = opts?.excludeHeroIds ?? new Set<string>();
 
-  // 1) 补齐棋盘/tray 半对（配对字尚未在池中）
   const pending = pendingPartnerChars(boardChars, [...trayCharsAlready]).filter(
-    (c) => (counts.get(c) ?? 0) < 1 && !isCharDrawBlocked(c, trayCharsAlready, field),
+    (c) =>
+      (counts.get(c) ?? 0) < 1
+      && !isCharDrawBlocked(c, trayCharsAlready, field)
+      && charCompletesNewHeroMatch(c, counts, excludeHeroes),
   );
+  const preferHalfPair = pending.length > 0 && rng.next() < FORCE_MATCH_HALF_PAIR_P;
+  if (preferHalfPair) {
+    const char = rng.pick(pending);
+    return [{ char, general: hintGeneralForChar(char) }];
+  }
+
+  // 一对新英雄（双字皆不在池中）优先；否则回退补半对 / 未完整武将
+  const freshPair = pickForcedFreshHeroPair(
+    rng,
+    counts,
+    trayCharsAlready,
+    slotsLeft,
+    t5Only,
+    excludeHeroes,
+    field,
+  );
+  if (freshPair.length > 0) return freshPair;
+
   if (pending.length > 0) {
     const char = rng.pick(pending);
     return [{ char, general: hintGeneralForChar(char) }];
   }
 
-  // 2) 选尚未完整匹配的武将，尽量一次出双字
+  return pickForcedIncompleteHeroChars(
+    rng,
+    counts,
+    trayCharsAlready,
+    slotsLeft,
+    t5Only,
+    excludeHeroes,
+    field,
+  );
+}
+
+/** 尚未出场的武将：一次尽量塞双字 */
+function pickForcedFreshHeroPair(
+  rng: Rng,
+  counts: ReadonlyMap<string, number>,
+  trayCharsAlready: readonly string[],
+  slotsLeft: number,
+  t5Only: boolean,
+  excludeHeroes: ReadonlySet<string>,
+  field: ReadonlyMap<string, number> | undefined,
+): WordPick[] {
+  if (slotsLeft < 2) return [];
+  const candidates = GENERALS.filter((g) => {
+    if (excludeHeroes.has(g.id)) return false;
+    if (t5Only && g.maxTier < 5) return false;
+    const a = g.chars[0]!;
+    const b = g.chars[1]!;
+    if ((counts.get(a) ?? 0) >= 1 || (counts.get(b) ?? 0) >= 1) return false;
+    if (isCharDrawBlocked(a, trayCharsAlready, field)) return false;
+    if (isCharDrawBlocked(b, [...trayCharsAlready, a], field)) return false;
+    if (t5Only && (maxTierForChar(a) < 5 || maxTierForChar(b) < 5)) return false;
+    return true;
+  });
+  if (candidates.length === 0) return [];
+  const g = rng.pick(candidates);
+  return [
+    { char: g.chars[0]!, general: g.id },
+    { char: g.chars[1]!, general: g.id },
+  ];
+}
+
+/** 未完整匹配武将：补缺字或开新半对 */
+function pickForcedIncompleteHeroChars(
+  rng: Rng,
+  counts: ReadonlyMap<string, number>,
+  trayCharsAlready: readonly string[],
+  slotsLeft: number,
+  t5Only: boolean,
+  excludeHeroes: ReadonlySet<string>,
+  field: ReadonlyMap<string, number> | undefined,
+): WordPick[] {
   const candidates = GENERALS.filter((g) => {
     if (excludeHeroes.has(g.id)) return false;
     if (t5Only && g.maxTier < 5) return false;

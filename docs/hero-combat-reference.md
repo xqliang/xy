@@ -164,7 +164,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 ## 5. 羁绊与升阶（简要）
 
 - **大圣护法**：大圣激活时全队攻击 `+5%`（`BOND_ATK_BONUS = 0.05`），含兵器与友军武将。
-- **局内升阶**：激活武将输出攒经验，基础 `expToNext = 5 × 3^level`；可按武将 `expCostMul` 放大（大圣 `1.2`，即约 ×1.2 升阶难度）。经验系数 `combatExpFromHits` 为 `dmg × 加权命中 × 0.036`（多目标有折减）。
+- **局内升阶**：激活武将输出攒经验，基础 `expToNext = 5 × 2^level`（即 level0→1 需 5，1→2 需 10，2→3 需 20…）；再乘角色倍率 `generalExpCostMul`：输出（武器）`×1.3`、控制 `×1.15`、观音 `×1.05`，其余 `×1`（可用武将 `expCostMul` 覆盖）；阈值与当前进度均 `roundExp` 保留 1 位小数。经验系数 `combatExpFromHits` 为 `dmg × 加权命中 × 0.036`（多目标有折减）。选中已激活武将时信息面板展示「经验 当前 / 目标」（满级显示「满级」）。
 
 ---
 
@@ -237,9 +237,19 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 |------|------|
 | **每两盘必匹配** | 上一局 `lastGameHadMatch=false` → 本局 `forceMatchThisGame`，直至至少匹配 1 名武将 |
 | **波 10 后每 10 波** | 窗口 11–20、21–30…；窗口末波（20/30…，含波间准备期）若本窗口尚无新匹配 → 强制补对 |
-| 强制手段 | `forcedMatchWordChars`：优先补半对；否则一次尽量给出某未匹配武将双字（受 `SUMMON_MAX_WORD_SLOTS` 限制） |
+| 强制手段 | `forcedMatchWordChars`（受 `SUMMON_MAX_WORD_SLOTS` 限制） |
+| 有半对可补时 | `FORCE_MATCH_HALF_PAIR_P`=**0.6** 补场上单字（只补能形成**新匹配**的半对，跳过仅复刷已匹配英雄的字）；**0.4** 直接给出一对双字皆未出场的新武将 |
+| 无半对 / 新英雄抽不出 | 回退：半对补齐，或从未完整匹配武将中尽量出双字 |
 
 仍保留随机抽字；保底仅在条件触发时硬塞。实现：`word-draw.ts` + `Battle.summon`；局末 `recordHeroMatchGame`。
+
+### 8.4 AI 布阵孤儿单字上限（`autoplace.ts`）
+
+| 常量 | 值 | 含义 |
+|------|----|------|
+| `AI_MAX_ORPHAN_WORDS` | **4** | AI 半场未激活英雄单字最多保留数（已激活武将双字不计入） |
+
+选留优先级（`orphanKeepScore` / `selectOrphansToKeep`）：满5 字 ≫ 满3；补齐缺失职业（输出/控制/辅助）；同字、同门派（满3/满5 同组）降权。超出则顶回候选区，候选满则 `removeWord` 移除。达上限后低分单字可留在 tray。玩家一键布阵不启用。
 
 ---
 
@@ -270,8 +280,8 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `monsterHpBase` | 20 | 血量基数 |
-| `monsterHpStep` | **3** | 每波固定公式 +3；爬坡步长基准 |
+| `monsterHpBase` | **14** | 血量基数 |
+| `monsterHpStep` | **6** | 每波固定公式 +6；爬坡步长基准 |
 | `monsterHpNoDiffTo` | 3 | 波 1–3 仅用固定公式 |
 | `monsterHpRampMul` | **2** | 爬坡：`step×2 + (wave−rampFrom)` |
 | `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
@@ -281,7 +291,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | `MONSTER_HP_FROM_WAVE` | 2 |
 | `MONSTER_HP_KILL_SEC` | 3 |
 
-例（目标境界 1.5、空板）：波 1–3 = 23/26/29；波 4 maxStep=`3×2+(4−4)=6` → min(48, 29+6)=35；波 5 maxStep=7… 直至追上 target。
+例（目标境界 1.5、空板）：波 1–3 = 20/26/32；波 4 maxStep=`6×2+(4−4)=12` → min(57, 32+12)=44；波 5 maxStep=13… 直至追上 target。
 
 ### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
 

@@ -891,6 +891,7 @@ it('盘丝洞满盘：tray 沙应通过合并或腾位上板', () => {
   b.status = 'playing';
 
   b.autoPlaceTray();
+  b.flushAutoPlacePlaybackForTest();
 
   expect(b.tray.some((t) => t?.kind === 'word')).toBe(false);
   expect([...b.words.values()].some((w) => w.char === '沙')).toBe(true);
@@ -1878,6 +1879,22 @@ it('lowHpEngageMul：危险时残血加权更高，弓兵额外加成', () => {
   expect(archerLow).toBeGreaterThan(spearLow);
 });
 
+it('engageThreatAt：无怪时按出怪口有怪计分', () => {
+  const path = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const nearExit = engageThreatAt([], path, 0, 0, 0, 2, 10, false);
+  const far = engageThreatAt([], path, 0, 7, 0, 2, 10, false);
+  expect(nearExit).toBeGreaterThan(0);
+  expect(nearExit).toBeGreaterThan(far);
+});
+
+it('imminentPathScore：无怪时按出怪口计分', () => {
+  const path = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
+  const nearExit = imminentPathScore(path, 7, 0, [], { c: 0, r: 1 });
+  const far = imminentPathScore(path, 7, 0, [], { c: 6, r: 1 });
+  expect(nearExit).toBeGreaterThan(0);
+  expect(nearExit).toBeGreaterThan(far);
+});
+
 it('engageThreatAt：危险时覆盖残血怪的座位分更高', () => {
   const path = Array.from({ length: 8 }, (_, c) => ({ c, r: 0 }));
   const monsters: MonsterEngageLite[] = [
@@ -1922,6 +1939,7 @@ it('火焰山：无怪时弓优先落更早接到出怪口的格', () => {
   b.grantPeach(999);
   b.tray.push({ kind: 'unit', type: 'archer', tier: 1 });
   b.autoPlaceTray();
+  b.flushAutoPlacePlaybackForTest();
   const archer = [...b.units.values()].find((u) => u.type === 'archer');
   expect(archer?.cell.c).toBeLessThanOrEqual(3);
   expect(pathFirstEngageDist(b.map, b.entranceDist, b.pathLen, archer!.cell.c, archer!.cell.r, rge)).toBeLessThan(3);

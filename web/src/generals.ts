@@ -40,15 +40,27 @@ export interface GeneralDef {
   maxTier: 3 | 5;
   atkStyle: string;
   family: string; // 门派共享字
-  /** 升阶经验需求倍率（默认 1；大圣略高以拉长养成） */
+  /** 升阶经验需求倍率覆盖；缺省时按 `generalExpCostMul`（输出 1.3 / 控制 1.15 / 观音 1.05） */
   expCostMul?: number;
+}
+
+/** 武器位=输出 ×1.3；控制 ×1.15；观音 ×1.05；其余 ×1。显式 `expCostMul` 优先。 */
+export function generalExpCostMul(
+  def?: Pick<GeneralDef, 'id' | 'role' | 'expCostMul'> | null,
+): number {
+  if (def?.expCostMul != null) return def.expCostMul;
+  if (!def) return 1;
+  if (def.id === 'guanyin') return 1.05;
+  if (def.role === '输出') return 1.3;
+  if (def.role === '控制') return 1.15;
+  return 1;
 }
 
 export const GENERALS: GeneralDef[] = [
   // ——— 大：快攻贯穿 ———
   { id: 'dasheng', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',
     skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 3.4, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
-    maxTier: 5, atkStyle: '快攻贯穿', family: '大', expCostMul: 1.2 },
+    maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
   { id: 'damang', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
     skillName: '蟒影横扫', skillDesc: '小范围贯穿（过渡）', atk: 2.4, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-damang',
     maxTier: 3, atkStyle: '快攻贯穿', family: '大' },

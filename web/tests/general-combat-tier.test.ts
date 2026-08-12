@@ -136,14 +136,20 @@ describe('攻击升品质阶', () => {
     expect(Battle.combatExpFromHits(10, 3)).toBeLessThan(10 * 3 * 0.05);
   });
 
-  it('expToNext：5×3^level；大圣 ×1.2', () => {
-    expect(Battle.expToNext(1)).toBe(15);
-    expect(Battle.expToNext(2)).toBe(45);
-    expect(Battle.expToNext(3)).toBe(135);
-    expect(Battle.expToNext(4)).toBe(405);
-    const dasheng = { expCostMul: 1.2 };
-    expect(Battle.expToNext(1, dasheng)).toBe(18);
-    expect(Battle.expToNext(2, dasheng)).toBe(54);
+  it('expToNext：5×2^level；输出×1.3 / 控制×1.15 / 观音×1.05；保留1位小数', () => {
+    expect(Battle.expToNext(0)).toBe(5);
+    expect(Battle.expToNext(1)).toBe(10);
+    expect(Battle.expToNext(2)).toBe(20);
+    expect(Battle.expToNext(3)).toBe(40);
+    expect(Battle.expToNext(0, { id: 'dasheng', role: '输出' })).toBe(6.5);
+    expect(Battle.expToNext(1, { id: 'dasheng', role: '输出' })).toBe(13);
+    expect(Battle.expToNext(0, { id: 'bajie', role: '控制' })).toBe(5.8);
+    expect(Battle.expToNext(1, { id: 'bajie', role: '控制' })).toBe(11.5);
+    expect(Battle.expToNext(0, { id: 'guanyin', role: '辅助' })).toBe(5.3);
+    expect(Battle.expToNext(1, { id: 'guanyin', role: '辅助' })).toBe(10.5);
+    expect(Battle.expToNext(1, { id: 'laojun', role: '辅助' })).toBe(10);
+    expect(Battle.roundExp(1.24)).toBe(1.2);
+    expect(Battle.roundExp(1.25)).toBe(1.3);
   });
 
   it('heroSkillExp 低于首档升阶阈值', () => {

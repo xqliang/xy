@@ -26,6 +26,7 @@ import {
   GENERAL_TUNING,
   ultTypeOf,
   heroAttackFxTtl,
+  generalExpCostMul,
   type GeneralDef,
 } from './generals';
 import {
@@ -570,7 +571,7 @@ export interface SkillFx {
 }
 
 // 武将的持续状态（按激活对格子 key 记录；拆分后该对进度清除，重组从 1 档重计）
-// level/exp 为升阶进度内部计数，不对玩家展示为战斗 Lv
+// level = 升阶次数；exp = 当前升阶进度（选中面板展示「经验 当前/目标」）
 export interface GeneralState {
   level: number;
   exp: number;
@@ -1278,6 +1279,9 @@ export class Battle {
         return null;
       case 'displaceToTray':
         this.aiDisplaceToTray(step.cell);
+        return null;
+      case 'removeWord':
+        this.aiRemoveOrphanWord(step.cell);
         return null;
       default: {
         const _exhaustive: never = step;
@@ -4957,11 +4961,17 @@ export class Battle {
     return msg;
   }
 
-  // 武将升阶进度：5×3^level（15/45/135/405…）；可按武将 expCostMul 放大（大圣 1.2×）
-  static expToNext(level: number, def?: Pick<GeneralDef, 'expCostMul'> | null): number {
-    const base = 5 * 3 ** level;
-    const mul = def?.expCostMul ?? 1;
-    return Math.round(base * mul);
+  /** 经验数值保留 1 位小数（阈值与累积进度共用） */
+  static roundExp(n: number): number {
+    return Math.round(n * 10) / 10;
+  }
+  // 武将升阶进度：5×2^level；倍率见 generalExpCostMul（输出/武器 1.3、控制 1.15、观音 1.05）
+  static expToNext(
+    level: number,
+    def?: Pick<GeneralDef, 'id' | 'role' | 'expCostMul'> | null,
+  ): number {
+    const base = 5 * 2 ** level;
+    return Battle.roundExp(base * generalExpCostMul(def));
   }
   /** 普攻输出转升阶经验：首目标全额，额外目标折计（避免 multi-target 英雄刷经验过快） */
   static combatExpFromHits(dmg: number, hit: number): number {
@@ -4980,7 +4990,7 @@ export class Battle {
     if (wa.tier >= cap && wb.tier >= cap) return; // 双字已达该武将满级：丢弃经验
 
     const s = g.state;
-    s.exp += amount;
+    s.exp = Battle.roundExp(s.exp + amount);
     while (s.exp >= Battle.expToNext(s.level, g.def)) {
       const wa2 = wordAt(g.cells[0].c, g.cells[0].r);
       const wb2 = wordAt(g.cells[1].c, g.cells[1].r);
@@ -4990,7 +5000,7 @@ export class Battle {
         s.exp = 0; // 升阶过程中触顶：清掉剩余进度，避免拆开后多段连升
         break;
       }
-      s.exp -= Battle.expToNext(s.level, g.def);
+      s.exp = Battle.roundExp(s.exp - Battle.expToNext(s.level, g.def));
       if (wa2.tier < cap) wa2.tier += 1;
       if (wb2.tier < cap) wb2.tier += 1;
       s.level += 1;

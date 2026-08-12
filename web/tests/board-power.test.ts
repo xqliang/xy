@@ -375,12 +375,12 @@ describe('Battle 接入压力规划', () => {
     expect(rampFrom()).toBe(4);
     const hp = (w: number) =>
       (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(w);
-    expect(hp(1)).toBeCloseTo(23, 5);
-    expect(hp(3)).toBeCloseTo(29, 5);
-    // target4 = 32×1.5 = 48；maxStep = 3×2+(4−4)=6 → 35
-    expect(maxRamp(4)).toBe(6);
-    expect(maxRamp(5)).toBe(7);
-    expect(hp(4)).toBeCloseTo(29 + maxRamp(4), 5);
+    expect(hp(1)).toBeCloseTo(20, 5);
+    expect(hp(3)).toBeCloseTo(32, 5);
+    // target4 = 38×1.5 = 57；maxStep = 6×2+(4−4)=12 → 44
+    expect(maxRamp(4)).toBe(12);
+    expect(maxRamp(5)).toBe(13);
+    expect(hp(4)).toBeCloseTo(32 + maxRamp(4), 5);
     expect(hp(4)).toBeCloseTo(expectedHp(b, 4), 5);
     expect(hp(5)).toBeCloseTo(expectedHp(b, 5), 5);
     expect(hp(8)).toBeCloseTo(expectedHp(b, 8), 5);

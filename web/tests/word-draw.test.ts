@@ -15,6 +15,7 @@ import {
   matchedHeroIds,
   hasAnyHeroMatch,
   forcedMatchWordChars,
+  FORCE_MATCH_HALF_PAIR_P,
   YIN_SUPPORT_PRESS_MUL,
   RECENT_HERO_REPEAT_MUL,
 } from '../src/word-draw';
@@ -234,11 +235,25 @@ describe('武将匹配与软权重', () => {
     expect(pressed / base).toBeCloseTo(RECENT_HERO_REPEAT_MUL, 5);
   });
 
-  it('forcedMatchWordChars：有半对时补配对字', () => {
-    const rng = new FakeRng([0]);
+  it('FORCE_MATCH_HALF_PAIR_P 为 0.6', () => {
+    expect(FORCE_MATCH_HALF_PAIR_P).toBe(0.6);
+  });
+
+  it('forcedMatchWordChars：有半对且抽中半对分支时补配对字', () => {
+    // next()<0.6 → 半对；随后 pick
+    const rng = new FakeRng([0, 0]);
     const picks = forcedMatchWordChars(rng, [], ['大'], 2);
     expect(picks.length).toBe(1);
     expect(['圣', '蟒']).toContain(picks[0]!.char);
+  });
+
+  it('forcedMatchWordChars：有半对时 40% 可直接出一对新英雄', () => {
+    // next()=0.7 ≥ 0.6 → 新英雄双字（不含已在场的「大」）
+    const rng = new FakeRng([0.7, 0]);
+    const picks = forcedMatchWordChars(rng, [], ['大'], 2);
+    expect(picks.length).toBe(2);
+    expect(picks.every((p) => p.char !== '大')).toBe(true);
+    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(true);
   });
 
   it('forcedMatchWordChars：空场可一次给出双字', () => {
@@ -246,6 +261,22 @@ describe('武将匹配与软权重', () => {
     const picks = forcedMatchWordChars(rng, [], [], 2);
     expect(picks.length).toBe(2);
     expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(true);
+  });
+
+  it('forcedMatchWordChars：半对仅能复刷已匹配英雄时改抽新武将', () => {
+    // 半对分支：只能补「蟒」（大圣已排除）
+    const rng = new FakeRng([0, 0, 0, 0]);
+    const picks = forcedMatchWordChars(rng, [], ['大'], 2, {
+      excludeHeroIds: new Set(['dasheng']),
+    });
+    expect(picks.every((p) => p.char !== '圣')).toBe(true);
+    const chars = picks.map((p) => p.char);
+    if (chars.includes('蟒')) {
+      expect(hasAnyHeroMatch(chars, ['大'])).toBe(true);
+    } else {
+      expect(picks.length).toBeGreaterThanOrEqual(1);
+      expect(chars.includes('大') || hasAnyHeroMatch(chars, ['大']) || picks.length === 2).toBe(true);
+    }
   });
 });
 
@@ -303,5 +334,31 @@ describe('征兵匹配保底', () => {
     expect(b.summon()).toBe(true);
     const trayChars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
     expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+  });
+
+  it('波20保底：早年已匹配大圣时不反复刷圣', () => {
+    TUNING.wordDrawChance = 0;
+    const b = new Battle(13);
+    b.grantPeach(100_000);
+    const cell = b.unlockedCells()[0]!;
+    b.words.set(`${cell.c},${cell.r}`, {
+      char: '大',
+      general: hintGeneralForChar('大'),
+      tier: 1,
+      cell,
+    });
+    // 早年曾凑齐大圣（已计入匹配），「圣」已不在场；波20窗口仍要新匹配
+    b.seedHeroMatchForTest('dasheng', 5);
+    b.setWaveForTest(19);
+    b.status = 'ready';
+    b.summon(); // 首次不转字
+    let sheng = 0;
+    for (let i = 0; i < 8; i++) {
+      expect(b.summon()).toBe(true);
+      const chars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
+      sheng += chars.filter((c) => c === '圣').length;
+    }
+    expect(sheng).toBe(0);
+    expect(b.heroMatchedIdsThisGame().some((id) => id !== 'dasheng')).toBe(true);
   });
 });
