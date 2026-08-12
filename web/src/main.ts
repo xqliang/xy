@@ -501,7 +501,7 @@ function battleIntroSequence(): TutorialSequence {
     {
       id: 'peach',
       title: '蟠桃',
-      text: '这里显示你当前拥有的蟠桃数量，击杀妖怪也会掉落。蟠桃是征兵的唯一资源，攒够后就能召募士兵和武将。',
+      text: '这里显示你当前拥有的蟠桃数量，击杀妖怪也会掉落。点击桃子可查看获取途径。蟠桃是征兵的唯一资源，攒够后就能召募士兵和武将。',
       getAnchor: () => peachHudRect(),
     },
     {
