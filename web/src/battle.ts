@@ -709,7 +709,7 @@ export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
 /** 布阵动画 / 间隔（DevTools 可改） */
 export const PLACE_TIMING = {
-  digDur: 0.5, // 铲子挖坑动画时长（来回挖两下）
+  digDur: 0.4, // 铲子挖坑动画时长（铲两下）
   dropDur: 0.03, // AI 落子：自半场顶加速落入格心的时长（秒）
   dragDur: 0.18, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
   staggerMin: 0.1, // 连续落子之间的最短间隔（秒）
@@ -2660,6 +2660,7 @@ export class Battle {
       if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false; // 只挖 AI 可摆放格
       this.aiUnlocked.add(k);
       this.aiDigFx.push({ c: to.c, r: to.r, t: 0 }); // 开格动画（对称展示；延迟落子据此判定）
+      this.emit('shovel'); // 第一铲；半程再铲一声
       if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach;
       this.aiTray.splice(index, 1);
       return true;
@@ -3662,6 +3663,7 @@ export class Battle {
     this.shovels -= 1;
     this.unlocked.add(cellKey(to.c, to.r));
     this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
+    this.emit('shovel'); // 第一铲；半程再铲一声
     this.peach += this.mods.shovelPeach; // 摸金校尉
     this.message = '铲子挖开了新阵位';
     return true;
@@ -4974,6 +4976,7 @@ export class Battle {
     this.aiShovels -= 1;
     this.aiUnlocked.add(k);
     this.aiDigFx.push({ c: to.c, r: to.r, t: 0 });
+    this.emit('shovel'); // 第一铲；半程再铲一声
     if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach;
     return true;
   }
@@ -5856,9 +5859,19 @@ export class Battle {
       if (d.y < d.peakY) d.peakY = d.y;
     }
     this.damageFloats = this.damageFloats.filter((d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);
-    for (const d of this.digFx) d.t += dt;
+    // 挖坑：时长内铲两下；第一铲在开挖瞬间 emit，半程再播第二铲
+    const digHalf = PLACE_TIMING.digDur * 0.5;
+    for (const d of this.digFx) {
+      const prev = d.t;
+      d.t += dt;
+      if (prev < digHalf && d.t >= digHalf) this.emit('shovel');
+    }
     this.digFx = this.digFx.filter((d) => d.t < PLACE_TIMING.digDur);
-    for (const d of this.aiDigFx) d.t += dt;
+    for (const d of this.aiDigFx) {
+      const prev = d.t;
+      d.t += dt;
+      if (prev < digHalf && d.t >= digHalf) this.emit('shovel');
+    }
     this.aiDigFx = this.aiDigFx.filter((d) => d.t < PLACE_TIMING.digDur);
     for (let i = this.autoPlaceDragFx.length - 1; i >= 0; i--) {
       const d = this.autoPlaceDragFx[i]!;

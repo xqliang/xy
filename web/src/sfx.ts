@@ -95,7 +95,11 @@ export function playSfx(name: string): void {
     case 'summon': tone(320, 0.18, { type: 'sine', to: 760, gain: 0.22 }); tone(480, 0.14, { type: 'triangle', gain: 0.12, delay: 0.04 }); break;
     case 'place': tone(520, 0.05, { type: 'square', gain: 0.14 }); tone(196, 0.07, { type: 'sine', gain: 0.1, delay: 0.02 }); break;
     case 'merge': tone(660, 0.07, { type: 'triangle', gain: 0.18 }); tone(990, 0.1, { type: 'triangle', gain: 0.16, delay: 0.06 }); break;
-    case 'shovel': noise(0.12, { gain: 0.16, hp: 300, lp: 2200 }); break;
+    // 一铲落地：沙土噪声 + 短促闷击（挖坑动画每铲各播一次）
+    case 'shovel':
+      noise(0.1, { gain: 0.18, hp: 280, lp: 2400 });
+      tone(160, 0.05, { type: 'triangle', to: 70, gain: 0.1 });
+      break;
     case 'attack': {
       const now = performance.now();
       if (now - lastAttack < 80) return; // 节流

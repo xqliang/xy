@@ -2982,21 +2982,47 @@ function drawSkillFx(ctx: CanvasRenderingContext2D, fx: SkillFx | null) {
 // 爆发特效：命中冲击环 / 击杀爆散 / 合成星爆
 function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number; t: number }[]) {
   const spr = sprite('item-shovel');
+  const STROKES = 2; // 铲两下（与 digDur / 半程音效对齐）
   for (const d of fxList) {
     const { x, y } = cellCenterPx(d.c, d.r);
     const phase = Math.min(1, d.t / PLACE_TIMING.digDur); // 0→1
-    const chop = Math.abs(Math.sin(phase * Math.PI * 2 * 2)); // 两个周期=来回挖两下
-    const tilt = Math.sin(phase * Math.PI * 2 * 2) * 0.5; // 随挖左右摆
-    const s = CELL * 0.6;
+    const u = phase * STROKES;
+    const stroke = Math.min(STROKES - 1, Math.floor(u));
+    const local = u - stroke; // 单铲内 0→1：下压→抬起
+    // 前半快落、后半抬起，峰值更像真实一铲
+    const chop = local < 0.45
+      ? (local / 0.45) ** 1.35
+      : (1 - (local - 0.45) / 0.55) ** 1.1;
+    const tilt = (stroke === 0 ? -1 : 1) * (0.28 + chop * 0.42);
+    const s = CELL * 0.62;
     ctx.save();
-    ctx.globalAlpha = 1 - phase * 0.15;
-    // 泥坑底色
-    ctx.fillStyle = 'rgba(60,40,20,0.32)';
+    ctx.globalAlpha = 1 - phase * 0.12;
+    // 泥坑：随两铲加深
+    const pit = 0.22 + phase * 0.2;
+    ctx.fillStyle = `rgba(60,40,20,${0.28 + phase * 0.2})`;
     ctx.beginPath();
-    ctx.ellipse(x, y + CELL * 0.18, CELL * 0.28, CELL * 0.13, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y + CELL * 0.18, CELL * pit, CELL * (pit * 0.45), 0, 0, Math.PI * 2);
     ctx.fill();
-    // 铲子：随 chop 下压 + tilt 倾斜
-    ctx.translate(x, y - CELL * 0.12 + chop * CELL * 0.22);
+    // 下铲溅泥（峰值附近更明显）
+    if (chop > 0.55) {
+      const spit = (chop - 0.55) / 0.45;
+      ctx.fillStyle = `rgba(90,62,32,${0.35 * spit})`;
+      for (const side of [-1, 1] as const) {
+        ctx.beginPath();
+        ctx.ellipse(
+          x + side * CELL * (0.16 + spit * 0.1),
+          y + CELL * (0.06 - spit * 0.08),
+          CELL * 0.05,
+          CELL * 0.035,
+          side * 0.4,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+    }
+    // 铲子：随 chop 下压 + 两铲左右对挥
+    ctx.translate(x, y - CELL * 0.14 + chop * CELL * 0.28);
     ctx.rotate(tilt);
     if (spr) {
       ctx.drawImage(spr, -s / 2, -s / 2, s, s);

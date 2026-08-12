@@ -38,10 +38,11 @@ describe('挖格后延迟落子（玩家侧）', () => {
       { kind: 'unit', type: 'dao', tier: 1 },
       { kind: 'unit', type: 'gun', tier: 1 },
     ];
+    // 先挖 → 立刻排新坑落子（应预占）→ 再落其他格（挖坑中可并行）
     b.autoPlacePlayback = [
       { kind: 'place', trayIndex: 0, cell: { c: digCell.c, r: digCell.r }, token: { kind: 'shovel' } },
-      { kind: 'place', trayIndex: 1, cell: { c: other.c, r: other.r }, token: { kind: 'unit', type: 'dao', tier: 1 } },
       { kind: 'place', trayIndex: 2, cell: { c: digCell.c, r: digCell.r }, token: { kind: 'unit', type: 'gun', tier: 1 } },
+      { kind: 'place', trayIndex: 1, cell: { c: other.c, r: other.r }, token: { kind: 'unit', type: 'dao', tier: 1 } },
     ];
     b.autoPlacePlaying = true;
     b.placeDropAnimDepth = 1;
@@ -49,7 +50,7 @@ describe('挖格后延迟落子（玩家侧）', () => {
 
     let sawOtherWhileDigging = false;
     let sawDigPending = false;
-    const horizon = PLACE_TIMING.dragDur + PLACE_TIMING.staggerMax + DIG_DUR + 0.5;
+    const horizon = PLACE_TIMING.dragDur * 3 + PLACE_TIMING.staggerMax * 2 + DIG_DUR + 0.5;
     for (let t = 0; t < horizon; t += 0.02) {
       b.step(0.02);
       const digging = b.digFx.some((d: { c: number; r: number }) => d.c === digCell.c && d.r === digCell.r);
@@ -57,19 +58,12 @@ describe('挖格后延迟落子（玩家侧）', () => {
         b.units.has(`${other.c},${other.r}`)
         || b.autoPlaceDragFx.some((d: { c: number; r: number }) => d.c === other.c && d.r === other.r);
       if (digging && otherBusy) sawOtherWhileDigging = true;
-      if (
-        digging
-        && (
-          b.pendingPlace.some((p: { c: number; r: number }) => p.c === digCell.c && p.r === digCell.r)
-          || b.autoPlaceDragFx.some((d: { c: number; r: number; commit: string }) =>
-            d.c === digCell.c && d.r === digCell.r && d.commit !== 'digShovel')
-        )
-      ) {
+      if (digging && b.pendingPlace.some((p: { c: number; r: number }) => p.c === digCell.c && p.r === digCell.r)) {
         sawDigPending = true;
       }
     }
-    expect(sawOtherWhileDigging).toBe(true);
     expect(sawDigPending).toBe(true);
+    expect(sawOtherWhileDigging).toBe(true);
     expect(b.units.has(`${digCell.c},${digCell.r}`)).toBe(true);
     expect(b.units.get(`${digCell.c},${digCell.r}`)?.type).toBe('gun');
     expect(b.units.has(`${other.c},${other.r}`)).toBe(true);
