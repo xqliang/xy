@@ -225,7 +225,33 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（阵位未全开时） |
 | `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（阵位未全开时；在匹配保底之后落定） |
 
-半对保底触发时（`forcePartner`）：只从仍缺的配对字中抽。若场上独特单字 ≥ **3**，随机选一个孤儿，其配对字权重 **0.4**、其余配对字 **0.2**；不足 3 个则全部配对字等权 **0.2**（玩家 / AI 相同，`pickForcedPartnerChar`）。
+#### 半对保底（单字配对聚焦）
+
+代码：`word-draw.ts` → `pickForcedPartnerChar`；征兵侧 `Battle.summon` / `aiSummon` 在 `forcePartner` 时调用。玩家与 AI **规则相同**（各用本方棋盘孤儿与独立 `summonsSincePair` / `aiSummonsSincePair`）。
+
+**何时触发**
+
+1. 非首次征兵，且本方棋盘存在未激活占用的单字（孤儿，`boardOrphanCharsNow` / AI 对称）。
+2. 连续 `pairPityAfter`（**6**）次征兵仍未抽出可补该孤儿的配对字。
+3. 本盘字槽策略允许强制配对（`allowForcePartner`，且 `wordSlotsCap > 0`）。
+
+触发后本盘至少强制抽 **1** 张「仍缺的配对字」（`pendingPartnerChars`，已排除本盘 tray 已有字与场上达上限的字）；**不会**抽非配对字。
+
+**强制抽字时的权重（聚焦）**
+
+在仍缺的配对字集合 `need` 上加权抽取（相对权重，再归一化）：
+
+| 条件 | 行为 |
+|------|------|
+| 场上独特单字数 ≥ `PAIR_PITY_FOCUS_MIN_ORPHANS`（**3**） | 在「仍有缺口配对」的独特孤儿中**随机选 1 个**作为聚焦；该孤儿所需、且落在 `need` 内的配对字权重 = `PAIR_PITY_FOCUS_W`（**0.4**）；`need` 内其余配对字权重 = `PAIR_PITY_OTHER_W`（**0.2**） |
+| 独特单字不足 **3** | `need` 内全部配对字等权 `PAIR_PITY_OTHER_W`（**0.2**） |
+
+说明：
+
+- 「独特单字」按字去重；只统计至少还有一个配对字落在 `need` 里的孤儿。
+- 同一聚焦孤儿若对应多个可补配对（如「大」→「圣」「蟒」），这些字各自权重均为 **0.4**。
+- 非保底征兵时的软加权仍用 `PARTNER_BOOST`（**0.12**），与上表无关。
+- 与 §8.3「匹配保底」（跨局/波段强制新匹配）是不同系统；匹配保底用 `forcedMatchWordChars` / `FORCE_MATCH_HALF_PAIR_P`。
 
 ### 8.2 匹配口径与软权重（玩家 / AI）
 
