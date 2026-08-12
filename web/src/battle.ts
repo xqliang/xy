@@ -50,7 +50,7 @@ import {
 } from './weapons';
 import { applyForceShovel, drawSummonTray } from './summon-draw';
 import { earlySummonGates } from './summon-early';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -1033,6 +1033,12 @@ export class Battle {
     generalCells?: Cell[],
   ): boolean {
     if (this.autoPlaceDragFx.some((d) => d.c === cell.c && d.r === cell.r)) return false;
+    // 同一 tray 槽不可排队两次（否则 commit 用克隆 token 会「复制」出第二份字/兵）
+    if (this.autoPlaceDragFx.some((d) => d.trayIndex === trayIndex)) return false;
+    const cur = this.tray[trayIndex];
+    if (!cur || !this.trayTokensMatch(cur, token)) return false;
+    // 排队时预扣 tray，避免回放多步/同字双份时二次匹配到同一槽
+    this.clearTraySlot(trayIndex);
     this.autoPlaceDragFx.push({
       trayIndex,
       token: this.cloneTrayToken(token),
@@ -1046,29 +1052,71 @@ export class Battle {
     return true;
   }
 
+  /** 拖拽中止/落子失败：把预扣的令牌退回原 tray 槽 */
+  private restoreQueuedAutoPlaceToken(d: AutoPlaceDragFx): void {
+    if (!this.tray[d.trayIndex]) {
+      this.tray[d.trayIndex] = this.cloneTrayToken(d.token);
+    }
+  }
+
+  /** commit 时目标格是否可落：忽略「自己」这条 drag 预占（cellFree 会把 drag 格算占用） */
+  private cellFreeForAutoPlaceCommit(c: number, r: number, self: AutoPlaceDragFx): boolean {
+    return !this.units.has(cellKey(c, r))
+      && !this.words.has(cellKey(c, r))
+      && !this.pendingPlace.some((p) => p.c === c && p.r === r)
+      && !this.autoPlaceDragFx.some((d) => d !== self && d.c === c && d.r === r);
+  }
+
   private commitAutoPlaceDrag(d: AutoPlaceDragFx): void {
+    // 必须仍在排队中：禁止对已提交/伪造的 drag 用克隆 token 再落一份（字牌复制 bug）
+    if (!this.autoPlaceDragFx.includes(d)) return;
     const cell = { c: d.c, r: d.r };
     const k = cellKey(d.c, d.r);
-    if (this.tray[d.trayIndex]) this.clearTraySlot(d.trayIndex);
+    // tray 已在 queue 时预扣；此处只消费克隆 token，失败则退回
     switch (d.commit) {
       case 'placeUnit': {
         const t = d.token;
-        if (t.kind !== 'unit') break;
+        if (t.kind !== 'unit') {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
+        if (!this.isUnlocked(cell.c, cell.r) || !this.cellFreeForAutoPlaceCommit(cell.c, cell.r, d)) {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         this.units.set(k, makePlacedUnit(t.type, t.tier, cell, this.unitFaceGate()));
         break;
       }
       case 'placeWord': {
         const t = d.token;
-        if (t.kind !== 'word') break;
+        if (t.kind !== 'word') {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
+        if (!this.isUnlocked(cell.c, cell.r) || !this.cellFreeForAutoPlaceCommit(cell.c, cell.r, d)) {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         this.words.set(k, placedWordFromTray(t, cell));
         break;
       }
       case 'mergeUnit': {
         const t = d.token;
-        if (t.kind !== 'unit') break;
+        if (t.kind !== 'unit') {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         const exist = this.units.get(k);
         if (!exist) {
+          if (!this.isUnlocked(cell.c, cell.r) || !this.cellFreeForAutoPlaceCommit(cell.c, cell.r, d)) {
+            this.restoreQueuedAutoPlaceToken(d);
+            break;
+          }
           this.units.set(k, makePlacedUnit(t.type, t.tier, cell, this.unitFaceGate()));
+          break;
+        }
+        if (!canMerge({ type: exist.type, tier: exist.tier }, { type: t.type, tier: t.tier })) {
+          this.restoreQueuedAutoPlaceToken(d);
           break;
         }
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: t.type, tier: t.tier });
@@ -1078,10 +1126,16 @@ export class Battle {
       }
       case 'feedGeneralWord': {
         const t = d.token;
-        if (t.kind !== 'word' || !d.generalCells || d.generalCells.length < 2) break;
+        if (t.kind !== 'word' || !d.generalCells || d.generalCells.length < 2) {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         const wa = this.wordAt(d.generalCells[0]!.c, d.generalCells[0]!.r);
         const wb = this.wordAt(d.generalCells[1]!.c, d.generalCells[1]!.r);
-        if (!wa || !wb) break;
+        if (!wa || !wb) {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         wa.tier += 1;
         wb.tier += 1;
         for (const cc of d.generalCells) {
@@ -1098,8 +1152,10 @@ export class Battle {
         break;
       }
       case 'digShovel': {
-        if (this.isUnlocked(cell.c, cell.r) || !this.isPlaceable(cell.c, cell.r)) break;
-        if (this.trees.has(k)) break;
+        if (this.isUnlocked(cell.c, cell.r) || !this.isPlaceable(cell.c, cell.r) || this.trees.has(k)) {
+          this.restoreQueuedAutoPlaceToken(d);
+          break;
+        }
         this.unlocked.add(k);
         this.digFx.push({ c: cell.c, r: cell.r, t: 0 });
         this.peach += this.mods.shovelPeach;
@@ -1431,12 +1487,37 @@ export class Battle {
     this.endPlaceDropAnim();
   }
 
-  /** 回放漏掉的 tray 单位：无动效补落（避免 tray 里还剩兵） */
+  /** 是否还有可自动落下的 tray 令牌（铲子须仍有可挖格；桃树挡挖的铲不算） */
+  private trayHasAutoplaceSweepPending(): boolean {
+    for (const t of this.tray) {
+      if (!t) continue;
+      if (t.kind === 'unit' || t.kind === 'word') return true;
+      if (t.kind === 'shovel' && this.hasDiggableSlot()) return true;
+      if (t.kind === 'tree' && this.hasTreePlantSlot()) return true;
+    }
+    return false;
+  }
+
+  /** 未开垦且无桃树 → 铲子可挖 */
+  private hasDiggableSlot(): boolean {
+    return this.lockedCells().some((c) => !this.trees.has(cellKey(c.c, c.r)));
+  }
+
+  /** 未开垦空地（可种/换桃树） */
+  private hasTreePlantSlot(): boolean {
+    return this.lockedCells().some((c) => this.isPlaceable(c.c, c.r));
+  }
+
+  /**
+   * 回放漏掉的 tray 单位：无动效补落（避免 tray 里还剩兵）。
+   * 仅处理仍可落地的令牌——若只剩「桃树挡着挖不了」的铲子，禁止再空转调位（否则可拖到数百 ms）。
+   */
   private sweepRemainingTrayDeploy(): void {
     for (let g = 0; g < PLAYER_PLACE_MAX_STEPS; g++) {
-      if (!this.tray.some(Boolean)) break;
+      if (!this.trayHasAutoplaceSweepPending()) break;
       const hasFree = this.unlockedCells().some((c) => this.cellFree(c.c, c.r));
-      if (!hasFree) break;
+      // 铲子还可挖时不要求已有空闲解锁格
+      if (!hasFree && !this.hasDiggableSlot()) break;
       const n = planAutoPlaceSteps(this.buildPlayerAutoView(), {
         rng: () => this.rng.next(),
         pSubOptimal: 0,
@@ -1834,25 +1915,25 @@ export class Battle {
     const avail = TUNING.traySize;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.summonCount === 0;
-    // 阵位是否已全部挖开：全开后铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
-    const allOpen = this.lockedCells().length === 0;
+    // 无可挖阵位（全开或仅剩桃树占格）：铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
+    const diggableLeft = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))).length;
+    const allOpen = diggableLeft === 0;
     const early = earlySummonGates(this.wave, {
       wordsInCapWindow: this.earlySummonWordsCap,
       wordsInGuaranteeWindow: this.earlySummonWordsGuarantee,
       shovelsInWindow: this.earlySummonShovels,
     }, TUNING);
-    // 铲子保底 / 前期下限：仅在仍有未挖格时生效；前期上限用 maxShovels 卡住
+    // 单次征兵出铲 ≤ 待挖空位；再与前期配额 / summonMaxPerKey 取更严
     // 强制出铲延后到字/半对/匹配保底之后，避免覆盖其它保底槽
-    const forceShovel = !allOpen
-      && (this.summonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel)
-      && (early.maxShovels === null || early.maxShovels > 0);
-    const shovelCap = allOpen ? 0 : (early.maxShovels ?? TUNING.summonMaxPerKey);
+    const shovelCap = Math.min(diggableLeft, early.maxShovels ?? TUNING.summonMaxPerKey);
+    const forceShovel = shovelCap > 0
+      && (this.summonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel);
     // 兵/铲分布：受约束（同 key ≤ 上限，首次保底≥4兵）；强制铲见文末 applyForceShovel
     const base = drawSummonTray({
       rng: this.rng,
       unitTypes: types,
       draws: avail,
-      shovelChance: allOpen ? 0 : (early.maxShovels === 0 ? 0 : TUNING.shovelDrawChance),
+      shovelChance: shovelCap <= 0 ? 0 : TUNING.shovelDrawChance,
       maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
       firstSummon,
       maxShovels: shovelCap,
@@ -2811,19 +2892,20 @@ export class Battle {
     this.aiSummonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.aiSummonCount === 0;
-    const allOpen = this.aiLockedCells().length === 0;
+    // 与玩家一致：单次出铲 ≤ 待挖空位（AI 侧无桃树占格）
+    const diggableLeft = this.aiLockedCells().length;
+    const allOpen = diggableLeft === 0;
     const early = earlySummonGates(this.wave, {
       wordsInCapWindow: this.aiEarlySummonWordsCap,
       wordsInGuaranteeWindow: this.aiEarlySummonWordsGuarantee,
       shovelsInWindow: this.aiEarlySummonShovels,
     }, TUNING);
-    const forceShovel = !allOpen
-      && (this.aiSummonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel)
-      && (early.maxShovels === null || early.maxShovels > 0);
-    const shovelCap = allOpen ? 0 : (early.maxShovels ?? TUNING.summonMaxPerKey);
+    const shovelCap = Math.min(diggableLeft, early.maxShovels ?? TUNING.summonMaxPerKey);
+    const forceShovel = shovelCap > 0
+      && (this.aiSummonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel);
     const base = drawSummonTray({
       rng: this.aiRng, unitTypes: types, draws: TUNING.traySize,
-      shovelChance: allOpen ? 0 : (early.maxShovels === 0 ? 0 : TUNING.shovelDrawChance),
+      shovelChance: shovelCap <= 0 ? 0 : TUNING.shovelDrawChance,
       maxPerKey: allOpen ? TUNING.summonMaxPerKeyAllOpen : TUNING.summonMaxPerKey,
       firstSummon,
       maxShovels: shovelCap,
@@ -3127,9 +3209,9 @@ export class Battle {
     dangerNear: boolean,
   ): number {
     const stat = getUnitStat(type, tier);
-    const lite = monsters.map((m) => ({ dist: m.dist, hp: m.hp, maxHp: m.maxHp }));
+    // Monster 已含 dist/hp/maxHp，直接传入避免每次 map 分配（布阵/调位热点）
     return engageThreatAt(
-      lite,
+      monsters,
       path,
       entranceDist,
       cell.c,
@@ -4790,6 +4872,9 @@ export class Battle {
           maxOrphanWords: AI_MAX_ORPHAN_WORDS,
           maxSteps: AI_PLACE_MAX_STEPS,
           maxGuard: AI_PLACE_MAX_GUARD,
+          deadlineMs: this.aiMonsters.length > 0
+            ? performance.now() + AI_PLACE_DEADLINE_MS
+            : undefined,
         });
         this.aiAutoPlaceRecording = false;
         this.aiAutoPlaceRecorder = null;
@@ -6364,10 +6449,18 @@ export class Battle {
       maxOrphanWords: AI_MAX_ORPHAN_WORDS,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
+      // 仅场上有怪时限时：无怪时几何评分便宜，不必截断完整布阵
+      deadlineMs: this.monsters.length > 0
+        ? performance.now() + PLAYER_PLACE_DEADLINE_MS
+        : undefined,
     });
     this.autoPlaceRecording = false;
     this.autoPlaceRecorder = null;
-    const needsReposition = trayBefore > 0 || this.tray.length > 0;
+    // 有怪：布阵后按怪群调位（含空 tray）。无怪：仅当 tray 仍有可落物时才挂调位，
+    // 避免「只剩挖不了的铲」仍走 finish→sweep 空转调位。
+    const needsReposition = this.monsters.length > 0
+      ? (trayBefore > 0 || this.tray.length > 0 || placed > 0)
+      : this.trayHasAutoplaceSweepPending();
     const keyAfter = autoPlaceBoardKey(this.buildPlayerAutoView());
     const lastKey = this.lastAutoPlaceBoardKey;
     if (keyAfter !== keyBefore && lastKey !== null && keyAfter === lastKey) {

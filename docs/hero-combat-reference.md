@@ -266,11 +266,16 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `PLAYER_PLACE_MAX_STEPS` / `AI_PLACE_MAX_STEPS` | **150** | 单轮自动布阵最多落子步（AI 别名等于玩家） |
 | `PLAYER_PLACE_MAX_GUARD` / `AI_PLACE_MAX_GUARD` | **300** | 布阵循环护栏（防死循环；AI 同玩家） |
 | `PLAYER_REPOSITION_MAX_STEPS` | **100** | 玩家一键布阵后的战中调位步数上限 |
+| `PLAYER_PLACE_DEADLINE_MS` / `AI_PLACE_DEADLINE_MS` | **80 / 64** | 场上有怪时单帧布阵规划软超时（ms） |
 | `PLACE_TIMING.digDur` | **0.4** | 挖坑动画（铲两下；每铲播 `shovel` 音效） |
 | `PLACE_TIMING.dragDur` | **0.18** | 玩家一键布阵虚线拖拽时长（秒） |
 | `PLACE_TIMING.staggerMin` / `staggerMax` | **0.18 / 0.25** | 连续落子间隔（秒） |
 
 挖坑进行中可并行落**其他格**；新挖格预占，挖完后再落武器（`pendingPlace` / `digFx`）。
+
+**布阵拖拽落子（防字牌复制）**：`queueAutoPlaceDrag` 入队时预扣 tray；同 `trayIndex` 不可二次排队；`commitAutoPlaceDrag` 仅处理仍在 `autoPlaceDragFx` 内的项，失败退回 tray。禁止 tray 已空仍用克隆 token 再落一份（表现为点一次布阵多出一个相同字）。
+
+**铲子 + 桃树**：tray 仅剩挖不了的铲时，`sweepRemainingTrayDeploy` 不得空转调位。
 
 ### 8.6 玩家 ↔ AI：已对齐 vs 有意保留差异
 
