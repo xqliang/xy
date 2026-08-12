@@ -7,6 +7,7 @@ import { loadRank } from './rank';
 import { ensureUserId } from './user-id';
 import { maskUid } from './avatar-catalog';
 import { clampNickname } from './nickname';
+import { invalidateLeaderboardCache } from './leaderboard';
 
 const SAVE_TS_KEY = 'dasheng.saveUpdatedAt';
 const KEYS = [
@@ -159,6 +160,8 @@ export async function updateProfile(opts: {
     avatarId: res.data.avatarId,
     unlockedAvatars: res.data.unlockedAvatars,
   });
+  // 资料改完后丢掉榜单本地缓存，下次进排行榜会重新拉（服务端也会同步今日快照）
+  invalidateLeaderboardCache();
   scheduleCloudSync(1000);
   return true;
 }

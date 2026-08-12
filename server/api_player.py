@@ -204,13 +204,26 @@ def handle_profile(handler, db: DB) -> None:
     if not updates:
         send_json(handler, 400, {"error": {"code": "bad_body", "msg": "nothing to update"}})
         return
+    now = db.now()
     updates.append("updated_at=%s")
-    args.append(db.now())
+    args.append(now)
     args.append(uid)
     with db.cursor() as cur:
         cur.execute(f"UPDATE players SET {', '.join(updates)} WHERE uid=%s", args)
     row = _player_row(db, uid)
     assert row
+    # 榜单昵称/头像是 daily_leaderboard 快照：改资料后立刻同步今日行，避免改名后仍显示旧名。
+    # 不碰 updated_at，避免同段位因改名挤到更好并列位次。
+    if "nickname" in body or avatar_id is not None:
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE daily_leaderboard
+                SET nickname=%s, avatar_id=%s
+                WHERE day=%s AND uid=%s
+                """,
+                (row["nickname"], row["avatar_id"], db.today(), uid),
+            )
     send_json(handler, 200, _public_player(row, _unlocked(db, uid)))
 
 

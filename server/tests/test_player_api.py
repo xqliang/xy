@@ -155,6 +155,23 @@ def test_leaderboard_and_events(server_base):
     assert body["me"]["rankLevel"] == 3
     assert body["entries"][0]["rankLevel"] >= 3
 
+    # 改昵称后今日榜快照应立即更新（不必再 submit）
+    st, body = _req(
+        server_base,
+        "POST",
+        "/api/player/profile",
+        {"nickname": "新昵称侠"},
+        uid,
+    )
+    assert st == 200
+    assert body["nickname"] == "新昵称侠"
+    st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
+    assert st == 200
+    assert body["me"]["name"] == "新昵称侠"
+    me_entry = next((e for e in body["entries"] if e.get("me") or e["uid"] == uid), None)
+    assert me_entry is not None
+    assert me_entry["name"] == "新昵称侠"
+
     st, body = _req(
         server_base,
         "POST",
