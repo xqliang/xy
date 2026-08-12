@@ -24,7 +24,7 @@ describe('字牌征兵保底', () => {
     expect(b.tray.some((t) => t.kind === 'word')).toBe(true);
   });
 
-  it('强制转字只改 unit 槽，不把 shovel 换成字', () => {
+  it('强制转字只改 unit 槽，不把 shovel 换成字；强制铲不覆盖字保底', () => {
     TUNING.wordDrawChance = 0;
     TUNING.wordPityAfter = 1; // 第二次非首次即可强制（先召唤一次垫高计数）
     const b = new Battle(3);
@@ -41,5 +41,9 @@ describe('字牌征兵保底', () => {
     expect(words.length).toBeGreaterThanOrEqual(1);
     expect(shovels.length).toBeGreaterThanOrEqual(1);
     expect(b.tray).toHaveLength(TUNING.summonDraws);
+  });
+
+  it('shovelPityAfter 为 4', () => {
+    expect(TUNING.shovelPityAfter).toBe(4);
   });
 });

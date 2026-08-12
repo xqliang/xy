@@ -5,6 +5,26 @@ export type SummonToken =
   | { kind: 'unit'; type: UnitType; tier: 1 }
   | { kind: 'shovel' };
 
+/**
+ * 强制出铲：只替换剩余 `unit` 槽，绝不改写字牌等其它保底结果。
+ * @returns 是否成功写入一把铲
+ */
+export function applyForceShovel<T extends { kind: string }>(
+  tokens: T[],
+  opts?: { maxShovels?: number; minUnits?: number },
+): boolean {
+  const maxShovels = opts?.maxShovels ?? Number.POSITIVE_INFINITY;
+  const minUnits = opts?.minUnits ?? 0;
+  const shovelN = tokens.filter((t) => t.kind === 'shovel').length;
+  if (shovelN >= 1 || maxShovels <= shovelN) return false;
+  const unitN = tokens.filter((t) => t.kind === 'unit').length;
+  if (unitN <= minUnits) return false;
+  const lastUnit = tokens.map((t) => t.kind).lastIndexOf('unit');
+  if (lastUnit < 0) return false;
+  tokens[lastUnit] = { kind: 'shovel' } as T;
+  return true;
+}
+
 export function drawSummonTray(opts: {
   rng: RNG;
   unitTypes: readonly UnitType[];
@@ -12,11 +32,12 @@ export function drawSummonTray(opts: {
   shovelChance: number;
   maxPerKey: number;
   firstSummon: boolean;
+  /** @deprecated 强制出铲改由征兵流程在字/半对保底之后调用 applyForceShovel */
   forceShovel?: boolean;
   /** 本盘铲子硬上限（如前期累计配额剩余）；未设则只受 maxPerKey */
   maxShovels?: number;
 }): SummonToken[] {
-  const { rng, unitTypes, draws, shovelChance, maxPerKey, firstSummon, forceShovel } = opts;
+  const { rng, unitTypes, draws, shovelChance, maxPerKey, firstSummon } = opts;
   const maxShovels = opts.maxShovels ?? maxPerKey;
   const counts = new Map<string, number>();
   const out: SummonToken[] = [];
@@ -50,15 +71,5 @@ export function drawSummonTray(opts: {
     bump(`unit:${type}`);
   }
 
-  // 铲子保底：要求强制出铲但本盘一把都没出 → 把最后一个兵槽替换为铲子
-  if (
-    forceShovel
-    && maxShovels > 0
-    && out.filter((t) => t.kind === 'shovel').length < maxShovels
-    && !out.some((t) => t.kind === 'shovel')
-  ) {
-    const lastUnit = out.map((t) => t.kind).lastIndexOf('unit');
-    if (lastUnit >= 0) out[lastUnit] = { kind: 'shovel' };
-  }
   return out;
 }

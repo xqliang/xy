@@ -203,7 +203,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ## 8. 征兵字/铲与武将匹配（`TUNING` / `word-draw.ts`，2026-08-12）
 
-字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定，单次征兵最多 `SUMMON_MAX_WORD_SLOTS` 字。另有连续无字/无铲/半对保底。
+字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定，单次征兵最多 `SUMMON_MAX_WORD_SLOTS` 字。另有连续无字 / 无铲（`shovelPityAfter`=**4**）/ 半对保底；强制出铲在字·半对·匹配保底之后执行，只替换剩余兵槽，不覆盖其它保底牌。
 
 ### 8.1 基础配额与掉率
 

@@ -1262,7 +1262,17 @@ function clearActiveDrag(): void {
 function handleButton(x: number, y: number): boolean {
   for (const btn of getButtons(battle)) {
     if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
-      if (!btn.enabled) return true;
+      if (!btn.enabled) {
+        // 桃够但飞入未结束：吞掉连点并提示，避免连续征兵抖动
+        if (
+          btn.id === 'summon'
+          && battle.peach >= battle.effectiveSummonCost()
+          && !summonAnimDone(battle)
+        ) {
+          battle.message = '征兵冷却中';
+        }
+        return true;
+      }
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
         if (battle.summon()) pendingFirstSummonTutorial = true;

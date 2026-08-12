@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RNG } from '../src/rng';
-import { drawSummonTray } from '../src/summon-draw';
+import { applyForceShovel, drawSummonTray } from '../src/summon-draw';
 import { UNITS } from '@core';
 import type { UnitType } from '@core';
 
@@ -59,7 +59,7 @@ describe('drawSummonTray', () => {
     }
   });
 
-  it('respects maxShovels even when chance and force are high', () => {
+  it('respects maxShovels even when chance is high', () => {
     for (let seed = 1; seed <= 100; seed++) {
       const tray = drawSummonTray({
         rng: new RNG(seed),
@@ -68,10 +68,39 @@ describe('drawSummonTray', () => {
         shovelChance: 1,
         maxPerKey: 3,
         firstSummon: false,
-        forceShovel: true,
         maxShovels: 1,
       });
       expect(tray.filter((t) => t.kind === 'shovel')).toHaveLength(1);
     }
+  });
+
+  it('applyForceShovel 只替换 unit，不覆盖 word', () => {
+    const tray: Array<{ kind: string; type?: string; char?: string }> = [
+      { kind: 'word', char: '大' },
+      { kind: 'unit', type: 'dao' },
+      { kind: 'unit', type: 'spear' },
+    ];
+    expect(applyForceShovel(tray, { maxShovels: 1 })).toBe(true);
+    expect(tray.filter((t) => t.kind === 'word')).toHaveLength(1);
+    expect(tray.filter((t) => t.kind === 'shovel')).toHaveLength(1);
+    expect(tray[0]!.kind).toBe('word');
+  });
+
+  it('applyForceShovel 在 minUnits 不足时放弃', () => {
+    const tray: Array<{ kind: string }> = [
+      { kind: 'word' },
+      { kind: 'word' },
+      { kind: 'unit' },
+      { kind: 'shovel' },
+    ];
+    expect(applyForceShovel(tray, { maxShovels: 2 })).toBe(false); // 已有铲
+    const noSpare: Array<{ kind: string }> = [
+      { kind: 'word' },
+      { kind: 'word' },
+      { kind: 'unit' },
+      { kind: 'unit' },
+    ];
+    expect(applyForceShovel(noSpare, { maxShovels: 1, minUnits: 2 })).toBe(false);
+    expect(noSpare.every((t) => t.kind !== 'shovel')).toBe(true);
   });
 });
