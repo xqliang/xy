@@ -165,6 +165,8 @@ export const PLAYER_PLACE_MAX_GUARD = 300;
 export const PLAYER_REPOSITION_MAX_STEPS = 100;
 /** 场上有怪时单帧布阵规划软超时（ms）；超时先播已规划步，避免卡顿 */
 export const PLAYER_PLACE_DEADLINE_MS = 80;
+/** 备战/波间无怪时布阵软超时（ms）；比战中宽松，仍防单帧卡死 */
+export const PLAYER_PLACE_DEADLINE_PREP_MS = 150;
 export const AI_PLACE_DEADLINE_MS = 64;
 /** AI 征兵后布阵：与玩家一键布阵同预算 */
 export const AI_PLACE_MAX_STEPS = PLAYER_PLACE_MAX_STEPS;

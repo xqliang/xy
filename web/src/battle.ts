@@ -50,7 +50,7 @@ import {
 } from './weapons';
 import { applyForceShovel, drawSummonTray } from './summon-draw';
 import { earlySummonGates } from './summon-early';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_PLACE_DEADLINE_PREP_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -488,6 +488,39 @@ export function makePlacedUnit(
     rangeCutImmuneT: 0,
     knockdownImmuneT: 0,
   };
+}
+
+/** 棋盘同型同阶合成：保留幸存格坐标/减益等，并合并两单位的仙丹/风火轮/炼丹增益 */
+function mergePlacedUnitState(
+  survivor: PlacedUnit,
+  consumed: PlacedUnit,
+  merged: { type: UnitType; tier: number },
+): PlacedUnit {
+  const out: PlacedUnit = {
+    ...survivor,
+    type: merged.type,
+    tier: merged.tier,
+    cooldown: 0,
+  };
+  if (survivor.pillAtk || consumed.pillAtk) out.pillAtk = true;
+  else delete out.pillAtk;
+  if (survivor.pillFrq || consumed.pillFrq) out.pillFrq = true;
+  else delete out.pillFrq;
+  const sT = survivor.buffAtkT ?? 0;
+  const cT = consumed.buffAtkT ?? 0;
+  if (sT >= cT && sT > 0) {
+    out.buffAtkT = sT;
+    if (survivor.buffAtkMul != null) out.buffAtkMul = survivor.buffAtkMul;
+    else delete out.buffAtkMul;
+  } else if (cT > 0) {
+    out.buffAtkT = cT;
+    if (consumed.buffAtkMul != null) out.buffAtkMul = consumed.buffAtkMul;
+    else delete out.buffAtkMul;
+  } else {
+    delete out.buffAtkT;
+    delete out.buffAtkMul;
+  }
+  return out;
 }
 
 // 棋盘上的单个武将字牌（占一格，带阶数；同字同阶可合并升阶）
@@ -1120,7 +1153,7 @@ export class Battle {
           break;
         }
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: t.type, tier: t.tier });
-        this.units.set(k, { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.set(k, mergePlacedUnitState(exist, makePlacedUnit(t.type, t.tier, cell), merged));
         this.bursts.push({ kind: 'merge', c: d.c, r: d.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         break;
       }
@@ -1413,7 +1446,7 @@ export class Battle {
         if (!a || !b) return false;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
         const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
-        this.units.set(cellKey(step.to.c, step.to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.set(cellKey(step.to.c, step.to.r), mergePlacedUnitState(b, a, merged));
         this.units.delete(cellKey(step.from.c, step.from.r));
         this.bursts.push({ kind: 'merge', c: step.to.c, r: step.to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.emit('merge');
@@ -1825,6 +1858,75 @@ export class Battle {
       this.aiNearestPathDistByCell.set(k, Battle.nearestPathDistOn(this.aiPath, s));
       this.aiExitDistByCell.set(k, exitDistToPath(this.aiPath, s));
     }
+  }
+
+  /** 单轮布阵规划内复用：pathCover / early / firstEngage 采样缓存 */
+  private makePathMetricCaches() {
+    return { cover: new Map<string, number>(), early: new Map<string, number>(), first: new Map<string, number>() };
+  }
+
+  private static pathMetricKey(ax: number, ay: number, rge: number): string {
+    return `${ax},${ay},${rge}`;
+  }
+
+  private playerPathCoverCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.cover.get(k);
+    if (v === undefined) {
+      v = pathCoverageLen(this.map, this.entranceDist, this.pathLen, ax, ay, rge);
+      caches.cover.set(k, v);
+    }
+    return v;
+  }
+
+  private playerPathCoverEarlyCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.early.get(k);
+    if (v === undefined) {
+      v = pathCoverageLenEntranceWeighted(this.map, this.entranceDist, this.pathLen, ax, ay, rge);
+      caches.early.set(k, v);
+    }
+    return v;
+  }
+
+  private playerPathFirstEngageCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.first.get(k);
+    if (v === undefined) {
+      v = pathFirstEngageDist(this.map, this.entranceDist, this.pathLen, ax, ay, rge);
+      caches.first.set(k, v);
+    }
+    return v;
+  }
+
+  private aiPathCoverCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.cover.get(k);
+    if (v === undefined) {
+      v = this.aiPathCoverAt(ax, ay, rge);
+      caches.cover.set(k, v);
+    }
+    return v;
+  }
+
+  private aiPathCoverEarlyCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.early.get(k);
+    if (v === undefined) {
+      v = pathCoverageLenEntranceWeightedAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge);
+      caches.early.set(k, v);
+    }
+    return v;
+  }
+
+  private aiPathFirstEngageCached(caches: ReturnType<Battle['makePathMetricCaches']>, ax: number, ay: number, rge: number): number {
+    const k = Battle.pathMetricKey(ax, ay, rge);
+    let v = caches.first.get(k);
+    if (v === undefined) {
+      v = pathFirstEngageDistAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge);
+      caches.first.set(k, v);
+    }
+    return v;
   }
 
   private static nearestPathDistOn(path: Cell[], cell: { c: number; r: number }): number {
@@ -2854,7 +2956,7 @@ export class Battle {
     if (ex) {
       if (canMerge({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier })) {
         const m = mergeUnits({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier });
-        ex.type = m.type; ex.tier = m.tier; ex.cooldown = 0;
+        Object.assign(ex, mergePlacedUnitState(ex, makePlacedUnit(token.type, token.tier, ex.cell), m));
         this.aiTray.splice(index, 1);
         this.spawnPlaceDropFx('ai', to, {
           kind: 'unit',
@@ -3129,6 +3231,7 @@ export class Battle {
         const snap = this.cloneTrayToken(token);
         const ok = this.aiAutoPlaceApply(i, cell);
         if (ok) {
+          bumpBoard();
           this.recordAiAutoPlaceStep({
             kind: 'place',
             trayIndex: i,
@@ -3144,6 +3247,7 @@ export class Battle {
         if (!this.aiUnlocked.has(cellKey(to.c, to.r)) || !this.aiCellFree(to.c, to.r)) return false;
         u.cell = { c: to.c, r: to.r };
         u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
+        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'moveUnit', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
@@ -3155,17 +3259,24 @@ export class Battle {
         ub.cell = { c: a.c, r: a.r };
         ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
         ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
+        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'swapUnits', a: { c: a.c, r: a.r }, b: { c: b.c, r: b.r } });
         return true;
       },
       swapUnitWord: (unitCell, wordCell) => {
         const ok = this.aiSwapUnitWord(unitCell, wordCell);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'swapUnitWord', unitCell: { ...unitCell }, wordCell: { ...wordCell } });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'swapUnitWord', unitCell: { ...unitCell }, wordCell: { ...wordCell } });
+        }
         return ok;
       },
       swapWords: (from, to) => {
         const ok = this.aiSwapWords(from, to);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'swapWords', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'swapWords', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
+        }
         return ok;
       },
       moveWord: (from, to) => {
@@ -3177,17 +3288,24 @@ export class Battle {
         this.aiWords.delete(kFrom);
         w.cell = { c: to.c, r: to.r };
         this.aiWords.set(kTo, w);
+        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'moveWord', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
       displaceToTray: (cell) => {
         const ok = this.aiDisplaceToTray(cell);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
+        }
         return ok;
       },
       removeWord: (cell) => {
         const ok = this.aiRemoveOrphanWord(cell);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'removeWord', cell: { c: cell.c, r: cell.r } });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'removeWord', cell: { c: cell.c, r: cell.r } });
+        }
         return ok;
       },
       isActiveHeroCell: (cell) =>
@@ -3206,12 +3324,18 @@ export class Battle {
         this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear()),
       mergeTray: (from, to) => {
         const ok = this.aiMergeTrayTokens(from, to);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'mergeTray', from, to });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'mergeTray', from, to });
+        }
         return ok;
       },
       mergeBoard: (from, to) => {
         const ok = this.aiMergeBoardUnits(from, to);
-        if (ok) this.recordAiAutoPlaceStep({ kind: 'mergeBoard', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
+        if (ok) {
+          bumpBoard();
+          this.recordAiAutoPlaceStep({ kind: 'mergeBoard', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
+        }
         return ok;
       },
     };
@@ -3640,9 +3764,7 @@ export class Battle {
     const b = this.aiUnits[bi]!;
     if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
     const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
-    b.type = merged.type;
-    b.tier = merged.tier;
-    b.cooldown = 0;
+    Object.assign(b, mergePlacedUnitState(b, a, merged));
     this.aiUnits.splice(ai, 1);
     this.spawnPlaceDropFx('ai', to, {
       kind: 'unit',
@@ -3821,7 +3943,7 @@ export class Battle {
           return this.queueAutoPlaceDrag(index, to, token, 'mergeUnit', 'merge');
         }
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier });
-        this.units.set(cellKey(to.c, to.r), { ...exist, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.set(cellKey(to.c, to.r), mergePlacedUnitState(exist, makePlacedUnit(token.type, token.tier, exist.cell), merged));
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.clearTraySlot(index);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;

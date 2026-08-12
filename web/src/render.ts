@@ -174,12 +174,6 @@ export function hitPeachHud(x: number, y: number): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-/** AI 对手桃数占用的右缘宽度（图标+数字），供道具芯片左移避让 */
-function aiPeachHudWidth(peach: number): number {
-  const digits = String(Math.max(0, Math.floor(peach))).length;
-  return PEACH_UI_ICON_SIZE + 6 + Math.max(18, digits * 14);
-}
-
 // HUD 显示的境界名（由 main 设置）
 let hudRankLabel = '';
 export function setHudRank(label: string): void {
@@ -9157,7 +9151,7 @@ type AiItemChip = {
   slot?: { cd: number; cdMax: number; ready: boolean; flash: number };
 };
 
-/** HUD 右上角 AI 道具：上行最多 2 个主动（大），下行最多 6 个被动（小）；左侧让出 AI 桃数 */
+/** HUD 右上角 AI 道具：上行最多 2 个主动（大），下行最多 6 个被动（小） */
 function aiItemChipLayout(b: Battle): AiItemChip[] {
   if (b.endless || b.aiPickedItems.length === 0) return [];
   if (b.status !== 'ready' && b.status !== 'playing') return [];
@@ -9165,8 +9159,7 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
   const pasR = 9;
   const actY = HUD_H / 2 - 16;
   const pasY = HUD_H / 2 + 16;
-  const peachW = aiPeachHudWidth(b.aiPeach);
-  const rightX = VIEW_W - 12 - peachW - 8;
+  const rightX = VIEW_W - 12;
   const actGap = actR * 2 + 5;
   const pasGap = pasR * 2 + 3;
   const out: AiItemChip[] = [];
@@ -9208,26 +9201,6 @@ function aiItemChipLayout(b: Battle): AiItemChip[] {
     }
   }
   return out;
-}
-
-function drawAiPeachHud(ctx: CanvasRenderingContext2D, b: Battle) {
-  if (b.endless) return;
-  if (b.status !== 'ready' && b.status !== 'playing') return;
-  const iconSize = PEACH_UI_ICON_SIZE;
-  const text = String(b.aiPeach);
-  ctx.save();
-  ctx.font = 'bold 22px "PingFang SC", sans-serif';
-  const tw = ctx.measureText(text).width;
-  const totalW = iconSize + 6 + tw;
-  const right = VIEW_W - 12;
-  const iconCx = right - totalW + iconSize / 2;
-  const cy = HUD_H / 2;
-  drawPeachIcon(ctx, iconCx, cy, iconSize);
-  ctx.fillStyle = '#7a3b12';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, iconCx + iconSize / 2 + 6, cy);
-  ctx.restore();
 }
 
 /** HUD 右上角 AI 对手道具图标命中（返回 aiPickedItems 下标） */
@@ -9329,7 +9302,6 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
     ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
   }
   drawAiItemsHud(ctx, b, ui);
-  drawAiPeachHud(ctx, b);
   drawBondHudChip(ctx, b);
 }
 

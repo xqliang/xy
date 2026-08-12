@@ -48,6 +48,31 @@ describe('主动技能专属特效', () => {
     expect(b.pillBuffRoster('atkBuff')).toEqual(['枪天兵 Lv.1']);
   });
 
+  it('合成升阶后保留仙丹增益（被拖动的兵器上有仙丹时也保留）', () => {
+    const b = new Battle(1);
+    const from = { c: 2, r: 7 };
+    const to = { c: 3, r: 7 };
+    b.units.set(`${from.c},${from.r}`, { ...makePlacedUnit('archer', 4, from), pillAtk: true });
+    b.units.set(`${to.c},${to.r}`, makePlacedUnit('archer', 4, to));
+    expect(b.dragUnit(from, to)).toBe(true);
+    const merged = b.units.get(`${to.c},${to.r}`);
+    expect(merged?.type).toBe('archer');
+    expect(merged?.tier).toBe(5);
+    expect(merged?.pillAtk).toBe(true);
+    expect(b.units.has(`${from.c},${from.r}`)).toBe(false);
+  });
+
+  it('候选区合成升阶后保留棋盘上兵器的仙丹增益', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, { ...makePlacedUnit('archer', 4, cell), pillAtk: true });
+    b.tray = [{ kind: 'unit', type: 'archer', tier: 4 }];
+    expect(b.placeFromTray(0, cell)).toBe(true);
+    const merged = b.units.get(`${cell.c},${cell.r}`);
+    expect(merged?.tier).toBe(5);
+    expect(merged?.pillAtk).toBe(true);
+  });
+
   it('仙丹拖到武将：跨调用持久生效（回归：activeGenerals() 每次返回新对象，须落到 GeneralState 才不丢）', () => {
     const b = new Battle(1, 1, undefined, undefined, undefined, ['act_atk'], [], false);
     b.introDone = true;
