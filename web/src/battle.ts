@@ -96,8 +96,10 @@ import {
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
-  monsterHpBase: 24, // 第 n 波 HP = base + step*n（波5起形成"第5波危机"，波1-4对正常操作友好）
-  monsterHpStep: 16,
+  monsterHpBase: 20, // 第 n 波 HP = base + step*n；前 monsterHpNoDiffTo 波不乘境界难度
+  monsterHpStep: 2,
+  monsterHpNoDiffTo: 3, // 波 1–3 小怪 HP 难度乘区固定 1
+  monsterHpDiffRampPerWave: 0.15, // 其后朝目标境界每波最多 +0.15（含 DPS 缩放乘区）
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
   bossFirstSegLo: 5, // 首段候选波下界
   bossFirstSegHi: 10, // 首段候选波上界（亦为段长锚点）
@@ -4027,10 +4029,22 @@ export class Battle {
     return monstersInWave(wave);
   }
 
+  /**
+   * 小怪 HP 难度乘区：前 monsterHpNoDiffTo 波固定 1；
+   * 其后从 1 朝 effectiveDifficulty 爬升，每波最多 +monsterHpDiffRampPerWave。
+   */
+  private monsterHpDiffMul(wave: number = this.wave): number {
+    const w = Math.max(1, Math.floor(wave));
+    if (w <= TUNING.monsterHpNoDiffTo) return 1;
+    const target = this.effectiveDifficulty(w);
+    const ramped = 1 + (w - TUNING.monsterHpNoDiffTo) * TUNING.monsterHpDiffRampPerWave;
+    return Math.min(target, ramped);
+  }
+
   /** 普通怪基础血量（含境界/分圈系数与波>10 加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
-    const staticBase =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
+    const diffMul = this.monsterHpDiffMul(wave);
+    const staticBase = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diffMul;
     const staticHp = staticBase * this.wavePostMul(wave);
     if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE) return staticHp;
     const powerBase = monsterHpFromBoardPower(
@@ -4039,7 +4053,7 @@ export class Battle {
       pressureRatioForWave(wave),
     );
     if (powerBase <= 0) return staticHp;
-    const powerHp = powerBase * this.effectiveDifficulty(wave) * this.wavePostMul(wave);
+    const powerHp = powerBase * diffMul * this.wavePostMul(wave);
     return Math.max(staticHp, powerHp);
   }
 

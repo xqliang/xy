@@ -225,19 +225,25 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 **静态公式**（第 1 波保底；第 2 波起与 DPS 公式取 max）：
 
 ```
-static = (monsterHpBase + monsterHpStep × wave) × effectiveDifficulty × wavePostMul
+target = effectiveDifficulty
+diffMul = wave ≤ monsterHpNoDiffTo
+  ? 1
+  : min(target, 1 + (wave − monsterHpNoDiffTo) × monsterHpDiffRampPerWave)
+static = (monsterHpBase + monsterHpStep × wave) × diffMul × wavePostMul
 ```
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `monsterHpBase` | 24 | 血量基数 |
-| `monsterHpStep` | 16 | 每波 +16 |
+| `monsterHpBase` | 20 | 血量基数 |
+| `monsterHpStep` | 2 | 每波 +2 |
+| `monsterHpNoDiffTo` | 3 | 波 1–3 难度乘区固定 1 |
+| `monsterHpDiffRampPerWave` | **0.15** | 目标境界更高时，每波最多 +0.15 爬向 target |
 | `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
 
 **DPS 缩放**（第 `MONSTER_HP_FROM_WAVE` 波起，默认 2）：
 
 ```
-powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × effectiveDifficulty × wavePostMul
+powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × diffMul × wavePostMul
 normalMonsterHp = max(static, powerHp)   // optimalDps=0 时回退 static
 ```
 
@@ -246,7 +252,7 @@ normalMonsterHp = max(static, powerHp)   // optimalDps=0 时回退 static
 | `MONSTER_HP_FROM_WAVE` | 2 |
 | `MONSTER_HP_KILL_SEC` | 3 |
 
-**已取消**前期软血（`earlyWaveHp*`）。
+前 3 波固定 `diffMul=1`；第 4 波起 `1.15 → 1.30 → …` 爬向目标境界（每波最多 +0.15）。**已取消**前期软血（`earlyWaveHp*`）。
 
 ### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
 
@@ -299,7 +305,7 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / end
 | 11–20 | ×1.2 |
 | 21–30 | ×1.44（1.2²） |
 
-对战与无尽共用；只影响 HP 静态部分及 DPS 公式里的 `effectiveDifficulty` 乘区，**不影响移速**。
+对战与无尽共用；只影响 HP 静态部分及 DPS 公式里的难度乘区（波 ≤ `monsterHpNoDiffTo` 固定 1，其后每波最多 +`monsterHpDiffRampPerWave` 爬向目标），**不影响移速**。
 
 ### 9.6 出怪压力（第 `PRESSURE_FROM_WAVE` 波起，默认 6）
 

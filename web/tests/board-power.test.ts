@@ -338,18 +338,36 @@ describe('monsterHpFromBoardPower', () => {
 });
 
 describe('Battle 接入压力规划', () => {
+  const hpDiffMul = (b: Battle, wave: number) => {
+    if (wave <= TUNING.monsterHpNoDiffTo) return 1;
+    const ramped = 1 + (wave - TUNING.monsterHpNoDiffTo) * TUNING.monsterHpDiffRampPerWave;
+    return Math.min(b.effectiveDifficulty(wave), ramped);
+  };
+
   it('第 1 波血量仅用静态公式', () => {
     const b = new Battle(1);
     const staticHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * b.effectiveDifficulty(1);
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * hpDiffMul(b, 1);
     const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(1);
     expect(hp).toBeCloseTo(staticHp, 5);
+  });
+
+  it('前 3 波不乘境界，其后每波最多 +0.15 爬向目标', () => {
+    const b = new Battle(1, 1.5);
+    expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
+    const hp = (w: number) =>
+      (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(w);
+    expect(hp(1)).toBeCloseTo(TUNING.monsterHpBase + TUNING.monsterHpStep * 1, 5);
+    expect(hp(3)).toBeCloseTo(TUNING.monsterHpBase + TUNING.monsterHpStep * 3, 5);
+    expect(hp(4)).toBeCloseTo((TUNING.monsterHpBase + TUNING.monsterHpStep * 4) * 1.15, 5);
+    expect(hp(5)).toBeCloseTo((TUNING.monsterHpBase + TUNING.monsterHpStep * 5) * 1.3, 5);
+    expect(hp(7)).toBeCloseTo((TUNING.monsterHpBase + TUNING.monsterHpStep * 7) * 1.5, 5);
   });
 
   it('第 2 波空板仍用静态保底', () => {
     const b = new Battle(2);
     const staticHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * 2) * b.effectiveDifficulty(2);
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 2) * hpDiffMul(b, 2);
     const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(2);
     expect(hp).toBeCloseTo(staticHp, 5);
     expect(b.estimateOptimalPower().optimalDps).toBe(0);
@@ -366,10 +384,10 @@ describe('Battle 接入压力规划', () => {
     expect(power.optimalDps).toBeGreaterThan(50);
     const wave = MONSTER_HP_FROM_WAVE;
     const staticHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * b.effectiveDifficulty(wave);
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * hpDiffMul(b, wave);
     const powerHp =
       monsterHpFromBoardPower(wave, power.optimalDps, pressureRatioForWave(wave)) *
-      b.effectiveDifficulty(wave);
+      hpDiffMul(b, wave);
     expect(powerHp).toBeGreaterThan(staticHp);
     const hp = (b as unknown as { normalMonsterHp(w: number): number }).normalMonsterHp(wave);
     expect(hp).toBeCloseTo(powerHp, 5);
@@ -386,7 +404,7 @@ describe('Battle 接入压力规划', () => {
     const boss = b.monsters.find((m) => m.isBoss);
     expect(boss).toBeTruthy();
     const normalHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * b.effectiveDifficulty(1);
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * 1) * hpDiffMul(b, 1);
     expect(boss!.maxHp).toBeGreaterThanOrEqual(normalHp);
   });
 
