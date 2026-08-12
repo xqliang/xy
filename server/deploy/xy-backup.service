@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily MySQL backup for xy_game
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/xy/server/deploy/backup-mysql.sh xy_game
+StandardOutput=journal
+StandardError=journal

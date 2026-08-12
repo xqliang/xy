@@ -28,6 +28,8 @@ import {
 } from './loadout';
 import type { MeritState } from './merit';
 import { spendMerit } from './merit';
+import { track } from './telemetry';
+import { scheduleCloudSync } from './cloud-sync';
 import { clearMerchantFloatToasts, pushMerchantFloatToast } from './merchant-toast';
 import { drawSkillGlyph } from './skill-icon';
 
@@ -268,6 +270,12 @@ export function applyMerchantHit(
         const res = buyActive(lo, me, offer.id);
         lo = res.loadout;
         me = res.merit;
+        if (res.ok) {
+          const cost = activeById(offer.id)?.cost ?? 0;
+          track('shop_buy', { kind: 'active', itemId: offer.id, costMerit: cost });
+          track('merit', { delta: -cost, remain: me.merit });
+          scheduleCloudSync(5000);
+        }
         m = {
           ...withToast(
             m,
@@ -282,6 +290,12 @@ export function applyMerchantHit(
         const res = buyPassive(lo, me, offer.id);
         lo = res.loadout;
         me = res.merit;
+        if (res.ok) {
+          const cost = passiveById(offer.id)?.cost ?? 0;
+          track('shop_buy', { kind: 'passive', itemId: offer.id, costMerit: cost });
+          track('merit', { delta: -cost, remain: me.merit });
+          scheduleCloudSync(5000);
+        }
         m = {
           ...withToast(
             m,

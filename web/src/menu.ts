@@ -37,6 +37,8 @@ export interface MenuInfo {
   endlessOn: boolean;
   pressedId: string | null;
   hoverId: string | null;
+  /** sprite key for profile avatar */
+  avatarArt?: string;
 }
 
 const TOP = 18;
@@ -123,6 +125,7 @@ const BAG_BTN = {
 
 export function menuButtons(): MenuButton[] {
   return [
+    { id: 'avatar', ...AVATAR },
     { id: 'settings', ...SIDE_BTN, y: SIDE_Y0 },
     { id: 'codex', ...SIDE_BTN, y: SIDE_Y0 + SIDE + SIDE_GAP },
     { id: 'help', ...SIDE_BTN, y: SIDE_Y0 + (SIDE + SIDE_GAP) * 2 },
@@ -222,7 +225,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.strokeStyle = 'rgba(170,110,40,0.65)';
   ctx.lineWidth = 2;
   ctx.stroke();
-  const av = sprite('hero-wukong');
+  const av = sprite(info.avatarArt || 'hero-wukong');
   if (av) {
     const s = AVATAR.w - 8;
     const scale = Math.min(s / av.width, s / av.height);

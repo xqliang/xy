@@ -1,0 +1,19 @@
+addr: "0.0.0.0:8082"
+static_dir: "/opt/xy/html"
+timezone: "Asia/Shanghai"
+db:
+  host: "127.0.0.1"
+  port: 3306
+  user: "xy_game"
+  password: "CHANGE_ME"
+  database: "xy_game"
+admin:
+  username: "admin"
+  password: "CHANGE_ME"
+# optional TOS backup (leave empty to skip upload)
+tos:
+  endpoint: ""
+  region: ""
+  bucket: ""
+  access_key: ""
+  secret_key: ""

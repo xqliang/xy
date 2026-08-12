@@ -35,6 +35,14 @@ tools/seeddream/output_raw/
 .idea/
 *.swp
 
+# 服务端本地
+server/.venv/
+server/config.yaml
+server/.db_password
+server/.pytest_cache/
+server/__pycache__/
+server/**/__pycache__/
+
 # 本地运行时
 .vite.pid
 web/vite.log

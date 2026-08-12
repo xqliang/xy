@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# 【已退役】请改用仓库根目录 server/server.py（静态 + /api + /admin + MySQL）。
+# 本文件仍可能被 Vite 拷进 dist，但 ECS systemd（xy-web）不再以它为入口。
 # 静态站服务：在 SimpleHTTPRequestHandler 基础上补充缓存头。
 # - /assets/* 都是带内容哈希的文件（Vite 指纹），内容不变→文件名不变，可永久缓存：
 #     Cache-Control: public, max-age=31536000, immutable  → 浏览器命中缓存、零请求

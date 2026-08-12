@@ -353,30 +353,84 @@ case "$CMD" in
     echo "   ⚠️  首次联调前需在小程序后台「开发管理→开发设置→服务器域名」把 CDN 域名加入 downloadFile 合法域名"
     ;;
   deploy)
-    # 一键部署：构建生产产物 → 打包经 ssh 传到 ECS 静态目录 → 健康检查。
-    # 服务器用 systemd(python http.server) 直读目录，无需重启；见首次部署说明。
+    # 一键部署：构建 dist → 原子切换静态目录 → 同步 server/ → 重启 xy-web（API+静态同进程）。
     ensure_deps "$ROOT/web"
     ECS_SSH="${ECS_SSH:-ecs}"          # ~/.ssh/config 里的主机别名
     ECS_DIR="${ECS_DIR:-/opt/xy/html}" # 服务器静态站根目录
+    ECS_SERVER_DIR="${ECS_SERVER_DIR:-/opt/xy/server}"
     ECS_URL="${ECS_URL:-http://124.221.105.4:8082/}" # 健康检查地址
     echo "🔨 构建生产产物（web/dist）…"
     (cd "$ROOT/web" && npm run build)
     echo "📤 上传 dist → ${ECS_SSH}:${ECS_DIR}（解压到新发布目录后原子切换，零停机）"
-    # 零停机：远程把 tar 流解压到全新的 releases/rel-<ts> 目录，再用 ln -sfn 原子切换 symlink，
-    # 保证任何时刻 ECS_DIR 都指向一份完整产物（绝不先删后解压）。首次若 ECS_DIR 是真实目录则迁移为 symlink。
-    # 该远程脚本的 stdin 即 tar 流（由 `tar xzf -` 消费）；${ECS_DIR} 在本地展开，其余 \$ 变量在远程求值。
     remote_cmd="set -e
 DIR='${ECS_DIR}'
 RELROOT=\"\$(dirname \"\$DIR\")/releases\"
 REL=\"\$RELROOT/rel-\$(date +%Y%m%d%H%M%S)-\$\$\"
 mkdir -p \"\$REL\"
 tar xzf - -C \"\$REL\" 2>/dev/null
-if [ -d \"\$DIR\" ] && [ ! -L \"\$DIR\" ]; then rm -rf \"\$DIR\"; fi   # 首次：真实目录→迁移为 symlink（仅一次）
-ln -sfn \"\$REL\" \"\$DIR\"                                            # 原子切换
-ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null | tail -n +6 | xargs -r rm -rf # 仅保留最近 5 个发布(可回滚)
+if [ -d \"\$DIR\" ] && [ ! -L \"\$DIR\" ]; then rm -rf \"\$DIR\"; fi
+ln -sfn \"\$REL\" \"\$DIR\"
+ls -1dt \"\$RELROOT\"/rel-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 echo \"✅ 已原子切换：\$DIR → \$REL\""
     COPYFILE_DISABLE=1 tar czf - -C "$ROOT/web/dist" . 2>/dev/null | ssh "$ECS_SSH" "$remote_cmd"
-    echo "🔎 健康检查：${ECS_URL}"
+
+    echo "📤 同步 server/ → ${ECS_SSH}:${ECS_SERVER_DIR}"
+    # 排除本地 venv/测试缓存/密钥；远端保留 config.yaml 与 .db_password
+    rsync -az --delete \
+      --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
+      --exclude 'config.yaml' --exclude '.db_password' --exclude 'tests' \
+      "$ROOT/server/" "${ECS_SSH}:${ECS_SERVER_DIR}/"
+    ssh "$ECS_SSH" "set -e
+DIR='${ECS_SERVER_DIR}'
+mkdir -p \"\$DIR\" /opt/xy/backups
+chmod +x \"\$DIR\"/deploy/*.sh 2>/dev/null || true
+
+# 确保 python3-venv 可用（Debian/Ubuntu 默认 python3 不含 ensurepip）
+if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
+  echo '📦 installing python3-venv …'
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  # 优先装与当前 python 小版本匹配的 venv；回退 python3-venv
+  PYVER=\$(python3 -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')
+  apt-get install -y -qq \"python\${PYVER}-venv\" || apt-get install -y -qq python3-venv
+fi
+
+# 上次失败可能留下坏掉的 .venv（无 pip）
+if [[ -d \"\$DIR/.venv\" ]] && [[ ! -x \"\$DIR/.venv/bin/pip\" ]]; then
+  echo '🧹 removing broken .venv'
+  rm -rf \"\$DIR/.venv\"
+fi
+if [[ ! -d \"\$DIR/.venv\" ]]; then
+  python3 -m venv \"\$DIR/.venv\"
+fi
+\"\$DIR/.venv/bin/pip\" install -q -U pip
+\"\$DIR/.venv/bin/pip\" install -q -r \"\$DIR/requirements.txt\"
+
+# 建库 + 写 config（纯 bash；已有合法 config 则幂等跳过）
+\"\$DIR/deploy/init-db.sh\" \"\$DIR\"
+
+cp \"\$DIR/deploy/xy-web.service\" /etc/systemd/system/xy-web.service
+cp \"\$DIR/deploy/xy-backup.service\" /etc/systemd/system/xy-backup.service
+cp \"\$DIR/deploy/xy-backup.timer\" /etc/systemd/system/xy-backup.timer
+# 清掉旧静态站时代的 ExecStart override（否则会继续跑 /opt/xy/html/server.py）
+rm -f /etc/systemd/system/xy-web.service.d/override.conf
+rmdir /etc/systemd/system/xy-web.service.d 2>/dev/null || true
+systemctl daemon-reload
+systemctl enable --now xy-web.service
+systemctl enable --now xy-backup.timer
+systemctl restart xy-web.service
+echo '✅ xy-web restarted'
+systemctl --no-pager --full status xy-web.service | head -n 20 || true
+# 冒烟：API 必须不是 404
+api_code=\$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'X-Uid: 12345678' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8082/api/player/login || echo 000)
+echo \"API login HTTP \$api_code\"
+if [[ \"\$api_code\" != \"200\" ]]; then
+  echo '⚠️  API 未就绪，最近日志：'
+  journalctl -u xy-web -n 40 --no-pager || true
+  exit 1
+fi
+"
+    echo "🔎 健康检查：${ECS_URL} 与 ${ECS_URL}api/leaderboard/daily"
     code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$ECS_URL" || echo 000)"
     if [ "$code" = "200" ]; then
       echo "✅ 部署完成：${ECS_URL} (HTTP ${code})"

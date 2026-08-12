@@ -10,7 +10,15 @@ export default defineConfig({
       '@asset-manifest': fileURLToPath(new URL('./src/asset-manifest.web.ts', import.meta.url)),
     },
   },
-  server: { port: 5180, host: '127.0.0.1' },
+  server: {
+    port: 5180,
+    host: '127.0.0.1',
+    // 本地开发把 /api、/admin 转到本机游戏服务（默认 8082；可用 XY_API_PROXY 覆盖）
+    proxy: {
+      '/api': { target: process.env.XY_API_PROXY || 'http://127.0.0.1:8082', changeOrigin: true },
+      '/admin': { target: process.env.XY_API_PROXY || 'http://127.0.0.1:8082', changeOrigin: true },
+    },
+  },
   preview: { port: 5180, host: '127.0.0.1' },
   build: { target: 'es2020', outDir: 'dist' },
 });

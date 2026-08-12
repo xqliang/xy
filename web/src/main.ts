@@ -68,7 +68,28 @@ import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weap
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
-import { loadUserId, copyUserId } from './user-id';
+import { loadUserId, copyUserId, ensureUserId } from './user-id';
+import {
+  cloudLogin,
+  scheduleCloudSync,
+  submitLeaderboard,
+  syncAvatarUnlocks,
+  updateProfile,
+} from './cloud-sync';
+import { track } from './telemetry';
+import { bumpClearCount } from './clear-count';
+import { loadProfile } from './profile';
+import { avatarById } from './avatar-catalog';
+import {
+  createProfilePopupState,
+  drawProfilePopup,
+  profilePopupHitAt,
+  applyProfileScrollDrag,
+  clampProfileScroll,
+  promptNickname,
+  type ProfilePopupState,
+  type ProfileScrollDrag,
+} from './profile-popup';
 import { loadAiSkill, recordVersusOutcome, rollMatchAiSkill } from './ai-skill';
 import { loadHeroMatchHistory, recordHeroMatchGame } from './hero-match-history';
 import {
@@ -227,7 +248,9 @@ function enterBag(): void {
   });
 }
 function enterRank(): void {
-  leaderboardLazy.ensure(() => {
+  leaderboardLazy.ensure((m) => {
+    m.invalidateLeaderboardCache();
+    m.ensureLeaderboardLoaded(() => scheduleFrame());
     screen = 'rank';
     scheduleFrame();
   });
@@ -260,7 +283,12 @@ void (async () => {
     await prefetchMenuBgm();
     loadProgress = { ...loadProgress, phase: 'done' };
     bootstrapMenuMusic();
+    ensureUserId();
     screen = 'menu';
+    void cloudLogin().then((ok) => {
+      if (ok) track('login');
+      scheduleFrame();
+    });
   } finally {
     window.clearTimeout(showUiTimer);
   }
@@ -360,8 +388,10 @@ try {
   gameSettings = resetSettings();
   syncAudioFromSettings();
 }
-type MenuPopup = 'none' | 'settings' | 'stamina' | 'map' | 'help';
+type MenuPopup = 'none' | 'settings' | 'stamina' | 'map' | 'help' | 'profile';
 let menuPopup: MenuPopup = 'none';
+let profilePopup: ProfilePopupState | null = null;
+let profileScrollDrag: ProfileScrollDrag | null = null;
 let staminaPopupToast = '';
 let menuSliderDrag: 'music' | 'sfx' | null = null;
 let helpScrollY = 0;
@@ -809,6 +839,12 @@ function applyDevUserResult(r: ApplyUserResult): void {
 
 function handleMenu(id: string) {
   playSfx('click');
+  if (id === 'avatar') {
+    profilePopup = createProfilePopupState();
+    menuPopup = 'profile';
+    scheduleFrame();
+    return;
+  }
   if (id === 'settings') {
     openSettingsPopup();
     return;
@@ -845,6 +881,9 @@ function handleMenu(id: string) {
       return;
     }
     stamina = r.state;
+    track('stamina', { delta: -5, remain: stamina.value });
+    track('game_start', { endless: endlessOn, mapId: currentMap.id });
+    scheduleCloudSync(5000);
     newGame();
     screen = 'battle';
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
@@ -861,6 +900,54 @@ function handleMenu(id: string) {
 
 function handleMenuPopupPointer(x: number, y: number): boolean {
   if (menuPopup === 'none') return false;
+  if (menuPopup === 'profile' && profilePopup) {
+    const hit = profilePopupHitAt(x, y, profilePopup);
+    if (hit === null) return true;
+    if (hit.kind === 'scroll' || hit.kind === 'avatar') {
+      // 按下只开始拖动；轻点松手再选中，避免一滑就换头像
+      profileScrollDrag = {
+        x,
+        scroll: profilePopup.scrollX,
+        moved: false,
+        avatarId: hit.kind === 'avatar' ? hit.id : null,
+      };
+      return true;
+    }
+    playSfx('click');
+    if (hit.kind === 'close') {
+      menuPopup = 'none';
+      profilePopup = null;
+      profileScrollDrag = null;
+      return true;
+    }
+    if (hit.kind === 'nickname') {
+      const next = promptNickname(profilePopup.nicknameDraft);
+      if (next !== null) {
+        profilePopup.nicknameDraft = next;
+        scheduleFrame();
+      }
+      return true;
+    }
+    if (hit.kind === 'confirm') {
+      const sel = profilePopup.selectedId;
+      if (!profilePopup.unlocked.has(sel)) {
+        menuToast = '该头像尚未解锁';
+        pushMenuFloatToast('头像未解锁');
+        return true;
+      }
+      const nick = profilePopup.nicknameDraft.trim() || null;
+      void updateProfile({ avatarId: sel, nickname: nick }).then((ok) => {
+        menuToast = ok ? '资料已更新' : '资料同步失败（已保留本地选择）';
+        if (ok) {
+          menuPopup = 'none';
+          profilePopup = null;
+        }
+        scheduleFrame();
+      });
+      return true;
+    }
+    return true;
+  }
   if (menuPopup === 'settings') {
     const pop = menuPopupsLazy.get()!;
     const hit = pop.settingsHitAt(x, y, gameSettings, loadUserId());
@@ -963,10 +1050,14 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
   }
   if (hit.kind === 'ad') {
     staminaPopupToast = '正在加载广告…';
+    track('ad_click', { scene: 'stamina' });
     void showRewardedAd('stamina').then((ok) => {
       if (ok) {
         stamina = addStamina(stamina, 10);
         staminaPopupToast = '体力 +10';
+        track('ad_reward', { scene: 'stamina' });
+        track('stamina', { delta: 10, remain: stamina.value });
+        scheduleCloudSync(2000);
       } else {
         staminaPopupToast = '未看完广告，未发放体力';
       }
@@ -983,6 +1074,11 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
 }
 
 function handleMenuPopupDrag(x: number): void {
+  if (menuPopup === 'profile' && profilePopup && profileScrollDrag) {
+    applyProfileScrollDrag(profilePopup, profileScrollDrag, x);
+    scheduleFrame();
+    return;
+  }
   if (menuPopup !== 'settings' || !menuSliderDrag) return;
   const uid = loadUserId();
   const pop = menuPopupsLazy.get()!;
@@ -1236,7 +1332,7 @@ function onPointerDown(e: PointerEvent) {
       return;
     }
     if (handleMenuPopupPointer(x, y)) {
-      if (menuSliderDrag || helpPointerActive) canvas.setPointerCapture(e.pointerId);
+      if (menuSliderDrag || helpPointerActive || profileScrollDrag) canvas.setPointerCapture(e.pointerId);
       return;
     }
     if (menuPopup === 'none' && !merchant.open && menuVersionHitAt(x, y)) {
@@ -1394,7 +1490,7 @@ canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); schedule
 function onPointerMove(e: PointerEvent) {
   if (screen === 'menu') {
     const { x, y } = toLogical(e.clientX, e.clientY);
-    if (menuSliderDrag) {
+    if (menuSliderDrag || profileScrollDrag) {
       handleMenuPopupDrag(x);
       return;
     }
@@ -1463,6 +1559,14 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       }
     }
     menuSliderDrag = null;
+    if (profileScrollDrag && profilePopup) {
+      if (!profileScrollDrag.moved && profileScrollDrag.avatarId) {
+        profilePopup.selectedId = profileScrollDrag.avatarId;
+        playSfx('click');
+        scheduleFrame();
+      }
+      profileScrollDrag = null;
+    }
     if (versionPointerDown) {
       versionPointerDown = false;
       if (!cancelled && e) {
@@ -1594,6 +1698,14 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
 
 // 桌面端滚轮滚动商城
 canvas.addEventListener('wheel', (e) => {
+  if (screen === 'menu' && menuPopup === 'profile' && profilePopup) {
+    e.preventDefault();
+    // 触控板横滑用 deltaX；鼠标滚轮用 deltaY 映射为横滚
+    profilePopup.scrollX += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    clampProfileScroll(profilePopup);
+    scheduleFrame();
+    return;
+  }
   if (screen === 'menu' && merchant.open && merchant.testMode) {
     e.preventDefault();
     merchant = merchantLazy.get()!.merchantApplyWheel(merchant, e.deltaY);
@@ -1663,22 +1775,28 @@ function frame(now: number): void {
   } else if (screen === 'menu') {
     updateMenuFloatToasts(dt);
     stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
-    drawMenu(ctx, {
-      rankStars: rank.stars,
-      rankName: rankName(rank.level),
-      stamina: stamina.value,
-      merit: merit.merit,
-      mapName: currentMap.name,
-      mapDaily: mapSelection.mode === 'daily',
-      toast: menuToast,
-      endlessOn,
-      pressedId: menuPressedId,
-      hoverId: menuHoverId,
-    });
+    {
+      const prof = loadProfile();
+      const art = avatarById(prof.avatarId)?.art || 'hero-wukong';
+      drawMenu(ctx, {
+        rankStars: rank.stars,
+        rankName: rankName(rank.level),
+        stamina: stamina.value,
+        merit: merit.merit,
+        mapName: currentMap.name,
+        mapDaily: mapSelection.mode === 'daily',
+        toast: menuToast,
+        endlessOn,
+        pressedId: menuPressedId,
+        hoverId: menuHoverId,
+        avatarArt: art,
+      });
+    }
     if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings, loadUserId());
     else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
     else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name);
     else if (menuPopup === 'help') menuHelpLazy.get()!.drawHelpPopup(ctx, helpScrollY);
+    else if (menuPopup === 'profile' && profilePopup) drawProfilePopup(ctx, profilePopup);
     if (merchant.open) {
       updateMerchantFloatToasts(dt);
       merchantLazy.get()!.drawMerchant(ctx, merchant, loadout, merit, {
@@ -1729,6 +1847,18 @@ function frame(now: number): void {
         settleChange = null;
         battle.message = `抵达第 ${battle.wave} 波（功德 +${gain}）`;
         settleStart = performance.now();
+        track('game_end', {
+          win: false,
+          wave: battle.wave,
+          rankLevel: rank.level,
+          heroes: battle.heroMatchedIdsThisGame(),
+          items: [...loadout.equipped, ...loadout.passives],
+          endless: true,
+        });
+        track('merit', { delta: gain, remain: merit.merit });
+        void syncAvatarUnlocks();
+        void submitLeaderboard();
+        scheduleCloudSync(1000);
       } else {
         const won = battle.status === 'won';
         // 对战连胜：下一局按档位隐藏加压（70% / 80% / 全力）
@@ -1741,6 +1871,19 @@ function frame(now: number): void {
         endlessResult = null;
         settleChange = change;
         settleStart = performance.now();
+        if (won) bumpClearCount();
+        track('game_end', {
+          win: won,
+          wave: battle.wave,
+          rankLevel: rank.level,
+          heroes: battle.heroMatchedIdsThisGame(),
+          items: [...loadout.equipped, ...loadout.passives],
+          endless: false,
+        });
+        track('merit', { delta: gain, remain: merit.merit });
+        void syncAvatarUnlocks();
+        void submitLeaderboard();
+        scheduleCloudSync(1000);
       }
     }
     setHudRank(rankName(rank.level));
