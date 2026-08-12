@@ -218,23 +218,106 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ---
 
-## 9. 波次压力与移速（`TUNING` / `board-power.ts`，2026-08-12）
+## 9. 波次压力、怪物血量与移速（`TUNING` / `board-power.ts`，2026-08-12）
 
-**移速固定**：普通妖基础移速恒为 `TUNING.monsterSpd`（0.6 格/s），**不**随境界、分圈、波次 >10 或 `effectiveDifficulty` 升高。Boss/小 Boss 仍用各自倍率；**骑兵怪**移速 × `cavalrySpdMul`（**1.35**）；被动蛛网/淤泥、技能疾风/减速照常叠加。
+### 9.1 小怪基础血量 `normalMonsterHp(wave)`
 
-**后期加压只走两条**（第 `PRESSURE_FROM_WAVE` 波起，默认 6）：
+**静态公式**（第 1 波保底；第 2 波起与 DPS 公式取 max）：
+
+```
+static = (monsterHpBase + monsterHpStep × wave) × effectiveDifficulty × wavePostMul
+```
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `monsterHpBase` | 24 | 血量基数 |
+| `monsterHpStep` | 16 | 每波 +16 |
+| `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
+
+**DPS 缩放**（第 `MONSTER_HP_FROM_WAVE` 波起，默认 2）：
+
+```
+powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × effectiveDifficulty × wavePostMul
+normalMonsterHp = max(static, powerHp)   // optimalDps=0 时回退 static
+```
+
+| 常量（`BOARD_POWER`） | 值 |
+|----------------------|-----|
+| `MONSTER_HP_FROM_WAVE` | 2 |
+| `MONSTER_HP_KILL_SEC` | 3 |
+
+**已取消**前期软血（`earlyWaveHp*`）。
+
+### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
+
+| 类型 | 公式 | 关键倍率 |
+|------|------|----------|
+| 普通妖 | `normalMonsterHp()` | — |
+| 精英 | × `eliteHpMul` | **1.4**（第 `eliteFromWave`=4 波起，概率 `eliteChance`=0.28） |
+| 小 Boss | × `miniBossHpMul` | **3.5**（第 `miniBossFromWave`=5 波起，非妖王波概率 0.42） |
+| 骑兵 | 在普通/精英上再 × `cavalryHpMul` | **2/3** |
+| 妖王 | 开波 `max(normalMonsterHp, pathDamage × 压力比)`；双雄引妖王实时重算 | 见 `bossHpMulEarly`~`bossHpMul` |
+
+小 Boss 额外血量计入本波出怪预算（`miniBossExtraHp = normalHp × (miniBossHpMul − 1)`）。
+
+### 9.3 移速
+
+| 类型 | 移速 |
+|------|------|
+| 普通妖 | 固定 `monsterSpd` = **0.6** 格/s（不随波次 / `effectiveDifficulty` 升高） |
+| 骑兵 | × `cavalrySpdMul` = **1.35** |
+| 小 Boss | × `miniBossSpdMul` = 0.82 |
+| 妖王 | × `bossSpdMul` = 0.625 |
+
+被动蛛网/淤泥、技能疾风/减速照常叠加。
+
+### 9.4 骑兵波
+
+第 `cavalryFromWave`（**5**）波起，每波 **50%** 概率成为骑兵波（`cavalryWaveChance`）。命中后本波占比：
+
+| 波次 | 占比 | 常量 |
+|------|------|------|
+| 5–20 | 线性 **30% → 55%**（每波固定值） | `cavalryRatioRampStart/End`，`RampLoWave`=5，`RampHiWave`=20 |
+| 21+ | 每波 **[56%, 70%]** 均匀随机 | `cavalryRatioLateLo/Hi` |
+
+逐只普通怪独立判定是否变骑兵；妖王 / 小 Boss 不会是骑兵。
+
+### 9.5 分圈难度 `effectiveDifficulty`
+
+```
+effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / endlessWavesPerCycle)
+```
+
+| 常量 | 值 |
+|------|-----|
+| `endlessWavesPerCycle` | 10 |
+| `endlessCycleStep` | **1.2** |
+
+| 波次 | 圈系数 |
+|------|--------|
+| 1–10 | ×1 |
+| 11–20 | ×1.2 |
+| 21–30 | ×1.44（1.2²） |
+
+对战与无尽共用；只影响 HP 静态部分及 DPS 公式里的 `effectiveDifficulty` 乘区，**不影响移速**。
+
+### 9.6 出怪压力（第 `PRESSURE_FROM_WAVE` 波起，默认 6）
 
 | 机制 | 说明 |
 |------|------|
-| **小怪血量（波 ≥2）** | `monsterHpFromBoardPower`：`max(静态公式, 最优 DPS × MONSTER_HP_KILL_SEC × 压力比)`，再乘境界/波>10；空板仍用静态保底 |
-| **出怪总量** | `planWavePressure`：按战场最优 DPS × 压力比（60%→90%）规划本波小怪总血预算，数量不低于 `monstersInWave(wave)`（10+n−1） |
-| **同批叠怪** | `spawnBatchCap(wave)`：单次出怪随机 1..N 只（波 6 起 N≥2，约波 22 封顶 10） |
+| **出怪总量** | `planWavePressure`：最优 DPS × `PRESSURE_WINDOW_SEC`（10s）× 压力比；数量不低于 `monstersInWave(wave)`（10+n−1） |
+| **同批叠怪** | `spawnBatchCap(wave)`：单次随机 1..N（波 6 起 N≥2，约波 22 封顶 10） |
+| **压力比** | 波 ≤6 → 60%；6→16 线性至 90%；≥16 封顶 90% |
 
-常量（`BOARD_POWER`）：`MONSTER_HP_FROM_WAVE = 2`，`MONSTER_HP_KILL_SEC = 3`。
+| 常量（`BOARD_POWER`） | 值 |
+|----------------------|-----|
+| `PRESSURE_FROM_WAVE` | 6 |
+| `PRESSURE_RATIO` / `PRESSURE_RATIO_MAX` | 0.60 / 0.90 |
+| `PRESSURE_RATIO_FULL_WAVE` | 16 |
+| `PRESSURE_WINDOW_SEC` | 10 |
+| `SPAWN_BATCH_CAP_MAX` | 10 |
 
-出怪**间隔**不再随难度缩短（`difficultySpawnFactor = 1`）；仅保留基础 `spawnInterval` 与门口防秒杀压间隔。
-
-第 1 波血量仍仅走静态公式（`monsterHpBase + monsterHpStep × wave`）；第 2 波起与武器攻击挂钩时，仍叠加境界/分圈（`effectiveDifficulty`）、波 >10（`wavePostMul`）。**已取消**前期软血（`earlyWaveHp*`）。
+出怪间隔不再随难度缩短（`difficultySpawnFactor = 1`）；仅保留 `spawnInterval`（1.25s）与门口防秒杀压间隔。
 
 ---
 
@@ -244,6 +327,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 |------|------|
 | 武将表 | `web/src/generals.ts` |
 | 战斗结算 | `web/src/battle.ts` |
+| 承压 / 出怪规划 | `web/src/board-power.ts` |
 | 征兵前期配额 | `web/src/summon-early.ts`、`web/src/summon-draw.ts`、`web/src/word-draw.ts` |
 | 大招动画 | `web/src/render.ts`（`drawHeroUlt` / `drawUltDasheng` 等） |
 | 门派与满阶设计 | `docs/superpowers/specs/2026-08-07-general-family-max-tier-design.md` |

@@ -56,6 +56,8 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | `TANGSENG_INITIAL_HP` | **3** | 唐僧初始血量（道具可再加） |
 | `eliteFromWave` | **4** | 第 4 波起可能刷精英 |
 
+怪物血量、骑兵波、分圈难度等完整常量见 [`hero-combat-reference.md` §9](./hero-combat-reference.md#9-波次压力怪物血量与移速tuning--board-powerts2026-08-12)。
+
 ### 压力比（随波次升高）
 
 出怪数量预算与 Boss 血参考均用 `pressureRatioForWave(wave)`（`web/src/board-power.ts`）：
@@ -120,9 +122,8 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | `web/src/versus-user-agent.ts` | 用户代理与 `runVersusSession()` |
 | `web/tests/versus-user-agent.test.ts` | vitest 入口 |
 | `web/src/ai-skill.ts` | AI skill、rubber-band、目标胜率 |
-| `web/src/board-power.ts` | `pressureRatioForWave`、出怪压力 |
-| `web/src/autoplace.ts` | AI 调位间隔常量 |
-| `web/src/battle.ts` | 精英波、压力接入、`cavalrySpdMul` |
+| `web/src/board-power.ts` | `pressureRatioForWave`、出怪压力、`MONSTER_HP_*` |
+| `web/src/battle.ts` | 怪物 HP/移速、骑兵波、分圈 `endlessCycleStep`、精英波 |
 
 ---
 

@@ -113,14 +113,15 @@ export const TUNING = {
   bossEscortMax: 8, // 妖王出场护卫最多只数
   bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
-  // —— 骑兵波（后期随机某波：比例随波次升高；移速 ×cavalrySpdMul、血量略低）——
-  cavalryFromWave: 6, // 第 6 波起（游戏后期）才可能出现骑兵波
+  // —— 骑兵波（后期随机某波：占比随波次升高；移速 ×cavalrySpdMul、血量略低）——
+  cavalryFromWave: 5, // 第 5 波起才可能出现骑兵波
   cavalryWaveChance: 0.5, // 达到后期后，每波成为骑兵波的概率
-  cavalryRatioBase: 0.35, // 本波骑兵比例下界：base + min(waveBonusCap, 波次/100)
-  cavalryRatioWaveBonusCap: 0.2,
-  cavalryRatioWaveDiv: 100,
-  cavalryRatioMaxSpread: 0.2, // 上界 = min(cap, 下界 + spread)，开波时在 [下界, 上界] 随机
-  cavalryRatioCap: 0.7,
+  cavalryRatioRampLoWave: 5, // 占比线性爬升：本波 → cavalryRatioRampHiWave
+  cavalryRatioRampHiWave: 20,
+  cavalryRatioRampStart: 0.3, // 第 5 波骑兵占比 30%
+  cavalryRatioRampEnd: 0.55, // 第 20 波 55%
+  cavalryRatioLateLo: 0.56, // 第 21 波起每波在 [lateLo, lateHi] 随机
+  cavalryRatioLateHi: 0.7,
   cavalrySpdMul: 1.35, // 骑兵移速倍率：比普通妖快 35%
   cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
@@ -156,7 +157,7 @@ export const TUNING = {
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
-  endlessCycleStep: 1.3,
+  endlessCycleStep: 1.2,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
@@ -303,11 +304,19 @@ export function splitBossHpBudget(
   return { bossHp, escortHpEach };
 }
 
-/** 某波骑兵比例区间：[起始, 最大]（开波时在区间内随机一次，逐怪独立判定） */
+/** 某波骑兵比例区间：5–20 线性 30%→55%；21+ 随机 [56%,70%]；开波时在区间内随机一次，逐怪独立判定 */
 export function cavalryRatioBounds(wave: number): { start: number; max: number } {
-  const start = TUNING.cavalryRatioBase + Math.min(TUNING.cavalryRatioWaveBonusCap, wave / TUNING.cavalryRatioWaveDiv);
-  const max = Math.min(TUNING.cavalryRatioCap, start + TUNING.cavalryRatioMaxSpread);
-  return { start, max };
+  const w = Math.max(1, Math.floor(wave));
+  if (w < TUNING.cavalryFromWave) return { start: 0, max: 0 };
+  if (w > TUNING.cavalryRatioRampHiWave) {
+    return { start: TUNING.cavalryRatioLateLo, max: TUNING.cavalryRatioLateHi };
+  }
+  const lo = TUNING.cavalryRatioRampLoWave;
+  const hi = TUNING.cavalryRatioRampHiWave;
+  const span = Math.max(1, hi - lo);
+  const t = Math.min(1, Math.max(0, (w - lo) / span));
+  const ratio = TUNING.cavalryRatioRampStart + t * (TUNING.cavalryRatioRampEnd - TUNING.cavalryRatioRampStart);
+  return { start: ratio, max: ratio };
 }
 
 /** 在 [起始, 最大] 内均匀随机本波骑兵占比 */
@@ -4018,7 +4027,7 @@ export class Battle {
     return monstersInWave(wave);
   }
 
-  /** 普通怪基础血量（含境界/分圈系数、前3波减量与波>10 加成，不含 Boss/精英倍乘） */
+  /** 普通怪基础血量（含境界/分圈系数与波>10 加成，不含 Boss/精英倍乘） */
   private normalMonsterHp(wave: number = this.wave): number {
     const staticBase =
       (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.effectiveDifficulty(wave);
