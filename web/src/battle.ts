@@ -33,7 +33,10 @@ import {
   collectOrphanChars,
   computeSummonWordPolicy,
   countChars,
+  forcedMatchWordChars,
+  matchedHeroIds,
   pickWordChar,
+  yinSupportCharsPresent,
   PAIR_PITY_AFTER,
   type SummonWordPolicy,
   type SummonWordPolicyInput,
@@ -96,10 +99,11 @@ import {
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
-  monsterHpBase: 20, // 第 n 波 HP = base + step*n；前 monsterHpNoDiffTo 波不乘境界难度
-  monsterHpStep: 2,
-  monsterHpNoDiffTo: 3, // 波 1–3 小怪 HP 难度乘区固定 1
-  monsterHpDiffRampPerWave: 0.15, // 其后朝目标境界每波最多 +0.15（含 DPS 缩放乘区）
+  monsterHpBase: 20, // 第 n 波固定公式 HP = base + step*n（前 monsterHpNoDiffTo 波）
+  monsterHpStep: 3,
+  monsterHpNoDiffTo: 3, // 波 1–3 仅用固定公式；其后朝目标血量爬坡
+  // 爬坡每波上限 = monsterHpStep × monsterHpRampMul + (wave − rampFrom)；rampFrom = NoDiffTo+1
+  monsterHpRampMul: 2,
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
   bossFirstSegLo: 5, // 首段候选波下界
   bossFirstSegHi: 10, // 首段候选波上界（亦为段长锚点）
@@ -449,6 +453,10 @@ export interface PlacedUnit {
   pillAtk?: boolean;
   /** 风火轮：本局该兵器攻速 +40%（每单位一次） */
   pillFrq?: boolean;
+  /** 老君/丹君炼丹：攻击增益剩余秒数 */
+  buffAtkT?: number;
+  /** 炼丹攻击倍率（与 buffAtkT 成对） */
+  buffAtkMul?: number;
 }
 
 /** 新建落位兵器的公共初始状态（含减益计时器）；可选朝向出怪口 */
@@ -1582,9 +1590,31 @@ export class Battle {
   private bossScheduleThrough = 0; // 已排程覆盖到的最高波号
   /** 本波按最优输出算出的压力方案（开波时刷新；供出怪血量/数量使用） */
   private wavePressure: PressurePlan | null = null;
+  /** 上一局未匹配 → 本局强制至少达成一次可组合双字 */
+  private forceMatchThisGame = false;
+  /** 近 N 局匹配过的武将 id（抽字软降重） */
+  private recentMatchedHeroIds: readonly string[] = [];
+  /** 本局已达成匹配的武将 id */
+  private matchedHeroIdsThisGame = new Set<string>();
+  /** 本局新匹配发生时的波次（用于波段窗口保底） */
+  private heroMatchWaves: number[] = [];
 
-  constructor(seed = 1, difficultyMul = 1, map: GameMap = MAPS[0]!, meta: MetaBonuses = NO_META, weapons: WeaponBonuses = {}, actives: string[] = [], passives: string[] = [], endless = false, aiSkill = DEFAULT_AI_SKILL, aiAdjustIntervalScale = 1) {
+  constructor(
+    seed = 1,
+    difficultyMul = 1,
+    map: GameMap = MAPS[0]!,
+    meta: MetaBonuses = NO_META,
+    weapons: WeaponBonuses = {},
+    actives: string[] = [],
+    passives: string[] = [],
+    endless = false,
+    aiSkill = DEFAULT_AI_SKILL,
+    aiAdjustIntervalScale = 1,
+    heroMatch?: { forceMatchThisGame?: boolean; recentMatchedHeroIds?: readonly string[] },
+  ) {
     this.aiAdjustIntervalScale = aiAdjustIntervalScale;
+    this.forceMatchThisGame = !!heroMatch?.forceMatchThisGame;
+    this.recentMatchedHeroIds = heroMatch?.recentMatchedHeroIds ?? [];
     this.versusBand = versusRubberBand(
       endless ? 0 : loadPlayerWinStreak(),
       endless ? 0 : loadPlayerLossStreak(),
@@ -1818,6 +1848,20 @@ export class Battle {
       && wordSlotsCap > 0;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
+    const yinPressActive = yinSupportCharsPresent([
+      ...this.wordCharCounts.keys(),
+      ...ownedBoard,
+    ]);
+    const wordPickOpts = () => ({
+      tier5BiasMul: this.versusBand.playerWordTier5Bias,
+      fieldCharCounts,
+      activeMax5Families,
+      tier5CapableOnly: wordPolicy.tier5CapableOnly,
+      excludeChars: wordPolicy.excludeChars,
+      preferRoles: wordPolicy.preferRoles,
+      yinPressActive: yinPressActive || yinSupportCharsPresent(trayWordsSoFar),
+      recentMatchedHeroIds: this.recentMatchedHeroIds,
+    });
     const wordDrawChance =
       (TUNING.wordDrawChance + this.mods.wordRateBonus + this.versusBand.playerWordDrawBonus)
       * wordPolicy.wordSlotChanceMul;
@@ -1833,14 +1877,7 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.wordDrawCounts(),
-        {
-          tier5BiasMul: this.versusBand.playerWordTier5Bias,
-          fieldCharCounts,
-          activeMax5Families,
-          tier5CapableOnly: wordPolicy.tier5CapableOnly,
-          excludeChars: wordPolicy.excludeChars,
-          preferRoles: wordPolicy.preferRoles,
-        },
+        wordPickOpts(),
       );
       trayWordsSoFar.push(w.char);
       this.bumpWordCharCount(w.char);
@@ -1880,7 +1917,35 @@ export class Battle {
       const word = idx >= 0 ? drawOneWord(true) : null;
       if (word) draws[idx] = word;
     }
+    // 跨局 / 波段匹配保底：强制推进可组合双字
+    if (
+      !firstSummon
+      && wordPolicy.allowForceWord
+      && wordSlotsCap > 0
+      && this.needsHeroMatchPity()
+    ) {
+      const forced = forcedMatchWordChars(
+        this.rng,
+        trayWordsSoFar,
+        ownedBoard,
+        wordSlotsCap,
+        {
+          tier5CapableOnly: wordPolicy.tier5CapableOnly,
+          fieldCharCounts,
+          excludeHeroIds: this.matchedHeroIdsThisGame,
+        },
+      );
+      for (const w of forced) {
+        const idx = draws.findIndex((t) => t.kind === 'unit');
+        if (idx < 0) break;
+        trayWordsSoFar.push(w.char);
+        this.bumpWordCharCount(w.char);
+        if (orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
+        draws[idx] = { kind: 'word', char: w.char, general: w.general, tier: wordPolicy.wordTier };
+      }
+    }
     this.tray = draws;
+    this.refreshHeroMatchesAfterSummon(trayWordsSoFar);
     const waveNow = Math.max(1, this.wave);
     const shovelN = base.filter((t) => t.kind === 'shovel').length;
     const wordN = draws.filter((t) => t.kind === 'word').length;
@@ -1896,6 +1961,46 @@ export class Battle {
     } else this.summonsSincePair += 1;
     this.message = '把兵拖到绿格；左右凑齐武将双字可激活（占两格）';
     return true;
+  }
+
+  /** 局末/测试：本局累计匹配过的武将 id */
+  heroMatchedIdsThisGame(): string[] {
+    const tray = this.tray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => t.kind === 'word')
+      .map((t) => t.char);
+    for (const id of matchedHeroIds(tray, this.boardWordCharsNow())) {
+      this.matchedHeroIdsThisGame.add(id);
+    }
+    return [...this.matchedHeroIdsThisGame];
+  }
+
+  /** 测试：挂上跨局匹配保底 */
+  forceHeroMatchPityForTest(): void {
+    this.forceMatchThisGame = true;
+  }
+
+  /** 波间 ready 时 wave 仍为上一波，征兵保底按「即将进入的波」计 */
+  private effectiveSummonWave(): number {
+    if (this.status === 'ready' && this.wave > 0) return this.wave + 1;
+    return Math.max(1, this.wave);
+  }
+
+  private refreshHeroMatchesAfterSummon(trayChars: readonly string[]): void {
+    const waveNow = this.effectiveSummonWave();
+    const ids = matchedHeroIds(trayChars, this.boardWordCharsNow());
+    for (const id of ids) {
+      if (this.matchedHeroIdsThisGame.has(id)) continue;
+      this.matchedHeroIdsThisGame.add(id);
+      this.heroMatchWaves.push(waveNow);
+    }
+  }
+
+  /** 跨局未匹配，或波>10 的 10 波窗口末仍无本窗口新匹配 */
+  private needsHeroMatchPity(): boolean {
+    if (this.forceMatchThisGame && this.matchedHeroIdsThisGame.size === 0) return true;
+    const w = this.effectiveSummonWave();
+    if (w <= 10 || w % 10 !== 0) return false;
+    const windowStart = Math.floor((w - 1) / 10) * 10 + 1;
+    return !this.heroMatchWaves.some((mw) => mw >= windowStart && mw <= w);
   }
 
   // 某格是否有字牌
@@ -4029,32 +4134,50 @@ export class Battle {
     return monstersInWave(wave);
   }
 
-  /**
-   * 小怪 HP 难度乘区：前 monsterHpNoDiffTo 波固定 1；
-   * 其后从 1 朝 effectiveDifficulty 爬升，每波最多 +monsterHpDiffRampPerWave。
-   */
-  private monsterHpDiffMul(wave: number = this.wave): number {
-    const w = Math.max(1, Math.floor(wave));
-    if (w <= TUNING.monsterHpNoDiffTo) return 1;
-    const target = this.effectiveDifficulty(w);
-    const ramped = 1 + (w - TUNING.monsterHpNoDiffTo) * TUNING.monsterHpDiffRampPerWave;
-    return Math.min(target, ramped);
+  /** 前 monsterHpNoDiffTo 波固定公式血量（不含境界 / DPS 缩放） */
+  private fixedMonsterHp(wave: number): number {
+    return (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * this.wavePostMul(wave);
   }
 
-  /** 普通怪基础血量（含境界/分圈系数与波>10 加成，不含 Boss/精英倍乘） */
-  private normalMonsterHp(wave: number = this.wave): number {
-    const diffMul = this.monsterHpDiffMul(wave);
-    const staticBase = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diffMul;
-    const staticHp = staticBase * this.wavePostMul(wave);
+  /**
+   * 目标血量：静态公式 × effectiveDifficulty，第 MONSTER_HP_FROM_WAVE 波起再与 DPS 公式取 max。
+   * 不含爬坡上限（爬坡见 normalMonsterHp）。
+   */
+  private targetMonsterHp(wave: number, optimalDps?: number): number {
+    const diffMul = this.effectiveDifficulty(wave);
+    const staticHp =
+      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diffMul * this.wavePostMul(wave);
     if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE) return staticHp;
-    const powerBase = monsterHpFromBoardPower(
-      wave,
-      this.estimateOptimalPower().optimalDps,
-      pressureRatioForWave(wave),
-    );
+    const dps = optimalDps ?? this.estimateOptimalPower().optimalDps;
+    const powerBase = monsterHpFromBoardPower(wave, dps, pressureRatioForWave(wave));
     if (powerBase <= 0) return staticHp;
-    const powerHp = powerBase * diffMul * this.wavePostMul(wave);
-    return Math.max(staticHp, powerHp);
+    return Math.max(staticHp, powerBase * diffMul * this.wavePostMul(wave));
+  }
+
+  /** 爬坡起始波（紧接固定公式波之后，默认 4） */
+  private monsterHpRampFromWave(): number {
+    return TUNING.monsterHpNoDiffTo + 1;
+  }
+
+  /** 第 wave 波爬坡上限增量：monsterHpStep×mul + (wave − 起始波) */
+  private monsterHpRampMaxStep(wave: number): number {
+    return TUNING.monsterHpStep * TUNING.monsterHpRampMul + (wave - this.monsterHpRampFromWave());
+  }
+
+  /**
+   * 普通怪基础血量（不含 Boss/精英倍乘）：
+   * - 波 ≤ monsterHpNoDiffTo：固定公式
+   * - 其后：从上波实际血量朝 targetMonsterHp 爬坡，每波最多 +monsterHpRampMaxStep(wave)
+   */
+  private normalMonsterHp(wave: number = this.wave): number {
+    const w = Math.max(1, Math.floor(wave));
+    if (w <= TUNING.monsterHpNoDiffTo) return this.fixedMonsterHp(w);
+    const optimalDps = this.estimateOptimalPower().optimalDps;
+    let hp = this.fixedMonsterHp(TUNING.monsterHpNoDiffTo);
+    for (let i = TUNING.monsterHpNoDiffTo + 1; i <= w; i++) {
+      hp = Math.min(this.targetMonsterHp(i, optimalDps), hp + this.monsterHpRampMaxStep(i));
+    }
+    return hp;
   }
 
   /** 某波普通怪基础移速（固定 TUNING.monsterSpd；不含被动减速、Boss/骑兵倍乘） */
@@ -4585,6 +4708,10 @@ export class Battle {
       if (u.weakenImmuneT > 0) u.weakenImmuneT = Math.max(0, u.weakenImmuneT - dt);
       if (u.rangeCutImmuneT > 0) u.rangeCutImmuneT = Math.max(0, u.rangeCutImmuneT - dt);
       if (u.knockdownImmuneT > 0) u.knockdownImmuneT = Math.max(0, u.knockdownImmuneT - dt);
+      if ((u.buffAtkT ?? 0) > 0) {
+        u.buffAtkT = Math.max(0, (u.buffAtkT ?? 0) - dt);
+        if (u.buffAtkT <= 0) u.buffAtkMul = undefined;
+      }
       if (u.stunT > 0 || u.knockdownT > 0) continue; // 眩晕/倒下：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
@@ -4602,8 +4729,9 @@ export class Battle {
           .filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p)),
       );
       if (inRange.length === 0) continue;
-      // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊抬高攻击
-      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul();
+      // 降攻减益：仅临时削弱伤害，不改动基础数值；仙丹增益 + 大圣羁绊 + 老君炼丹抬高攻击
+      const heroAtkBuff = (u.buffAtkT ?? 0) > 0 ? (u.buffAtkMul ?? 1) : 1;
+      const atkMul = this.mods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.bondAtkMul() * heroAtkBuff;
       const dmg = damage(stat.atk * atkMul); // 道具增伤 + 减益
       const color = this.unitColor(u.type);
       let hitCount = 0;
@@ -4920,7 +5048,11 @@ export class Battle {
           ally.state.buffAtkT = Math.max(ally.state.buffAtkT ?? 0, dur);
           ally.state.buffAtkMul = Math.max(ally.state.buffAtkMul ?? 1, mul);
         }
-        this.message = `${g.def.name}炼丹：武将攻击 ×${mul.toFixed(2)}（${dur}s）`;
+        for (const u of this.units.values()) {
+          u.buffAtkT = Math.max(u.buffAtkT ?? 0, dur);
+          u.buffAtkMul = Math.max(u.buffAtkMul ?? 1, mul);
+        }
+        this.message = `${g.def.name}炼丹：武将与兵器攻击 ×${mul.toFixed(2)}（${dur}s）`;
         break;
       }
       case 'cdr': {
@@ -4931,9 +5063,21 @@ export class Battle {
           ally.state.skillCd = Math.max(0, ally.state.skillCd - sec);
           n++;
         }
-        this.message = n > 0
-          ? `${g.def.name}慧剑：${n} 名武将大招 CD −${sec}s`
-          : `${g.def.name}慧剑：场上暂无其他武将`;
+        let unitsN = 0;
+        for (const u of this.units.values()) {
+          if (u.cooldown <= 0) continue;
+          u.cooldown = Math.max(0, u.cooldown - sec);
+          unitsN++;
+        }
+        if (n > 0 && unitsN > 0) {
+          this.message = `${g.def.name}慧剑：${n} 武将大招 CD、${unitsN} 兵器间隔 −${sec}s`;
+        } else if (n > 0) {
+          this.message = `${g.def.name}慧剑：${n} 名武将大招 CD −${sec}s`;
+        } else if (unitsN > 0) {
+          this.message = `${g.def.name}慧剑：${unitsN} 件兵器攻击间隔 −${sec}s`;
+        } else {
+          this.message = `${g.def.name}慧剑：场上暂无其他友军`;
+        }
         break;
       }
       case 'burn': {

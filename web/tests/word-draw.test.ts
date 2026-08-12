@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import {
   phaseWeight,
   phaseWeightRatio,
@@ -12,9 +12,15 @@ import {
   computeSummonWordPolicy,
   SUMMON_MAX_WORD_SLOTS_GROWING,
   missingHeroRoles,
+  matchedHeroIds,
+  hasAnyHeroMatch,
+  forcedMatchWordChars,
+  YIN_SUPPORT_PRESS_MUL,
+  RECENT_HERO_REPEAT_MUL,
 } from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
 import { hintGeneralForChar, charHeroCapacity } from '../src/generals';
+import { loadHeroMatchHistory, recordHeroMatchGame } from '../src/hero-match-history';
 
 class FakeRng {
   constructor(private seq: number[], private i = 0) {}
@@ -199,5 +205,103 @@ describe('征兵字牌策略', () => {
       const pick = pickWordChar(rng, 5, [], [], false, [], undefined, { excludeChars: ['哪'] });
       expect(pick.char).not.toBe('哪');
     }
+  });
+});
+
+describe('武将匹配与软权重', () => {
+  it('matchedHeroIds：tray+棋盘可组合双字即匹配', () => {
+    expect(matchedHeroIds(['大', '圣'], [])).toContain('dasheng');
+    expect(matchedHeroIds(['圣'], ['大'])).toContain('dasheng');
+    expect(hasAnyHeroMatch(['大'], [])).toBe(false);
+    expect(hasAnyHeroMatch(['大'], ['圣'])).toBe(true);
+  });
+
+  it('音系出现后君/殊字权重 ×0.4', () => {
+    const base = wordDrawEntries(5, [], [], [], undefined, {}).find((e) => e.char === '老')?.w ?? 0;
+    const pressed = wordDrawEntries(5, [], [], [], undefined, { yinPressActive: true })
+      .find((e) => e.char === '老')?.w ?? 0;
+    expect(base).toBeGreaterThan(0);
+    expect(pressed / base).toBeCloseTo(YIN_SUPPORT_PRESS_MUL, 5);
+  });
+
+  it('近10局匹配英雄字权重 ×0.4', () => {
+    // 「圣」仅属大圣，避免共享字叠加干扰比值
+    const base = wordDrawEntries(5, [], [], [], undefined, {}).find((e) => e.char === '圣')?.w ?? 0;
+    const pressed = wordDrawEntries(5, [], [], [], undefined, {
+      recentMatchedHeroIds: ['dasheng'],
+    }).find((e) => e.char === '圣')?.w ?? 0;
+    expect(base).toBeGreaterThan(0);
+    expect(pressed / base).toBeCloseTo(RECENT_HERO_REPEAT_MUL, 5);
+  });
+
+  it('forcedMatchWordChars：有半对时补配对字', () => {
+    const rng = new FakeRng([0]);
+    const picks = forcedMatchWordChars(rng, [], ['大'], 2);
+    expect(picks.length).toBe(1);
+    expect(['圣', '蟒']).toContain(picks[0]!.char);
+  });
+
+  it('forcedMatchWordChars：空场可一次给出双字', () => {
+    const rng = new FakeRng([0]);
+    const picks = forcedMatchWordChars(rng, [], [], 2);
+    expect(picks.length).toBe(2);
+    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(true);
+  });
+});
+
+describe('跨局匹配历史', () => {
+  beforeEach(() => {
+    const mem = new Map<string, string>();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
+      setItem: (k: string, v: string) => { mem.set(k, String(v)); },
+      removeItem: (k: string) => { mem.delete(k); },
+      clear: () => { mem.clear(); },
+      key: (i: number) => [...mem.keys()][i] ?? null,
+      get length() { return mem.size; },
+    } as Storage;
+  });
+
+  it('recordHeroMatchGame 写入 lastGameHadMatch 与 recentMatched', () => {
+    recordHeroMatchGame(['dasheng', 'bajie']);
+    const h = loadHeroMatchHistory();
+    expect(h.lastGameHadMatch).toBe(true);
+    expect(h.recentMatched.slice(0, 2)).toEqual(['dasheng', 'bajie']);
+    recordHeroMatchGame([]);
+    expect(loadHeroMatchHistory().lastGameHadMatch).toBe(false);
+  });
+});
+
+describe('征兵匹配保底', () => {
+  const origWord = TUNING.wordDrawChance;
+  afterEach(() => {
+    TUNING.wordDrawChance = origWord;
+  });
+
+  it('跨局未匹配保底：第二次征兵可组合出一对字', () => {
+    TUNING.wordDrawChance = 0;
+    const b = new Battle(11, 1, undefined, undefined, {}, [], [], false, undefined, 1, {
+      forceMatchThisGame: true,
+    });
+    b.grantPeach(10_000);
+    b.wave = 5;
+    b.status = 'ready';
+    expect(b.summon()).toBe(true); // 首次不转字
+    expect(b.summon()).toBe(true);
+    const trayChars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
+    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+    expect(b.heroMatchedIdsThisGame().length).toBeGreaterThan(0);
+  });
+
+  it('波20窗口无匹配时强制补对', () => {
+    TUNING.wordDrawChance = 0;
+    const b = new Battle(13);
+    b.grantPeach(10_000);
+    b.setWaveForTest(19);
+    b.status = 'ready'; // 即将进入第 20 波
+    expect(b.summon()).toBe(true);
+    expect(b.summon()).toBe(true);
+    const trayChars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
+    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
   });
 });

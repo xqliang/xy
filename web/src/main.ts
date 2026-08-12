@@ -70,6 +70,7 @@ import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow } from './platform';
 import { loadUserId, copyUserId } from './user-id';
 import { loadAiSkill, recordVersusOutcome, rollMatchAiSkill } from './ai-skill';
+import { loadHeroMatchHistory, recordHeroMatchGame } from './hero-match-history';
 import {
   getSettings,
   resetSettings,
@@ -310,7 +311,16 @@ function newBattleAiSkill(): number {
   return rollMatchAiSkill(loadAiSkill(), () => Math.random());
 }
 
-let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, newBattleAiSkill());
+/** 跨局武将匹配：上一局未匹配则本局保底；近 10 局降重 */
+function heroMatchOptsForNewBattle() {
+  const hist = loadHeroMatchHistory();
+  return {
+    forceMatchThisGame: !hist.lastGameHadMatch,
+    recentMatchedHeroIds: hist.recentMatched,
+  };
+}
+
+let battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, false, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
 bindBattleWeaponPickup();
 let endHandled = false; // 本局胜负是否已结算入境界
 let settleChange: RankChange | null = null; // 局内结算弹层要播放的段位变化
@@ -741,7 +751,7 @@ function checkBattleTutorials(): void {
 
 function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
-  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, newBattleAiSkill());
+  battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
   bindBattleWeaponPickup();
   endHandled = false;
   endlessResult = null;
@@ -1708,6 +1718,7 @@ function frame(now: number): void {
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
       endHandled = true;
       pendingMerchant = true;
+      recordHeroMatchGame(battle.heroMatchedIdsThisGame());
 
       if (battle.endless) {
         // 无尽：不涨降境界，只记录最高波数；仍发放功德（软奖励，与星级解耦）
@@ -1828,7 +1839,7 @@ const hook: GameHook = {
     void import('./devtools').then(({ openDevTools }) => openDevTools({ onUserApplied: applyDevUserResult }));
   },
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
-    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill());
+    battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
     bindBattleWeaponPickup();
     endHandled = false;
     endlessResult = null;

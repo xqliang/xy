@@ -31,6 +31,16 @@ export const LOW_TIER_BIAS = 0.65;
 export const OCCURRENCE_DECAY = 0.55;
 /** 场上已有同门派满5 激活时，满3 过渡将字的权重倍率 */
 export const FAMILY_MAX5_ACTIVE_T3_PENALTY = 0.12;
+/** 观音/梵音字已出现后，君/殊门派字权重倍率（降 60%） */
+export const YIN_SUPPORT_PRESS_MUL = 0.4;
+/** 近 N 局匹配过的武将字权重倍率（降 60%） */
+export const RECENT_HERO_REPEAT_MUL = 0.4;
+/** 跨局降重记忆局数 */
+export const RECENT_HERO_HISTORY_LEN = 10;
+/** 观音/梵音相关字（出现任一则触发君/殊软压） */
+export const YIN_SUPPORT_CHARS = new Set(['观', '音', '梵']);
+/** 被音系软压的门派 */
+export const YIN_PRESS_FAMILIES = new Set(['君', '殊']);
 
 /** 波段对满3/满5的相对权重（需压过满3基础 weight≈3、满5≈1 的差距） */
 export function phaseWeight(wave: number, maxTier: 3 | 5): number {
@@ -95,6 +105,53 @@ export function countChars(chars: readonly string[]): Map<string, number> {
   return m;
 }
 
+/**
+ * 匹配英雄：某一武将双字同时存在于 tray ∪ 棋盘（可组合，不必已激活）。
+ */
+export function matchedHeroIds(
+  trayChars: readonly string[],
+  boardChars: readonly string[],
+): string[] {
+  const counts = countChars([...trayChars, ...boardChars]);
+  const out: string[] = [];
+  for (const g of GENERALS) {
+    const a = g.chars[0]!;
+    const b = g.chars[1]!;
+    if ((counts.get(a) ?? 0) >= 1 && (counts.get(b) ?? 0) >= 1) out.push(g.id);
+  }
+  return out;
+}
+
+export function hasAnyHeroMatch(
+  trayChars: readonly string[],
+  boardChars: readonly string[],
+): boolean {
+  return matchedHeroIds(trayChars, boardChars).length > 0;
+}
+
+/** 是否出现过观音/梵音相关字 */
+export function yinSupportCharsPresent(chars: Iterable<string>): boolean {
+  for (const c of chars) {
+    if (YIN_SUPPORT_CHARS.has(c)) return true;
+  }
+  return false;
+}
+
+/** 该字是否属于近 N 局匹配过的武将 */
+export function charInRecentMatchedHeroes(
+  char: string,
+  recentMatchedHeroIds: ReadonlySet<string> | readonly string[],
+): boolean {
+  const set = recentMatchedHeroIds instanceof Set
+    ? recentMatchedHeroIds
+    : new Set(recentMatchedHeroIds);
+  if (set.size === 0) return false;
+  for (const g of GENERALS) {
+    if (g.chars.includes(char) && set.has(g.id)) return true;
+  }
+  return false;
+}
+
 /** 场上该字已达可组武将数上限 → 不再生成 */
 export function isCharAtFieldCapacity(char: string, fieldCharCounts: ReadonlyMap<string, number>): boolean {
   return (fieldCharCounts.get(char) ?? 0) >= charHeroCapacity(char);
@@ -126,11 +183,14 @@ function buildWeightedEntries(
   tier5CapableOnly = false,
   excludeChars: readonly string[] = [],
   preferRoles: readonly GeneralRole[] = [],
+  yinPressActive = false,
+  recentMatchedHeroIds: readonly string[] = [],
 ): { char: string; general: string; w: number }[] {
   const needed = new Set(pendingPartnerChars(orphanChars, trayCharsAlready));
   const owned = new Set([...ownedChars, ...orphanChars, ...trayCharsAlready]);
   const exclude = new Set(excludeChars);
   const roleBoost = new Set(preferRoles);
+  const recentSet = new Set(recentMatchedHeroIds);
 
   const entries: { char: string; general: string; w: number }[] = [];
   const seen = new Set<string>();
@@ -158,6 +218,10 @@ function buildWeightedEntries(
       }
       if (g.role !== '过渡' && roleBoost.has(g.role)) mult *= ROLE_DIVERSITY_BOOST;
       mult *= familyPenalty;
+      if (yinPressActive && YIN_PRESS_FAMILIES.has(g.family)) mult *= YIN_SUPPORT_PRESS_MUL;
+      if (recentSet.size > 0 && charInRecentMatchedHeroes(c, recentSet)) {
+        mult *= RECENT_HERO_REPEAT_MUL;
+      }
       const w = base * mult;
       if (!seen.has(c)) {
         seen.add(c);
@@ -198,6 +262,10 @@ export interface WordPickOpts {
   excludeChars?: readonly string[];
   /** 优先补齐的角色 */
   preferRoles?: readonly GeneralRole[];
+  /** 本局已出现观音/梵音字 → 君/殊权重 × YIN_SUPPORT_PRESS_MUL */
+  yinPressActive?: boolean;
+  /** 近 N 局匹配过的武将 id → 其字权重 × RECENT_HERO_REPEAT_MUL */
+  recentMatchedHeroIds?: readonly string[];
 }
 
 /** 激活武将已占用的字 */
@@ -314,7 +382,79 @@ export function wordDrawEntries(
     opts?.tier5CapableOnly ?? false,
     opts?.excludeChars ?? [],
     opts?.preferRoles ?? [],
+    opts?.yinPressActive ?? false,
+    opts?.recentMatchedHeroIds ?? [],
   );
+}
+
+/**
+ * 保底推进匹配：优先补齐现有半对；否则一次给出某武将双字（slots≥2）或首字。
+ * 返回 0–2 个尚未在 tray 中的字（调用方负责写入 tray）。
+ */
+export function forcedMatchWordChars(
+  rng: Rng,
+  trayCharsAlready: readonly string[],
+  boardChars: readonly string[],
+  maxSlots: number,
+  opts?: {
+    tier5CapableOnly?: boolean;
+    fieldCharCounts?: ReadonlyMap<string, number>;
+    excludeHeroIds?: ReadonlySet<string>;
+  },
+): WordPick[] {
+  const slotsLeft = Math.max(0, maxSlots - trayCharsAlready.length);
+  if (slotsLeft <= 0) return [];
+  const counts = countChars([...boardChars, ...trayCharsAlready]);
+  const field = opts?.fieldCharCounts;
+  const t5Only = opts?.tier5CapableOnly ?? false;
+  const excludeHeroes = opts?.excludeHeroIds ?? new Set<string>();
+
+  // 1) 补齐棋盘/tray 半对（配对字尚未在池中）
+  const pending = pendingPartnerChars(boardChars, [...trayCharsAlready]).filter(
+    (c) => (counts.get(c) ?? 0) < 1 && !isCharDrawBlocked(c, trayCharsAlready, field),
+  );
+  if (pending.length > 0) {
+    const char = rng.pick(pending);
+    return [{ char, general: hintGeneralForChar(char) }];
+  }
+
+  // 2) 选尚未完整匹配的武将，尽量一次出双字
+  const candidates = GENERALS.filter((g) => {
+    if (excludeHeroes.has(g.id)) return false;
+    if (t5Only && g.maxTier < 5) return false;
+    const a = g.chars[0]!;
+    const b = g.chars[1]!;
+    const hasA = (counts.get(a) ?? 0) >= 1;
+    const hasB = (counts.get(b) ?? 0) >= 1;
+    if (hasA && hasB) return false;
+    return true;
+  });
+  if (candidates.length === 0) return [];
+  const g = rng.pick(candidates);
+  const a = g.chars[0]!;
+  const b = g.chars[1]!;
+  const hasA = (counts.get(a) ?? 0) >= 1;
+  const hasB = (counts.get(b) ?? 0) >= 1;
+  const out: WordPick[] = [];
+  const tryPush = (c: string) => {
+    if (out.length >= slotsLeft) return;
+    if (isCharDrawBlocked(c, [...trayCharsAlready, ...out.map((x) => x.char)], field)) return;
+    if (t5Only && maxTierForChar(c) < 5) return;
+    out.push({ char: c, general: g.id });
+  };
+  if (!hasA && !hasB) {
+    if (slotsLeft >= 2) {
+      tryPush(a);
+      tryPush(b);
+    } else {
+      tryPush(a);
+    }
+  } else if (!hasA) {
+    tryPush(a);
+  } else if (!hasB) {
+    tryPush(b);
+  }
+  return out;
 }
 
 /**
@@ -341,6 +481,8 @@ export function pickWordChar(
   const tier5CapableOnly = opts?.tier5CapableOnly ?? false;
   const excludeChars = opts?.excludeChars ?? [];
   const preferRoles = opts?.preferRoles ?? [];
+  const yinPressActive = opts?.yinPressActive ?? false;
+  const recentMatchedHeroIds = opts?.recentMatchedHeroIds ?? [];
   if (forcePartner) {
     const need = pendingPartnerChars(orphanChars, trayCharsAlready).filter(
       (c) => !isCharDrawBlocked(c, trayCharsAlready, fieldCharCounts),
@@ -364,6 +506,8 @@ export function pickWordChar(
       tier5CapableOnly,
       excludeChars,
       preferRoles,
+      yinPressActive,
+      recentMatchedHeroIds,
     ),
   );
 }

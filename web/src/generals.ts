@@ -127,18 +127,18 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 君：炼丹增攻 ———
   { id: 'laojun', name: '老君', chars: ['老', '君'], role: '辅助', rank: 'T1', skill: 'buff',
-    skillName: '炼丹·金丹', skillDesc: '短时提升全体武将攻击', atk: 2.2, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-laojun',
+    skillName: '炼丹·金丹', skillDesc: '短时提升全体武将与兵器攻击', atk: 2.2, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-laojun',
     maxTier: 5, atkStyle: '炼丹增攻', family: '君' },
   { id: 'danjun', name: '丹君', chars: ['丹', '君'], role: '过渡', rank: 'T2', skill: 'buff',
-    skillName: '小还丹', skillDesc: '短时弱提升武将攻击（过渡）', atk: 1.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-danjun',
+    skillName: '小还丹', skillDesc: '短时弱提升武将与兵器攻击（过渡）', atk: 1.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-danjun',
     maxTier: 3, atkStyle: '炼丹增攻', family: '君' },
 
   // ——— 殊：般若减 CD ———
   { id: 'wenshu', name: '文殊', chars: ['文', '殊'], role: '辅助', rank: 'T1', skill: 'cdr',
-    skillName: '般若·慧剑', skillDesc: '缩短其他武将大招剩余冷却', atk: 2.2, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-wenshu',
+    skillName: '般若·慧剑', skillDesc: '缩短其他武将大招与兵器攻击剩余冷却', atk: 2.2, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-wenshu',
     maxTier: 5, atkStyle: '般若减CD', family: '殊' },
   { id: 'huishu', name: '慧殊', chars: ['慧', '殊'], role: '过渡', rank: 'T2', skill: 'cdr',
-    skillName: '慧光浅照', skillDesc: '略缩短友军大招冷却（过渡）', atk: 1.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
+    skillName: '慧光浅照', skillDesc: '略缩短友军大招与兵器冷却（过渡）', atk: 1.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
     maxTier: 3, atkStyle: '般若减CD', family: '殊' },
 ];
 

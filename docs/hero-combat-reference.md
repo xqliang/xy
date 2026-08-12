@@ -30,7 +30,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 |------|-----------------------------------------------------|----------------------|
 | CD 就绪（`skillCd ≤ 0`） | 必须 | 必须 |
 | 射程内至少 1 只怪 | **必须** | 不要求 |
-| 结算对象 | `inRange` 内的怪 | 已激活友军武将 |
+| 结算对象 | `inRange` 内的怪 | 已激活友军武将 + 场上兵器 |
 | 特效锚点 | 通常在最前目标附近 | 武将自身 |
 
 流程：
@@ -82,8 +82,8 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 | skill | 代表英雄 | 大招效果 | 触发条件 |
 |-------|----------|----------|----------|
-| `buff` | 老君、丹君 | 全体已激活武将短时攻击倍率（含自己） | CD 就绪即可，无需怪在圈内 |
-| `cdr` | 文殊、慧殊 | 缩短**其他**武将大招剩余 CD | CD 就绪即可，无需怪在圈内 |
+| `buff` | 老君、丹君 | 全体已激活武将 **与场上兵器** 短时攻击倍率（含自己） | CD 就绪即可，无需怪在圈内 |
+| `cdr` | 文殊、慧殊 | 缩短**其他**武将大招剩余 CD，并缩短场上兵器当前攻击间隔 | CD 就绪即可，无需怪在圈内 |
 
 `heroSkillFocusDps` 对 `heal` / `buff` / `cdr` 均计 **0**（不进 Boss 压力账本的大招秒伤）。
 
@@ -91,14 +91,16 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 - 满 5：`heroBuffAtkMulMain = 1.35`，`heroBuffDurMain = 5`s
 - 满 3：`heroBuffAtkMulTransit = 1.20`，`heroBuffDurTransit = 3.5`s
-- 写入目标 `GeneralState.buffAtkT` / `buffAtkMul`；与仙丹、羁绊、神兵 **乘算**；刷新取较长时长与较高倍率
+- 武将写入 `GeneralState.buffAtkT` / `buffAtkMul`；兵器写入 `PlacedUnit.buffAtkT` / `buffAtkMul`
+- 与仙丹、羁绊、神兵 **乘算**；刷新取较长时长与较高倍率
 - 动画（约 0.85s）：八卦炉升起 → 太极环转 → 金丹外溅 + 地火冲击（暖金）
 
 #### 文殊 · 般若·慧剑（`cdr`）
 
 - 满 5：`heroCdrSecMain = 4`（秒）
 - 满 3：`heroCdrSecTransit = 2.5`
-- 结算：`ally.skillCd = max(0, skillCd - cdrSec)`；**不**缩短施法者自身刚重置的 CD
+- 武将：`ally.skillCd = max(0, skillCd - cdrSec)`；**不**缩短施法者自身刚重置的 CD
+- 兵器：`unit.cooldown = max(0, cooldown - cdrSec)`（仅当前攻击间隔，不含永久攻速）
 - 动画（约 0.85s）：双层青莲展开 → 三道慧剑弧斩 → 光尘外散（青金/莲紫）
 
 #### 与观音分工
@@ -106,8 +108,8 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | 武将 | 作用对象 | 核心价值 |
 |------|----------|----------|
 | 观音 | 怪 + 唐僧 | 减速 + 每波限一次续命 |
-| 老君 | 友军武将 | 短时全体攻击加成 |
-| 文殊 | 友军武将 | 缩短其他武将大招剩余 CD |
+| 老君 | 友军武将 + 兵器 | 短时全体攻击加成 |
+| 文殊 | 友军武将 + 兵器 | 缩短大招 / 攻击间隔剩余 CD |
 
 ---
 
@@ -199,14 +201,16 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ---
 
-## 8. 征兵前期字/铲配额（`TUNING`，2026-08-11）
+## 8. 征兵字/铲与武将匹配（`TUNING` / `word-draw.ts`，2026-08-12）
 
 字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定，单次征兵最多 `SUMMON_MAX_WORD_SLOTS` 字。另有连续无字/无铲/半对保底。
+
+### 8.1 基础配额与掉率
 
 | 常量 | 值 | 含义 |
 |------|----|------|
 | `wordDrawChance` | 0.03 | 每兵槽独立转字概率 |
-| `SUMMON_MAX_WORD_SLOTS` | 2 | 单次征兵最多出几个字 |
+| `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
 | `PARTNER_BOOST` | 0.05 | 半对孤儿所需配对字的抽字权重倍率 |
 | `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制配对字 |
 | `wordPityAfter` | 10 | 连续 N 次无字 → 下次强制 1 字 |
@@ -214,7 +218,28 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
 
-实现：`summon-early.ts` → `Battle.summon` / `aiSummon`。
+### 8.2 匹配口径与软权重
+
+**匹配英雄**：某一武将双字同时存在于 `tray ∪ 棋盘字`（可组合，不必已激活摆位）。
+
+| 常量 | 值 | 含义 |
+|------|-----|------|
+| `YIN_SUPPORT_PRESS_MUL` | **0.4** | 本局已出现观/音/梵（观音或梵音相关字）后，君/殊门派字权重 ×0.4 |
+| `RECENT_HERO_REPEAT_MUL` | **0.4** | 近 `RECENT_HERO_HISTORY_LEN`（**10**）局匹配过的武将字权重 ×0.4 |
+| `YIN_SUPPORT_CHARS` | 观、音、梵 | 触发音系软压 |
+| `YIN_PRESS_FAMILIES` | 君、殊 | 被软压的门派（老君/丹君/文殊/慧殊） |
+
+跨局状态：`dasheng.heroMatchHistory`（`hero-match-history.ts`）存 `lastGameHadMatch` 与 `recentMatched`。
+
+### 8.3 匹配保底（玩家征兵）
+
+| 规则 | 行为 |
+|------|------|
+| **每两盘必匹配** | 上一局 `lastGameHadMatch=false` → 本局 `forceMatchThisGame`，直至至少匹配 1 名武将 |
+| **波 10 后每 10 波** | 窗口 11–20、21–30…；窗口末波（20/30…，含波间准备期）若本窗口尚无新匹配 → 强制补对 |
+| 强制手段 | `forcedMatchWordChars`：优先补半对；否则一次尽量给出某未匹配武将双字（受 `SUMMON_MAX_WORD_SLOTS` 限制） |
+
+仍保留随机抽字；保底仅在条件触发时硬塞。实现：`word-draw.ts` + `Battle.summon`；局末 `recordHeroMatchGame`。
 
 ---
 
@@ -222,37 +247,41 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ### 9.1 小怪基础血量 `normalMonsterHp(wave)`
 
-**静态公式**（第 1 波保底；第 2 波起与 DPS 公式取 max）：
+**前 3 波（≤ `monsterHpNoDiffTo`）固定公式**：
 
 ```
-target = effectiveDifficulty
-diffMul = wave ≤ monsterHpNoDiffTo
-  ? 1
-  : min(target, 1 + (wave − monsterHpNoDiffTo) × monsterHpDiffRampPerWave)
-static = (monsterHpBase + monsterHpStep × wave) × diffMul × wavePostMul
+fixed = (monsterHpBase + monsterHpStep × wave) × wavePostMul
+```
+
+**第 4 波起目标血量**（含境界；第 `MONSTER_HP_FROM_WAVE` 波起再与 DPS 公式取 max）：
+
+```
+static = (monsterHpBase + monsterHpStep × wave) × effectiveDifficulty × wavePostMul
+powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × effectiveDifficulty × wavePostMul
+target = max(static, powerHp)   // optimalDps=0 时回退 static
+```
+
+**爬坡**（从上波实际血量朝 target；起始波 `rampFrom = monsterHpNoDiffTo + 1`，默认 4）：
+
+```
+maxStep(w) = monsterHpStep × monsterHpRampMul + (w − rampFrom)
+hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(w))
 ```
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
 | `monsterHpBase` | 20 | 血量基数 |
-| `monsterHpStep` | 2 | 每波 +2 |
-| `monsterHpNoDiffTo` | 3 | 波 1–3 难度乘区固定 1 |
-| `monsterHpDiffRampPerWave` | **0.15** | 目标境界更高时，每波最多 +0.15 爬向 target |
+| `monsterHpStep` | **3** | 每波固定公式 +3；爬坡步长基准 |
+| `monsterHpNoDiffTo` | 3 | 波 1–3 仅用固定公式 |
+| `monsterHpRampMul` | **2** | 爬坡：`step×2 + (wave−rampFrom)` |
 | `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
-
-**DPS 缩放**（第 `MONSTER_HP_FROM_WAVE` 波起，默认 2）：
-
-```
-powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × diffMul × wavePostMul
-normalMonsterHp = max(static, powerHp)   // optimalDps=0 时回退 static
-```
 
 | 常量（`BOARD_POWER`） | 值 |
 |----------------------|-----|
 | `MONSTER_HP_FROM_WAVE` | 2 |
 | `MONSTER_HP_KILL_SEC` | 3 |
 
-前 3 波固定 `diffMul=1`；第 4 波起 `1.15 → 1.30 → …` 爬向目标境界（每波最多 +0.15）。**已取消**前期软血（`earlyWaveHp*`）。
+例（目标境界 1.5、空板）：波 1–3 = 23/26/29；波 4 maxStep=`3×2+(4−4)=6` → min(48, 29+6)=35；波 5 maxStep=7… 直至追上 target。
 
 ### 9.2 各类型怪物血量（均从 `normalMonsterHp()` 起算）
 
@@ -305,7 +334,7 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / end
 | 11–20 | ×1.2 |
 | 21–30 | ×1.44（1.2²） |
 
-对战与无尽共用；只影响 HP 静态部分及 DPS 公式里的难度乘区（波 ≤ `monsterHpNoDiffTo` 固定 1，其后每波最多 +`monsterHpDiffRampPerWave` 爬向目标），**不影响移速**。
+对战与无尽共用；写入目标血量的 `effectiveDifficulty` 乘区（波 ≤ `monsterHpNoDiffTo` 不乘，其后经绝对血量爬坡逼近），**不影响移速**。
 
 ### 9.6 出怪压力（第 `PRESSURE_FROM_WAVE` 波起，默认 6）
 

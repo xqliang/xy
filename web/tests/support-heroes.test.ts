@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, TUNING } from '../src/battle';
+import { Battle, TUNING, makePlacedUnit } from '../src/battle';
 import { GENERALS, generalById } from '../src/generals';
 import { WEAPONS } from '../src/weapons';
 import { ECONOMY } from '@core';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+const cellKey = (c: number, r: number) => `${c},${r}`;
 
 function findPairs(b: Battle, n: number): [{ c: number; r: number }, { c: number; r: number }][] {
   const cells = b.unlockedCells();
@@ -124,6 +126,19 @@ describe('验收：老君 buff', () => {
     expect(b.generalAtk(dasheng)).toBeCloseTo(atkBefore, 5);
   });
 
+  it('大招同时加持场上普通兵器攻击', () => {
+    const b = new Battle(1);
+    const [L, R] = findPairs(b, 1)[0]!;
+    placeHero(b, 'laojun', L, R);
+    const empty = b.unlockedCells().find((c) => !b.words.has(cellKey(c.c, c.r)) && !b.units.has(cellKey(c.c, c.r)))!;
+    b.units.set(cellKey(empty.c, empty.r), makePlacedUnit('archer', 1, empty));
+    const unit = b.units.get(cellKey(empty.c, empty.r))!;
+    const laojun = b.activeGenerals().find((g) => g.def.id === 'laojun')!;
+    castSkill(b, laojun);
+    expect(unit.buffAtkT).toBeCloseTo(TUNING.heroBuffDurMain, 5);
+    expect(unit.buffAtkMul).toBe(TUNING.heroBuffAtkMulMain);
+  });
+
   it('无怪时 CD 就绪仍可施放 buff', () => {
     const b = new Battle(1);
     b.status = 'playing';
@@ -151,6 +166,19 @@ describe('验收：文殊 cdr', () => {
     castSkill(b, wenshu);
     expect(bajie.state.skillCd).toBeCloseTo(10 - TUNING.heroCdrSecMain, 5);
     expect(wenshu.state.skillCd).toBe(0);
+  });
+
+  it('同时缩短场上兵器当前攻击间隔', () => {
+    const b = new Battle(1);
+    const [L, R] = findPairs(b, 1)[0]!;
+    placeHero(b, 'wenshu', L, R);
+    const empty = b.unlockedCells().find((c) => !b.words.has(cellKey(c.c, c.r)) && !b.units.has(cellKey(c.c, c.r)))!;
+    const unit = makePlacedUnit('archer', 1, empty);
+    unit.cooldown = 2.5;
+    b.units.set(cellKey(empty.c, empty.r), unit);
+    const wenshu = b.activeGenerals().find((g) => g.def.id === 'wenshu')!;
+    castSkill(b, wenshu);
+    expect(unit.cooldown).toBeCloseTo(Math.max(0, 2.5 - TUNING.heroCdrSecMain), 5);
   });
 
   it('无怪时 CD 就绪仍可施放 cdr', () => {
