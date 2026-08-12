@@ -1,6 +1,7 @@
 // web/tests/ai-opponent.test.ts
 import { describe, it, expect, vi } from 'vitest';
-import { Battle, TUNING } from '../src/battle';
+import { Battle, TUNING, inAttackRange } from '../src/battle';
+import { posAlong } from '../src/board';
 import { PEACH_PER_KILL } from '@core';
 
 describe('AI 道具', () => {
@@ -77,6 +78,36 @@ describe('AI 落子与激活', () => {
     expect(b.aiWords.get(`${left!.c},${left!.r}`)?.tier).toBe(2);
     expect(b.aiWords.get(`${right!.c},${right!.r}`)?.tier).toBe(2);
     expect(b.aiActiveGenerals()[0]!.tier).toBe(2);
+  });
+
+  it('AI 武将大招就绪时施放并播放 heroUltFx', () => {
+    const b = new Battle(1);
+    const cells = b.aiUnlockedCells();
+    let left: { c: number; r: number } | undefined, right: { c: number; r: number } | undefined;
+    for (const l of cells) {
+      const r = cells.find((c) => c.r === l.r && c.c === l.c + 1);
+      if (r) { left = l; right = r; break; }
+    }
+    expect(left && right).toBeTruthy();
+    b.aiWords.set(`${left!.c},${left!.r}`, { char: '大', general: 'dasheng', tier: 3, cell: left! });
+    b.aiWords.set(`${right!.c},${right!.r}`, { char: '圣', general: 'dasheng', tier: 3, cell: right! });
+    const g = b.aiActiveGenerals()[0]!;
+    g.state.skillCd = 0;
+    const ax = (g.cells[0].c + g.cells[1].c) / 2;
+    const ay = (g.cells[0].r + g.cells[1].r) / 2;
+    const rge = b.aiGeneralRge(g);
+    b.aiMonsters = [{
+      id: 1, dist: b.aiEntranceDist + 0.5, hp: 200, maxHp: 200, spd: 0.6,
+      isBoss: false, isMiniBoss: false, miniBossKind: null, isCavalry: false,
+      hitFlash: 0, skill: null, skillCd: 99, castFlash: 0, spawnT: 1,
+      stunT: 0, slowT: 0, hasteT: 0, healFlash: 0, burnT: 0, burnDps: 0,
+    }];
+    const p = posAlong(b.aiPath, b.aiMonsters[0]!.dist);
+    expect(inAttackRange(ax, ay, rge, p)).toBe(true);
+    expect(b.heroUltFx).toHaveLength(0);
+    (b as unknown as { updateAiGenerals(dt: number): void }).updateAiGenerals(1 / 60);
+    expect(b.heroUltFx.some((f) => f.heroId === 'dasheng')).toBe(true);
+    expect(g.state.skillCd).toBe(g.def.skillCd);
   });
 });
 

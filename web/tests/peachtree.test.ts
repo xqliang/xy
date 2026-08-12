@@ -71,6 +71,20 @@ describe('铲子不能开垦有桃树的格', () => {
     expect(b.useShovelOn(cell)).toBe(false);
     expect(b.trees.has(`${cell.c},${cell.r}`)).toBe(true);
   });
+
+  it('锁定格全被桃树占满时征兵仍可出铲，且不超过桃树数', () => {
+    const b = fresh();
+    b.wave = 8;
+    b.grantPeach(10_000);
+    fillAllLockedWithTrees(b, 1);
+    const treeN = b.trees.size;
+    expect(treeN).toBeGreaterThan(0);
+    b.forceShovelPityForTest();
+    expect(b.summon()).toBe(true);
+    const shovelN = b.tray.filter((t) => t?.kind === 'shovel').length;
+    expect(shovelN).toBeGreaterThanOrEqual(1);
+    expect(shovelN).toBeLessThanOrEqual(treeN);
+  });
 });
 
 function fillAllLockedWithTrees(b: Battle, level: number): void {

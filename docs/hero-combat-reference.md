@@ -222,8 +222,12 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
-| `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（阵位未全开时） |
-| `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（阵位未全开时；在匹配保底之后落定） |
+| `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（仍有待挖空位或地图桃树时） |
+| `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（同上；在匹配保底之后落定） |
+
+单次征兵出铲上限 = `min(待挖空位 + 地图桃树数, early.maxShovels / summonMaxPerKey)`。桃树占住锁定格时仍可出铲（可先挪树再挖）；阵位全开且无桃树时不出铲。
+
+满盘且激活将均为满 5 时**仍可出字**；`isHeroRosterComplete` 仅影响布阵优先（兵器顶孤儿），不再关闭征兵出字。
 
 #### 半对保底（单字配对聚焦）
 

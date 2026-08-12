@@ -1577,6 +1577,7 @@ export class Battle {
 
   tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
   healUsedThisWave = false; // 观音甘露每波限回一次
+  aiHealUsedThisWave = false; // AI 侧观音甘露每波限回一次
   tangsengHurtImmuneT = 0; // 漏怪扣血后短暂免疫剩余（秒）
 
   // —— 主动技能（功德购买、每日装备，最多 2 个；CD 制、手动触发）——
@@ -1915,17 +1916,18 @@ export class Battle {
     const avail = TUNING.traySize;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.summonCount === 0;
-    // 无可挖阵位（全开或仅剩桃树占格）：铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
-    const diggableLeft = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))).length;
-    const allOpen = diggableLeft === 0;
+    // 阵位全开且无桃树：铲子无用 → 不出铲、不触发铲子保底，且放宽同兵种上限
+    // 有桃树时仍可出铲（可挪树后再挖），单次上限 = 待挖空位 + 桃树数
+    const shovelUseful = this.shovelUsefulSlots();
+    const allOpen = shovelUseful === 0;
     const early = earlySummonGates(this.wave, {
       wordsInCapWindow: this.earlySummonWordsCap,
       wordsInGuaranteeWindow: this.earlySummonWordsGuarantee,
       shovelsInWindow: this.earlySummonShovels,
     }, TUNING);
-    // 单次征兵出铲 ≤ 待挖空位；再与前期配额 / summonMaxPerKey 取更严
+    // 单次征兵出铲 ≤ 桃树+待挖；再与前期配额 / summonMaxPerKey 取更严
     // 强制出铲延后到字/半对/匹配保底之后，避免覆盖其它保底槽
-    const shovelCap = Math.min(diggableLeft, early.maxShovels ?? TUNING.summonMaxPerKey);
+    const shovelCap = Math.min(shovelUseful, early.maxShovels ?? TUNING.summonMaxPerKey);
     const forceShovel = shovelCap > 0
       && (this.summonsSinceShovel >= TUNING.shovelPityAfter || early.forceShovel);
     // 兵/铲分布：受约束（同 key ≤ 上限，首次保底≥4兵）；强制铲见文末 applyForceShovel
@@ -2479,9 +2481,21 @@ export class Battle {
     return families;
   }
 
-  /** 满盘且场上激活将均为满5 → 征兵不再产字，布阵优先用兵器替换孤儿单字 */
+  /**
+   * 满盘且场上激活将均为满5：布阵可优先用兵器顶孤儿单字。
+   * 征兵仍可出字（见 `computeSummonWordPolicy`）。
+   */
   isHeroRosterComplete(): boolean {
-    return this.summonWordPolicyNow().maxWordSlots === 0;
+    const active = this.activeGenerals();
+    if (active.length === 0) return false;
+    if (!active.every((g) => g.def.maxTier === 5 && g.tier >= 5)) return false;
+    return this.unlockedCells().every((c) => !this.cellFree(c.c, c.r));
+  }
+
+  /** 铲子用途上限：待挖空位 + 地图桃树（桃树占格时可先挪树再挖） */
+  private shovelUsefulSlots(): number {
+    const diggable = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))).length;
+    return diggable + this.trees.size;
   }
 
   private summonWordPolicyInput(active: ActiveGeneral[], freeCellCount: number): SummonWordPolicyInput {
@@ -2892,7 +2906,7 @@ export class Battle {
     this.aiSummonCost += TUNING.summonCostStep;
     const types = Object.keys(UNITS) as UnitType[];
     const firstSummon = this.aiSummonCount === 0;
-    // 与玩家一致：单次出铲 ≤ 待挖空位（AI 侧无桃树占格）
+    // 与玩家一致：单次出铲 ≤ 待挖空位（AI 侧无桃树）
     const diggableLeft = this.aiLockedCells().length;
     const allOpen = diggableLeft === 0;
     const early = earlySummonGates(this.wave, {
@@ -3182,7 +3196,12 @@ export class Battle {
       imminentPathScore: (cell) =>
         this.imminentPathScoreAt(this.aiMonsters, this.aiPath, this.aiPathLen, this.aiEntranceDist, cell),
       monstersPresent: () => this.aiMonsters.length > 0,
-      heroRosterComplete: () => this.aiSummonWordPolicyNow().maxWordSlots === 0,
+      heroRosterComplete: () => {
+        const active = this.aiActiveGenerals();
+        if (active.length === 0) return false;
+        if (!active.every((g) => g.def.maxTier === 5 && g.tier >= 5)) return false;
+        return this.aiUnlockedCells().every((c) => this.aiCellFree(c.c, c.r) === false);
+      },
       unitEngageScore: (cell, type, tier) =>
         this.engageScoreAt(this.aiMonsters, this.aiPath, this.aiEntranceDist, cell, type, tier, this.aiDangerNear()),
       mergeTray: (from, to) => {
@@ -3225,6 +3244,13 @@ export class Battle {
 
   /** 对妖怪扣血并触发受击反馈（闪白 + 可选伤害飘字） */
   private hurtMonster(m: Monster, dmg: number, pos: { c: number; r: number }, hitFlash = 0.12, crit = false): void {
+    m.hp -= dmg;
+    m.hitFlash = hitFlash;
+    this.spawnDamageFloat(pos.c, pos.r, dmg, crit);
+  }
+
+  /** 对 AI 半场妖怪扣血并触发受击反馈 */
+  private hurtAiMonster(m: Monster, dmg: number, pos: { c: number; r: number }, hitFlash = 0.12, crit = false): void {
     m.hp -= dmg;
     m.hitFlash = hitFlash;
     this.spawnDamageFloat(pos.c, pos.r, dmg, crit);
@@ -4000,6 +4026,7 @@ export class Battle {
     this.status = 'playing';
     this.waveActive = true;
     this.healUsedThisWave = false;
+    this.aiHealUsedThisWave = false;
     // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（压力比随波次升高）
     this.wavePressure = this.computeWavePressure(this.wave);
     this.spawnRemaining = this.wavePressure.count;
@@ -4820,35 +4847,44 @@ export class Battle {
     }
   }
 
-  // AI 武将攻击 tick：镜像玩家 updateGenerals（含 AI 道具 / 神兵 / 羁绊）。
+  // AI 武将攻击 tick：镜像玩家 updateGenerals（含 AI 道具 / 神兵 / 羁绊 / 大招）。
   private updateAiGenerals(dt: number): void {
     for (const g of this.aiActiveGenerals()) {
       const stat = generalStat(g.def, g.tier);
-      const wb = this.aiWeaponBonuses[g.def.id];
-      const atk = stat.atk * (1 + (wb?.atk ?? 0));
-      const rge = stat.rge + (wb?.rge ?? 0);
-      const frq = stat.frq * (1 + (wb?.frq ?? 0));
       const s = g.state;
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
+      s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
+      if ((s.buffAtkT ?? 0) > 0) {
+        s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
+        if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
+      }
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
       const inRange = this.sortCombatTargets(
         this.aiMonsters
           .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-          .filter((x) => inAttackRange(ax, ay, rge, x.p)),
+          .filter((x) => inAttackRange(ax, ay, this.aiGeneralRge(g), x.p)),
       );
+
+      if (g.def.skill !== 'none' && g.def.skillCd > 0) {
+        s.skillCd -= dt;
+        const needsTarget = g.def.skill !== 'buff' && g.def.skill !== 'cdr';
+        if (s.skillCd <= 0 && (!needsTarget || inRange.length > 0)) {
+          this.castGeneralSkill(g, inRange, true);
+          s.skillCd = g.def.skillCd;
+        }
+      }
+
       s.cooldown -= dt;
       if (s.cooldown > 0 || inRange.length === 0) continue;
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(atk * this.aiMods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
+      const dmg = damage(this.aiGeneralAtk(g));
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
-        t.m.hp -= dmg;
-        t.m.hitFlash = 0.12;
-        this.spawnDamageFloat(t.p.c, t.p.r, dmg);
+        this.hurtAiMonster(t.m, dmg, t.p, 0.12);
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
@@ -4858,6 +4894,7 @@ export class Battle {
         s.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
+      const frq = stat.frq * (1 + (this.aiWeaponBonuses[g.def.id]?.frq ?? 0));
       s.cooldown = 1 / (frq * this.aiMods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1));
     }
   }
@@ -5283,6 +5320,49 @@ export class Battle {
     return generalStat(g.def, g.tier).rge + (wb?.rge ?? 0);
   }
 
+  /** AI 半场武将实际攻击力（含神兵 / 羁绊 / 仙丹 / 老君炼丹） */
+  aiGeneralAtk(g: ActiveGeneral): number {
+    const base = generalStat(g.def, g.tier).atk;
+    const wb = this.aiWeaponBonuses[g.def.id];
+    const atkBuffMul = (g.state.buffAtkT ?? 0) > 0 ? (g.state.buffAtkMul ?? 1) : 1;
+    return base * (1 + (wb?.atk ?? 0)) * this.aiMods.atkMul * (g.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul() * atkBuffMul;
+  }
+
+  aiGeneralRge(g: ActiveGeneral): number {
+    const wb = this.aiWeaponBonuses[g.def.id];
+    return generalStat(g.def, g.tier).rge + (wb?.rge ?? 0);
+  }
+
+  /** 武将大招专属特效（玩家 / AI 共用 heroUltFx，格坐标在各自半场） */
+  private pushHeroUltFx(
+    g: ActiveGeneral,
+    center: { c: number; r: number },
+    gAx: number,
+    gAy: number,
+    rgeCells: number,
+  ): void {
+    const crit = ultTypeOf(g.def) === 'crit';
+    const ultTtl = g.def.id === 'dasheng' ? 0.9
+      : g.def.id === 'honghaier' ? 0.9
+      : g.def.id === 'bailong' ? 0.8
+      : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? 0.85
+      : 0.6;
+    const fxAtCaster = g.def.skill === 'buff' || g.def.skill === 'cdr';
+    this.heroUltFx.push({
+      heroId: g.def.id,
+      c: fxAtCaster ? gAx : center.c,
+      r: fxAtCaster ? gAy : center.r,
+      ttl: ultTtl, maxTtl: ultTtl,
+      tier: g.tier,
+      rge: rgeCells,
+      crit,
+      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' || g.def.id === 'niumowang'
+        || g.def.skill === 'buff' || g.def.skill === 'cdr'
+        ? { fromC: gAx, fromR: gAy }
+        : {}),
+    });
+  }
+
   /** 武将普攻命中特效：按 heroId 分派，阶数越高 ttl/规模越大 */
   private pushGeneralAttackFx(g: ActiveGeneral, to: { c: number; r: number }): void {
     const ax = (g.cells[0].c + g.cells[1].c) / 2;
@@ -5352,23 +5432,31 @@ export class Battle {
     }
   }
 
-  private castGeneralSkill(g: ActiveGeneral, inRange: { m: Monster; p: { c: number; r: number } }[]): void {
-    const atk = this.generalAtk(g);
+  private castGeneralSkill(
+    g: ActiveGeneral,
+    inRange: { m: Monster; p: { c: number; r: number } }[],
+    ai = false,
+  ): void {
+    const atk = ai ? this.aiGeneralAtk(g) : this.generalAtk(g);
+    const rgeCells = ai ? this.aiGeneralRge(g) : this.generalRge(g);
+    const entranceDist = ai ? this.aiEntranceDist : this.entranceDist;
+    const hurt = (m: Monster, dmg: number, p: { c: number; r: number }, flash: number, crit = false) => {
+      if (ai) this.hurtAiMonster(m, dmg, p, flash, crit);
+      else this.hurtMonster(m, dmg, p, flash, crit);
+    };
     g.state.skillFlash = 1;
     const gAx = (g.cells[0].c + g.cells[1].c) / 2;
     const gAy = (g.cells[0].r + g.cells[1].r) / 2;
     const center = inRange[0]?.p ?? { c: gAx, r: gAy };
-    const crit = ultTypeOf(g.def) === 'crit';
     switch (g.def.skill) {
       case 'burst': {
-        for (const t of inRange) this.hurtMonster(t.m, damage(atk * 3), t.p, 0.15);
+        for (const t of inRange) hurt(t.m, damage(atk * 3), t.p, 0.15);
         break;
       }
       case 'ranged': {
-        // 暴击：单体高倍 ×(5×GENERAL_TUNING.CRIT_MULT)
         const t = inRange[0]!;
         const dmg = damage(atk * 5 * GENERAL_TUNING.CRIT_MULT);
-        this.hurtMonster(t.m, dmg, t.p, 0.2, true);
+        hurt(t.m, dmg, t.p, 0.2, true);
         break;
       }
       case 'stun': {
@@ -5377,15 +5465,15 @@ export class Battle {
         const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
         for (const t of inRange) {
           t.m.stunT = Math.max(t.m.stunT, dur);
-          this.hurtMonster(t.m, damage(atk * dmgMul), t.p, 0.12);
+          hurt(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
       }
       case 'knock': {
         const push = g.def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
         for (const t of inRange) {
-          t.m.dist = Math.max(this.entranceDist, t.m.dist - push);
-          this.hurtMonster(t.m, damage(atk * TUNING.heroKnockDmgMul), t.p, 0.12);
+          t.m.dist = Math.max(entranceDist, t.m.dist - push);
+          hurt(t.m, damage(atk * TUNING.heroKnockDmgMul), t.p, 0.12);
         }
         break;
       }
@@ -5393,13 +5481,18 @@ export class Battle {
         const dmgMul = g.def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
         for (const t of inRange) {
           t.m.slowT = Math.max(t.m.slowT, TUNING.heroSlowDur);
-          this.hurtMonster(t.m, damage(atk * dmgMul), t.p, 0.12);
+          hurt(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
       }
       case 'heal': {
         for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, TUNING.heroHealSlowDur);
-        if (!this.healUsedThisWave && this.tangsengHP < this.tangsengMaxHP) {
+        if (ai) {
+          if (!this.aiHealUsedThisWave && this.aiTangsengHP < this.tangsengMaxHP) {
+            this.aiTangsengHP += 1;
+            this.aiHealUsedThisWave = true;
+          }
+        } else if (!this.healUsedThisWave && this.tangsengHP < this.tangsengMaxHP) {
           this.tangsengHP += 1;
           this.healUsedThisWave = true;
           this.message = `${g.def.name}甘露：唐僧回复 1 血`;
@@ -5409,46 +5502,67 @@ export class Battle {
       case 'buff': {
         const mul = g.def.maxTier === 5 ? TUNING.heroBuffAtkMulMain : TUNING.heroBuffAtkMulTransit;
         const dur = g.def.maxTier === 5 ? TUNING.heroBuffDurMain : TUNING.heroBuffDurTransit;
-        for (const ally of this.activeGenerals()) {
-          ally.state.buffAtkT = Math.max(ally.state.buffAtkT ?? 0, dur);
-          ally.state.buffAtkMul = Math.max(ally.state.buffAtkMul ?? 1, mul);
+        if (ai) {
+          for (const ally of this.aiActiveGenerals()) {
+            ally.state.buffAtkT = Math.max(ally.state.buffAtkT ?? 0, dur);
+            ally.state.buffAtkMul = Math.max(ally.state.buffAtkMul ?? 1, mul);
+          }
+          for (const u of this.aiUnits) {
+            u.buffAtkT = Math.max(u.buffAtkT ?? 0, dur);
+            u.buffAtkMul = Math.max(u.buffAtkMul ?? 1, mul);
+          }
+        } else {
+          for (const ally of this.activeGenerals()) {
+            ally.state.buffAtkT = Math.max(ally.state.buffAtkT ?? 0, dur);
+            ally.state.buffAtkMul = Math.max(ally.state.buffAtkMul ?? 1, mul);
+          }
+          for (const u of this.units.values()) {
+            u.buffAtkT = Math.max(u.buffAtkT ?? 0, dur);
+            u.buffAtkMul = Math.max(u.buffAtkMul ?? 1, mul);
+          }
+          this.message = `${g.def.name}炼丹：武将与兵器攻击 ×${mul.toFixed(2)}（${dur}s）`;
         }
-        for (const u of this.units.values()) {
-          u.buffAtkT = Math.max(u.buffAtkT ?? 0, dur);
-          u.buffAtkMul = Math.max(u.buffAtkMul ?? 1, mul);
-        }
-        this.message = `${g.def.name}炼丹：武将与兵器攻击 ×${mul.toFixed(2)}（${dur}s）`;
         break;
       }
       case 'cdr': {
         const sec = g.def.maxTier === 5 ? TUNING.heroCdrSecMain : TUNING.heroCdrSecTransit;
-        let n = 0;
-        for (const ally of this.activeGenerals()) {
-          if (ally.state === g.state) continue;
-          ally.state.skillCd = Math.max(0, ally.state.skillCd - sec);
-          n++;
-        }
-        let unitsN = 0;
-        for (const u of this.units.values()) {
-          if (u.cooldown <= 0) continue;
-          u.cooldown = Math.max(0, u.cooldown - sec);
-          unitsN++;
-        }
-        if (n > 0 && unitsN > 0) {
-          this.message = `${g.def.name}慧剑：${n} 武将大招 CD、${unitsN} 兵器间隔 −${sec}s`;
-        } else if (n > 0) {
-          this.message = `${g.def.name}慧剑：${n} 名武将大招 CD −${sec}s`;
-        } else if (unitsN > 0) {
-          this.message = `${g.def.name}慧剑：${unitsN} 件兵器攻击间隔 −${sec}s`;
+        if (ai) {
+          for (const ally of this.aiActiveGenerals()) {
+            if (ally.state === g.state) continue;
+            ally.state.skillCd = Math.max(0, ally.state.skillCd - sec);
+          }
+          for (const u of this.aiUnits) {
+            if (u.cooldown <= 0) continue;
+            u.cooldown = Math.max(0, u.cooldown - sec);
+          }
         } else {
-          this.message = `${g.def.name}慧剑：场上暂无其他友军`;
+          let n = 0;
+          for (const ally of this.activeGenerals()) {
+            if (ally.state === g.state) continue;
+            ally.state.skillCd = Math.max(0, ally.state.skillCd - sec);
+            n++;
+          }
+          let unitsN = 0;
+          for (const u of this.units.values()) {
+            if (u.cooldown <= 0) continue;
+            u.cooldown = Math.max(0, u.cooldown - sec);
+            unitsN++;
+          }
+          if (n > 0 && unitsN > 0) {
+            this.message = `${g.def.name}慧剑：${n} 武将大招 CD、${unitsN} 兵器间隔 −${sec}s`;
+          } else if (n > 0) {
+            this.message = `${g.def.name}慧剑：${n} 名武将大招 CD −${sec}s`;
+          } else if (unitsN > 0) {
+            this.message = `${g.def.name}慧剑：${unitsN} 件兵器攻击间隔 −${sec}s`;
+          } else {
+            this.message = `${g.def.name}慧剑：场上暂无其他友军`;
+          }
         }
         break;
       }
       case 'burn': {
-        // 红孩/红袍：瞬时命中较轻，余量转为持续灼烧（真正的 DoT，区别于哪吒/金吒的纯爆发）
         for (const t of inRange) {
-          this.hurtMonster(t.m, damage(atk * TUNING.heroBurnHitMul), t.p, 0.15);
+          hurt(t.m, damage(atk * TUNING.heroBurnHitMul), t.p, 0.15);
           t.m.burnT = Math.max(t.m.burnT, TUNING.heroBurnDur);
           t.m.burnDps = Math.max(t.m.burnDps, atk * TUNING.heroBurnDpsMul);
         }
@@ -5462,28 +5576,9 @@ export class Battle {
         break;
       }
     }
-    // 专属大招特效（替代原通用 bursts.push）
-    const ultTtl = g.def.id === 'dasheng' ? 0.9
-      : g.def.id === 'honghaier' ? 0.9
-      : g.def.id === 'bailong' ? 0.8
-      : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? 0.85
-      : 0.6;
-    const fxAtCaster = g.def.skill === 'buff' || g.def.skill === 'cdr';
-    this.heroUltFx.push({
-      heroId: g.def.id,
-      c: fxAtCaster ? gAx : center.c,
-      r: fxAtCaster ? gAy : center.r,
-      ttl: ultTtl, maxTtl: ultTtl,
-      tier: g.tier,
-      rge: this.generalRge(g),
-      crit,
-      ...(g.def.id === 'dasheng' || g.def.id === 'erlang' || g.def.id === 'niulang' || g.def.id === 'niumowang'
-        || g.def.skill === 'buff' || g.def.skill === 'cdr'
-        ? { fromC: gAx, fromR: gAy }
-        : {}),
-    });
-    this.addGeneralCombatExp(g, Battle.heroSkillExp);
-    this.tryRollFragmentOnHeroAttack();
+    this.pushHeroUltFx(g, center, gAx, gAy, rgeCells);
+    this.addGeneralCombatExp(g, Battle.heroSkillExp, ai);
+    if (!ai) this.tryRollFragmentOnHeroAttack();
   }
 
   // 怪物施法：精英/BOSS 对半径内随机 1~2 件最近兵器施加地图减益；小 Boss 施展跨地图光环

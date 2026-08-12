@@ -14,6 +14,7 @@ import {
   FAMILY_MAX5_ACTIVE_T3_PENALTY,
   isCharAtFieldCapacity,
   computeSummonWordPolicy,
+  SUMMON_MAX_WORD_SLOTS,
   SUMMON_MAX_WORD_SLOTS_GROWING,
   missingHeroRoles,
   matchedHeroIds,
@@ -197,7 +198,7 @@ describe('半对保底 N=6', () => {
 });
 
 describe('征兵字牌策略', () => {
-  it('满盘且激活将均为满5 → 不出字牌', () => {
+  it('满盘且激活将均为满5 → 仍可出字牌', () => {
     const policy = computeSummonWordPolicy({
       wave: 8,
       freeCellCount: 0,
@@ -207,9 +208,10 @@ describe('征兵字牌策略', () => {
       ],
       activeHeroChars: ['哪', '吒', '铁', '扇'],
     });
-    expect(policy.maxWordSlots).toBe(0);
-    expect(policy.wordSlotChanceMul).toBe(0);
-    expect(policy.allowForceWord).toBe(false);
+    expect(policy.maxWordSlots).toBe(SUMMON_MAX_WORD_SLOTS);
+    expect(policy.wordSlotChanceMul).toBe(1);
+    expect(policy.allowForceWord).toBe(true);
+    expect(policy.tier5CapableOnly).toBe(false);
   });
 
   it('有未升满将 → 最多2张满5字，排除已在将上的字', () => {

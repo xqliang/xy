@@ -319,32 +319,18 @@ export interface SummonWordPolicy {
   preferRoles: readonly GeneralRole[];
 }
 
-/** 依棋盘武将饱和度决定本盘征兵字牌策略 */
+/** 依棋盘武将饱和度决定本盘征兵字牌策略（满盘/满5 仍可出字） */
 export function computeSummonWordPolicy(input: SummonWordPolicyInput): SummonWordPolicy {
-  const { activeGenerals, freeCellCount, activeHeroChars } = input;
+  const { activeGenerals, activeHeroChars } = input;
   const preferRoles = missingHeroRoles(activeGenerals);
   const allMax5 =
     activeGenerals.length > 0
     && activeGenerals.every((g) => g.maxTier === 5 && g.tier >= 5);
-  const boardFull = freeCellCount === 0;
   const hasGrowing = activeGenerals.some((g) => g.tier < 5);
 
   // wordTier 统一从 1 起：配对/喂字时的"继承对齐"（activeGenerals() 里 target = max(左, 右)）
   // 已经会把新字自动补到已激活搭档的当前阶，无需在抽字时就预设高阶——否则会让满5可培养的字
   // 一出场就是满级，跳过合并升阶的过程。
-  if (boardFull && allMax5) {
-    return {
-      wordSlotChanceMul: 0,
-      allowForceWord: false,
-      allowForcePartner: false,
-      maxWordSlots: 0,
-      wordTier: 1,
-      tier5CapableOnly: true,
-      excludeChars: activeHeroChars,
-      preferRoles,
-    };
-  }
-
   if (hasGrowing || (activeGenerals.length > 0 && !allMax5)) {
     return {
       wordSlotChanceMul: 1,
