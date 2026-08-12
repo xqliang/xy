@@ -146,10 +146,10 @@ export const TUNING = {
   summonCostStart: 10, // 首次征兵成本
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
-  shovelDrawChance: 0.16, // 候选中出现铲子的概率
+  shovelDrawChance: 0.18, // 候选中出现铲子的概率
   shovelPityAfter: 4, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.08, // 候选中出现武将字牌的概率（每兵槽独立判定）
-  wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
+  wordPityAfter: 8, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
   earlyWordCapWave: 3, // 前 N 波字牌累计上限窗口
@@ -4249,8 +4249,15 @@ export class Battle {
   }
 
   // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
+  // skillFx=true 时即使场上无怪也落点播特效（主动技能反馈）；被动无怪则直接跳过
   private doMeteor(mul: number = TUNING.meteorDmgMul, skillFx = false): void {
-    if (this.monsters.length === 0) return;
+    if (this.monsters.length === 0) {
+      if (skillFx) {
+        const p = posAtDistance(this.map, this.pathLen * 0.55);
+        this.setSkillFx('meteor', p, false);
+      }
+      return;
+    }
     let front = this.monsters[0]!;
     for (const m of this.monsters) if (m.dist > front.dist) front = m;
     const dmg = this.normalMonsterHp() * mul;
@@ -4264,7 +4271,13 @@ export class Battle {
   }
 
   private doAiMeteor(mul: number = TUNING.meteorDmgMul, skillFx = false): void {
-    if (this.aiMonsters.length === 0) return;
+    if (this.aiMonsters.length === 0) {
+      if (skillFx) {
+        const p = posAlong(this.aiPath, lenOf(this.aiPath) * 0.55);
+        this.setSkillFx('meteor', p, true);
+      }
+      return;
+    }
     let front = this.aiMonsters[0]!;
     for (const m of this.aiMonsters) if (m.dist > front.dist) front = m;
     const dmg = (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * mul;
@@ -5759,7 +5772,8 @@ export class Battle {
     if (!def) return false;
     if (isPillActiveEffect(def.effect)) return false;
     // 需要场上有怪才有意义的技能：无怪时不触发、不进冷却（避免空放浪费）
-    const needsMonsters: ActiveEffect[] = ['palm', 'meteor', 'freeze', 'jinggu'];
+    // 陨石除外：无怪也可释放并播放落点特效（清波收尾/空场点技能都要看得到）
+    const needsMonsters: ActiveEffect[] = ['palm', 'freeze', 'jinggu'];
     if (needsMonsters.includes(def.effect) && this.monsters.length === 0) {
       this.message = '场上无妖，技能待命';
       return false;
@@ -5903,8 +5917,7 @@ export class Battle {
     this.ultCenter = null;
     this.palmPushFx = null;
     this.aiPalmPushFx = null;
-    this.playerSkillFx = null;
-    this.aiSkillFx = null;
+    // 主动技能爆发（陨石/紧箍等）保留到自然播完：清波瞬间若清掉，收尾一击的特效会「闪一下没了」
     for (const u of this.units.values()) {
       u.firePulse = 0;
       u.combo = 0;

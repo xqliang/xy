@@ -366,6 +366,7 @@ let merchant: MerchantUiState = {
   confirmOffer: null,
   confirmUnequip: null,
   skillInfo: null,
+  shopPurchaseDone: false,
   testMode: false,
   scrollY: 0,
 };

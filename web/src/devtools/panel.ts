@@ -665,6 +665,8 @@ export class DevToolsPanel {
       };
       fxActions.appendChild(btn(names[sk], () => play({ kind: 'activeSkill', skill: sk })));
     }
+    fxActions.appendChild(btn('神掌', () => play({ kind: 'palm' })));
+    fxActions.appendChild(btn('铲子', () => play({ kind: 'dig' })));
     for (const b of ['hit', 'death', 'merge'] as const) {
       const names = { hit: '命中爆发', death: '击杀散落', merge: '合成星爆' };
       fxActions.appendChild(btn(names[b], () => play({ kind: 'burst', burst: b })));

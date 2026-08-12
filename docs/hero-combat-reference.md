@@ -215,10 +215,11 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
 | `PARTNER_BOOST` | **0.12** | 半对孤儿所需配对字的抽字权重倍率（单字补齐） |
 | `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制配对字 |
-| `wordPityAfter` | 10 | 连续 N 次无字 → 下次强制 1 字 |
+| `wordPityAfter` | **8** | 连续 N 次无字 → 下次强制 1 字 |
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
+| `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（阵位未全开时） |
 | `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（阵位未全开时；在匹配保底之后落定） |
 
 ### 8.2 匹配口径与软权重（玩家 / AI）

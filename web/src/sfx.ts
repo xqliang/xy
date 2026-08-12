@@ -95,10 +95,12 @@ export function playSfx(name: string): void {
     case 'summon': tone(320, 0.18, { type: 'sine', to: 760, gain: 0.22 }); tone(480, 0.14, { type: 'triangle', gain: 0.12, delay: 0.04 }); break;
     case 'place': tone(520, 0.05, { type: 'square', gain: 0.14 }); tone(196, 0.07, { type: 'sine', gain: 0.1, delay: 0.02 }); break;
     case 'merge': tone(660, 0.07, { type: 'triangle', gain: 0.18 }); tone(990, 0.1, { type: 'triangle', gain: 0.16, delay: 0.06 }); break;
-    // 一铲落地：沙土噪声 + 短促闷击（挖坑动画每铲各播一次）
+    // 一铲落地：金属刮土 → 沙土翻起 → 铲背闷击（与击杀噪声区分开）
     case 'shovel':
-      noise(0.1, { gain: 0.18, hp: 280, lp: 2400 });
-      tone(160, 0.05, { type: 'triangle', to: 70, gain: 0.1 });
+      noise(0.04, { gain: 0.11, hp: 1200, lp: 5200 }); // 铲刃刮擦
+      noise(0.1, { gain: 0.15, hp: 120, lp: 780, delay: 0.025 }); // 沙土颗粒
+      tone(88, 0.09, { type: 'triangle', to: 42, gain: 0.13, delay: 0.035 }); // 入土闷击
+      tone(48, 0.11, { type: 'sine', to: 32, gain: 0.09, delay: 0.045 });
       break;
     case 'attack': {
       const now = performance.now();

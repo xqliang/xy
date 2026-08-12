@@ -35,7 +35,7 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
   { id: 'jubaopen', name: '聚宝盆', icon: '盆', cost: 55, desc: '击杀额外 +1 蟠桃' },
   { id: 'hushen', name: '护身金光', icon: '护', cost: 40, desc: '唐僧 +1 血' },
   { id: 'zhuwang', name: '绊妖蛛网', icon: '网', cost: 55, desc: '妖怪移速 -10%' },
-  { id: 'tongxin', name: '同心咒', icon: '心', cost: 70, desc: '唐僧 +3 血（对手仅 +2）' },
+  { id: 'tongxin', name: '同心咒', icon: '心', cost: 70, desc: '唐僧 +3 血（对手 +2）' },
   { id: 'dinghai', name: '自动定海针', icon: '针', cost: 55, desc: '立即开辟 1 阵位' },
 ];
 

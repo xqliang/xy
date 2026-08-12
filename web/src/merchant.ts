@@ -50,10 +50,14 @@ export interface MerchantUiState {
   toast: string;
   /** 商店 Tab 购买二次确认：待确认的商品下标 */
   confirmOffer: number | null;
-  /** 卸下二次确认：待确认卸下的技能（卸下后需等该道具重新刷出才能再装备，故需二次确认） */
+  /**
+   * @deprecated 卸下已并入 skillInfo 弹窗；保留字段以免旧存档/测试字面量缺键
+   */
   confirmUnequip: { kind: SkillKind; id: string } | null;
-  /** 技能详情弹窗：点击已装配技能或抽奖预览道具时展示描述 + 当前功德 */
+  /** 技能详情弹窗：装配栏技能/×、抽奖预览等；已装备时含卸下+关闭 */
   skillInfo: { kind: SkillKind; id: string } | null;
+  /** 本次到访商店是否已成功购买过（限购 1 件，其余未买显示已售完） */
+  shopPurchaseDone: boolean;
   /** 首页隐藏入口：展示全部技能并可滚动切换 */
   testMode: boolean;
   scrollY: number;
@@ -169,6 +173,7 @@ export function merchantClosed(): MerchantUiState {
     confirmOffer: null,
     confirmUnequip: null,
     skillInfo: null,
+    shopPurchaseDone: false,
     testMode: false,
     scrollY: 0,
   };
@@ -186,6 +191,7 @@ export function openMerchant(loadout: LoadoutState): MerchantUiState {
     confirmOffer: null,
     confirmUnequip: null,
     skillInfo: null,
+    shopPurchaseDone: false,
     testMode: false,
     scrollY: 0,
   };
@@ -203,6 +209,7 @@ export function openMerchantTest(loadout: LoadoutState): MerchantUiState {
     confirmOffer: null,
     confirmUnequip: null,
     skillInfo: null,
+    shopPurchaseDone: false,
     testMode: true,
     scrollY: 0,
   };
@@ -210,7 +217,21 @@ export function openMerchantTest(loadout: LoadoutState): MerchantUiState {
 
 export function closeMerchant(m: MerchantUiState): MerchantUiState {
   clearMerchantFloatToasts();
-  return { ...m, open: false, toast: '', confirmOffer: null, confirmUnequip: null, skillInfo: null };
+  return {
+    ...m,
+    open: false,
+    toast: '',
+    confirmOffer: null,
+    confirmUnequip: null,
+    skillInfo: null,
+    shopPurchaseDone: false,
+  };
+}
+
+/** 本次到访已买过且该商品本身未拥有 → 展示已售完（测试模式不限购） */
+export function isOfferSoldOut(m: MerchantUiState, offer: MerchantOffer): boolean {
+  if (m.testMode || offer.owned) return false;
+  return m.shopPurchaseDone;
 }
 
 function updateOfferOwned(offers: MerchantOffer[], index: number, owned: boolean): MerchantOffer[] {
@@ -256,7 +277,7 @@ export function applyMerchantHit(
       const idx = m.confirmOffer;
       if (idx === null) return { merchant: m, loadout: lo, merit: me };
       const offer = m.offers[idx];
-      if (!offer || offer.owned) {
+      if (!offer || offer.owned || isOfferSoldOut(m, offer)) {
         return { merchant: { ...m, confirmOffer: null }, loadout: lo, merit: me };
       }
       if (isKindSlotsFull(lo, offer.kind)) {
@@ -285,6 +306,7 @@ export function applyMerchantHit(
           ),
           confirmOffer: null,
           offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
+          shopPurchaseDone: res.ok ? true : m.shopPurchaseDone,
         };
       } else {
         const res = buyPassive(lo, me, offer.id);
@@ -305,30 +327,58 @@ export function applyMerchantHit(
           ),
           confirmOffer: null,
           offers: res.ok ? updateOfferOwned(m.offers, idx, true) : m.offers,
+          shopPurchaseDone: res.ok ? true : m.shopPurchaseDone,
         };
       }
       return { merchant: m, loadout: lo, merit: me };
     }
     case 'unequipActive':
-      return { merchant: { ...m, confirmUnequip: { kind: 'active', id: hit.id }, toast: '' }, loadout: lo, merit: me };
+      return {
+        merchant: { ...m, skillInfo: { kind: 'active', id: hit.id }, confirmUnequip: null, toast: '' },
+        loadout: lo,
+        merit: me,
+      };
     case 'unequipPassive':
-      return { merchant: { ...m, confirmUnequip: { kind: 'passive', id: hit.id }, toast: '' }, loadout: lo, merit: me };
+      return {
+        merchant: { ...m, skillInfo: { kind: 'passive', id: hit.id }, confirmUnequip: null, toast: '' },
+        loadout: lo,
+        merit: me,
+      };
     case 'confirmUnequip': {
-      const req = m.confirmUnequip;
+      // 兼容旧命中：改走详情弹窗内卸下
+      const req = m.confirmUnequip ?? (m.skillInfo ? { kind: m.skillInfo.kind, id: m.skillInfo.id } : null);
       if (!req) return { merchant: m, loadout: lo, merit: me };
       lo = req.kind === 'active' ? unequipActive(lo, req.id) : unequipPassive(lo, req.id);
-      m = withToast({ ...m, confirmUnequip: null }, '已卸下');
+      m = withToast({ ...m, confirmUnequip: null, skillInfo: null }, '已卸下');
       return { merchant: m, loadout: lo, merit: me };
     }
     case 'cancelUnequip':
       return { merchant: { ...m, confirmUnequip: null }, loadout: lo, merit: me };
     case 'skillInfo':
-      return { merchant: { ...m, skillInfo: { kind: hit.skillKind, id: hit.id } }, loadout: lo, merit: me };
+      return {
+        merchant: { ...m, skillInfo: { kind: hit.skillKind, id: hit.id }, confirmUnequip: null, toast: '' },
+        loadout: lo,
+        merit: me,
+      };
     case 'closeSkillInfo':
       return { merchant: { ...m, skillInfo: null }, loadout: lo, merit: me };
+    case 'unequipFromSkillInfo': {
+      const info = m.skillInfo;
+      if (!info) return { merchant: m, loadout: lo, merit: me };
+      if (!isSkillRefEquipped(lo, info)) {
+        return { merchant: { ...m, skillInfo: null }, loadout: lo, merit: me };
+      }
+      lo = info.kind === 'active' ? unequipActive(lo, info.id) : unequipPassive(lo, info.id);
+      m = withToast({ ...m, skillInfo: null, confirmUnequip: null }, '已卸下');
+      return { merchant: m, loadout: lo, merit: me };
+    }
     case 'offer': {
       const offer = m.offers[hit.index];
       if (!offer) return { merchant: m, loadout: lo, merit: me };
+      if (isOfferSoldOut(m, offer)) {
+        m = withToast(m, '已售完');
+        return { merchant: m, loadout: lo, merit: me };
+      }
       let justGranted = false;
       if (m.testMode) {
         if (offer.kind === 'active' && !isOwnedActive(lo, offer.id)) {
@@ -347,7 +397,7 @@ export function applyMerchantHit(
       if (offer.owned || m.testMode) {
         const equipped = isOfferEquipped(lo, offer);
         if (equipped) {
-          m = { ...m, confirmUnequip: { kind: offer.kind, id: offer.id }, toast: '' };
+          m = { ...m, skillInfo: { kind: offer.kind, id: offer.id }, confirmUnequip: null, toast: '' };
         } else if (isKindSlotsFull(lo, offer.kind)) {
           m = withToast(m, slotFullHint(offer.kind));
         } else {
@@ -536,12 +586,25 @@ const CONF_PY = (VIEW_H - CONF_PH) / 2;
 const CONF_CANCEL = { x: CONF_PX + 18, y: CONF_PY + CONF_PH - 56, w: (CONF_PW - 36 - 12) / 2, h: 40 };
 const CONF_OK = { x: CONF_PX + CONF_PW / 2 + 6, y: CONF_PY + CONF_PH - 56, w: (CONF_PW - 36 - 12) / 2, h: 40 };
 
-// —— 技能详情弹窗（点击已装配技能 / 抽奖预览道具触发） —— //
+// —— 技能详情弹窗（装配栏技能/×、抽奖预览；已装备时卸下+关闭） —— //
 const INFO_PW = 400;
-const INFO_PH = 300;
+const INFO_PH = 320;
 const INFO_PX = (VIEW_W - INFO_PW) / 2;
 const INFO_PY = (VIEW_H - INFO_PH) / 2;
-const INFO_CLOSE_BTN = { x: INFO_PX + 32, y: INFO_PY + INFO_PH - 56, w: INFO_PW - 64, h: 40 };
+const INFO_BTN_Y = INFO_PY + INFO_PH - 56;
+const INFO_CLOSE_BTN_FULL = { x: INFO_PX + 32, y: INFO_BTN_Y, w: INFO_PW - 64, h: 40 };
+const INFO_UNEQUIP_BTN = {
+  x: INFO_PX + 18,
+  y: INFO_BTN_Y,
+  w: (INFO_PW - 36 - 12) / 2,
+  h: 40,
+};
+const INFO_CLOSE_BTN_HALF = {
+  x: INFO_PX + INFO_PW / 2 + 6,
+  y: INFO_BTN_Y,
+  w: (INFO_PW - 36 - 12) / 2,
+  h: 40,
+};
 
 function lotPreviewIndex(row: number, col: number): number | null {
   if (row === 1 && col === 1) return null;
@@ -647,6 +710,7 @@ export type MerchantHit =
   | { kind: 'cancelUnequip' }
   | { kind: 'skillInfo'; skillKind: SkillKind; id: string }
   | { kind: 'closeSkillInfo' }
+  | { kind: 'unequipFromSkillInfo' }
   | { kind: 'continue' }
   | { kind: 'confirmOfferBuy' }
   | { kind: 'cancelOfferBuy' }
@@ -659,24 +723,27 @@ function merchantConfirmHitAt(x: number, y: number): MerchantHit {
   return { kind: 'cancelOfferBuy' };
 }
 
-function merchantUnequipConfirmHitAt(x: number, y: number): MerchantHit {
-  if (inRect(x, y, CONF_CANCEL)) return { kind: 'cancelUnequip' };
-  if (inRect(x, y, CONF_OK)) return { kind: 'confirmUnequip' };
-  if (x >= CONF_PX && x <= CONF_PX + CONF_PW && y >= CONF_PY && y <= CONF_PY + CONF_PH) return null;
-  return { kind: 'cancelUnequip' };
-}
-
-function merchantSkillInfoHitAt(x: number, y: number): MerchantHit {
-  if (inRect(x, y, INFO_CLOSE_BTN)) return { kind: 'closeSkillInfo' };
+function merchantSkillInfoHitAt(
+  x: number,
+  y: number,
+  info: { kind: SkillKind; id: string },
+  loadout: LoadoutState,
+): MerchantHit {
+  const equipped = isSkillRefEquipped(loadout, info);
+  if (equipped) {
+    if (inRect(x, y, INFO_UNEQUIP_BTN)) return { kind: 'unequipFromSkillInfo' };
+    if (inRect(x, y, INFO_CLOSE_BTN_HALF)) return { kind: 'closeSkillInfo' };
+  } else if (inRect(x, y, INFO_CLOSE_BTN_FULL)) {
+    return { kind: 'closeSkillInfo' };
+  }
   if (x >= INFO_PX && x <= INFO_PX + INFO_PW && y >= INFO_PY && y <= INFO_PY + INFO_PH) return null;
   return { kind: 'closeSkillInfo' };
 }
 
 export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout: LoadoutState): MerchantHit {
   if (!m.open) return null;
-  if (m.confirmUnequip) return merchantUnequipConfirmHitAt(x, y);
   if (m.confirmOffer !== null) return merchantConfirmHitAt(x, y);
-  if (m.skillInfo) return merchantSkillInfoHitAt(x, y);
+  if (m.skillInfo) return merchantSkillInfoHitAt(x, y, m.skillInfo, loadout);
   if (inRect(x, y, CLOSE_R)) return { kind: 'close' };
   if (!m.testMode) {
     if (inRect(x, y, TAB_SHOP)) return { kind: 'tab', tab: 'shop' };
@@ -684,15 +751,18 @@ export function merchantHitAt(x: number, y: number, m: MerchantUiState, loadout:
   }
   if (inRect(x, y, CONTINUE_R)) return { kind: 'continue' };
 
+  // 装配栏：点技能本体或 × 均打开同一详情弹窗（内含卸下/关闭）
   for (const r of activeSlotRects(loadout)) {
     if (!r.id) continue;
-    if (inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipActive', id: r.id };
-    if (inRect(x, y, r)) return { kind: 'skillInfo', skillKind: 'active', id: r.id };
+    if (inRect(x, y, unequipBtnRect(r)) || inRect(x, y, r)) {
+      return { kind: 'skillInfo', skillKind: 'active', id: r.id };
+    }
   }
   for (const r of passiveSlotRects(loadout)) {
     if (!r.id) continue;
-    if (inRect(x, y, unequipBtnRect(r))) return { kind: 'unequipPassive', id: r.id };
-    if (inRect(x, y, r)) return { kind: 'skillInfo', skillKind: 'passive', id: r.id };
+    if (inRect(x, y, unequipBtnRect(r)) || inRect(x, y, r)) {
+      return { kind: 'skillInfo', skillKind: 'passive', id: r.id };
+    }
   }
 
   if (m.tab === 'shop') {
@@ -770,9 +840,12 @@ function offerActionLabel(
   offer: MerchantOffer,
   cost: number,
   canAfford: boolean,
-  testMode: boolean,
+  m: MerchantUiState,
 ): { label: string; variant: 'primary' | 'secondary' | 'accent' } {
-  if (testMode || offer.owned) {
+  if (isOfferSoldOut(m, offer)) {
+    return { label: '已售完', variant: 'secondary' };
+  }
+  if (m.testMode || offer.owned) {
     if (isOfferEquipped(loadout, offer)) {
       return { label: '卸下', variant: 'secondary' };
     }
@@ -866,7 +939,7 @@ function drawOfferCard(
   }
   ctx.restore();
 
-  const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford, m.testMode);
+  const { label, variant } = offerActionLabel(loadout, offer, cost, canAfford, m);
   drawInkActionButton(
     ctx,
     { x: bx, y: by, w: OFFER_BTN_W, h: OFFER_BTN_H },
@@ -874,6 +947,11 @@ function drawOfferCard(
     false,
     variant,
   );
+  if (isOfferSoldOut(m, offer)) {
+    ctx.fillStyle = 'rgba(48,28,12,0.28)';
+    roundRect(ctx, r.x, r.y, r.w, r.h, 10);
+    ctx.fill();
+  }
 }
 
 function drawLotteryGrid(ctx: CanvasRenderingContext2D, m: MerchantUiState): void {
@@ -1136,50 +1214,16 @@ function drawOfferConfirmPopup(
   drawInkActionButton(ctx, CONF_OK, '确认购买', false, merit.merit >= cost ? 'primary' : 'secondary');
 }
 
-function drawUnequipConfirmPopup(
-  ctx: CanvasRenderingContext2D,
-  req: { kind: SkillKind; id: string },
-): void {
-  const def = req.kind === 'active' ? activeById(req.id) : passiveById(req.id);
-  if (!def) return;
-  const rarity = skillRarityColor(def.cost);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-
-  roundRect(ctx, CONF_PX, CONF_PY, CONF_PW, CONF_PH, 12);
-  ctx.fillStyle = '#f8ecd2';
-  ctx.fill();
-  ctx.strokeStyle = rarity.color;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = '#4a2808';
-  ctx.font = 'bold 18px "PingFang SC", "STKaiti", serif';
-  ctx.fillText(`卸下「${def.name}」？`, CONF_PX + 18, CONF_PY + 16);
-
-  ctx.fillStyle = 'rgba(70,45,15,0.82)';
-  ctx.font = '13px "PingFang SC", serif';
-  const hint = '卸下后需等该道具在【商店】重新刷出（本次列表中若仍有它可直接再装备，否则要等下次神秘商人到访）才能重新装备。';
-  const lines = fitTextLines(ctx, hint, CONF_PW - 36, 4);
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i]!, CONF_PX + 18, CONF_PY + 46 + i * 20);
-  }
-
-  drawInkActionButton(ctx, CONF_CANCEL, '取消', false, 'secondary');
-  drawInkActionButton(ctx, CONF_OK, '确认卸下', false, 'primary');
-}
-
 function drawSkillInfoPopup(
   ctx: CanvasRenderingContext2D,
   info: { kind: SkillKind; id: string },
   merit: MeritState,
+  loadout: LoadoutState,
 ): void {
   const def = info.kind === 'active' ? activeById(info.id) : passiveById(info.id);
   if (!def) return;
   const rarity = skillRarityColor(def.cost);
+  const equipped = isSkillRefEquipped(loadout, info);
 
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
@@ -1220,18 +1264,25 @@ function drawSkillInfoPopup(
   const desc = info.kind === 'active' ? `${def.desc} · CD${activeById(info.id)!.cd}s` : def.desc;
   const descTop = INFO_PY + 92;
   const descMaxW = INFO_PW - 36;
-  const descLines = fitTextLines(ctx, desc, descMaxW, 5);
+  const descLines = fitTextLines(ctx, desc, descMaxW, 4);
   for (let i = 0; i < descLines.length; i++) {
     ctx.fillText(descLines[i]!, INFO_PX + 18, descTop + i * 20);
   }
 
-  const footY = INFO_PY + INFO_PH - 100;
+  const footY = INFO_PY + INFO_PH - 118;
   ctx.fillStyle = 'rgba(70,45,15,0.7)';
   ctx.font = '12px "PingFang SC", serif';
-  ctx.fillText(`商店价值 ${def.cost} 功德`, INFO_PX + 18, footY);
-  ctx.fillText(`当前功德 ${merit.merit}`, INFO_PX + 18, footY + 20);
+  ctx.fillText(`商店价值 ${def.cost} 功德 · 当前功德 ${merit.merit}`, INFO_PX + 18, footY);
+  if (equipped) {
+    ctx.fillText('卸下后需商店再刷出该道具才能重新装备。', INFO_PX + 18, footY + 20);
+  }
 
-  drawInkActionButton(ctx, INFO_CLOSE_BTN, '关闭', false, 'secondary');
+  if (equipped) {
+    drawInkActionButton(ctx, INFO_UNEQUIP_BTN, '卸下', false, 'primary');
+    drawInkActionButton(ctx, INFO_CLOSE_BTN_HALF, '关闭', false, 'secondary');
+  } else {
+    drawInkActionButton(ctx, INFO_CLOSE_BTN_FULL, '关闭', false, 'secondary');
+  }
 }
 
 function drawMerchantScrollBar(ctx: CanvasRenderingContext2D, m: MerchantUiState): void {
@@ -1318,6 +1369,5 @@ export function drawMerchant(
   drawInkActionButton(ctx, CONTINUE_R, '关闭', false, 'secondary');
 
   if (m.confirmOffer !== null) drawOfferConfirmPopup(ctx, m, merit);
-  if (m.confirmUnequip) drawUnequipConfirmPopup(ctx, m.confirmUnequip);
-  if (m.skillInfo) drawSkillInfoPopup(ctx, m.skillInfo, merit);
+  if (m.skillInfo) drawSkillInfoPopup(ctx, m.skillInfo, merit, loadout);
 }

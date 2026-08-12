@@ -3298,8 +3298,49 @@ function drawHuojianSpearGlyph(
   ctx.moveTo(-len * 0.92, -0.8);
   ctx.lineTo(-8, -0.8);
   ctx.stroke();
-  // 火尖
+  // 枪尾金属箍 + 金属镦
+  const buttX = -len;
+  const buttR = 2.1 + tier * 0.22;
+  ctx.fillStyle = '#b8c0c8';
+  ctx.strokeStyle = '#5a6270';
+  ctx.lineWidth = 1;
+  roundRect(ctx, buttX + 0.5, -1.7 - tier * 0.12, 5.2 + tier * 0.35, 3.4 + tier * 0.24, 1);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(buttX - 0.2, 0, buttR * 0.85, buttR, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(buttX + 0.3, -0.55, 0.7, 1.0, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#8a929c';
+  ctx.beginPath();
+  ctx.arc(buttX - buttR * 0.55, 0, 0.9 + tier * 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  // 枪头下红缨（衔接处下垂飘带）
   const hl = 7 + tier * 1.6;
+  const tasselRoot = -hl * 0.12;
+  ctx.fillStyle = '#9a2218';
+  ctx.beginPath();
+  ctx.arc(tasselRoot, 0, 1.35 + tier * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#c8392b';
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const spread = (1.8 + i * 0.85 + tier * 0.2) * side;
+    const back = 2.2 + i * 1.15;
+    ctx.globalAlpha = alpha * (0.9 - i * 0.1);
+    ctx.lineWidth = 1.55 - i * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(tasselRoot, 0);
+    ctx.quadraticCurveTo(tasselRoot - back * 0.35, spread * 0.55, tasselRoot - back, spread);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = alpha;
+  // 火尖
   ctx.fillStyle = '#ffe27a';
   ctx.strokeStyle = '#ff6a20';
   ctx.lineWidth = 1;
@@ -3419,7 +3460,70 @@ function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
   }
 }
 
-// 二郎天眼光束：自额心射向目标（普攻/大招共用）
+/** 二郎天眼几何（普攻/大招共用：竖眼、同位置同大小；大招仅换配色） */
+const ERLANG_EYE = {
+  offsetY: 0.24, // 相对格心上移（CELL 倍率）
+  rx: 0.13, // 竖眼半宽
+  ry: 0.32, // 竖眼半高
+  pupil: 0.1,
+  highlight: 0.045,
+} as const;
+
+type ErlangEyePalette = {
+  stroke: string;
+  pupil: string;
+  highlight: string;
+  lineWidth: number;
+};
+
+const ERLANG_EYE_BASIC: ErlangEyePalette = {
+  stroke: '#bfe9ff',
+  pupil: '#3a6ea5',
+  highlight: 'rgba(220,245,255,0.95)',
+  lineWidth: 2.6,
+};
+
+const ERLANG_EYE_ULT: ErlangEyePalette = {
+  stroke: '#ffe9a0',
+  pupil: '#8a5a20',
+  highlight: 'rgba(255,250,225,0.95)',
+  lineWidth: 2.6,
+};
+
+function erlangEyePos(fromX: number, fromY: number): { x: number; y: number } {
+  return { x: fromX, y: fromY - CELL * ERLANG_EYE.offsetY };
+}
+
+/** 竖天眼：普攻与大招同形，仅 palette 不同 */
+function drawErlangSkyEye(
+  ctx: CanvasRenderingContext2D,
+  eyeX: number,
+  eyeY: number,
+  open: number,
+  alpha: number,
+  palette: ErlangEyePalette,
+  tier = 1,
+): void {
+  const o = Math.max(0.08, open);
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = palette.stroke;
+  ctx.lineWidth = palette.lineWidth + tier * 0.3;
+  ctx.beginPath();
+  ctx.ellipse(eyeX, eyeY, CELL * ERLANG_EYE.rx * o, CELL * ERLANG_EYE.ry * Math.max(0.1, open), 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = palette.pupil;
+  ctx.beginPath();
+  ctx.arc(eyeX, eyeY, CELL * ERLANG_EYE.pupil * open, 0, Math.PI * 2);
+  ctx.fill();
+  if (open > 0.45) {
+    ctx.fillStyle = palette.highlight;
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, CELL * ERLANG_EYE.highlight * open, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// 二郎天眼光束：自额心射向目标（普攻；天眼与大招同形，蓝系配色）
 function drawErlangSkyEyeBeam(
   ctx: CanvasRenderingContext2D,
   fromX: number, fromY: number,
@@ -3427,8 +3531,7 @@ function drawErlangSkyEyeBeam(
   p: number, fade: number, tier: number,
   widthMul = 1,
 ) {
-  const eyeX = fromX;
-  const eyeY = fromY - CELL * 0.18;
+  const { x: eyeX, y: eyeY } = erlangEyePos(fromX, fromY);
   const dx = toX - eyeX;
   const dy = toY - eyeY;
   const dist = Math.hypot(dx, dy) || 1;
@@ -3438,22 +3541,7 @@ function drawErlangSkyEyeBeam(
   const beamReach = easeOut(Math.max(0, Math.min(1, (p - 0.12) / 0.55)));
   const reach = dist * beamReach;
 
-  ctx.globalAlpha = fade;
-  ctx.strokeStyle = '#bfe9ff';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.ellipse(eyeX, eyeY, CELL * 0.3, CELL * 0.18 * Math.max(0.08, open), 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = '#3a6ea5';
-  ctx.beginPath();
-  ctx.arc(eyeX, eyeY, CELL * 0.1 * open, 0, Math.PI * 2);
-  ctx.fill();
-  if (open > 0.45) {
-    ctx.fillStyle = 'rgba(220,245,255,0.95)';
-    ctx.beginPath();
-    ctx.arc(eyeX, eyeY, CELL * 0.045 * open, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  drawErlangSkyEye(ctx, eyeX, eyeY, open, fade, ERLANG_EYE_BASIC, tier);
 
   if (beamReach <= 0.01) return;
 
@@ -3494,7 +3582,7 @@ function drawErlangSkyEyeBeam(
   }
 }
 
-// 二郎 天眼诛邪：竖眼睁开（区别于普攻横眼）→ 金白粗光束 + 侧支闪电 → 诛邪符纹爆点
+// 二郎 天眼诛邪：与普攻同形竖眼（金色）→ 金白粗光束 + 侧支闪电 → 诛邪符纹爆点
 function drawUltErlang(
   ctx: CanvasRenderingContext2D,
   x: number, y: number,
@@ -3505,8 +3593,7 @@ function drawUltErlang(
   const vis = Math.max(fade, life * 0.85);
   const hasOrigin = fromC != null && fromR != null;
   const fromPx = hasOrigin ? cellCenterPx(fromC, fromR) : { x: x - CELL * 2.4, y };
-  const eyeX = fromPx.x;
-  const eyeY = fromPx.y - CELL * 0.24;
+  const { x: eyeX, y: eyeY } = erlangEyePos(fromPx.x, fromPx.y);
   const dx = x - eyeX;
   const dy = y - eyeY;
   const dist = Math.hypot(dx, dy) || 1;
@@ -3516,7 +3603,7 @@ function drawUltErlang(
   const beamReach = easeOut(Math.max(0, Math.min(1, (p - 0.1) / 0.5)));
   const reach = dist * beamReach;
 
-  // 金色灵光晕（开眼前奏，比普攻更华丽）
+  // 金色灵光晕（开眼前奏）
   ctx.globalAlpha = vis * 0.5 * open;
   const haloR = CELL * (0.55 + tier * 0.05) * open;
   const halo = ctx.createRadialGradient(eyeX, eyeY, 1, eyeX, eyeY, haloR);
@@ -3527,23 +3614,7 @@ function drawUltErlang(
   ctx.arc(eyeX, eyeY, haloR, 0, Math.PI * 2);
   ctx.fill();
 
-  // 竖眼（天眼纵向睁开，金色，区别于普攻的横向蓝眼）
-  ctx.globalAlpha = vis;
-  ctx.strokeStyle = '#ffe9a0';
-  ctx.lineWidth = 2.6 + tier * 0.3;
-  ctx.beginPath();
-  ctx.ellipse(eyeX, eyeY, CELL * 0.13 * Math.max(0.08, open), CELL * 0.32 * Math.max(0.1, open), 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = '#8a5a20';
-  ctx.beginPath();
-  ctx.arc(eyeX, eyeY, CELL * 0.1 * open, 0, Math.PI * 2);
-  ctx.fill();
-  if (open > 0.45) {
-    ctx.fillStyle = 'rgba(255,250,225,0.95)';
-    ctx.beginPath();
-    ctx.arc(eyeX, eyeY, CELL * 0.045 * open, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  drawErlangSkyEye(ctx, eyeX, eyeY, open, vis, ERLANG_EYE_ULT, tier);
 
   if (beamReach <= 0.01) return;
 
@@ -7881,30 +7952,19 @@ function drawHeroAttackFx(
       const dist = Math.hypot(tx - ax, ty - ay);
       const tipD = dist * (0.15 + 0.85 * jab);
       const shaft = CELL * (0.38 + sc * 0.22);
-      ctx.globalAlpha = fade;
-      ctx.translate(ax, ay);
-      ctx.rotate(ang);
-      ctx.strokeStyle = '#8a4a18';
-      ctx.lineWidth = 2 + tier * 0.45;
-      ctx.beginPath(); ctx.moveTo(tipD - shaft, 0); ctx.lineTo(tipD - 6, 0); ctx.stroke();
-      ctx.fillStyle = '#ffcf5a';
-      ctx.strokeStyle = '#ff6a20';
-      ctx.lineWidth = 1;
-      const hl = 8 + tier * 2.2 * sc;
-      ctx.beginPath();
-      ctx.moveTo(tipD, 0);
-      ctx.lineTo(tipD - hl * 0.5, -2.5 - tier * 0.4);
-      ctx.lineTo(tipD - hl, 0);
-      ctx.lineTo(tipD - hl * 0.5, 2.5 + tier * 0.4);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
+      const tipX = ax + Math.cos(ang) * tipD;
+      const tipY = ay + Math.sin(ang) * tipD;
       if (jab > 0.2) {
-        ctx.globalAlpha = fade * jab * sc * 0.5;
+        ctx.globalAlpha = fade * jab * sc * 0.45;
         ctx.strokeStyle = '#ff9040';
         ctx.lineWidth = 3 + tier * 0.6;
         ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(tipD - shaft * 0.3, 0); ctx.lineTo(tipD + 4, 0); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ax + Math.cos(ang) * (tipD - shaft * 0.3), ay + Math.sin(ang) * (tipD - shaft * 0.3));
+        ctx.lineTo(tipX + Math.cos(ang) * 4, tipY + Math.sin(ang) * 4);
+        ctx.stroke();
       }
+      drawHuojianSpearGlyph(ctx, tipX, tipY, ang, shaft, tier, fade * (0.55 + sc * 0.45), 0);
       break;
     }
     case 'jinzha': {
@@ -9965,13 +10025,26 @@ export type DevFxPreviewSpec =
   | { kind: 'heroUlt'; heroId: string; tier?: number }
   | { kind: 'unitAttack'; unit: UnitType; tier?: number }
   | { kind: 'activeSkill'; skill: SkillFxKind }
-  | { kind: 'burst'; burst: 'hit' | 'death' | 'merge' };
+  | { kind: 'burst'; burst: 'hit' | 'death' | 'merge' }
+  | { kind: 'dig' }
+  | { kind: 'palm' };
+
+interface FxPreviewPalm {
+  path: Cell[];
+  t: number;
+  dur: number;
+  fadeT: number;
+  cells: number;
+  frontStartDist: number;
+}
 
 interface FxPreviewStub {
   fx: HitFx[];
   heroUltFx: HeroUltFx[];
   playerSkillFx: SkillFx | null;
   bursts: Burst[];
+  digFx: { c: number; r: number; t: number }[];
+  palm: FxPreviewPalm | null;
 }
 
 let _devFxPreviewStop: (() => void) | null = null;
@@ -9986,7 +10059,14 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
   const fromR = 11;
   const midC = toC;
   const midR = toR;
-  const stub: FxPreviewStub = { fx: [], heroUltFx: [], playerSkillFx: null, bursts: [] };
+  const stub: FxPreviewStub = {
+    fx: [],
+    heroUltFx: [],
+    playerSkillFx: null,
+    bursts: [],
+    digFx: [],
+    palm: null,
+  };
 
   let contentHalfW = CELL * 2.2;
   let contentHalfH = CELL * 1.8;
@@ -10093,6 +10173,33 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
       focusY -= CELL * 1.2;
       contentHalfH += CELL * 1.4;
     }
+  } else if (spec.kind === 'dig') {
+    stub.digFx.push({ c: toC, r: toR, t: 0 });
+    const to = cellCenterPx(toC, toR);
+    focusX = to.x;
+    focusY = to.y;
+    contentHalfW = CELL * 1.6;
+    contentHalfH = CELL * 1.6;
+  } else if (spec.kind === 'palm') {
+    // 短水平路径：波前从右侧回推向左（复用局内掌印绘制）
+    const palmPath: Cell[] = [];
+    for (let i = 0; i <= 5; i++) palmPath.push({ c: 1 + i, r: midR });
+    const frontStartDist = lenOf(palmPath) - 0.2;
+    const pushCells = 3.2;
+    stub.palm = {
+      path: palmPath,
+      t: 0,
+      dur: SKILL_FX_DUR,
+      fadeT: 0,
+      cells: pushCells,
+      frontStartDist,
+    };
+    const a = cellCenterPx(palmPath[0]!.c, palmPath[0]!.r);
+    const b = cellCenterPx(palmPath[palmPath.length - 1]!.c, palmPath[palmPath.length - 1]!.r);
+    focusX = (a.x + b.x) / 2;
+    focusY = (a.y + b.y) / 2;
+    contentHalfW = Math.max(CELL * 2.4, Math.abs(b.x - a.x) * 0.55 + CELL * 1.4);
+    contentHalfH = CELL * 2.0;
   } else {
     const ttl = spec.burst === 'death' ? 0.55 : 0.4;
     stub.bursts.push({
@@ -10137,6 +10244,15 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
       stub.playerSkillFx.t += dt;
       if (stub.playerSkillFx.t >= stub.playerSkillFx.dur) stub.playerSkillFx = null;
     }
+    for (const d of stub.digFx) d.t += dt;
+    stub.digFx = stub.digFx.filter((d) => d.t < PLACE_TIMING.digDur);
+    if (stub.palm) {
+      stub.palm.t += dt;
+      if (stub.palm.t >= stub.palm.dur) {
+        stub.palm.fadeT += dt;
+        if (stub.palm.fadeT >= PALM_PUSH_FADE_DUR) stub.palm = null;
+      }
+    }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cssW = canvas.clientWidth || 360;
@@ -10175,6 +10291,20 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
       drawFx(ctx, fake);
       drawHeroUlt(ctx, fake);
       drawSkillFx(ctx, stub.playerSkillFx);
+      drawDigFx(ctx, stub.digFx);
+      if (stub.palm) {
+        const p = Math.min(1, stub.palm.t / stub.palm.dur);
+        const eased = 1 - (1 - p) ** 2;
+        const waveDist = stub.palm.frontStartDist - stub.palm.cells * eased;
+        drawPalmPushWaveFx(
+          ctx,
+          stub.palm.path,
+          waveDist,
+          stub.palm.frontStartDist,
+          p,
+          stub.palm.t >= stub.palm.dur ? stub.palm.fadeT : 0,
+        );
+      }
       drawBursts(ctx, fake);
       ctx.restore();
       ctx.fillStyle = 'rgba(248,239,216,0.55)';
@@ -10184,7 +10314,8 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
     }
 
     const done = stub.fx.length === 0 && stub.heroUltFx.length === 0
-      && !stub.playerSkillFx && stub.bursts.length === 0;
+      && !stub.playerSkillFx && stub.bursts.length === 0
+      && stub.digFx.length === 0 && !stub.palm;
     if (done) {
       stop();
       return;
