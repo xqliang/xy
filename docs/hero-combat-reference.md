@@ -201,9 +201,11 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ---
 
-## 8. 征兵字/铲与武将匹配（`TUNING` / `word-draw.ts`，2026-08-12）
+## 8. 征兵字/铲、武将匹配与布阵对称（`TUNING` / `word-draw.ts` / `autoplace.ts`，2026-08-12）
 
 字牌与铲子在**征兵**时进入候选区（非挖地掉落）。有效字率 ≈ `(wordDrawChance + 招贤榜等加成) × wordSlotChanceMul`；每兵槽独立判定，单次征兵最多 `SUMMON_MAX_WORD_SLOTS` 字。另有连续无字 / 无铲（`shovelPityAfter`=**4**）/ 半对保底；强制出铲在字·半对·匹配保底之后执行，只替换剩余兵槽，不覆盖其它保底牌。
+
+**玩家 `Battle.summon` 与 AI `Battle.aiSummon` 共用同一套字/铲/保底/软压规则**（各用独立计数与棋盘；见 §8.5）。
 
 ### 8.1 基础配额与掉率
 
@@ -217,39 +219,74 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
+| `shovelPityAfter` | **4** | 连续 N 次无铲 → 强制 1 铲（阵位未全开时；在匹配保底之后落定） |
 
-### 8.2 匹配口径与软权重
+### 8.2 匹配口径与软权重（玩家 / AI）
 
-**匹配英雄**：某一武将双字同时存在于 `tray ∪ 棋盘字`（可组合，不必已激活摆位）。
+**匹配英雄**：某一武将双字同时存在于本方 `tray ∪ 棋盘字`（可组合，不必已激活摆位）。
 
 | 常量 | 值 | 含义 |
 |------|-----|------|
-| `YIN_SUPPORT_PRESS_MUL` | **0.4** | 本局已出现观/音/梵（观音或梵音相关字）后，君/殊门派字权重 ×0.4 |
+| `YIN_SUPPORT_PRESS_MUL` | **0.4** | 本方已出现观/音/梵后，君/殊门派字权重 ×0.4 |
 | `RECENT_HERO_REPEAT_MUL` | **0.4** | 近 `RECENT_HERO_HISTORY_LEN`（**10**）局匹配过的武将字权重 ×0.4 |
 | `YIN_SUPPORT_CHARS` | 观、音、梵 | 触发音系软压 |
 | `YIN_PRESS_FAMILIES` | 君、殊 | 被软压的门派（老君/丹君/文殊/慧殊） |
 
-跨局状态：`dasheng.heroMatchHistory`（`hero-match-history.ts`）存 `lastGameHadMatch` 与 `recentMatched`。
+- **音系软压**：玩家看 `wordCharCounts ∪ 己方棋盘`；AI 看 `aiWordCharCounts ∪ AI 棋盘`；本盘 tray 新出观/音/梵也会立刻加压（`yinPressActive`）。
+- **近局降重**：玩家与 AI 共用开局注入的 `recentMatchedHeroIds`（来自玩家 `heroMatchHistory.recentMatched`）。
+- 跨局持久化：`dasheng.heroMatchHistory`（`hero-match-history.ts`）存 `lastGameHadMatch` 与 `recentMatched`——**仅按玩家局末匹配更新**。
 
-### 8.3 匹配保底（玩家征兵）
+### 8.3 匹配保底（玩家 / AI 征兵）
 
 | 规则 | 行为 |
 |------|------|
-| **每两盘必匹配** | 上一局 `lastGameHadMatch=false` → 本局 `forceMatchThisGame`，直至至少匹配 1 名武将 |
-| **波 10 后每 10 波** | 窗口 11–20、21–30…；窗口末波（20/30…，含波间准备期）若本窗口尚无新匹配 → 强制补对 |
+| **每两盘必匹配** | 上一局玩家 `lastGameHadMatch=false` → 本局 `forceMatchThisGame` 与 `aiForceMatchThisGame` **同步开启**；各方独立计数，直至**本方**至少匹配 1 名武将 |
+| **波 10 后每 10 波** | 窗口 11–20、21–30…；窗口末波（20/30…，含波间准备期）若**本方**窗口尚无新匹配 → 强制补对（玩家 `heroMatchWaves` / AI `aiHeroMatchWaves`） |
 | 强制手段 | `forcedMatchWordChars`（受 `SUMMON_MAX_WORD_SLOTS` 限制） |
-| 有半对可补时 | `FORCE_MATCH_HALF_PAIR_P`=**0.6** 补场上单字（只补能形成**新匹配**的半对，跳过仅复刷已匹配英雄的字）；**0.4** 直接给出一对双字皆未出场的新武将 |
+| 有半对可补时 | `FORCE_MATCH_HALF_PAIR_P`=**0.6** 补场上单字（只补能形成**新匹配**的半对）；**0.4** 给出一对双字皆未出场的新武将 |
 | 无半对 / 新英雄抽不出 | 回退：半对补齐，或从未完整匹配武将中尽量出双字 |
 
-仍保留随机抽字；保底仅在条件触发时硬塞。实现：`word-draw.ts` + `Battle.summon`；局末 `recordHeroMatchGame`。
+仍保留随机抽字；保底仅在条件触发时硬塞。实现：`word-draw.ts` + `Battle.summon` / `Battle.aiSummon`。局末仅 `recordHeroMatchGame(玩家匹配)`；AI 匹配不写回 history。
 
-### 8.4 AI 布阵孤儿单字上限（`autoplace.ts`）
+### 8.4 布阵孤儿单字上限（`autoplace.ts`）
 
 | 常量 | 值 | 含义 |
 |------|----|------|
-| `AI_MAX_ORPHAN_WORDS` | **4** | AI 半场未激活英雄单字最多保留数（已激活武将双字不计入） |
+| `AI_MAX_ORPHAN_WORDS` | **4** | 未激活英雄单字最多保留数（已激活武将双字不计入） |
 
-选留优先级（`orphanKeepScore` / `selectOrphansToKeep`）：满5 字 ≫ 满3；补齐缺失职业（输出/控制/辅助）；同字、同门派（满3/满5 同组）降权。超出则顶回候选区，候选满则 `removeWord` 移除。达上限后低分单字可留在 tray。玩家一键布阵不启用。
+- **玩家一键布阵**与 **AI 征兵后布阵 / 战中补字**均传 `maxOrphanWords: AI_MAX_ORPHAN_WORDS`。
+- 选留（`orphanKeepScore` / `selectOrphansToKeep`）：满5 字 ≫ 满3；补齐缺失职业（输出/控制/辅助）；同字、同门派降权。超出顶回 tray，tray 满则 `removeWord`。达上限后低分单字可留 tray。
+
+### 8.5 布阵步数预算与落子时序（`autoplace.ts` / `PLACE_TIMING`）
+
+| 常量 | 值 | 含义 |
+|------|----|------|
+| `PLAYER_PLACE_MAX_STEPS` / `AI_PLACE_MAX_STEPS` | **150** | 单轮自动布阵最多落子步（AI 别名等于玩家） |
+| `PLAYER_PLACE_MAX_GUARD` / `AI_PLACE_MAX_GUARD` | **300** | 布阵循环护栏（防死循环；AI 同玩家） |
+| `PLAYER_REPOSITION_MAX_STEPS` | **100** | 玩家一键布阵后的战中调位步数上限 |
+| `PLACE_TIMING.digDur` | **0.4** | 挖坑动画（铲两下；每铲播 `shovel` 音效） |
+| `PLACE_TIMING.dragDur` | **0.18** | 玩家一键布阵虚线拖拽时长（秒） |
+| `PLACE_TIMING.staggerMin` / `staggerMax` | **0.1 / 0.2** | 连续落子间隔（秒） |
+
+挖坑进行中可并行落**其他格**；新挖格预占，挖完后再落武器（`pendingPlace` / `digFx`）。
+
+### 8.6 玩家 ↔ AI：已对齐 vs 有意保留差异
+
+| 规则 | 玩家 | AI | 说明 |
+|------|------|-----|------|
+| 字/铲/半对保底、前期配额 | ✓ | ✓ | 独立计数器 |
+| 英雄匹配保底（跨局 + 波段） | ✓ | ✓ | 独立 `*ForceMatch*` / `*MatchWaves*`；跨局开关同源 |
+| 音系软压 | ✓ | ✓ | 各看本方字池 |
+| 近局武将降重 | ✓ | ✓ | 共享 `recentMatchedHeroIds` |
+| 孤儿单字 ≤4 | ✓ 一键布阵 | ✓ 布阵/补字 | `AI_MAX_ORPHAN_WORDS` |
+| 布阵 steps/guard | 150 / 300 | 150 / 300 | 常量别名相等 |
+| 局末写入 `heroMatchHistory` | ✓ | ✗ | 避免 AI 匹配抬高玩家「上局已匹配」 |
+| 次优落子 `pSubOptimal` | 0 | 随 `aiSkill` | 强度杠杆 |
+| 挖铲出口随机权重 | ✗ | ✓ `randomDigExitWeight` | AI 挖格多样性 |
+| 战中定时调位 | ✗（一键后一次性） | ✓ `tickAiBattleAdjust` | 节奏见 `versus-user-agent.md` |
+| 征兵节奏 | 玩家点击 | `aiSummonTimer` | skill 越快间隔越短 |
+| 功德桃 / 神兵 | 全额 meta | 无 bonusPeach；神兵按 skill 缩放 | |
+| 手动拖放 / tray 召回 | ✓ | ✗ | 操作层差异 |
 
 ---
 
@@ -378,7 +415,11 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / end
 | 战斗结算 | `web/src/battle.ts` |
 | 承压 / 出怪规划 | `web/src/board-power.ts` |
 | 征兵前期配额 | `web/src/summon-early.ts`、`web/src/summon-draw.ts`、`web/src/word-draw.ts` |
+| 自动布阵 / 孤儿上限 / 步数预算 | `web/src/autoplace.ts` |
+| 跨局匹配历史 | `web/src/hero-match-history.ts` |
+| AI 强度 | `web/src/ai-skill.ts` |
 | 大招动画 | `web/src/render.ts`（`drawHeroUlt` / `drawUltDasheng` 等） |
 | 门派与满阶设计 | `docs/superpowers/specs/2026-08-07-general-family-max-tier-design.md` |
 | 辅助武将设计 | `docs/superpowers/specs/2026-08-11-support-heroes-laojun-wenshu-design.md` |
 | 大招动画设计 | `docs/superpowers/specs/2026-08-05-hero-skills-ultimate-animations-design.md` |
+| 对战代理与 AI 节奏 | `docs/versus-user-agent.md` |

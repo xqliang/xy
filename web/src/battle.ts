@@ -1614,12 +1614,18 @@ export class Battle {
   private wavePressure: PressurePlan | null = null;
   /** 上一局未匹配 → 本局强制至少达成一次可组合双字 */
   private forceMatchThisGame = false;
-  /** 近 N 局匹配过的武将 id（抽字软降重） */
+  /** AI：与玩家同步的跨局强制匹配（独立计数，不写回玩家 history） */
+  private aiForceMatchThisGame = false;
+  /** 近 N 局匹配过的武将 id（抽字软降重；玩家/AI 共用列表） */
   private recentMatchedHeroIds: readonly string[] = [];
   /** 本局已达成匹配的武将 id */
   private matchedHeroIdsThisGame = new Set<string>();
+  /** AI 本局已达成匹配的武将 id */
+  private aiMatchedHeroIdsThisGame = new Set<string>();
   /** 本局新匹配发生时的波次（用于波段窗口保底） */
   private heroMatchWaves: number[] = [];
+  /** AI 本局新匹配波次 */
+  private aiHeroMatchWaves: number[] = [];
 
   constructor(
     seed = 1,
@@ -1636,6 +1642,7 @@ export class Battle {
   ) {
     this.aiAdjustIntervalScale = aiAdjustIntervalScale;
     this.forceMatchThisGame = !!heroMatch?.forceMatchThisGame;
+    this.aiForceMatchThisGame = !!heroMatch?.forceMatchThisGame;
     this.recentMatchedHeroIds = heroMatch?.recentMatchedHeroIds ?? [];
     this.versusBand = versusRubberBand(
       endless ? 0 : loadPlayerWinStreak(),
@@ -2020,11 +2027,33 @@ export class Battle {
     this.forceMatchThisGame = true;
   }
 
+  /** 测试：挂上 AI 跨局匹配保底 */
+  forceAiHeroMatchPityForTest(): void {
+    this.aiForceMatchThisGame = true;
+  }
+
   /** 测试：预设本局已匹配武将与记波（用于波段保底回归） */
   seedHeroMatchForTest(heroId: string, wave: number): void {
     this.matchedHeroIdsThisGame.add(heroId);
     this.heroMatchWaves.push(wave);
     this.forceMatchThisGame = false;
+  }
+
+  /** 测试：预设 AI 本局已匹配武将与记波 */
+  seedAiHeroMatchForTest(heroId: string, wave: number): void {
+    this.aiMatchedHeroIdsThisGame.add(heroId);
+    this.aiHeroMatchWaves.push(wave);
+    this.aiForceMatchThisGame = false;
+  }
+
+  /** 局末/测试：AI 本局累计匹配过的武将 id */
+  aiHeroMatchedIdsThisGame(): string[] {
+    const tray = this.aiTray.filter((t): t is Extract<TrayToken, { kind: 'word' }> => !!t && t.kind === 'word')
+      .map((t) => t.char);
+    for (const id of matchedHeroIds(tray, this.aiBoardWordCharsNow())) {
+      this.aiMatchedHeroIdsThisGame.add(id);
+    }
+    return [...this.aiMatchedHeroIdsThisGame];
   }
 
   /** 波间 ready 时 wave 仍为上一波，征兵保底按「即将进入的波」计 */
@@ -2043,6 +2072,16 @@ export class Battle {
     }
   }
 
+  private refreshAiHeroMatchesAfterSummon(trayChars: readonly string[]): void {
+    const waveNow = this.effectiveSummonWave();
+    const ids = matchedHeroIds(trayChars, this.aiBoardWordCharsNow());
+    for (const id of ids) {
+      if (this.aiMatchedHeroIdsThisGame.has(id)) continue;
+      this.aiMatchedHeroIdsThisGame.add(id);
+      this.aiHeroMatchWaves.push(waveNow);
+    }
+  }
+
   /** 跨局未匹配，或波>10 的 10 波窗口末仍无本窗口新匹配 */
   private needsHeroMatchPity(): boolean {
     if (this.forceMatchThisGame && this.matchedHeroIdsThisGame.size === 0) return true;
@@ -2050,6 +2089,14 @@ export class Battle {
     if (w <= 10 || w % 10 !== 0) return false;
     const windowStart = Math.floor((w - 1) / 10) * 10 + 1;
     return !this.heroMatchWaves.some((mw) => mw >= windowStart && mw <= w);
+  }
+
+  private needsAiHeroMatchPity(): boolean {
+    if (this.aiForceMatchThisGame && this.aiMatchedHeroIdsThisGame.size === 0) return true;
+    const w = this.effectiveSummonWave();
+    if (w <= 10 || w % 10 !== 0) return false;
+    const windowStart = Math.floor((w - 1) / 10) * 10 + 1;
+    return !this.aiHeroMatchWaves.some((mw) => mw >= windowStart && mw <= w);
   }
 
   // 某格是否有字牌
@@ -2783,7 +2830,7 @@ export class Battle {
     });
     this.aiSummonCount += 1;
     this.clearAiAutoPlaceLayoutMemory();
-    // 字牌抽取：镜像玩家 summon 的字牌保底 + 半对保底 + 孤儿配对 + 前期配额
+    // 字牌抽取：镜像玩家 summon（字/半对/匹配保底 + 音系软压 + 近局降重）
     const forceWordPity = !firstSummon && this.aiSummonsSinceWord >= TUNING.wordPityAfter;
     const forceWord = !firstSummon && (forceWordPity || early.forceWord) && early.maxWords > 0;
     const orphansBefore = this.aiBoardOrphanCharsNow();
@@ -2799,6 +2846,20 @@ export class Battle {
       && wordSlotsCap > 0;
     const trayWordsSoFar: string[] = [];
     let partnerForced = false;
+    const yinPressActive = yinSupportCharsPresent([
+      ...this.aiWordCharCounts.keys(),
+      ...ownedBoard,
+    ]);
+    const wordPickOpts = () => ({
+      tier5BiasMul: this.versusBand.aiWordTier5Bias,
+      fieldCharCounts,
+      activeMax5Families,
+      tier5CapableOnly: wordPolicy.tier5CapableOnly,
+      excludeChars: wordPolicy.excludeChars,
+      preferRoles: wordPolicy.preferRoles,
+      yinPressActive: yinPressActive || yinSupportCharsPresent(trayWordsSoFar),
+      recentMatchedHeroIds: this.recentMatchedHeroIds,
+    });
     const wordDrawChance =
       (TUNING.wordDrawChance + this.aiMods.wordRateBonus + this.versusBand.aiWordDrawBonus)
       * wordPolicy.wordSlotChanceMul;
@@ -2814,14 +2875,7 @@ export class Battle {
         forcePair,
         ownedBoard,
         this.aiWordDrawCounts(),
-        {
-          tier5BiasMul: this.versusBand.aiWordTier5Bias,
-          fieldCharCounts,
-          activeMax5Families,
-          tier5CapableOnly: wordPolicy.tier5CapableOnly,
-          excludeChars: wordPolicy.excludeChars,
-          preferRoles: wordPolicy.preferRoles,
-        },
+        wordPickOpts(),
       );
       trayWordsSoFar.push(w.char);
       this.bumpAiWordCharCount(w.char);
@@ -2859,6 +2913,44 @@ export class Battle {
       const word = idx >= 0 ? drawOneWord(true) : null;
       if (word) draws[idx] = word;
     }
+    // 跨局 / 波段匹配保底（与玩家 summon 对称；不写回玩家 heroMatchHistory）
+    const freshMatchAlready = matchedHeroIds(trayWordsSoFar, ownedBoard)
+      .some((id) => !this.aiMatchedHeroIdsThisGame.has(id));
+    if (
+      !firstSummon
+      && wordPolicy.allowForceWord
+      && wordSlotsCap > 0
+      && this.needsAiHeroMatchPity()
+      && !freshMatchAlready
+    ) {
+      const forced = forcedMatchWordChars(
+        this.aiRng,
+        trayWordsSoFar,
+        ownedBoard,
+        wordSlotsCap,
+        {
+          tier5CapableOnly: wordPolicy.tier5CapableOnly,
+          fieldCharCounts,
+          excludeHeroIds: this.aiMatchedHeroIdsThisGame,
+        },
+      );
+      for (const w of forced) {
+        const idx = draws.findIndex((t) => t.kind === 'unit');
+        if (idx < 0) break;
+        trayWordsSoFar.push(w.char);
+        this.bumpAiWordCharCount(w.char);
+        if (orphansBefore.some((o) => partnerChars(o).includes(w.char))) partnerForced = true;
+        draws[idx] = { kind: 'word', char: w.char, general: w.general, tier: wordPolicy.wordTier };
+      }
+      if (
+        forced.length === 0
+        && trayWordsSoFar.length < wordSlotsCap
+        && this.needsAiHeroMatchPity()
+      ) {
+        this.aiHeroMatchWaves.push(this.effectiveSummonWave());
+        this.aiForceMatchThisGame = false;
+      }
+    }
     if (forceShovel) {
       applyForceShovel(draws, {
         maxShovels: shovelCap,
@@ -2868,6 +2960,7 @@ export class Battle {
     if (draws.some((t) => t.kind === 'shovel')) this.aiSummonsSinceShovel = 0;
     else this.aiSummonsSinceShovel += 1;
     this.aiTray = draws;
+    this.refreshAiHeroMatchesAfterSummon(trayWordsSoFar);
     const waveNow = Math.max(1, this.wave);
     const shovelN = draws.filter((t) => t.kind === 'shovel').length;
     const wordN = draws.filter((t) => t.kind === 'word').length;
@@ -6206,6 +6299,11 @@ export class Battle {
         if (ok) this.recordAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
         return ok;
       },
+      removeWord: (cell) => {
+        const ok = this.removeOrphanWord(cell);
+        if (ok) this.recordAutoPlaceStep({ kind: 'removeWord', cell: { c: cell.c, r: cell.r } });
+        return ok;
+      },
       isActiveHeroCell: (cell) =>
         this.activeGenerals().some((g) => g.cells.some((c) => c.c === cell.c && c.r === cell.r)),
       dangerNear: () => this.dangerNear(),
@@ -6250,6 +6348,7 @@ export class Battle {
     const placed = planAutoPlaceSteps(this.buildPlayerAutoView(), {
       rng: () => this.rng.next(),
       pSubOptimal: 0,
+      maxOrphanWords: AI_MAX_ORPHAN_WORDS,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
     });

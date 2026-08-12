@@ -85,6 +85,10 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | AI 调位快放缩放 | **×0.1** | 仅 versus-agent（10× 子步进） |
 | AI 征兵基准间隔 | **1.2s**（skill=1） | `skillToKnobs`；skill 越高越快，下限 0.6s |
 | 自动部署播放期间 | 暂停征兵 | `aiAutoPlacePlaying` 为真时跳过 `aiSummon`，避免播放中的落子被新一轮快照覆盖 |
+| 布阵 steps / guard | **150 / 300** | 与玩家一键布阵相同（`AI_PLACE_MAX_*` = `PLAYER_PLACE_MAX_*`） |
+| 孤儿单字上限 | **4** | `AI_MAX_ORPHAN_WORDS`；玩家一键布阵同样启用 |
+
+征兵侧与玩家对齐的规则（字/铲/半对保底、英雄匹配保底、音系软压、近局降重等）见权威文档 [`docs/hero-combat-reference.md`](./hero-combat-reference.md) §8。
 
 ### 胜率控制器
 
@@ -125,6 +129,8 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | `web/src/ai-skill.ts` | AI skill、rubber-band、目标胜率 |
 | `web/src/board-power.ts` | `pressureRatioForWave`、出怪压力、`MONSTER_HP_*` |
 | `web/src/battle.ts` | 怪物 HP/移速、骑兵波、分圈 `endlessCycleStep`、精英波 |
+| `web/src/autoplace.ts` | 布阵预算、孤儿上限 |
+| `docs/hero-combat-reference.md` §8 | 玩家/AI 征兵与布阵对称规则（权威） |
 
 ---
 

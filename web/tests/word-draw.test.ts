@@ -362,3 +362,37 @@ describe('征兵匹配保底', () => {
     expect(b.heroMatchedIdsThisGame().some((id) => id !== 'dasheng')).toBe(true);
   });
 });
+
+describe('AI 征兵匹配保底', () => {
+  const origWord = TUNING.wordDrawChance;
+  afterEach(() => {
+    TUNING.wordDrawChance = origWord;
+  });
+
+  it('跨局未匹配保底：AI 第二次征兵可组合出一对字', () => {
+    TUNING.wordDrawChance = 0;
+    const b = new Battle(11, 1, undefined, undefined, {}, [], [], false, undefined, 1, {
+      forceMatchThisGame: true,
+    });
+    (b as any).aiPeach = 10_000;
+    b.wave = 5;
+    b.status = 'ready';
+    expect((b as any).aiSummon()).toBe(true);
+    expect((b as any).aiSummon()).toBe(true);
+    const trayChars = b.aiTray.filter((t) => t?.kind === 'word').map((t) => (t!.kind === 'word' ? t.char : ''));
+    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+    expect(b.aiHeroMatchedIdsThisGame().length).toBeGreaterThan(0);
+  });
+
+  it('波20窗口无匹配时 AI 强制补对', () => {
+    TUNING.wordDrawChance = 0;
+    const b = new Battle(13);
+    (b as any).aiPeach = 10_000;
+    b.setWaveForTest(19);
+    b.status = 'ready';
+    expect((b as any).aiSummon()).toBe(true);
+    expect((b as any).aiSummon()).toBe(true);
+    const trayChars = b.aiTray.filter((t) => t?.kind === 'word').map((t) => (t!.kind === 'word' ? t.char : ''));
+    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+  });
+});

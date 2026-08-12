@@ -153,7 +153,7 @@ export interface AutoPlaceOpts {
   /** 绝对时间戳（ms）；超时则停止继续布阵步（分帧预算） */
   deadlineMs?: number;
   /**
-   * 场上未激活英雄单字上限（仅 AI 布阵传 `AI_MAX_ORPHAN_WORDS`）。
+   * 场上未激活英雄单字上限（玩家一键布阵与 AI 布阵均传 `AI_MAX_ORPHAN_WORDS`）。
    * 超出则按保留分裁剪；达上限时低分单字可留在 tray。
    */
   maxOrphanWords?: number;
@@ -163,10 +163,10 @@ export interface AutoPlaceOpts {
 export const PLAYER_PLACE_MAX_STEPS = 150;
 export const PLAYER_PLACE_MAX_GUARD = 300;
 export const PLAYER_REPOSITION_MAX_STEPS = 100;
-/** AI 征兵后布阵：步数/循环上限（在 battle.step 内同步执行，须轻量） */
-export const AI_PLACE_MAX_STEPS = 24;
-export const AI_PLACE_MAX_GUARD = 48;
-/** AI 场上未激活英雄单字最多保留数 */
+/** AI 征兵后布阵：与玩家一键布阵同预算 */
+export const AI_PLACE_MAX_STEPS = PLAYER_PLACE_MAX_STEPS;
+export const AI_PLACE_MAX_GUARD = PLAYER_PLACE_MAX_GUARD;
+/** 场上未激活英雄单字最多保留数（玩家一键布阵与 AI 共用） */
 export const AI_MAX_ORPHAN_WORDS = 4;
 
 /** 抽字提示武将所属门派（满5优先） */
