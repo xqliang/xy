@@ -1,18 +1,20 @@
 // 战场最优输出估算：按当前地图把已上场兵种重排到可达格，
 // 综合攻速/范围/伤害/目标数（含被动乘区）得到最优 DPS，
-// 并据此按随波次升高的压力比推算 Boss 血量与第 6 波起的出怪数 / 叠怪批次。
+// 并据此按随波次升高的压力比（6→20：0.6→0.75，其后每波+0.02）推算 Boss 血量与第 6 波起的出怪数 / 叠怪批次。
 import { getUnitStat, type UnitType } from '@core';
 import { exitDistToPath, posAlong, posAtDistance, type Cell, type GameMap } from './board';
 import { placeCellScore } from './autoplace';
 
 /** 承压 / 出怪批次等可调参数（DevTools 可改；函数内读此对象） */
 export const BOARD_POWER = {
-  /** 压力比下限（第 fromWave 波起） */
+  /** 压力比起点（第 fromWave 波） */
   PRESSURE_RATIO: 0.60,
-  /** 压力比上限（满波及以后） */
-  PRESSURE_RATIO_MAX: 0.90,
-  /** 压力比爬满的波次 */
-  PRESSURE_RATIO_FULL_WAVE: 16,
+  /** 线性段终点压力比（第 midWave 波） */
+  PRESSURE_RATIO_MID: 0.75,
+  /** 线性爬升结束波（fromWave → midWave：RATIO → RATIO_MID） */
+  PRESSURE_RATIO_MID_WAVE: 20,
+  /** midWave 之后每波叠加 */
+  PRESSURE_RATIO_STEP_AFTER: 0.02,
   /** 压力窗口（秒） */
   PRESSURE_WINDOW_SEC: 10,
   /** 第几波起按最优输出抬高出怪数 */
@@ -35,8 +37,9 @@ export const BOARD_POWER = {
 
 /** @deprecated 快照；运行时请读 BOARD_POWER.* */
 export const PRESSURE_RATIO = BOARD_POWER.PRESSURE_RATIO;
-export const PRESSURE_RATIO_MAX = BOARD_POWER.PRESSURE_RATIO_MAX;
-export const PRESSURE_RATIO_FULL_WAVE = BOARD_POWER.PRESSURE_RATIO_FULL_WAVE;
+export const PRESSURE_RATIO_MID = BOARD_POWER.PRESSURE_RATIO_MID;
+export const PRESSURE_RATIO_MID_WAVE = BOARD_POWER.PRESSURE_RATIO_MID_WAVE;
+export const PRESSURE_RATIO_STEP_AFTER = BOARD_POWER.PRESSURE_RATIO_STEP_AFTER;
 export const PRESSURE_WINDOW_SEC = BOARD_POWER.PRESSURE_WINDOW_SEC;
 export const PRESSURE_FROM_WAVE = BOARD_POWER.PRESSURE_FROM_WAVE;
 export const ENTRANCE_ZONE_LEN = BOARD_POWER.ENTRANCE_ZONE_LEN;
@@ -62,21 +65,26 @@ export function monsterHpFromBoardPower(
 }
 
 /**
- * 随波次升高的压力比：波 6 ≈ 60% → 波 16+ ≈ 90%（线性）。
- * 波 < PRESSURE_FROM_WAVE 时用下限（Boss 血参考仍可能用到）。
+ * 随波次升高的压力比：
+ * - 波 ≤ fromWave：PRESSURE_RATIO（0.60）
+ * - 波 fromWave→midWave（6→20）：线性至 PRESSURE_RATIO_MID（0.75）
+ * - 波 > midWave：每波 + PRESSURE_RATIO_STEP_AFTER（0.02）
  */
 export function pressureRatioForWave(wave: number): number {
   const w = Math.max(1, Math.floor(wave));
   const {
     PRESSURE_RATIO: lo,
-    PRESSURE_RATIO_MAX: hi,
-    PRESSURE_RATIO_FULL_WAVE: full,
+    PRESSURE_RATIO_MID: mid,
+    PRESSURE_RATIO_MID_WAVE: midWave,
+    PRESSURE_RATIO_STEP_AFTER: step,
     PRESSURE_FROM_WAVE: from,
   } = BOARD_POWER;
   if (w <= from) return lo;
-  const span = Math.max(1, full - from);
-  const t = Math.min(1, (w - from) / span);
-  return lo + t * (hi - lo);
+  if (w <= midWave) {
+    const span = Math.max(1, midWave - from);
+    return lo + ((w - from) / span) * (mid - lo);
+  }
+  return mid + (w - midWave) * step;
 }
 
 /**

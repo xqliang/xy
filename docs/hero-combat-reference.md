@@ -209,9 +209,9 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 | 常量 | 值 | 含义 |
 |------|----|------|
-| `wordDrawChance` | 0.03 | 每兵槽独立转字概率 |
+| `wordDrawChance` | **0.08** | 每兵槽独立转字概率（英雄随机） |
 | `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
-| `PARTNER_BOOST` | 0.05 | 半对孤儿所需配对字的抽字权重倍率 |
+| `PARTNER_BOOST` | **0.12** | 半对孤儿所需配对字的抽字权重倍率（单字补齐） |
 | `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制配对字 |
 | `wordPityAfter` | 10 | 连续 N 次无字 → 下次强制 1 字 |
 | `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
@@ -355,13 +355,14 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / end
 |------|------|
 | **出怪总量** | `planWavePressure`：最优 DPS × `PRESSURE_WINDOW_SEC`（10s）× 压力比；数量不低于 `monstersInWave(wave)`（10+n−1） |
 | **同批叠怪** | `spawnBatchCap(wave)`：单次随机 1..N（波 6 起 N≥2，约波 22 封顶 10） |
-| **压力比** | 波 ≤6 → 60%；6→16 线性至 90%；≥16 封顶 90% |
+| **压力比** | 波 ≤6 → 60%；6→20 线性至 75%；波 21 起每波 +2%（无封顶） |
 
 | 常量（`BOARD_POWER`） | 值 |
 |----------------------|-----|
 | `PRESSURE_FROM_WAVE` | 6 |
-| `PRESSURE_RATIO` / `PRESSURE_RATIO_MAX` | 0.60 / 0.90 |
-| `PRESSURE_RATIO_FULL_WAVE` | 16 |
+| `PRESSURE_RATIO` / `PRESSURE_RATIO_MID` | 0.60 / 0.75 |
+| `PRESSURE_RATIO_MID_WAVE` | 20 |
+| `PRESSURE_RATIO_STEP_AFTER` | 0.02 |
 | `PRESSURE_WINDOW_SEC` | 10 |
 | `SPAWN_BATCH_CAP_MAX` | 10 |
 

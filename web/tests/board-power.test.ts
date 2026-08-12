@@ -8,8 +8,9 @@ import {
   spawnBatchCap,
   pressureRatioForWave,
   PRESSURE_RATIO,
-  PRESSURE_RATIO_MAX,
-  PRESSURE_RATIO_FULL_WAVE,
+  PRESSURE_RATIO_MID,
+  PRESSURE_RATIO_MID_WAVE,
+  PRESSURE_RATIO_STEP_AFTER,
   PRESSURE_WINDOW_SEC,
   PRESSURE_FROM_WAVE,
   SPAWN_INTERVAL_MIN,
@@ -136,13 +137,20 @@ describe('estimateOptimalBoardPower', () => {
 });
 
 describe('pressureRatioForWave', () => {
-  it('压力波前用下限，满波封顶，中间线性爬升', () => {
+  it('6→20 线性 0.60→0.75，其后每波 +0.02', () => {
     expect(pressureRatioForWave(1)).toBeCloseTo(PRESSURE_RATIO, 5);
     expect(pressureRatioForWave(PRESSURE_FROM_WAVE)).toBeCloseTo(PRESSURE_RATIO, 5);
-    expect(pressureRatioForWave(PRESSURE_RATIO_FULL_WAVE)).toBeCloseTo(PRESSURE_RATIO_MAX, 5);
-    expect(pressureRatioForWave(99)).toBeCloseTo(PRESSURE_RATIO_MAX, 5);
-    const mid = PRESSURE_FROM_WAVE + (PRESSURE_RATIO_FULL_WAVE - PRESSURE_FROM_WAVE) / 2;
-    expect(pressureRatioForWave(mid)).toBeCloseTo((PRESSURE_RATIO + PRESSURE_RATIO_MAX) / 2, 5);
+    expect(pressureRatioForWave(PRESSURE_RATIO_MID_WAVE)).toBeCloseTo(PRESSURE_RATIO_MID, 5);
+    expect(pressureRatioForWave(21)).toBeCloseTo(
+      PRESSURE_RATIO_MID + PRESSURE_RATIO_STEP_AFTER,
+      5,
+    );
+    expect(pressureRatioForWave(25)).toBeCloseTo(
+      PRESSURE_RATIO_MID + 5 * PRESSURE_RATIO_STEP_AFTER,
+      5,
+    );
+    const mid = PRESSURE_FROM_WAVE + (PRESSURE_RATIO_MID_WAVE - PRESSURE_FROM_WAVE) / 2;
+    expect(pressureRatioForWave(mid)).toBeCloseTo((PRESSURE_RATIO + PRESSURE_RATIO_MID) / 2, 5);
     expect(pressureRatioForWave(PRESSURE_FROM_WAVE + 1))
       .toBeGreaterThan(pressureRatioForWave(PRESSURE_FROM_WAVE));
   });

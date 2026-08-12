@@ -65,15 +65,16 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 | 波次 | 压力比 |
 |------|--------|
 | ≤6（含压力起始波） | **60%** |
-| 6 → 16 线性 | 60% → 90% |
-| ≥16 | **90%** 封顶 |
+| 6 → 20 线性 | 60% → 75% |
+| ≥21 | 每波 **+2%**（无封顶；波 21 = 77%） |
 
 相关常量：
 
 - `PRESSURE_FROM_WAVE = 6` — 第几波起按最优 DPS 抬量 / 允许叠怪批次
-- `PRESSURE_RATIO = 0.60` — 下限（≤6）
-- `PRESSURE_RATIO_MAX = 0.90` — 上限
-- `PRESSURE_RATIO_FULL_WAVE = 16` — 爬满波次
+- `PRESSURE_RATIO = 0.60` — 起点（≤6）
+- `PRESSURE_RATIO_MID = 0.75` — 线性段终点（波 20）
+- `PRESSURE_RATIO_MID_WAVE = 20`
+- `PRESSURE_RATIO_STEP_AFTER = 0.02` — 波 20 之后每波增量
 
 ### AI 节奏
 

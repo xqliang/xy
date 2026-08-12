@@ -24,7 +24,7 @@ export const CORE_HERO_ROLES: GeneralRole[] = ['输出', '控制', '辅助'];
 /** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
 /** 半对孤儿所需配对字相对基础权重的倍率（forcePartner 保底仍必出） */
-export const PARTNER_BOOST = 0.05;
+export const PARTNER_BOOST = 0.12;
 /** 无配对需求时，满5 相对满3 的额外倍率（叠在 phaseWeight 之上） */
 export const HIGH_TIER_BIAS = 1.75;
 export const LOW_TIER_BIAS = 0.65;

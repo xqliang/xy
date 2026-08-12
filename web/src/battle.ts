@@ -148,7 +148,7 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.16, // 候选中出现铲子的概率
   shovelPityAfter: 4, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
-  wordDrawChance: 0.03, // 候选中出现武将字牌的概率（每兵槽独立判定）
+  wordDrawChance: 0.08, // 候选中出现武将字牌的概率（每兵槽独立判定）
   wordPityAfter: 10, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
@@ -711,9 +711,9 @@ export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 export const PLACE_TIMING = {
   digDur: 0.5, // 铲子挖坑动画时长（来回挖两下）
   dropDur: 0.03, // AI 落子：自半场顶加速落入格心的时长（秒）
-  dragDur: 0.22, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
-  staggerMin: 0.2, // 连续落子之间的最短间隔（秒）
-  staggerMax: 0.4, // 连续落子之间的最长间隔（秒）
+  dragDur: 0.18, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
+  staggerMin: 0.1, // 连续落子之间的最短间隔（秒）
+  staggerMax: 0.2, // 连续落子之间的最长间隔（秒）
 };
 /** @deprecated 快照；运行时请读 PLACE_TIMING.* */
 export const DIG_DUR = PLACE_TIMING.digDur;
@@ -1163,14 +1163,25 @@ export class Battle {
       : 'place';
   }
 
+  /** 步间等待：仅虚线拖拽未着地时阻塞；挖坑/预占不挡其他格并行落子 */
   private playerPlaceAnimBusy(): boolean {
+    return this.autoPlaceDragFx.length > 0;
+  }
+
+  /** 布阵收尾：拖拽、挖坑、延迟落子都结束后才 finish（新坑武器等挖完再落） */
+  private playerPlaceAnimSettleBusy(): boolean {
     return this.autoPlaceDragFx.length > 0
       || this.pendingPlace.length > 0
       || this.digFx.length > 0;
   }
 
+  /** 步间等待：仅 AI 落子掉落未完成时阻塞；挖坑/预占不挡其他格 */
   private aiPlaceAnimBusy(): boolean {
-    return this.placeDropFx.some((d) => d.side === 'ai' && (d.delay > 0 || d.t < PLACE_TIMING.dropDur))
+    return this.placeDropFx.some((d) => d.side === 'ai' && (d.delay > 0 || d.t < PLACE_TIMING.dropDur));
+  }
+
+  private aiPlaceAnimSettleBusy(): boolean {
+    return this.aiPlaceAnimBusy()
       || this.aiPendingPlace.length > 0
       || this.aiDigFx.length > 0;
   }
@@ -1320,7 +1331,7 @@ export class Battle {
         break;
       }
     }
-    if (!this.aiAutoPlacePlaybackWait && this.aiAutoPlacePlayback.length === 0 && !this.aiPlaceAnimBusy()) {
+    if (!this.aiAutoPlacePlaybackWait && this.aiAutoPlacePlayback.length === 0 && !this.aiPlaceAnimSettleBusy()) {
       this.finishAiAutoPlacePlayback();
     }
   }
@@ -1462,7 +1473,7 @@ export class Battle {
         break;
       }
     }
-    if (!this.autoPlacePlaybackWait && this.autoPlacePlayback.length === 0 && !this.playerPlaceAnimBusy()) {
+    if (!this.autoPlacePlaybackWait && this.autoPlacePlayback.length === 0 && !this.playerPlaceAnimSettleBusy()) {
       this.finishAutoPlacePlayback();
     }
   }
@@ -1471,7 +1482,8 @@ export class Battle {
   flushAutoPlacePlaybackForTest(): void {
     while (this.autoPlacePlaying) {
       this.autoPlacePlaybackGap = 0;
-      if (this.autoPlacePlaybackWait && this.playerPlaceAnimBusy()) {
+      // 挖坑/预占不再挡步间等待，但收尾仍可能卡在 settle；测试直接清掉
+      if (this.playerPlaceAnimSettleBusy()) {
         for (const d of this.autoPlaceDragFx) this.commitAutoPlaceDrag(d);
         this.autoPlaceDragFx = [];
         this.pendingPlace = [];
