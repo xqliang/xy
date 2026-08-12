@@ -256,6 +256,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 - **玩家一键布阵**与 **AI 征兵后布阵 / 战中补字**均传 `maxOrphanWords: AI_MAX_ORPHAN_WORDS`。
 - 选留（`orphanKeepScore` / `selectOrphansToKeep`）：满5 字 ≫ 满3；补齐缺失职业（输出/控制/辅助）；同字、同门派降权。超出顶回 tray，tray 满则 `removeWord`。达上限后低分单字可留 tray。
+- **冗余同字**：棋盘已有某字且 tray 同字当前不能凑对激活、也不能顶替更低阶同字时，优先部署其它字或武器（`trayWordIsRedundantDuplicate` / `mayLeaveWordInTray`）；仅在必须清空 tray 时再强制落同字。
 
 ### 8.5 布阵步数预算与落子时序（`autoplace.ts` / `PLACE_TIMING`）
 

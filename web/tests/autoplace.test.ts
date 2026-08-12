@@ -1189,6 +1189,37 @@ it('tray 同字更高阶与棋盘低阶孤儿互换', () => {
   expect(v.tray()).toHaveLength(0);
 });
 
+it('棋盘已有同字时，tray 同字让位给其它字或武器', () => {
+  const cells = [
+    { c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 },
+    { c: 0, r: 2 }, { c: 1, r: 2 },
+  ];
+  const v = new FakeView(
+    [
+      { kind: 'word', char: '大', general: 'dasheng', tier: 1 },
+      { kind: 'unit', type: 'dao', tier: 1 },
+      { kind: 'word', char: '郎', general: 'niulang', tier: 1 },
+    ],
+    cells,
+  );
+  v.wordChars = (g: string) => {
+    if (g === 'dasheng') return ['大', '圣'] as const;
+    if (g === 'niulang') return ['牛', '郎'] as const;
+    return undefined;
+  };
+  v.wordsMap.set('0,2', { char: '大', general: 'dasheng', cell: { c: 0, r: 2 }, tier: 1 });
+  // 一步：应先落武器或「郎」，而不是再铺一张冗余「大」
+  planAutoPlaceSteps(v, { rng, maxSteps: 1 });
+  const placedDa = v.placedWords().filter((w) => w.char === '大');
+  expect(placedDa).toHaveLength(1);
+  const trayStillHasDa = v.tray().some((t) => t?.kind === 'word' && t.char === '大');
+  const placedUnitOrLang =
+    v.placedUnits().some((u) => u.type === 'dao')
+    || v.placedWords().some((w) => w.char === '郎');
+  expect(trayStillHasDa).toBe(true);
+  expect(placedUnitOrLang).toBe(true);
+});
+
 it('tray 同型更高阶与棋盘低阶兵器互换', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
@@ -2211,7 +2242,7 @@ it('第4波起：tray 字优先于 tray 兵种落子', () => {
   expect(v.tray().some((t) => t.kind === 'unit' && t.type === 'dao')).toBe(true);
 });
 
-it('第4波起：有空格时 tray 重复字也上板', () => {
+it('第4波起：有空格时 tray 重复同字先留候选（不抢先铺第二张）', () => {
   const v = new FakeView(
     [{ kind: 'word', char: '红', general: 'honghaier', tier: 1 }],
     [{ c: 3, r: 5 }],
@@ -2219,8 +2250,8 @@ it('第4波起：有空格时 tray 重复字也上板', () => {
   v.waveNum = 4;
   v.wordsMap.set('4,5', { char: '红', general: 'honghaier', cell: { c: 4, r: 5 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 5 });
-  expect(v.placedWords().filter((w) => w.char === '红')).toHaveLength(2);
-  expect(v.tray()).toHaveLength(0);
+  expect(v.placedWords().filter((w) => w.char === '红')).toHaveLength(1);
+  expect(v.tray().some((t) => t?.kind === 'word' && t.char === '红')).toBe(true);
 });
 
 it('第4波起：tray白+棋盘龙待激活时 tray弓2应落到空位', () => {

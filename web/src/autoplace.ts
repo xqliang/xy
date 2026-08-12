@@ -1346,21 +1346,38 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return pendingTrayWordDeploy();
   }
 
-  /** 该 tray 字可留候选区：满盘且地图上已有同字；或 AI 孤儿上限下不宜再上板 */
-  function mayLeaveWordInTray(_t: Extract<PlaceToken, { kind: 'word' }>): boolean {
-    if (opts.maxOrphanWords != null && !canDeployTrayWordAsOrphanOrMate(_t)) return true;
-    if (hasFreeCells()) return false;
-    return view.placedWords().some((w) => w.char === _t.char);
+  /**
+   * 棋盘已有同字，且本 tray 字当前不能凑对激活、也不能顶替更低阶同字 → 视为冗余，
+   * 优先部署其它字或武器（有空格也可先留在 tray）。
+   */
+  function trayWordIsRedundantDuplicate(t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    const boardSame = view.placedWords().filter((w) => w.char === t.char);
+    if (boardSame.length === 0) return false;
+    const idx = trayFindIndex(view.tray(), (x) => x === t);
+    if (bestTrayPartnerForWord(view, t, idx >= 0 ? idx : undefined)) return false;
+    if (pickBestBoardMateView(view, t.char, t.general)) return false;
+    // 可顶替棋盘更低阶同字（含未激活孤儿）
+    if (boardSame.some((w) => (w.tier ?? 1) < t.tier && !view.isActiveHeroCell(w.cell))) return false;
+    return true;
   }
 
-  /** 有空格且 tray 仍有可部署字 → 必须先处理字（单字落位或凑对激活） */
+  /** 该 tray 字可留候选区：冗余同字 / AI 孤儿上限 / 满盘且已有同字 */
+  function mayLeaveWordInTray(t: Extract<PlaceToken, { kind: 'word' }>): boolean {
+    if (opts.maxOrphanWords != null && !canDeployTrayWordAsOrphanOrMate(t)) return true;
+    if (trayWordIsRedundantDuplicate(t)) return true;
+    if (hasFreeCells()) return false;
+    return view.placedWords().some((w) => w.char === t.char);
+  }
+
+  /** 有空格且 tray 仍有可部署字 → 必须先处理字（单字落位或凑对激活；冗余同字不计） */
   function pendingTrayWordDeploy(): boolean {
     if (heroRosterComplete()) return false;
     if (!hasFreeCells() || !trayHasWords()) return false;
-    if (opts.maxOrphanWords == null) return true;
     for (const t of filledTrayTokens(view.tray())) {
       if (t.kind !== 'word') continue;
-      if (canDeployTrayWordAsOrphanOrMate(t)) return true;
+      if (mayLeaveWordInTray(t)) continue;
+      if (opts.maxOrphanWords != null && !canDeployTrayWordAsOrphanOrMate(t)) continue;
+      return true;
     }
     return false;
   }
@@ -2768,13 +2785,14 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return tryDisplaceUnitForTrayWord();
   }
 
-  /** 1c 专用：仅落无 tray 伴侣、无棋盘伴侣的字（避免抢先拆 tray 内成对） */
+  /** 1c 专用：仅落无 tray 伴侣、无棋盘伴侣的字（避免抢先拆 tray 内成对；跳过棋盘已有同字） */
   function tryEarlyTrayOrphanWords(): boolean {
     if (!hasFreeCells()) return false;
     const tray = view.tray();
     for (let i = 0; i < tray.length; i++) {
       const t = tray[i];
       if (!t || t.kind !== 'word') continue;
+      if (mayLeaveWordInTray(t)) continue;
       if (bestTrayPartnerForWord(view, t, i)) continue;
       if (pickBestBoardMate(t.char, t.general)) continue;
       if (!canAcceptOrphanChar(t.char, t.tier)) continue;
@@ -2819,6 +2837,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const t = view.tray()[i];
     if (t?.kind !== 'word') return false;
     if (!force) {
+      if (mayLeaveWordInTray(t)) return false;
       if (bestTrayPartnerForWord(view, t, i)) return false;
       if (pickBestBoardMate(t.char, t.general)) return false;
       if (!canAcceptOrphanChar(t.char, t.tier)) return false;
