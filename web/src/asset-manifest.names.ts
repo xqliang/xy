@@ -1,6 +1,8 @@
 // 资源清单的唯一真源：AssetKey → 原始文件名（对应 src/game-assets/ 与 tools/tos-upload.mjs 上传的文件）。
-// Web 与微信构建（asset-manifest.web.ts / asset-manifest.wx.ts）都从这里拼出 CDN 完整 URL，
-// 避免同一份文件名列表维护两份。上传新素材后，先跑 `node tools/tos-upload.mjs` 再在此处补一行。
+// Web 与微信构建（asset-manifest.web.ts / asset-manifest.wx.ts）先尝试引用 manifest-generated.ts 里的
+// 内容哈希 URL（上传时按内容计算），命中则缓存击穿；未命中时回退用本登记的原名拼 bare URL。
+// 上传新素材：先跑 `node tools/tos-upload.mjs` 自动生成 manifest-generated.ts，本文件只登记逻辑名→原名，
+// 不再手填哈希后缀（哈希由上传时按文件内容计算，同名同内容永远同 URL）。
 
 // 与 tools/tos-upload.mjs 保持一致：火山引擎 TOS（user-growth 桶，公共读），前缀 dev/xy/。
 export const CDN_BASE = 'https://user-growth.tos-cn-shanghai.volces.com/dev/xy/';
