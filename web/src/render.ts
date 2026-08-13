@@ -7058,8 +7058,12 @@ function drawWordSelection(
   const pw = active
     ? (pills.length > 0 ? 210 : 194)
     : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
+  // 技能描述按面板可用宽度自动换行（如文殊「缩短其他武将大招与兵器攻击剩余冷却」超一行），
+  // 多出的行高 descExtra 要顺移下方所有行并计入面板高度 ph，避免溢出弹窗。
+  const skillDescLines = wrapText(ctx, def.skillDesc, pw - 24);
+  const descExtra = (skillDescLines.length - 1) * 15;
   // 激活多「大招CD」+「经验」；未激活也展示配置 CD
-  const ph = (active ? 196 : 176) + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
+  const ph = (active ? 196 : 176) + descExtra + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -7090,14 +7094,14 @@ function drawWordSelection(
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 52);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
-  ctx.fillText(def.skillDesc, px + 12, py + 68);
+  skillDescLines.forEach((ln, i) => ctx.fillText(ln, px + 12, py + 68 + i * 15));
   if (showBondDetail) {
     ctx.fillStyle = '#f0c860';
-    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 84);
+    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 84 + descExtra);
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
-    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98);
+    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98 + descExtra);
   }
-  let weaponRowY = showBondDetail ? 114 : 90;
+  let weaponRowY = (showBondDetail ? 114 : 90) + descExtra;
   if (equippedWeapon) {
     const { def: wdef, tier } = equippedWeapon;
     ctx.textAlign = 'left';
@@ -7111,7 +7115,7 @@ function drawWordSelection(
   }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
   // 「范围」= 普攻与对怪大招共用的射程环；「大招CD」= skillCd（激活时附剩余）
-  const statTop = equippedWeapon ? weaponRowY : (showBondDetail ? 114 : 90);
+  const statTop = equippedWeapon ? weaponRowY : ((showBondDetail ? 114 : 90) + descExtra);
   const skillCdText = (() => {
     if (def.skill === 'none' || def.skillCd <= 0) return '无';
     if (!active) return `${def.skillCd}s`;

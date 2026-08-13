@@ -1987,6 +1987,7 @@ interface GameHook {
   grantPeach: (n: number) => void;
   buildDefense: (peach?: number) => void;
   snapshot: () => ReturnType<Battle['snapshot']>;
+  curScreen: () => string;
 }
 const hook: GameHook = {
   get battle() {
@@ -2060,5 +2061,6 @@ const hook: GameHook = {
     draw(ctx, battle, ui);
   },
   snapshot: () => battle.snapshot(),
+  curScreen: () => screen,
 };
 (window as unknown as { __game: GameHook }).__game = hook;

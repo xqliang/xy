@@ -7,6 +7,7 @@ export const CDN_BASE = 'https://user-growth.tos-cn-shanghai.volces.com/dev/xy/'
 
 export const ASSET_FILENAMES: Record<string, string> = {
   tangseng: 'tangseng.png',
+  'loading-tangseng': 'loading-tangseng.png',
   'unit-monkey': 'unit-monkey.png',
   'unit-spear': 'unit-spear.png',
   'unit-cavalry': 'unit-cavalry.png',

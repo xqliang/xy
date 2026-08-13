@@ -31,7 +31,7 @@ export const MAX_EQUIPPED_ACTIVES = 2;
 // 主动技能池（数值经平衡修订：压掌/陨石节奏，统一大招缩放）
 export const ACTIVE_SKILLS: ActiveSkillDef[] = [
   { id: 'act_palm', name: '如来神掌', icon: '掌', cd: 75, cost: 65, effect: 'palm',
-    desc: '把场上所有妖怪沿路回推 6 格（从最前怪沿路径逐格击退）' },
+    desc: '把场上所有妖怪沿路回推 7 格（从最前怪沿路径逐格击退）' },
   { id: 'act_meteor', name: '天降陨石', icon: '陨', cd: 28, cost: 60, effect: 'meteor',
     desc: '对最前方妖怪群砸下波血×2.2 的伤害（半径 2）' },
   { id: 'act_atk', name: '仙丹', icon: '丹', cd: 80, cost: 50, effect: 'atkBuff',

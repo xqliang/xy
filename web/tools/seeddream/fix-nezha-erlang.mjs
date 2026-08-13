@@ -9,6 +9,8 @@ const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../sr
 const FILES = process.argv.slice(2).length
   ? process.argv.slice(2).map((a) => (a.endsWith('.png') ? a : `${a}.png`))
   : ['hero-nezha.png', 'hero-erlang.png'];
+// 白/银为主的角色开 protect：只清薄边、不动大面积白/银（银甲、白披帛、白衣）。
+const PROTECT = new Set(['erlang', 'guanyin']);
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
 const page = await browser.newPage();
@@ -16,7 +18,7 @@ const page = await browser.newPage();
 for (const file of FILES) {
   const FILE = path.join(DIR, file);
   const b64 = readFileSync(FILE).toString('base64');
-  const protectWhite = file.includes('erlang');
+  const protectWhite = [...PROTECT].some((k) => file.includes(k));
 
   const result = await page.evaluate(async (src, protect) => {
     const img = new Image();
@@ -39,6 +41,15 @@ for (const file of FILES) {
       const mn = Math.min(p[i], p[i + 1], p[i + 2]);
       const mx = Math.max(p[i], p[i + 1], p[i + 2]);
       return mn >= 150 && mx - mn <= 26 && !isWarm(i);
+    };
+    // 中灰背景：淡地图水印/宣纸底纹/地面投影。亮度落在中段、几乎无彩、非暖色；
+    // protect（银甲/白衣）时上限收到 224 保护亮白；非 protect（哪吒无大白面）可放到 236，
+    // 连淡地图残影一并清掉。角色内部白靠深轮廓与边隔断，泛洪到不了，故安全。
+    const grayCap = protect ? 224 : 236;
+    const isMidGray = (i) => {
+      const mn = Math.min(p[i], p[i + 1], p[i + 2]);
+      const mx = Math.max(p[i], p[i + 1], p[i + 2]);
+      return mn >= 150 && mn <= grayCap && mx - mn <= 22 && !isWarm(i);
     };
 
     const flood = (pred) => {
@@ -66,6 +77,9 @@ for (const file of FILES) {
 
     let cleared = 0;
     cleared += flood((i) => p[i + 3] < 36 || isBgWhite(i));
+    // 中灰背景从四边泛洪清除（淡地图/宣纸底纹/地面灰影）。角色内部的银甲/白衣不与边相连，
+    // 被角色深色轮廓隔断，泛洪到不了，因此低阈值也安全。
+    cleared += flood((i) => p[i + 3] < 36 || isMidGray(i));
     if (!protect) {
       cleared += flood((i) => p[i + 3] < 36 || isSoftBgWhite(i));
     }

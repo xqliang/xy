@@ -3,11 +3,11 @@ import { lenOf } from '../src/board';
 import { Battle, TUNING, PALM_PUSH_DUR, PALM_PUSH_FADE_DUR } from '../src/battle';
 
 describe('如来神掌沿路回推', () => {
-  it('击退格数为 6', () => {
-    expect(TUNING.palmPushCells).toBe(6);
+  it('击退格数为 7', () => {
+    expect(TUNING.palmPushCells).toBe(7);
   });
 
-  it('释放后沿路径逐帧回推，结束后各怪 dist 减 6', () => {
+  it('释放后沿路径逐帧回推，结束后各怪 dist 减 7', () => {
     const b = new Battle(1, 1, undefined, undefined, undefined, ['act_palm'], [], false);
     b.introDone = true;
     b.status = 'playing';
@@ -48,11 +48,11 @@ describe('如来神掌沿路回推', () => {
     for (let t = 0; t < dur; t += 1 / 60) b.step(1 / 60);
 
     expect(b.palmPushFx).toBeNull();
-    expect(b.monsters[0]!.dist).toBeCloseTo(6, 5);
-    expect(b.monsters[1]!.dist).toBeCloseTo(2, 5);
+    expect(b.monsters[0]!.dist).toBeCloseTo(5, 5);
+    expect(b.monsters[1]!.dist).toBeCloseTo(1, 5);
   });
 
-  it('AI 释放后沿 aiPath 逐帧回推，结束后各怪 dist 减 6', () => {
+  it('AI 释放后沿 aiPath 逐帧回推，结束后各怪 dist 减 7', () => {
     type GateBattle = Battle & {
       triggerAiActive(i: number): boolean;
       aiShouldTriggerActive(effect: string): boolean;
@@ -101,7 +101,7 @@ describe('如来神掌沿路回推', () => {
     for (let t = 0; t < dur; t += 1 / 60) b.step(1 / 60);
 
     expect(b.aiPalmPushFx).toBeNull();
-    expect(b.aiMonsters[0]!.dist).toBeCloseTo(d0 - 6, 5);
-    expect(b.aiMonsters[1]!.dist).toBeCloseTo(d1 - 6, 5);
+    expect(b.aiMonsters[0]!.dist).toBeCloseTo(d0 - 7, 5);
+    expect(b.aiMonsters[1]!.dist).toBeCloseTo(d1 - 7, 5);
   });
 });

@@ -16,6 +16,7 @@ const TARGET = {
   'unit-spear.png': 168,
   'unit-cavalry.png': 180,
   'tangseng.png': 192,
+  'loading-tangseng.png': 360, // 加载页唐僧骑马行走：画面上约 120px 高 ×3
   'item-shovel.png': 180,
   'monster-boss.png': 210,
   'monster-boss-baiguling.png': 210,

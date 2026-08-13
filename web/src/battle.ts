@@ -204,7 +204,7 @@ export const TUNING = {
   aiClearRadius: 2.5, // AI 清场 / 紧箍咒作用半径（格）
   aiClearDmgMul: 2.3, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
   // —— 主动技能数值 ——
-  palmPushCells: 6, // 如来神掌沿路击退格数（不再重置到 0）
+  palmPushCells: 7, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
   meteorRadius: 2, // 陨石半径；被动「陨石」亦等最前活怪走过 ≥ 该值后再砸
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
@@ -742,10 +742,10 @@ export const DAMAGE_FLOAT_VX_CRIT = 0.9;
 
 /** 布阵动画 / 间隔（DevTools 可改） */
 export const PLACE_TIMING = {
-  digDur: 0.4, // 铲子挖坑动画时长（铲两下）
+  digDur: 0.5, // 铲子挖坑动画时长（铲两下）
   dropDur: 0.03, // AI 落子：自半场顶加速落入格心的时长（秒）
   dragDur: 0.18, // 玩家一键布阵：候选区→目标格虚线拖拽时长（秒）
-  staggerMin: 0.18, // 连续落子之间的最短间隔（秒）
+  staggerMin: 0.2, // 连续落子之间的最短间隔（秒）
   staggerMax: 0.25, // 连续落子之间的最长间隔（秒）
 };
 /** @deprecated 快照；运行时请读 PLACE_TIMING.* */

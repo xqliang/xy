@@ -7,6 +7,7 @@ import { ASSET_URLS } from '@asset-manifest';
 
 export type AssetKey =
   | 'tangseng'
+  | 'loading-tangseng'
   | 'unit-monkey'
   | 'unit-spear'
   | 'unit-cavalry'
@@ -132,7 +133,16 @@ export async function loadAssets(onProgress?: AssetLoadProgressCb): Promise<void
   let loaded = 0;
   onProgress?.({ loaded: 0, total, phase: 'images' });
 
-  await Promise.all(imgKeys.map(async (key) => {
+  // 加载页立绘优先：先单独拉「唐僧骑马」这一张小图（~33KB），保证进度页一出现
+  // 就能播放行走动画，而不是和其余数十张素材一起在并发队列里排队、迟迟不出现。
+  const PRIORITY = 'loading-tangseng';
+  if (ASSET_URLS[PRIORITY]) {
+    await loadOne(PRIORITY);
+    loaded += 1;
+    onProgress?.({ loaded, total, phase: 'images', key: PRIORITY });
+  }
+
+  await Promise.all(imgKeys.filter((k) => k !== PRIORITY).map(async (key) => {
     await loadOne(key);
     loaded += 1;
     onProgress?.({ loaded, total, phase: 'images', key });
