@@ -3200,6 +3200,14 @@ export class Battle {
   }
 
   private buildAiAutoView(): AutoPlaceView {
+    // 与玩家侧同理：路径度量只依赖静态 aiPath 与 (ax,ay,rge)，单轮规划内缓存复用。
+    const caches = this.makePathMetricCaches();
+    // 落子/挪位后清缓存以防守；aiPath 本身不随棋面变，清理仅为与后续可能的棋面相关缓存保持一致语义。
+    const bumpBoard = () => {
+      caches.cover.clear();
+      caches.early.clear();
+      caches.first.clear();
+    };
     return {
       wave: () => this.wave,
       tray: () => this.aiTray,
@@ -3213,13 +3221,11 @@ export class Battle {
       tangsengDist: (cell) => Math.hypot(cell.c - this.aiTangseng.c, cell.r - this.aiTangseng.r),
       pathCover: (cell, type, tier) => {
         const rge = getUnitStat(type, tier).rge;
-        return this.aiPathCoverAt(cell.c, cell.r, rge);
+        return this.aiPathCoverCached(caches, cell.c, cell.r, rge);
       },
-      pathCoverAt: (ax, ay, rge) => this.aiPathCoverAt(ax, ay, rge),
-      pathCoverEarlyAt: (ax, ay, rge) =>
-        pathCoverageLenEntranceWeightedAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
-      pathFirstEngageAt: (ax, ay, rge) =>
-        pathFirstEngageDistAlong(this.aiPath, this.aiEntranceDist, this.aiPathLen, ax, ay, rge),
+      pathCoverAt: (ax, ay, rge) => this.aiPathCoverCached(caches, ax, ay, rge),
+      pathCoverEarlyAt: (ax, ay, rge) => this.aiPathCoverEarlyCached(caches, ax, ay, rge),
+      pathFirstEngageAt: (ax, ay, rge) => this.aiPathFirstEngageCached(caches, ax, ay, rge),
       generalRge: (general, tier) => {
         const def = generalById(general);
         return def ? generalStat(def, tier).rge : 2;
@@ -4107,7 +4113,7 @@ export class Battle {
     if (b) {
       if (canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) {
         const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
-        this.units.set(cellKey(to.c, to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.set(cellKey(to.c, to.r), mergePlacedUnitState(b, a, merged));
         this.units.delete(cellKey(from.c, from.r));
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
@@ -6539,6 +6545,9 @@ export class Battle {
   }
 
   private buildPlayerAutoView(): AutoPlaceView {
+    // 单轮规划复用：路径覆盖/首战等度量仅依赖静态地图与 (ax,ay,rge)，与棋面无关，
+    // 整个 view 生命周期（一次 planAutoPlaceSteps）内缓存，避免逐格逐候选重复采样路径。
+    const caches = this.makePathMetricCaches();
     return {
       wave: () => this.wave,
       tray: () => this.tray,
@@ -6551,13 +6560,10 @@ export class Battle {
       exitDist: (cell) => this.playerExitDist(cell),
       tangsengDist: (cell) => Math.hypot(cell.c - this.map.tangseng.c, cell.r - this.map.tangseng.r),
       pathCover: (cell, type, tier) =>
-        pathCoverageLen(this.map, this.entranceDist, this.pathLen, cell.c, cell.r, getUnitStat(type, tier).rge),
-      pathCoverAt: (ax, ay, rge) =>
-        pathCoverageLen(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
-      pathCoverEarlyAt: (ax, ay, rge) =>
-        pathCoverageLenEntranceWeighted(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
-      pathFirstEngageAt: (ax, ay, rge) =>
-        pathFirstEngageDist(this.map, this.entranceDist, this.pathLen, ax, ay, rge),
+        this.playerPathCoverCached(caches, cell.c, cell.r, getUnitStat(type, tier).rge),
+      pathCoverAt: (ax, ay, rge) => this.playerPathCoverCached(caches, ax, ay, rge),
+      pathCoverEarlyAt: (ax, ay, rge) => this.playerPathCoverEarlyCached(caches, ax, ay, rge),
+      pathFirstEngageAt: (ax, ay, rge) => this.playerPathFirstEngageCached(caches, ax, ay, rge),
       generalRge: (general, tier) => {
         const def = generalById(general);
         if (!def) return 2;
@@ -6667,7 +6673,7 @@ export class Battle {
         if (!a || !b) return false;
         if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
         const merged = mergeUnits({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier });
-        this.units.set(cellKey(to.c, to.r), { ...b, type: merged.type, tier: merged.tier, cooldown: 0 });
+        this.units.set(cellKey(to.c, to.r), mergePlacedUnitState(b, a, merged));
         this.units.delete(cellKey(from.c, from.r));
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         if (!this.autoPlaceRecording) {
@@ -6696,10 +6702,10 @@ export class Battle {
       maxOrphanWords: AI_MAX_ORPHAN_WORDS,
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
-      // 仅场上有怪时限时：无怪时几何评分便宜，不必截断完整布阵
-      deadlineMs: this.monsters.length > 0
-        ? performance.now() + PLAYER_PLACE_DEADLINE_MS
-        : undefined,
+      // 有怪时按紧预算截断（防掉帧）；无怪时用更宽松的备战预算兜底，防极端局面单帧卡死。
+      deadlineMs: performance.now() + (this.monsters.length > 0
+        ? PLAYER_PLACE_DEADLINE_MS
+        : PLAYER_PLACE_DEADLINE_PREP_MS),
     });
     this.autoPlaceRecording = false;
     this.autoPlaceRecorder = null;
