@@ -30,7 +30,7 @@ import type { Cell } from './board';
 import { pickDailyMap, mapById, MAPS, pathEntranceCell } from './board';
 import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
 import { loadAssets, type AssetLoadProgress } from './assets';
-import { drawLoadingScreen, drawLoadingBackdrop } from './loading-screen';
+import { drawLoadingScreen } from './loading-screen';
 import {
   pushMenuFloatToast,
   updateMenuFloatToasts,
@@ -1813,8 +1813,9 @@ function frame(now: number): void {
   if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
   if (screen === 'loading') {
+    // 仅当资源确实还在加载（超过 LOADING_UI_DELAY_MS 仍未就绪）才画加载页；
+    // 缓存秒进时不画任何内容，保留 index.html 画布底色，直接切首页，避免刷新时闪一下加载页再跳变。
     if (loadingUiVisible) drawLoadingScreen(ctx, loadProgress, now);
-    else drawLoadingBackdrop(ctx);
   } else if (screen === 'menu') {
     updateMenuFloatToasts(dt);
     stamina = syncStamina(stamina); // 结算离线/挂机恢复后再画顶栏
