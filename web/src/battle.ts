@@ -4929,6 +4929,11 @@ export class Battle {
     if (this.aiMonsters.length === 0) return;
     const monsterPos = this.aiMonsters.map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }));
     for (const u of this.aiUnits) {
+      // 老君炼丹增益倒计时：镜像玩家侧 updateUnits，逐帧衰减，到点清空倍率（否则 AI 兵器加成常驻、状态图标不消失）
+      if ((u.buffAtkT ?? 0) > 0) {
+        u.buffAtkT = Math.max(0, (u.buffAtkT ?? 0) - dt);
+        if (u.buffAtkT <= 0) u.buffAtkMul = undefined;
+      }
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier);
@@ -4938,7 +4943,9 @@ export class Battle {
       const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p));
       if (inRangeRaw.length === 0) continue;
       const inRange = this.sortCombatTargets(inRangeRaw);
-      const dmg = damage(stat.atk * this.aiMods.atkMul * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul());
+      // 仙丹增伤 + 大圣羁绊 + 老君炼丹增益（与玩家侧同一套计算）
+      const heroAtkBuff = (u.buffAtkT ?? 0) > 0 ? (u.buffAtkMul ?? 1) : 1;
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul() * heroAtkBuff);
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {

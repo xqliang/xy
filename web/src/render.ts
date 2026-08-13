@@ -7725,6 +7725,16 @@ function drawActiveGeneralGroup(
     ctx.fillText(label, cx, bondCy);
     ctx.restore();
   }
+  // 武将增益状态图标：老君炼丹（炼）/ 仙丹（丹）/ 风火轮（轮），与兵器侧同一套图标，显示在名号中间上方
+  const heroBuffs: { icon: string; color: string }[] = [];
+  if ((g.state.buffAtkT ?? 0) > 0) heroBuffs.push({ icon: '炼', color: '#e8a830' });
+  if (g.state.pillAtk) heroBuffs.push({ icon: '丹', color: '#ff6040' });
+  if (g.state.pillFrq) heroBuffs.push({ icon: '轮', color: '#ffb830' });
+  if (heroBuffs.length > 0) {
+    // 羁绊武将顶部已有名号徽标，状态图标再上移一档避免遮挡
+    const bondOffset = opts?.showBondLabel && g.def.id === BOND_GENERAL ? CELL * 0.2 : 0;
+    drawStatusRow(ctx, cx, Math.min(a.y, z.y) - CELL * 0.42 - bondOffset, heroBuffs, 8);
+  }
   drawHeroWordWeapon(ctx, g);
   ctx.restore();
 }
