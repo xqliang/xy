@@ -3200,14 +3200,9 @@ export class Battle {
   }
 
   private buildAiAutoView(): AutoPlaceView {
-    // 与玩家侧同理：路径度量只依赖静态 aiPath 与 (ax,ay,rge)，单轮规划内缓存复用。
+    // 与玩家侧同理：路径度量只依赖静态 aiPath 与 (ax,ay,rge)，与棋面无关，
+    // 整个 view 生命周期（一次 planAutoPlaceSteps）内缓存复用，无需随落子失效。
     const caches = this.makePathMetricCaches();
-    // 落子/挪位后清缓存以防守；aiPath 本身不随棋面变，清理仅为与后续可能的棋面相关缓存保持一致语义。
-    const bumpBoard = () => {
-      caches.cover.clear();
-      caches.early.clear();
-      caches.first.clear();
-    };
     return {
       wave: () => this.wave,
       tray: () => this.aiTray,
@@ -3237,7 +3232,6 @@ export class Battle {
         const snap = this.cloneTrayToken(token);
         const ok = this.aiAutoPlaceApply(i, cell);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({
             kind: 'place',
             trayIndex: i,
@@ -3253,7 +3247,6 @@ export class Battle {
         if (!this.aiUnlocked.has(cellKey(to.c, to.r)) || !this.aiCellFree(to.c, to.r)) return false;
         u.cell = { c: to.c, r: to.r };
         u.fireDir = faceDirToward(u.cell, this.unitFaceGate(true));
-        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'moveUnit', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
@@ -3265,14 +3258,12 @@ export class Battle {
         ub.cell = { c: a.c, r: a.r };
         ua.fireDir = faceDirToward(ua.cell, this.unitFaceGate(true));
         ub.fireDir = faceDirToward(ub.cell, this.unitFaceGate(true));
-        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'swapUnits', a: { c: a.c, r: a.r }, b: { c: b.c, r: b.r } });
         return true;
       },
       swapUnitWord: (unitCell, wordCell) => {
         const ok = this.aiSwapUnitWord(unitCell, wordCell);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'swapUnitWord', unitCell: { ...unitCell }, wordCell: { ...wordCell } });
         }
         return ok;
@@ -3280,7 +3271,6 @@ export class Battle {
       swapWords: (from, to) => {
         const ok = this.aiSwapWords(from, to);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'swapWords', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         }
         return ok;
@@ -3294,14 +3284,12 @@ export class Battle {
         this.aiWords.delete(kFrom);
         w.cell = { c: to.c, r: to.r };
         this.aiWords.set(kTo, w);
-        bumpBoard();
         this.recordAiAutoPlaceStep({ kind: 'moveWord', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         return true;
       },
       displaceToTray: (cell) => {
         const ok = this.aiDisplaceToTray(cell);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'displaceToTray', cell: { c: cell.c, r: cell.r } });
         }
         return ok;
@@ -3309,7 +3297,6 @@ export class Battle {
       removeWord: (cell) => {
         const ok = this.aiRemoveOrphanWord(cell);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'removeWord', cell: { c: cell.c, r: cell.r } });
         }
         return ok;
@@ -3331,7 +3318,6 @@ export class Battle {
       mergeTray: (from, to) => {
         const ok = this.aiMergeTrayTokens(from, to);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'mergeTray', from, to });
         }
         return ok;
@@ -3339,7 +3325,6 @@ export class Battle {
       mergeBoard: (from, to) => {
         const ok = this.aiMergeBoardUnits(from, to);
         if (ok) {
-          bumpBoard();
           this.recordAiAutoPlaceStep({ kind: 'mergeBoard', from: { c: from.c, r: from.r }, to: { c: to.c, r: to.r } });
         }
         return ok;
