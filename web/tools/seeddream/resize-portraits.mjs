@@ -78,7 +78,7 @@ const TARGET = {
   'skill-pas-zhuwang.png': 180,
   'skill-pas-tongxin.png': 180,
   'skill-pas-dinghai.png': 180,
-  'act-bomb.png': 180, // 炸药立绘：路径雷显示约 CELL*0.44≈18px、技能槽约 48px，取 ×3 上限 180 足够
+  'skill-act-bomb.png': 180, // 炸药立绘：技能槽约 48px、路径雷约 18px，取 ×3 上限 180 足够
   'menu-home.png': 3132, // max(VIEW_W, VIEW_H) cover 背景
   'merchant-peddler.png': 216, // PEDDLER_BOX 72
 };

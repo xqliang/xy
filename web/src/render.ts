@@ -3116,13 +3116,13 @@ function drawArmedBomb(ctx: CanvasRenderingContext2D, bomb: { c: number; r: numb
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  const img = sprite('act-bomb');
+  const img = sprite('skill-act-bomb');
   if (img && img.width) {
     // 立绘：按格子高度绘制，底部略微下沉贴地；引信火花用 t 叠一层辉光让"活"起来
     const h = CELL * 0.62;
     const w = h * (img.width / img.height);
     ctx.drawImage(img, x - w / 2, y - h * 0.62, w, h);
-    const spark = 0.55 + 0.45 * Math.sin(bomb.t * 18);
+    const spark = 0.55 + 0.45 * Math.sin(performance.now() / 1000 * 12 + (bomb.c + bomb.r));
     const sx = x + w * 0.16;
     const sy = y - h * 0.52;
     const sr = r * 0.5 * spark + r * 0.25;
@@ -9739,7 +9739,7 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
   ctx.fillStyle = '#8fd3ff';
   ctx.font = '12px "PingFang SC", sans-serif';
   const cdLine = slot.ready
-    ? (pill ? '就绪 · 拖到兵器或武将' : '就绪')
+    ? (pill ? '就绪 · 拖到兵器或武将' : isBombActiveEffect(def.effect) ? '就绪 · 拖到路径格埋雷' : '就绪')
     : `冷却 ${def.cd}s · 剩余 ${Math.ceil(slot.cd)}s`;
   ctx.fillText(cdLine, x + pad, y + 40);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';

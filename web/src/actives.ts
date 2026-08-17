@@ -43,7 +43,7 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
     desc: '全体妖怪定身 3 秒' },
   { id: 'act_jinggu', name: '紧箍咒', icon: '咒', cd: 55, cost: 70, effect: 'jinggu',
     desc: '以最前妖怪为中心大范围爆发（波血×2.3，半径 2.5）' },
-  { id: 'act_bomb', name: '轰天雷', icon: '雷', cd: 26, cost: 60, effect: 'bomb',
+  { id: 'act_bomb', name: '轰天雷', icon: '雷', cd: 40, cost: 60, effect: 'bomb',
     desc: '拖到路径格埋下炸药，妖怪踏入即引爆，波血×2.6 炸伤半径 2 内群妖。一次一颗，炸完可再埋。' },
 ];
 

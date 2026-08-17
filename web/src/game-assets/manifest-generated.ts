@@ -3,7 +3,6 @@
 // Web / 微信构建的 ASSET_URLS 优先引用此表（缺失时回退 CDN_BASE+原名）。不要手改。
 import { CDN_BASE } from '../asset-manifest.names';
 export const HASHED_URLS: Record<string, string> = {
-  "act-bomb.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/act-bomb-8370835b.png",
   "bgm-baiguling.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-baiguling-cecf7b63.mp3",
   "bgm-huoyanshan.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-huoyanshan-63a4dd03.mp3",
   "bgm-liushahe.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-liushahe-29d5a467.mp3",
@@ -71,6 +70,7 @@ export const HASHED_URLS: Record<string, string> = {
   "rank-star-off.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/rank-star-off-b059013e.png",
   "rank-star-on.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/rank-star-on-a698c3b3.png",
   "skill-act-atk.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-act-atk-f89fb3db.png",
+  "skill-act-bomb.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-act-bomb-8370835b.png",
   "skill-act-freeze.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-act-freeze-586de580.png",
   "skill-act-frq.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-act-frq-f260dc24.png",
   "skill-act-jinggu.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-act-jinggu-81552a2c.png",

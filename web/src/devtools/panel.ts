@@ -336,6 +336,14 @@ function section(title: string): HTMLElement {
   return h;
 }
 
+/** 条目说明文字（技能 desc / 武将大招说明等），复用 hint 样式 */
+function descNote(text: string): HTMLElement {
+  const p = document.createElement('p');
+  p.className = 'xy-dt-hint';
+  p.textContent = text;
+  return p;
+}
+
 function btn(label: string, onClick: () => void, cls = ''): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
@@ -771,6 +779,7 @@ export class DevToolsPanel {
     for (let i = 0; i < GENERALS.length; i++) {
       const g = GENERALS[i]!;
       body.appendChild(section(`${g.name} (${g.id})`));
+      body.appendChild(descNote(`${g.role}·${g.rank}·${g.atkStyle} ｜ 大招「${g.skillName}」：${g.skillDesc}`));
       body.appendChild(objectFields(g as unknown as Record<string, unknown>, (k) => (
         ['atk', 'frq', 'rge', 'targets', 'skillCd', 'weight', 'expCostMul'].includes(k)
       )));
@@ -787,6 +796,7 @@ export class DevToolsPanel {
     body.appendChild(section('主动技能 ACTIVE（CD / 价格 / 下架）'));
     for (const a of ACTIVE_SKILLS) {
       body.appendChild(section(`${a.name} (${a.id})`));
+      body.appendChild(descNote(a.desc));
       body.appendChild(objectFields(a as unknown as Record<string, unknown>, (k) => (
         ['cd', 'cost', 'disabled'].includes(k)
       )));
@@ -795,6 +805,7 @@ export class DevToolsPanel {
     body.appendChild(section('被动技能 PASSIVE（价格 / 下架）'));
     for (const p of PASSIVE_SKILLS) {
       body.appendChild(section(`${p.name} (${p.id})`));
+      body.appendChild(descNote(p.desc));
       body.appendChild(objectFields(p as unknown as Record<string, unknown>, (k) => (
         ['cost', 'disabled'].includes(k)
       )));

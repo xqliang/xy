@@ -28,6 +28,6 @@ const data = await res.json();
 const url = data.data[0].url;
 const img = await fetch(url);
 const buf = Buffer.from(await img.arrayBuffer());
-const file = path.join(OUT, 'act-bomb-raw.jpg');
+const file = path.join(OUT, 'skill-act-bomb-raw.jpg');
 writeFileSync(file, buf);
-console.log(`OK act-bomb-raw ${(buf.length / 1024).toFixed(0)}KB -> ${file}`);
+console.log(`OK skill-act-bomb-raw ${(buf.length / 1024).toFixed(0)}KB -> ${file}`);
