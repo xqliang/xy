@@ -4553,7 +4553,8 @@ export class Battle {
 
   /** 玩家埋雷：拖拽释放到路径格时调用。返回是否成功（成功才进冷却）。 */
   placeBomb(i: number, cell: Cell): boolean {
-    if (this.status !== 'playing') return false;
+    // 波间等待（status='ready'）也允许埋雷，供玩家提前布置迎接下一波
+    if (this.status !== 'playing' && this.status !== 'ready') return false;
     const slot = this.activeSlots[i];
     if (!slot?.ready) return false;
     const def = activeById(slot.id);

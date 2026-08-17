@@ -1262,7 +1262,10 @@ function handlePillActivePointerDown(e: PointerEvent, x: number, y: number): boo
   const slot = battle.activeSlots[actSlot];
   const def = slot ? activeById(slot.id) : undefined;
   if (!def || !isDragActiveEffect(def.effect)) return false; // 仙丹/风火轮/炸药：拖拽释放
-  if (battle.status === 'playing' && slot?.ready) {
+  // 炸药可在波间等待（ready）预埋；仙丹/风火轮仍仅限战中（playing）
+  const usableNow = battle.status === 'playing'
+    || (battle.status === 'ready' && isBombActiveEffect(def.effect));
+  if (usableNow && slot?.ready) {
     ui.dragActiveSlot = actSlot;
     ui.activeDragStart = { x, y };
     ui.dragPos = { x, y };

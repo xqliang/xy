@@ -57,6 +57,16 @@ describe('炸药 bomb 主动技能', () => {
     expect(b.bombs.length).toBe(1);
   });
 
+  it('波间等待（ready）也能预埋炸药', () => {
+    const map = MAPS[0]!;
+    const b = new Battle(1, 1, map);
+    (b as unknown as { status: string }).status = 'ready'; // 清波后的波间等待
+    (b as unknown as { activeSlots: unknown[] }).activeSlots = [readySlot()];
+    const pv = map.path[Math.floor(map.path.length / 2)]!;
+    expect(b.placeBomb(0, { c: pv.c, r: pv.r })).toBe(true);
+    expect(b.bombs.length).toBe(1);
+  });
+
   it('可埋多颗（不同格），各自独立', () => {
     const map = MAPS[0]!;
     const b = new Battle(1, 1, map);
