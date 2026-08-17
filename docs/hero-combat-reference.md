@@ -195,7 +195,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 ### 唐僧受伤免疫
 
-- `tangsengHurtImmuneDur = 0.5`：漏怪成功扣血后短暂免疫。
+- `tangsengHurtImmuneDur = 1`：漏怪成功扣血后短暂免疫。
 - 免疫期内再有怪越线：移除该怪，**不扣血、不给**舍身饲魔蟠桃（防同帧连扣 / 免疫窗刷桃）。
 - AI 唐僧对称（`aiTangsengHurtImmuneT`）。
 

@@ -169,7 +169,12 @@ function drawWalkingMonk(ctx: CanvasRenderingContext2D, now: number): void {
   ctx.fill();
   ctx.restore();
 
-  ctx.drawImage(img, x, topY, drawW, drawH);
+  // 贴图原图马头朝左，而行进方向是向右，直接画会像倒着走；水平镜像后朝右前进。
+  ctx.save();
+  ctx.translate(x + drawW, topY);
+  ctx.scale(-1, 1);
+  ctx.drawImage(img, 0, 0, drawW, drawH);
+  ctx.restore();
 }
 
 /** 延迟期内占位：纸底 + 静态山水（不画标题/进度），避免缓存命中时闪进度页。 */

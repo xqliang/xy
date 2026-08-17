@@ -145,6 +145,7 @@ export const TUNING_MONSTER_KEYS = new Set([
 /** 武将技能 Tab：主动技能数值 + 武将大招分档 + 命中容差 */
 export const TUNING_SKILL_KEYS = new Set([
   'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
+  'bombDmgMul', 'bombExplodeRadius', 'bombContactRadius',
   'atkBuffMul', 'frqBuffMul', 'freezeStunDur',
   'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',

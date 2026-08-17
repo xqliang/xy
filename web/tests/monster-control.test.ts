@@ -41,33 +41,35 @@ function eliteMonster(partial: Partial<Monster> & { dist: number }): Monster {
 }
 
 describe('monster control debuff limits', () => {
-  it('skill radius is at most 1 cell', () => {
-    expect(TUNING.skillRadius).toBeLessThanOrEqual(1);
+  it('skill radius is at most 2 cells', () => {
+    expect(TUNING.skillRadius).toBeLessThanOrEqual(2);
   });
 
-  it('control skill only hits weapons within 1 cell', () => {
+  it('control skill hits weapons within radius and misses those outside', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const b = new Battle(1, 1, map);
-    // 路径格 (4,6)：正交邻格命中，对角/远处不命中
+    // 路径格 (4,6)：半径 2 内命中，半径外不命中
     const pathCell = { c: 4, r: 6 };
-    const adj = { c: 3, r: 6 }; // d=1
-    const diag = { c: 3, r: 5 }; // d=√2≈1.41 > 1
-    const farCell = { c: 1, r: 6 }; // d=3
+    const adj = { c: 3, r: 6 }; // d=1，半径内
+    const inFar = { c: 4, r: 4 }; // d=2，恰在半径边界内
+    const outNear = { c: 3, r: 4 }; // d=√5≈2.24 > 2，半径外
+    const farCell = { c: 1, r: 6 }; // d=3，半径外
 
     b.units.set(`${adj.c},${adj.r}`, makePlacedUnit('dao', 1, adj));
-    b.units.set(`${diag.c},${diag.r}`, makePlacedUnit('spear', 1, diag));
+    b.units.set(`${inFar.c},${inFar.r}`, makePlacedUnit('spear', 1, inFar));
+    b.units.set(`${outNear.c},${outNear.r}`, makePlacedUnit('cavalry', 1, outNear));
     b.units.set(`${farCell.c},${farCell.r}`, makePlacedUnit('archer', 1, farCell));
 
     b.monsters.push(eliteMonster({ id: 9, dist: pathDistAt(map, pathCell), skillCd: 0 }));
+    (b as unknown as { rollSkillTargetCount(): number }).rollSkillTargetCount = () => 3; // 固定取满，确定性验证半径边界
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
 
-    const hit = b.units.get(`${adj.c},${adj.r}`)!;
-    const missDiag = b.units.get(`${diag.c},${diag.r}`)!;
-    const missFar = b.units.get(`${farCell.c},${farCell.r}`)!;
-    expect(hit.stunT).toBeGreaterThan(0);
-    expect(missDiag.stunT).toBe(0);
-    expect(missFar.stunT).toBe(0);
+    // 半径内两把（d=1、d=2）都应被命中；半径外两把不中
+    expect(b.units.get(`${adj.c},${adj.r}`)!.stunT).toBeGreaterThan(0);
+    expect(b.units.get(`${inFar.c},${inFar.r}`)!.stunT).toBeGreaterThan(0);
+    expect(b.units.get(`${outNear.c},${outNear.r}`)!.stunT).toBe(0);
+    expect(b.units.get(`${farCell.c},${farCell.r}`)!.stunT).toBe(0);
   });
 
   it('when two weapons are within 1 cell, debuffs 1–2 nearest by roll', () => {

@@ -23,6 +23,7 @@ export type AssetKey =
   | 'monster-minion-pansidong'
   | 'monster-boss-pansidong'
   | 'item-shovel'
+  | 'act-bomb'
   | 'hero-wukong'
   | 'hero-bajie'
   | 'hero-shaseng'

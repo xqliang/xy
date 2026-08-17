@@ -66,7 +66,7 @@ import {
   type BoardPowerResult,
   type PressurePlan,
 } from './board-power';
-import { activeById, isPillActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
+import { activeById, isPillActiveEffect, isDragActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
 import {
   DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses,
@@ -173,9 +173,9 @@ export const TUNING = {
   eliteFromWave: 4, // 第 4 波起可能刷出精英妖（略推迟控场，降低开局秒杀感）
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
-  skillRadius: 1, // 控制技能作用半径（格）
+  skillRadius: 2, // 控制技能作用半径（格）
   skillTargetMin: 1, // 单次施法最少命中兵器数
-  skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
+  skillTargetMax: 3, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 1.4, // 眩晕：武将暂停攻击（秒）
@@ -188,7 +188,7 @@ export const TUNING = {
   debuffImmuneDur: 4.5, // 兵器对同一种 debuff 的免疫时间（秒，含效果期内）
   // —— 小 Boss（第 4 波之后、非妖王波：有概率刷出跨地图小头目，各带独立光环技能）——
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
-  miniBossChance: 0.42, // 非 BOSS 波出现小 Boss 的概率
+  miniBossChance: 0.5, // 非 BOSS 波出现小 Boss 的概率
   miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
   miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
@@ -209,6 +209,9 @@ export const TUNING = {
   meteorRadius: 2, // 陨石半径；被动「陨石」亦等最前活怪走过 ≥ 该值后再砸
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
+  bombDmgMul: 2.6, // 埋雷炸药：波基础怪血 × 有效难度 × 该系数（略高于陨石，因需预判埋点）
+  bombExplodeRadius: 2, // 炸药引爆后的 AOE 伤害半径（格）
+  bombContactRadius: 0.55, // 妖怪进入炸药此半径即引爆（踏入触发）
   atkBuffMul: 1.4, // 仙丹单体攻击倍率
   frqBuffMul: 1.4, // 风火轮单体攻速倍率
   freezeStunDur: 3, // 冰封定身时长（全场；CD 24s）
@@ -236,7 +239,7 @@ export const TUNING = {
   heroBuffDurTransit: 3.5, // 丹君增益时长（秒）
   heroCdrSecMain: 4, // 文殊：其他武将大招剩余 CD 缩短（秒）
   heroCdrSecTransit: 2.5, // 慧殊：缩短秒数
-  tangsengHurtImmuneDur: 0.5, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
+  tangsengHurtImmuneDur: 1, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
@@ -865,6 +868,10 @@ export class Battle {
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
+  // 埋雷炸药（主动技能 bomb）：路径上待引爆的地雷，可埋多颗、同一格子最多一颗；t 累积秒用于引信闪烁
+  bombs: { c: number; r: number; t: number }[] = [];
+  aiBombs: { c: number; r: number; t: number }[] = [];
+  bombFx: { c: number; r: number; ttl: number; maxTtl: number; ai: boolean }[] = []; // 引爆爆炸特效
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   damageFloats: DamageFloat[] = []; // 受击伤害飘字
   digFx: { c: number; r: number; t: number }[] = []; // 铲子挖坑动画(来回两下)，t 累积秒数
@@ -1642,7 +1649,7 @@ export class Battle {
   aiMods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
   /** 攻击型主动技能(陨石/紧箍咒)：距离条件达成后的随机延迟倒计时（秒）；undefined=未解锁 */
-  private aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu', number>> = {};
+  private aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu' | 'bomb', number>> = {};
   private aiShovelTimer = 0;
   private aiMeteorPending = false;
   aiPickedItems: string[] = []; // HUD 右上角展示
@@ -4532,6 +4539,103 @@ export class Battle {
     else this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
   }
 
+  // —— 埋雷炸药（主动技能 bomb）——
+  // 落点必须在路径上（妖怪必经之路）；可埋多颗，但同一格子最多一颗（炸响后该格释放，可再埋）。
+  private bombOnPath(ai: boolean, cell: { c: number; r: number }): boolean {
+    return Battle.nearestPathDistOn(ai ? this.aiPath : this.map.path, cell) <= 0.75;
+  }
+
+  private bombCellTaken(list: { c: number; r: number }[], cell: { c: number; r: number }): boolean {
+    return list.some((b) => Math.hypot(b.c - cell.c, b.r - cell.r) < 0.5);
+  }
+
+  /** 玩家埋雷：拖拽释放到路径格时调用。返回是否成功（成功才进冷却）。 */
+  placeBomb(i: number, cell: Cell): boolean {
+    if (this.status !== 'playing') return false;
+    const slot = this.activeSlots[i];
+    if (!slot?.ready) return false;
+    const def = activeById(slot.id);
+    if (!def || def.effect !== 'bomb') return false;
+    if (!this.bombOnPath(false, cell)) { this.message = '炸药只能埋在妖怪必经的路径上'; return false; }
+    if (this.bombCellTaken(this.bombs, cell)) { this.message = '这个格子已经埋了炸药'; return false; }
+    this.bombs.push({ c: cell.c, r: cell.r, t: 0 });
+    slot.cd = slot.cdMax;
+    slot.ready = false;
+    slot.flash = 0.6;
+    this.message = '轰天雷已埋下，静候妖怪踏入';
+    this.emit('item');
+    return true;
+  }
+
+  /** AI 埋雷：在指定路径格埋下（由 triggerAiActive 调用；CD 交给其公共尾部统一处理，风格同仙丹）。 */
+  private placeAiBomb(cell: { c: number; r: number }): boolean {
+    if (!this.bombOnPath(true, cell) || this.bombCellTaken(this.aiBombs, cell)) return false;
+    this.aiBombs.push({ c: cell.c, r: cell.r, t: 0 });
+    return true;
+  }
+
+  /** AI 埋点：最前妖怪前方约 1.8 格的路径点（让妖怪走入即触发）。 */
+  private aiBombPlacementCell(): { c: number; r: number } | null {
+    if (this.aiMonsters.length === 0) return null;
+    const frontDist = this.aiFrontMonsterDist();
+    const d = Math.min(lenOf(this.aiPath), frontDist + 1.8);
+    return posAlong(this.aiPath, d);
+  }
+
+  // 每帧：引信闪烁计时 + 妖怪踏入引爆（逐颗判定）+ 爆炸特效寿命推进
+  private updateBombs(dt: number): void {
+    this.stepBombs(this.bombs, false, dt);
+    this.stepBombs(this.aiBombs, true, dt);
+    if (this.bombFx.length) {
+      for (const f of this.bombFx) f.ttl -= dt;
+      this.bombFx = this.bombFx.filter((f) => f.ttl > 0);
+    }
+  }
+
+  private stepBombs(list: { c: number; r: number; t: number }[], ai: boolean, dt: number): void {
+    for (let k = list.length - 1; k >= 0; k--) {
+      const bmb = list[k]!;
+      bmb.t += dt;
+      if (this.anyMonsterAtBomb(bmb, ai)) {
+        this.explodeBombAt(bmb, ai);
+        list.splice(k, 1);
+      }
+    }
+  }
+
+  private anyMonsterAtBomb(bomb: { c: number; r: number }, ai: boolean): boolean {
+    const monsters = ai ? this.aiMonsters : this.monsters;
+    for (const m of monsters) {
+      if (m.hp <= 0) continue;
+      const p = ai ? posAlong(this.aiPath, m.dist) : posAtDistance(this.map, m.dist);
+      if (Math.hypot(p.c - bomb.c, p.r - bomb.r) <= TUNING.bombContactRadius) return true;
+    }
+    return false;
+  }
+
+  // 单颗炸药引爆：范围 AOE 伤害 + 特效（不改动列表，由调用方移除该颗）
+  private explodeBombAt(bomb: { c: number; r: number }, ai: boolean): void {
+    const p = { c: bomb.c, r: bomb.r };
+    const dmg = ai
+      ? (TUNING.monsterHpBase + TUNING.monsterHpStep * this.wave) * this.effectiveDifficulty() * TUNING.bombDmgMul
+      : this.normalMonsterHp() * TUNING.bombDmgMul;
+    const monsters = ai ? this.aiMonsters : this.monsters;
+    for (const m of monsters) {
+      if (m.hp <= 0) continue;
+      const q = ai ? posAlong(this.aiPath, m.dist) : posAtDistance(this.map, m.dist);
+      if (Math.hypot(q.c - p.c, q.r - p.r) > TUNING.bombExplodeRadius) continue;
+      if (ai) { m.hp -= dmg; m.hitFlash = 0.2; this.spawnDamageFloat(q.c, q.r, dmg); }
+      else this.hurtMonster(m, dmg, q, 0.2);
+    }
+    this.bombFx.push({ c: p.c, r: p.r, ttl: 0.6, maxTtl: 0.6, ai });
+    this.bursts.push({ kind: 'death', c: p.c, r: p.r, ttl: 0.5, maxTtl: 0.5, big: true, color: '#ff7a3c' });
+    if (!ai) {
+      this.ultFlash = Math.max(this.ultFlash, 0.4);
+      this.message = '轰天雷炸响！';
+      this.emit('ult');
+    }
+  }
+
   // 开局预排本局神兵碎片：是否可能掉落 + 掉哪一件（main 注入可见性后调用）
   planBattleFragmentDrop(): void {
     this.battleFragmentDropId = null;
@@ -5162,7 +5266,7 @@ export class Battle {
    * 解锁瞬间随机滚 0~aiOffensiveActiveDelayMax 秒延迟，避免一开怪就死板打出；怪物退回阈值下则清空重来。 */
   private tickAiOffensiveActiveDelay(dt: number): void {
     const unlocked = this.aiFrontMonsterDist() >= TUNING.aiOffensiveActiveMinDist;
-    for (const effect of ['meteor', 'jinggu'] as const) {
+    for (const effect of ['meteor', 'jinggu', 'bomb'] as const) {
       if (!unlocked) {
         delete this.aiOffensiveDelay[effect];
         continue;
@@ -5176,7 +5280,7 @@ export class Battle {
     }
   }
 
-  private aiOffensiveActiveReady(effect: 'meteor' | 'jinggu'): boolean {
+  private aiOffensiveActiveReady(effect: 'meteor' | 'jinggu' | 'bomb'): boolean {
     const remain = this.aiOffensiveDelay[effect];
     return remain !== undefined && remain <= 0;
   }
@@ -5300,6 +5404,9 @@ export class Battle {
       case 'atkBuff':
       case 'frqBuff':
         return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(effect);
+      case 'bomb':
+        // 有怪且到了攻击型择时窗口就埋（可多颗；同格占用由 placeAiBomb 拦截）
+        return this.aiMonsters.length >= 1 && this.aiOffensiveActiveReady('bomb');
       default: {
         const _exhaustive: never = effect;
         void _exhaustive;
@@ -5319,6 +5426,8 @@ export class Battle {
         return 0;
       case 'jinggu':
       case 'meteor':
+        return 1;
+      case 'bomb':
         return 1;
       case 'atkBuff':
       case 'frqBuff':
@@ -5567,16 +5676,36 @@ export class Battle {
     g.state.skillFlash = 1;
     const gAx = (g.cells[0].c + g.cells[1].c) / 2;
     const gAy = (g.cells[0].r + g.cells[1].r) / 2;
-    const center = inRange[0]?.p ?? { c: gAx, r: gAy };
+    let center = inRange[0]?.p ?? { c: gAx, r: gAy };
     switch (g.def.skill) {
       case 'burst': {
         for (const t of inRange) hurt(t.m, damage(atk * 3), t.p, 0.15);
         break;
       }
       case 'ranged': {
-        const t = inRange[0]!;
+        // 真·穿透：命中「二郎→主目标」这条直线走廊上的多个敌人（垂距≤~1 格）。
+        // 二郎「天眼诛邪」贯穿最多 4 个；牛郎「织云箭」为单体过渡，仍只打 1 个。
+        const primary = inRange[0]!;
+        const pierceMax = g.def.id === 'erlang' ? 4 : 1;
+        const dirC = primary.p.c - gAx;
+        const dirR = primary.p.r - gAy;
+        const len = Math.hypot(dirC, dirR) || 1;
+        const ux = dirC / len;
+        const uy = dirR / len;
+        const CORRIDOR = 0.95; // 光束轴向的垂直半宽（格）
+        const line = inRange
+          .map((x) => {
+            const rx = x.p.c - gAx;
+            const ry = x.p.r - gAy;
+            return { m: x.m, p: x.p, proj: rx * ux + ry * uy, perp: Math.abs(rx * uy - ry * ux) };
+          })
+          .filter((x) => x.proj >= 0 && x.perp <= CORRIDOR)
+          .sort((a, b) => a.proj - b.proj)
+          .slice(0, pierceMax);
         const dmg = damage(atk * 5 * GENERAL_TUNING.CRIT_MULT);
-        hurt(t.m, dmg, t.p, 0.2, true);
+        for (const t of line) hurt(t.m, dmg, t.p, 0.2, true);
+        // 光束延伸到最远命中目标，凸显「贯穿一整条线」
+        center = line[line.length - 1]?.p ?? primary.p;
         break;
       }
       case 'stun': {
@@ -5936,6 +6065,11 @@ export class Battle {
         this.doAiJingu();
         this.emit('ult');
         break;
+      case 'bomb': {
+        const cell = this.aiBombPlacementCell();
+        if (!cell || !this.placeAiBomb(cell)) return false;
+        break;
+      }
     }
     if (def.effect === 'meteor' || def.effect === 'jinggu') {
       this.ultFlash = Math.max(this.ultFlash, 0.35);
@@ -5983,6 +6117,11 @@ export class Battle {
     if (!t) return false;
     if (effect === 'atkBuff') return t.kind === 'unit' ? !t.u.pillAtk : !t.g.pillAtk;
     return t.kind === 'unit' ? !t.u.pillFrq : !t.g.pillFrq;
+  }
+
+  /** 该格能否埋炸药：在路径上且该格尚未埋（供拖拽落点高亮） */
+  canPlaceBomb(cell: Cell): boolean {
+    return this.bombOnPath(false, cell) && !this.bombCellTaken(this.bombs, cell);
   }
 
   private pillTargetLabel(t: { kind: 'unit'; u: PlacedUnit } | { kind: 'general'; g: ActiveGeneral }): string {
@@ -6097,7 +6236,7 @@ export class Battle {
     if (!slot || !slot.ready) return false;
     const def = activeById(slot.id);
     if (!def) return false;
-    if (isPillActiveEffect(def.effect)) return false;
+    if (isDragActiveEffect(def.effect)) return false; // 仙丹/风火轮/炸药需拖拽释放，不响应点按
     // 需要场上有怪才有意义的技能：无怪时不触发、不进冷却（避免空放浪费）
     // 陨石除外：无怪也可释放并播放落点特效（清波收尾/空场点技能都要看得到）
     const needsMonsters: ActiveEffect[] = ['palm', 'freeze', 'jinggu'];
@@ -6238,6 +6377,7 @@ export class Battle {
     this.fx = [];
     this.bursts = [];
     this.heroUltFx = [];
+    this.bombFx = []; // 爆炸残影清掉；已埋未引爆的地雷（bombs/aiBombs）作为玩法状态保留跨波
     this.peachFloats = [];
     this.damageFloats = [];
     this.ultFlash = 0;
@@ -6411,6 +6551,7 @@ export class Battle {
     this.updateMonsterSkills(dt);
     this.updateGenerals(dt);
     this.updateActives(dt);
+    this.updateBombs(dt);
     this.updateMonsters(dt);
     const dangerNow = this.dangerNear();
     if (dangerNow && !this.wasDangerNear) this.emit('danger');

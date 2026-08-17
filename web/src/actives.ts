@@ -10,7 +10,8 @@
 // - frqBuff 风火轮：拖到单体兵器/武将，攻速 +40%（本局，每单位一次）
 // - freeze  冰封定身：全体妖怪短暂定身
 // - jinggu  紧箍咒：以最前妖怪为中心的大范围 AOE 爆发
-export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' | 'jinggu';
+// - bomb    埋雷炸药：拖到路径格埋下地雷，妖怪踏入即引爆，范围 AOE；一次一颗，炸完可再埋
+export type ActiveEffect = 'palm' | 'meteor' | 'atkBuff' | 'frqBuff' | 'freeze' | 'jinggu' | 'bomb';
 
 export interface ActiveSkillDef {
   id: string; // 稳定 id（与被动技能 id 刻意区分，两套系统互不查表）
@@ -42,6 +43,8 @@ export const ACTIVE_SKILLS: ActiveSkillDef[] = [
     desc: '全体妖怪定身 3 秒' },
   { id: 'act_jinggu', name: '紧箍咒', icon: '咒', cd: 55, cost: 70, effect: 'jinggu',
     desc: '以最前妖怪为中心大范围爆发（波血×2.3，半径 2.5）' },
+  { id: 'act_bomb', name: '轰天雷', icon: '雷', cd: 26, cost: 60, effect: 'bomb',
+    desc: '拖到路径格埋下炸药，妖怪踏入即引爆，波血×2.6 炸伤半径 2 内群妖。一次一颗，炸完可再埋。' },
 ];
 
 export function activeById(id: string): ActiveSkillDef | undefined {
@@ -51,6 +54,16 @@ export function activeById(id: string): ActiveSkillDef | undefined {
 /** 仙丹 / 风火轮：需拖到单体目标，非即时全场释放 */
 export function isPillActiveEffect(effect: ActiveEffect): boolean {
   return effect === 'atkBuff' || effect === 'frqBuff';
+}
+
+/** 炸药：需拖到路径格埋雷 */
+export function isBombActiveEffect(effect: ActiveEffect): boolean {
+  return effect === 'bomb';
+}
+
+/** 需要拖拽到目标（单体兵器/武将 或 路径格）才能释放的主动技能，区别于点一下即放的即时技 */
+export function isDragActiveEffect(effect: ActiveEffect): boolean {
+  return isPillActiveEffect(effect) || isBombActiveEffect(effect);
 }
 
 /** 是否可上架/装备（未标记 disabled） */

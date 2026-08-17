@@ -16,7 +16,7 @@ import {
 } from './board';
 import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
-import { activeById, isPillActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
+import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
 import type { UnitType } from '@core';
@@ -857,6 +857,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawBoard(ctx, b, ui);
   drawSpawnGate(ctx, b);
   drawSpawnDirectionHints(ctx, b);
+  drawBombs(ctx, b); // 埋在路径上的地雷（玩家+AI），画在怪物之下的地面层
   drawTangseng(ctx, b);
   drawMonsters(ctx, b);
   drawPalmPushFx(ctx, b);
@@ -873,6 +874,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawDigFx(ctx, b.digFx);
   drawDigFx(ctx, b.aiDigFx);
   drawBursts(ctx, b);
+  drawBombFx(ctx, b); // 炸药引爆特效（冲击波+火球+碎片），画在爆点之上
   drawPeachFloats(ctx, b);
   drawDamageFloats(ctx, b);
   drawHeroUlt(ctx, b);
@@ -3101,6 +3103,136 @@ function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 埋在路径上的炸药：优先用炸药立绘（act-bomb），未加载则回退矢量铁球 + 引信火花
+function drawArmedBomb(ctx: CanvasRenderingContext2D, bomb: { c: number; r: number; t: number }) {
+  const { x, y } = cellCenterPx(bomb.c, bomb.r);
+  const r = CELL * 0.22;
+  ctx.save();
+  // 地面阴影
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(x, y + r * 0.95, r * 1.05, r * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const img = sprite('act-bomb');
+  if (img && img.width) {
+    // 立绘：按格子高度绘制，底部略微下沉贴地；引信火花用 t 叠一层辉光让"活"起来
+    const h = CELL * 0.62;
+    const w = h * (img.width / img.height);
+    ctx.drawImage(img, x - w / 2, y - h * 0.62, w, h);
+    const spark = 0.55 + 0.45 * Math.sin(bomb.t * 18);
+    const sx = x + w * 0.16;
+    const sy = y - h * 0.52;
+    const sr = r * 0.5 * spark + r * 0.25;
+    const sg = ctx.createRadialGradient(sx, sy, 0.5, sx, sy, sr);
+    sg.addColorStop(0, `rgba(255,250,210,${0.9 * spark})`);
+    sg.addColorStop(0.5, `rgba(255,170,60,${0.6 * spark})`);
+    sg.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  // —— 回退：矢量铁球 ——
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.15, x, y, r);
+  g.addColorStop(0, '#5a5f68');
+  g.addColorStop(0.6, '#2b2f36');
+  g.addColorStop(1, '#15181c');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  // 高光点
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.beginPath();
+  ctx.arc(x - r * 0.34, y - r * 0.36, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+  // 引信口 + 弯曲引信
+  ctx.fillStyle = '#3a2a12';
+  ctx.beginPath();
+  ctx.arc(x, y - r * 0.9, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#9a774a';
+  ctx.lineWidth = Math.max(1.4, r * 0.14);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.9);
+  ctx.quadraticCurveTo(x + r * 0.55, y - r * 1.5, x + r * 0.22, y - r * 1.95);
+  ctx.stroke();
+  // 火花：随 t 闪烁跳动，红黄辉光
+  const spark = 0.55 + 0.45 * Math.sin(bomb.t * 18);
+  const sx = x + r * 0.22;
+  const sy = y - r * 1.95;
+  const sr = r * 0.65 * spark + r * 0.3;
+  const sg = ctx.createRadialGradient(sx, sy, 0.5, sx, sy, sr);
+  sg.addColorStop(0, `rgba(255,250,210,${0.95 * spark})`);
+  sg.addColorStop(0.5, `rgba(255,170,60,${0.7 * spark})`);
+  sg.addColorStop(1, 'rgba(255,120,40,0)');
+  ctx.fillStyle = sg;
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBombs(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const bomb of b.bombs) drawArmedBomb(ctx, bomb);
+  for (const bomb of b.aiBombs) drawArmedBomb(ctx, bomb);
+}
+
+// 炸药引爆特效：冲击波环 + 火球核心 + 四散碎片射线
+function drawBombFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const f of b.bombFx) {
+    const { x, y } = cellCenterPx(f.c, f.r);
+    const t = 1 - f.ttl / f.maxTtl; // 0→1
+    const R = CELL * TUNING.bombExplodeRadius;
+    ctx.save();
+    // 冲击波环（快速外扩、变淡）
+    ctx.globalAlpha = (1 - t) * 0.9;
+    ctx.strokeStyle = 'rgba(255,220,150,0.9)';
+    ctx.lineWidth = Math.max(2, CELL * 0.12 * (1 - t));
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.2 + t * 0.95), 0, Math.PI * 2);
+    ctx.stroke();
+    // 火球核心（前段最亮，迅速收束）
+    const core = Math.max(0, 1 - t * 1.6);
+    if (core > 0) {
+      const rad = R * (0.3 + t * 0.5) * (0.5 + core);
+      const g = ctx.createRadialGradient(x, y, 1, x, y, rad);
+      g.addColorStop(0, `rgba(255,252,230,${core})`);
+      g.addColorStop(0.35, `rgba(255,185,75,${0.85 * core})`);
+      g.addColorStop(0.7, `rgba(255,95,40,${0.5 * core})`);
+      g.addColorStop(1, 'rgba(120,40,20,0)');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 碎片射线
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = '#ffd27a';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    const shards = 10;
+    for (let i = 0; i < shards; i++) {
+      const a = (i / shards) * Math.PI * 2 + f.c * 0.7;
+      const r0 = R * 0.2 + t * R * 0.55;
+      const r1 = r0 + CELL * 0.42 * (1 - t);
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+      ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
 // 缓动：ease-out（两端→中段），大招动画统一手感
 function easeOut(p: number): number { return 1 - Math.pow(1 - p, 3); }
 function easeIn(p: number): number { return p * p * p; }
@@ -3578,20 +3710,26 @@ function drawErlangSkyEyeBeam(
   ctx.translate(eyeX, eyeY);
   ctx.rotate(ang);
   ctx.globalAlpha = fade;
-  const grad = ctx.createLinearGradient(0, 0, reach, 0);
-  grad.addColorStop(0, 'rgba(255,255,255,0.95)');
-  grad.addColorStop(0.2, 'rgba(150,216,255,0.85)');
-  grad.addColorStop(1, 'rgba(180,235,255,0.12)');
-  ctx.fillStyle = grad;
+  // 普攻：断续的青白虚线（一节一节、不连贯），与大招的连贯光束区分开
+  const dash = Math.max(5, beamW * 1.15);
+  const gap = dash * 1.2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(150,216,255,0.85)';
+  ctx.lineWidth = Math.max(1.6, beamW * 0.34);
+  ctx.setLineDash([dash, gap]);
   ctx.beginPath();
-  ctx.moveTo(0, -beamW * 0.32);
-  ctx.lineTo(reach, -beamW * 0.55);
-  ctx.lineTo(reach, beamW * 0.55);
-  ctx.lineTo(0, beamW * 0.32);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = `rgba(255,255,255,${0.65 * fade})`;
-  ctx.fillRect(0, -beamW * 0.12, reach, beamW * 0.24);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(reach, 0);
+  ctx.stroke();
+  // 更细的白色亮芯，虚线相位错开半格，强调「断开」质感
+  ctx.strokeStyle = `rgba(255,255,255,${0.85 * fade})`;
+  ctx.lineWidth = Math.max(1, beamW * 0.16);
+  ctx.lineDashOffset = -dash * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(reach, 0);
+  ctx.stroke();
+  ctx.setLineDash([]);
   ctx.restore();
 
   if (beamReach > 0.65) {
@@ -3643,7 +3781,8 @@ function drawUltErlang(
 
   if (beamReach <= 0.01) return;
 
-  const beamW = (8 + tier * 2.2) * (0.5 + open * 0.5);
+  // 大招保持连贯实心光束，并比普攻明显更粗（稍加粗一档）
+  const beamW = (10 + tier * 2.6) * (0.5 + open * 0.5);
   const tipX = eyeX + Math.cos(ang) * reach;
   const tipY = eyeY + Math.sin(ang) * reach;
 
@@ -9906,7 +10045,25 @@ function drawPillDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState
   if (ui.dragActiveSlot === null || !ui.dragPos) return;
   const slot = b.activeSlots[ui.dragActiveSlot];
   const def = slot ? activeById(slot.id) : undefined;
-  if (!def || !isPillActiveEffect(def.effect)) return;
+  if (!def) return;
+  // 炸药：高亮鼠标所在格——路径合法且未埋=绿，否则=红
+  if (isBombActiveEffect(def.effect)) {
+    const cell = pxToCell(ui.dragPos.x, ui.dragPos.y);
+    if (!cell) return;
+    const ok = b.canPlaceBomb(cell);
+    const x = BOARD_X + cell.c * CELL;
+    const y = BOARD_Y + cell.r * CELL;
+    ctx.save();
+    roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 8);
+    ctx.fillStyle = ok ? 'rgba(255,150,40,0.24)' : 'rgba(200,60,50,0.20)';
+    ctx.fill();
+    ctx.strokeStyle = ok ? '#ff9a30' : '#c8433a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (!isPillActiveEffect(def.effect)) return;
   const effect = def.effect;
   const seen = new Set<string>();
   const mark = (c: Cell) => {

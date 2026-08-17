@@ -1,6 +1,6 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, findTrayIndex, traySome } from './battle';
-import { activeById, isPillActiveEffect } from './actives';
+import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
 import { canMerge } from '@core';
 import type { UnitType } from '@core';
 import {
@@ -1261,7 +1261,7 @@ function handlePillActivePointerDown(e: PointerEvent, x: number, y: number): boo
   if (actSlot === null) return false;
   const slot = battle.activeSlots[actSlot];
   const def = slot ? activeById(slot.id) : undefined;
-  if (!def || !isPillActiveEffect(def.effect)) return false;
+  if (!def || !isDragActiveEffect(def.effect)) return false; // 仙丹/风火轮/炸药：拖拽释放
   if (battle.status === 'playing' && slot?.ready) {
     ui.dragActiveSlot = actSlot;
     ui.activeDragStart = { x, y };
@@ -1302,7 +1302,7 @@ function handleButton(x: number, y: number): boolean {
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
-        if (def && isPillActiveEffect(def.effect)) return true;
+        if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
         if (battle.activeSlots[i]?.ready) battle.triggerActive(i);
         else {
           ui.activePopup = i;
@@ -1693,7 +1693,11 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       ui.activePopupUntil = performance.now() + 2500;
     } else {
       const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
-      if (target) battle.applyPillActive(ui.dragActiveSlot, target);
+      if (target) {
+        const slotDef = activeById(battle.activeSlots[ui.dragActiveSlot]?.id ?? '');
+        if (slotDef && isBombActiveEffect(slotDef.effect)) battle.placeBomb(ui.dragActiveSlot, target);
+        else battle.applyPillActive(ui.dragActiveSlot, target);
+      }
     }
   } else if (ui.dragPos) {
     const target = pxToCell(ui.dragPos.x, ui.dragPos.y);

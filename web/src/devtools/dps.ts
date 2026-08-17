@@ -131,6 +131,10 @@ function activeApproxDps(a: ActiveSkillDef): { dps: number; detail: string } {
       const dmg = waveHp * TUNING.jingguDmgMul;
       return { dps: dmg / a.cd, detail: `波血×${TUNING.jingguDmgMul} / ${a.cd}s` };
     }
+    case 'bomb': {
+      const dmg = waveHp * TUNING.bombDmgMul;
+      return { dps: dmg / a.cd, detail: `波血×${TUNING.bombDmgMul} 埋雷 / ${a.cd}s` };
+    }
     case 'palm':
       return { dps: (TUNING.palmPushCells * 2) / a.cd, detail: `击退 ${TUNING.palmPushCells} 格（控场折算）` };
     case 'freeze':
