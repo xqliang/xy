@@ -3695,7 +3695,9 @@ export class Battle {
         maxOrphanWords: AI_MAX_ORPHAN_WORDS,
         maxSteps: 1,
       });
-    } else {
+    } else if (this.aiMonsters.length > 0) {
+      // 无怪时不做纯调位：调位只按路径覆盖择优，空场会在两套等价布局间反复横跳（见 oscillation-probe）。
+      // 与玩家侧一致（玩家仅在有怪/有可落 tray 时 reposition），有怪来袭才按怪群微调。
       this.tickBattleReposition('ai', 1);
     }
     this.commitAutoPlaceLayoutMemory('ai', layoutSnap, keyBefore);
