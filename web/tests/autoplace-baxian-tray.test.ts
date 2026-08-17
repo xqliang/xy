@@ -54,6 +54,7 @@ describe('tray仙 + 棋盘八 → 一次八仙', () => {
     unlocked.add(cellKey(4, 9));
 
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
 
     expect(b.activeGenerals().some((g) => g.def.id === 'baxian')).toBe(true);
     const ba = [...b.words.values()].find((w) => w.char === '八');

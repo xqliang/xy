@@ -113,6 +113,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     b.autoPlaceTray();
     const elapsed = performance.now() - t0;
 
+    b.flushAutoPlacePlaybackForTest();
     const filled = SCREENSHOT_EMPTY_LEFT.filter(({ c, r }) => b.units.has(cellKey(c, r)));
     expect(filled.length).toBeGreaterThan(0);
     expect(b.tray.length).toBeLessThan(trayBefore);
@@ -198,6 +199,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     const t0 = performance.now();
     b.autoPlaceTray();
     expect(performance.now() - t0).toBeLessThan(200);
+    b.flushAutoPlacePlaybackForTest();
     expect(b.units.has(cellKey(emptyBesideBai.c, emptyBesideBai.r))).toBe(true);
     expect(b.tray.length).toBeLessThan(5);
   });

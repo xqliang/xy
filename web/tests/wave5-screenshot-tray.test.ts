@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { planAutoPlaceSteps } from '../src/autoplace';
-import { Battle, makePlacedUnit } from '../src/battle';
+import { Battle, makePlacedUnit, trayTokens } from '../src/battle';
 import { isPlayerCell, isPathCell, mapById } from '../src/board';
 import { matchGeneral } from '../src/generals';
 
@@ -85,7 +85,10 @@ describe('wave4 screenshot tray words', () => {
     expect(target).toBeDefined();
     const ok = b.placeFromTray(0, target);
     expect(ok).toBe(true);
-    expect(b.tray.length).toBe(1);
-    expect(b.tray[0]?.kind === 'word' && b.tray[0].char).toBe('牛');
+    // 候选区是稀疏定长数组：clearTraySlot 用 delete 留空洞，tray.length 不随落子减少，
+    // 须用 trayTokens() 统计真实剩余令牌（落掉 index0 的「红」后应只剩「牛」）。
+    const remaining = trayTokens(b.tray);
+    expect(remaining.length).toBe(1);
+    expect(remaining[0]?.kind === 'word' && remaining[0].char).toBe('牛');
   });
 });

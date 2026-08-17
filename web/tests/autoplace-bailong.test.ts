@@ -28,6 +28,7 @@ describe('tray龙 + 棋盘白（用户截图盘面）→ 白龙', () => {
     const b = new Battle(20260809, 3, mapById('huoyanshan'));
     setupBailongScreenshot(b);
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
 
     expect(b.tray.every((t) => t.kind !== 'unit' || !t.displaced)).toBe(true);
     expect([...b.units.values()].some((u) => u.type === 'archer' && u.tier === 2)).toBe(true);
@@ -37,6 +38,7 @@ describe('tray龙 + 棋盘白（用户截图盘面）→ 白龙', () => {
     const b = new Battle(20260809, 3, mapById('huoyanshan'));
     setupBailongScreenshot(b);
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
 
     for (const { c, r } of BAILONG_DOT_CELLS) {
       expect(b.units.has(cellKey(c, r)), `(${c},${r}) 为路径，不应落兵`).toBe(false);
@@ -51,6 +53,7 @@ describe('tray龙 + 棋盘白（用户截图盘面）→ 白龙', () => {
     b.autoPlaceTray();
     expect(performance.now() - t0).toBeLessThan(500);
 
+    b.flushAutoPlacePlaybackForTest();
     const bai = [...b.words.values()].find((w) => w.char === '白');
     const long = [...b.words.values()].find((w) => w.char === '龙');
     expect(b.tray.some((t) => t.kind === 'word' && t.char === '龙')).toBe(false);

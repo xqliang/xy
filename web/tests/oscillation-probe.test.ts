@@ -11,6 +11,7 @@ function repeatedAutoplaceKeys(b: Battle, rounds: number): string[] {
   const keys: string[] = [];
   for (let i = 0; i < rounds; i++) {
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
     keys.push(autoPlaceBoardKey(playerView(b)));
   }
   return keys;
@@ -23,6 +24,7 @@ describe('无怪时重复布阵', () => {
     for (let i = 0; i < 8; i++) {
       b.summon();
       b.autoPlaceTray();
+      b.flushAutoPlacePlaybackForTest();
     }
     b.monsters.length = 0;
     b.tray.length = 0;
@@ -38,6 +40,7 @@ describe('无怪时重复布阵', () => {
     for (let i = 0; i < 6; i++) {
       b.summon();
       b.autoPlaceTray();
+      b.flushAutoPlacePlaybackForTest();
     }
     b.monsters.length = 0;
     b.tray.length = 0;
@@ -54,15 +57,18 @@ describe('无怪时重复布阵', () => {
     for (let i = 0; i < 8; i++) {
       b.summon();
       b.autoPlaceTray();
+      b.flushAutoPlacePlaybackForTest();
     }
     b.monsters.length = 0;
     b.tray.length = 0;
     b.autoPlaceTray();
+    b.flushAutoPlacePlaybackForTest();
     const w = [...b.words.values()][0];
     const free = playerView(b).freeCells().find((c) => c.c !== w?.cell.c || c.r !== w?.cell.r);
     if (w && free) {
       b.dragWord(w.cell, free);
       b.autoPlaceTray();
+      b.flushAutoPlacePlaybackForTest();
       expect(b.message).not.toBe('布阵：当前暂无可执行操作');
     }
   });
