@@ -91,7 +91,7 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 八：定身控制 ———
   { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
-    skillName: '钉耙震地', skillDesc: '大范围长时间定身并轻伤', atk: 3.4, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
+    skillName: '钉耙震地', skillDesc: '大范围长时间定身并轻伤', atk: 3.86, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '八' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
     skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 6.81, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
@@ -123,7 +123,7 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 白：单体突进 ———
   { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
-    skillName: '龙牙突进', skillDesc: '突进撕咬并减速', atk: 6.37, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
+    skillName: '龙牙突进', skillDesc: '突进撕咬并减速', atk: 5.31, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
     maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
     skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 11.13, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
