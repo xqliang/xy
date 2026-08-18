@@ -22,6 +22,15 @@ export type AssetKey =
   | 'monster-boss-baiguling'
   | 'monster-minion-pansidong'
   | 'monster-boss-pansidong'
+  | 'monster-cavalry-huoyanshan'
+  | 'monster-cavalry-liushahe'
+  | 'monster-cavalry-baiguling'
+  | 'monster-cavalry-pansidong'
+  | 'monster-miniboss-frost'
+  | 'monster-miniboss-blight'
+  | 'monster-miniboss-quake'
+  | 'monster-miniboss-gale'
+  | 'monster-miniboss-blood'
   | 'item-shovel'
   | 'hero-wukong'
   | 'hero-bajie'
@@ -170,4 +179,14 @@ export function unitAsset(type: UnitType): AssetKey {
 export function monsterSprite(mapId: string, isBoss: boolean): HTMLImageElement | undefined {
   const role = isBoss ? 'boss' : 'minion';
   return cache[`monster-${role}-${mapId}` as AssetKey] ?? cache[`monster-${role}` as AssetKey];
+}
+
+// 骑兵妖：每图专属立绘（monster-cavalry-{mapId}），缺图回退该图小妖。
+export function cavalrySprite(mapId: string): HTMLImageElement | undefined {
+  return cache[`monster-cavalry-${mapId}` as AssetKey] ?? monsterSprite(mapId, false);
+}
+
+// 小 Boss：按种类专属立绘（monster-miniboss-{kind}），缺图回退该图妖王立绘。
+export function miniBossSprite(kind: string, mapId: string): HTMLImageElement | undefined {
+  return cache[`monster-miniboss-${kind}` as AssetKey] ?? monsterSprite(mapId, true);
 }

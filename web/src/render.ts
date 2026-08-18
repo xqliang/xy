@@ -20,7 +20,7 @@ import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVE
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
 import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
 import type { UnitType } from '@core';
-import { sprite, unitAsset, monsterSprite } from './assets';
+import { sprite, unitAsset, monsterSprite, cavalrySprite, miniBossSprite } from './assets';
 import { getBestWave } from './endless';
 import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
@@ -2205,8 +2205,12 @@ function drawMonsterAt(
   ctx.ellipse(x, y + rad0 * 0.82, shW, rad0 * 0.32, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  // 小 Boss 用 boss 立绘（体型介于精英与妖王之间）；无专属图时回退 minion
-  const spr = monsterSprite(mapId, m.isBoss || !!m.isMiniBoss);
+  // 骑兵→每图专属骑兵立绘；小 Boss→按种类专属立绘；其余按 minion/boss。缺图各自回退。
+  const spr = m.isCavalry
+    ? cavalrySprite(mapId)
+    : (m.isMiniBoss && m.miniBossKind)
+      ? miniBossSprite(m.miniBossKind, mapId)
+      : monsterSprite(mapId, m.isBoss);
   // 骑兵视觉区分：身后拖出青蓝速度线（快速冲锋感）。拖尾始终在移动的反方向：
   // trailDir=+1 表示向右移动→拖尾在左侧；trailDir=-1 表示向左移动→拖尾在右侧。
   if (m.isCavalry) {
