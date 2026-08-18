@@ -2802,9 +2802,14 @@ export class Battle {
       }
       const state = this.stateOfPair(cells, def);
       if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = Battle.initialHeroSkillCd(def);
+      const tierVal = Math.min(w.tier, right.tier, cap);
+      // 不变量：state.level 恒等于当前 tier（二者同步递增）。按格子对复用 state 时，
+      // 若旧英雄阵亡/字牌被换成低阶新字，会残留高 level → 升级经验虚高(如 168)、面板 Lv 与地图阶不符。此处每帧纠正。
+      if (state.level > tierVal) state.exp = 0; // 残留旧英雄进度：清掉防止纠正后瞬间连升多阶
+      state.level = tierVal;
       out.push({
         def,
-        tier: Math.min(w.tier, right.tier, cap),
+        tier: tierVal,
         cells,
         state,
         pillAtk: state.pillAtk,
@@ -2858,9 +2863,12 @@ export class Battle {
       }
       const aiState = this.stateOfPairForAi(cells, def);
       if (!this.lastAiActivePairKeys.has(pairKey)) aiState.skillCd = Battle.initialHeroSkillCd(def);
+      const tierVal = Math.min(w.tier, right.tier, cap);
+      if (aiState.level > tierVal) aiState.exp = 0; // 见 activeGenerals：清残留 exp 防纠正后连升
+      aiState.level = tierVal; // 不变量 level==tier；纠正复用 state 残留的高 level（见 activeGenerals 注释）
       out.push({
         def,
-        tier: Math.min(w.tier, right.tier, cap),
+        tier: tierVal,
         cells,
         state: aiState,
         pillAtk: aiState.pillAtk,
