@@ -1553,17 +1553,27 @@ export class Battle {
    * 仅处理仍可落地的令牌——若只剩「桃树挡着挖不了」的铲子，禁止再空转调位（否则可拖到数百 ms）。
    */
   private sweepRemainingTrayDeploy(): void {
-    for (let g = 0; g < PLAYER_PLACE_MAX_STEPS; g++) {
+    // 收尾兜底：把主规划没落下的 tray 项尽量落地。但若某步只是棋盘布局微调（合并腾位/迁移换座，
+    // n=1 但 tray 没少），说明在空转——旧实现会空转到 PLAYER_PLACE_MAX_STEPS(150) 步卡界面。
+    // 现按「tray 是否真的少一件」判断：连续 3 步不收缩即停，并加绝对上限兜底。
+    const ABS_CAP = 40;
+    let noShrink = 0;
+    for (let g = 0; g < ABS_CAP; g++) {
       if (!this.trayHasAutoplaceSweepPending()) break;
       const hasFree = this.unlockedCells().some((c) => this.cellFree(c.c, c.r));
-      // 铲子还可挖时不要求已有空闲解锁格
       if (!hasFree && !this.hasDiggableSlot()) break;
+      const trayBefore = this.tray.length;
       const n = planAutoPlaceSteps(this.buildPlayerAutoView(), {
         rng: () => this.rng.next(),
         pSubOptimal: 0,
         maxSteps: 1,
       });
       if (n === 0) break;
+      if (this.tray.length >= trayBefore) {
+        if (++noShrink >= 3) break; // 连续空转：停
+      } else {
+        noShrink = 0;
+      }
     }
   }
 
