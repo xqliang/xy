@@ -42,7 +42,8 @@ describe('攻击升品质阶', () => {
     expect(b.words.get(`${a1.c},${a1.r}`)?.tier).toBe(3);
     expect(b.words.get(`${a2.c},${a2.r}`)?.tier).toBe(2);
     expect(g2!.state.exp).toBe(0);
-    expect(g2!.state.level).toBe(1);
+    // level 恒等于 tier：g2 字牌为 2 阶 → level 应为 2（旧实现残留 level=1 是 state 复用 bug，已修复）
+    expect(g2!.state.level).toBe(2);
   });
 
   it('满经验后双字各 +1，徽标上升；拆开保留', () => {

@@ -455,6 +455,7 @@ const ui: UiState = {
   activePopupUntil: 0,
   aiItemPopup: null,
   peachPopup: false,
+  bombPopup: null,
   paused: false,
 };
 
@@ -800,6 +801,7 @@ function newGame() {
   ui.activePopup = null;
   ui.aiItemPopup = null;
   ui.peachPopup = false;
+  ui.bombPopup = null;
   pendingFirstSummonTutorial = false;
 }
 
@@ -811,6 +813,7 @@ function abortBattleToMenu(): void {
   ui.activePopup = null;
   ui.aiItemPopup = null;
   ui.peachPopup = false;
+  ui.bombPopup = null;
   settleChange = null;
   endlessResult = null;
   clearBoardSelect();
@@ -1458,6 +1461,9 @@ function onPointerDown(e: PointerEvent) {
     clearActiveDrag();
     return;
   }
+  // 点棋盘任意处先关掉地雷信息弹窗（若点中的正是同一颗地雷，则下方按「再次点=关闭」处理）
+  const prevBombPopup = ui.bombPopup;
+  ui.bombPopup = null;
   // 我方蟠桃 / AI 道具详情：任意点击先关闭（消费本次点击）
   if (ui.peachPopup) { ui.peachPopup = false; return; }
   if (ui.aiItemPopup !== null) { ui.aiItemPopup = null; return; }
@@ -1519,6 +1525,18 @@ function onPointerDown(e: PointerEvent) {
     if (same) clearBoardSelect();
     else selectBoardCell(cell);
     return;
+  }
+  // 点击路径上已埋的地雷：查看信息（玩家/AI 双方的都可点，炸弹画在棋盘地面层）
+  if (cell) {
+    const hit = battle.bombs.find((bm) => bm.c === cell.c && bm.r === cell.r)
+      ?? battle.aiBombs.find((bm) => bm.c === cell.c && bm.r === cell.r);
+    if (hit) {
+      const now = performance.now();
+      const same = prevBombPopup && prevBombPopup.c === cell.c && prevBombPopup.r === cell.r && now < prevBombPopup.until;
+      ui.bombPopup = same ? null : { c: cell.c, r: cell.r, until: now + 2500 };
+      clearBoardSelect();
+      return;
+    }
   }
   // 棋盘拖拽（兵/武将字牌/桃树：重新布阵、合成、移动）或点击选中查看信息
   if (cell && (battle.units.has(`${cell.c},${cell.r}`) || battle.words.has(`${cell.c},${cell.r}`) || battle.trees.has(`${cell.c},${cell.r}`))) {

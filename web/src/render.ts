@@ -146,6 +146,7 @@ export interface UiState {
   activePopupUntil: number; // 主动技能弹窗展示截止时间(performance.now ms)
   aiItemPopup: number | null; // 点击 HUD 右上角 AI 道具图标（aiPickedItems 下标）
   peachPopup: boolean; // 点击我方 HUD 蟠桃：显示数量与获取途径
+  bombPopup: { c: number; r: number; until: number } | null; // 点击路径上已埋地雷：显示该雷信息（until 自动淡出）
   paused: boolean; // 局内手动暂停（弹窗遮罩，step 停表）
 }
 
@@ -889,6 +890,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPauseBtn(ctx, b);
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
+  drawBombPopup(ctx, b, ui); // 路径上已埋地雷的信息弹窗（点击地雷打开）
   drawAiItemPopup(ctx, b, ui);
   drawPeachPopup(ctx, b, ui);
   drawDragGhost(ctx, b, ui);
@@ -2250,7 +2252,20 @@ function drawMonsterAt(
   if (spr) {
     const box = rad * 2.3;
     const scale = Math.min(box / spr.width, box / spr.height);
-    ctx.drawImage(spr, x - (spr.width * scale) / 2, cy - (spr.height * scale) / 2, spr.width * scale, spr.height * scale);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    // 骑兵有明确行进方向：朝左走(trailDir<0)时水平翻转立绘，使其面朝移动方向。
+    // 仅翻转骑兵本体（speed 拖尾在上方已按 trailDir 单独画，不受影响）。
+    if (m.isCavalry && trailDir < 0) {
+      ctx.save();
+      ctx.translate(x, 0);
+      ctx.scale(-1, 1);
+      ctx.translate(-x, 0);
+      ctx.drawImage(spr, x - dw / 2, cy - dh / 2, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.drawImage(spr, x - dw / 2, cy - dh / 2, dw, dh);
+    }
   } else if (!m.isBoss && !m.isMiniBoss) {
     // 小妖立绘未加载时用汉字「妖」兜底（与铲子「铲」同口径）
     ctx.fillStyle = '#7a2b2b';
@@ -4187,81 +4202,9 @@ function drawUltHonghaier(ctx: CanvasRenderingContext2D, x: number, y: number, p
   }
 }
 
-// 红袍 赤焰：小范围地火（弱于三昧真火）
-function drawUltHongpao(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.8);
-  const bloom = easeOut(Math.min(1, p / 0.5));
-  const sway = Math.sin(p * 12);
-
-  ctx.globalAlpha = vis * 0.45 * bloom;
-  const ground = ctx.createRadialGradient(x, y + CELL * 0.06, 1, x, y + CELL * 0.06, R * 0.55 * bloom);
-  ground.addColorStop(0, 'rgba(255,180,70,0.6)');
-  ground.addColorStop(0.5, 'rgba(255,70,20,0.3)');
-  ground.addColorStop(1, 'rgba(180,20,0,0)');
-  ctx.fillStyle = ground;
-  ctx.beginPath();
-  ctx.ellipse(x, y + CELL * 0.08, R * 0.55 * bloom, R * 0.22 * bloom, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 中心短火柱
-  const columnH = R * (0.4 + bloom * 0.4);
-  ctx.save();
-  ctx.translate(x + sway * 1.5, y + CELL * 0.04);
-  ctx.rotate(sway * 0.08);
-  drawFlameTongue(
-    ctx,
-    columnH,
-    CELL * (0.16 + tier * 0.015),
-    vis * (0.65 + bloom * 0.3),
-    'rgba(210,45,15,0.9)',
-    'rgba(255,120,35,0.92)',
-    'rgba(255,230,120,0.95)',
-  );
-  ctx.restore();
-
-  // 四周小火舌
-  const tongues = 5 + tier;
-  for (let i = 0; i < tongues; i++) {
-    const a = (i / tongues) * Math.PI * 2 + p * 1.3;
-    const d = R * bloom * (0.28 + (i % 2) * 0.12);
-    const tx = x + Math.cos(a) * d;
-    const ty = y + Math.sin(a) * d * 0.5;
-    const th = CELL * (0.2 + (i % 2) * 0.06) * (0.65 + bloom * 0.45);
-    ctx.save();
-    ctx.translate(tx, ty);
-    ctx.rotate(a - Math.PI / 2 + Math.sin(p * 9 + i) * 0.15);
-    drawFlameTongue(
-      ctx,
-      th,
-      th * 0.4,
-      vis * (0.4 + bloom * 0.4),
-      'rgba(220,55,20,0.8)',
-      'rgba(255,140,40,0.88)',
-      'rgba(255,230,120,0.92)',
-    );
-    ctx.restore();
-  }
-
-  // 火星
-  const sparks = 8 + tier * 2;
-  for (let i = 0; i < sparks; i++) {
-    const seed = (i * 23 + tier * 7) % 89;
-    const t = ((p * 1.6 + seed * 0.011) % 1);
-    const rise = easeOut(t);
-    const ox = (((seed % 11) - 5) / 5) * R * 0.4 * bloom;
-    ctx.globalAlpha = vis * (1 - rise) * 0.8;
-    ctx.fillStyle = i % 2 === 0 ? '#ffcf5a' : '#ff7a2c';
-    ctx.beginPath();
-    ctx.arc(
-      x + ox + Math.sin(p * 7 + i) * 2,
-      y - rise * R * 0.55,
-      1.1 + (seed % 2) * 0.4,
-      0,
-      Math.PI * 2,
-    );
-    ctx.fill();
-  }
+// 红袍 赤焰：改为与红孩儿一致——天火从天而降砸地溅射（不再地面旋转地火）。范围随 R 自动更小（过渡武将）。
+function drawUltHongpao(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number): void {
+  drawUltHonghaier(ctx, x, y, p, fade, tier, R);
 }
 
 // —— 控制群攻 ——
@@ -9412,6 +9355,11 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
       ctx.stroke();
       ctx.restore();
     }
+    // AI 被动生效斜光：与玩家侧一致，命中触发时一道斜光划过图标
+    if (it.kind === 'passive') {
+      const ft = b.aiPassiveFlash.get(it.id) ?? 0;
+      if (ft > 0) drawPassiveSlash(ctx, it.x, it.y, it.r * 2, ft / 0.45);
+    }
     if (ui.aiItemPopup === it.index) {
       ctx.save();
       ctx.strokeStyle = '#ffe27a';
@@ -9676,6 +9624,31 @@ function drawActiveIcons(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 }
 
+// 被动技能生效时的对角斜光：一道亮带斜划过图标，prog(0..1) 驱动淡出（用于陨石/洛阳铲/蟠桃园等触发瞬间反馈）
+function drawPassiveSlash(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number, prog: number): void {
+  const a = Math.max(0, Math.min(1, prog));
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = a;
+  ctx.translate(cx, cy);
+  ctx.rotate(-Math.PI / 4); // 左上→右下斜光
+  const len = size * 1.5;
+  const wid = size * 0.34;
+  const g = ctx.createLinearGradient(-len / 2, 0, len / 2, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.42, 'rgba(255,248,210,0.85)');
+  g.addColorStop(0.5, 'rgba(255,255,255,1)');
+  g.addColorStop(0.58, 'rgba(255,248,210,0.85)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(-len / 2, -wid / 2, len, wid);
+  ctx.globalAlpha = a * 0.9; // 核心细高光
+  ctx.fillStyle = '#fffce8';
+  ctx.fillRect(-len / 2, -0.6, len, 1.2);
+  ctx.restore();
+}
+
 // 被动/强化技能行：图标块（进度类附小进度条）
 function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
   if (b.status !== 'playing' && b.status !== 'ready') return;
@@ -9705,9 +9678,12 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
       const by = btn.y + btn.h - 5;
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.fillRect(btn.x + 4, by, btn.w - 8, 3);
-      ctx.fillStyle = '#ffd24d';
+      ctx.fillStyle = '#ffd24a';
       ctx.fillRect(btn.x + 4, by, (btn.w - 8) * Math.max(0, Math.min(1, prog.ratio)), 3);
     }
+    // 被动生效斜光：flashPassive 设了剩余秒数时，一道斜光划过图标（斜光时长见 flashPassive dur，默认 0.45s）
+    const flashT = b.passiveFlash.get(def.id) ?? 0;
+    if (flashT > 0) drawPassiveSlash(ctx, btn.x + btn.w / 2, btn.y + btn.h / 2, btn.w, flashT / 0.45);
   }
 }
 
@@ -9758,6 +9734,50 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
     ctx.fillText(ln, x + pad, ty);
     ty += lineH;
   }
+  ctx.restore();
+}
+
+// 路径上已埋地雷的信息弹窗（点击地雷打开）：显示归属、伤害、范围、触发方式、CD
+function drawBombPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
+  if (!ui.bombPopup || performance.now() > ui.bombPopup.until) return;
+  const { c, r } = ui.bombPopup;
+  const { x: bx, y: by } = cellCenterPx(c, r);
+  const isAi = b.aiBombs.some((bm) => bm.c === c && bm.r === r);
+  const def = activeById('act_bomb');
+  if (!def) return;
+  const w = 252, pad = 14, lineH = 18;
+  ctx.save();
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const desc = wrapText(ctx, def.desc, w - pad * 2);
+  const stats = [
+    `归属：${isAi ? '对手埋设' : '我方埋设'}`,
+    `伤害：波血×${TUNING.bombDmgMul}`,
+    `范围：半径 ${TUNING.bombExplodeRadius} 格 · 踏入即爆`,
+    `CD：${def.cd}s · 每格最多 1 颗`,
+  ];
+  const h = 58 + desc.length * lineH + stats.length * lineH;
+  // 优先贴在地雷上方，放不下则落到下方；水平夹在视口内
+  let x = Math.max(8, Math.min(VIEW_W - w - 8, bx - w / 2));
+  let y = by - h - CELL * 0.6;
+  if (y < 6) y = by + CELL * 0.7;
+  roundRect(ctx, x, y, w, h, 10);
+  ctx.fillStyle = 'rgba(30,24,18,0.95)';
+  ctx.fill();
+  ctx.strokeStyle = isAi ? '#ff9a5a' : '#6ab0ff'; // 对手橙 / 我方蓝
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  drawSkillGlyph(ctx, x + pad + 9, y + 17, 12, def.icon, isAi ? '#ff9a5a' : '#6ab0ff', true, def.id);
+  ctx.fillStyle = SKILL_TITLE_COLOR;
+  ctx.font = 'bold 16px "PingFang SC", sans-serif';
+  ctx.fillText(def.name, x + pad + 26, y + 9);
+  let ty = y + 36;
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  for (const ln of desc) { ctx.fillText(ln, x + pad, ty); ty += lineH; }
+  ctx.fillStyle = '#ffd27a';
+  for (const ln of stats) { ctx.fillText(ln, x + pad, ty); ty += lineH; }
   ctx.restore();
 }
 

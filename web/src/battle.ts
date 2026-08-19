@@ -67,7 +67,7 @@ import {
   type PressurePlan,
 } from './board-power';
 import { activeById, isPillActiveEffect, isDragActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
-import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled } from './passives';
+import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled, passiveById } from './passives';
 import {
   DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses,
   loadPlayerWinStreak, loadPlayerLossStreak, versusRubberBand, effectiveAiSkill,
@@ -1693,6 +1693,11 @@ export class Battle {
   mods: Modifiers = { atkMul: 1, frqMul: 1, killBonus: 0, monsterSpdMul: 1, summonCostDelta: 0, wordRateBonus: 0, shovelPeach: 0, autoShovel: false, meteor: false, mud: false, generalTierDelta: 0 };
   private shovelTimer = 0; // 洛阳铲产铲计时
   private meteorPending = false; // 本波被动陨石是否待触发（等最前活怪走过 ≥ meteorRadius）
+  /** 被动生效时的图标斜光反馈：passive id → 斜光剩余秒数（玩家侧）。衰减在 updateSkillFx */
+  passiveFlash = new Map<string, number>();
+  /** AI 侧被动生效斜光反馈（独立一份，照 AI 的 HUD 图标） */
+  aiPassiveFlash = new Map<string, number>();
+  private passivesFlashedAtStart = false; // 首波已给全体被动闪过一次「生效」提示
   weaponBonuses: WeaponBonuses = {}; // 已装备神兵给各武将的加成
   aiWeaponBonuses: WeaponBonuses = {}; // AI 神兵：按 aiSkill 缩放玩家神兵
   pendingWeaponPickups: string[] = []; // 本局掉落、待左下角点击领取的神兵碎片
@@ -4150,6 +4155,12 @@ export class Battle {
   startNextWave(): boolean {
     if (this.waveActive) return false;
     if (this.status === 'won' || this.status === 'lost') return false;
+    // 首波给全体已装备被动闪一次斜光，作为「这些被动已生效」的确认反馈（静态 buff 无离散触发点）。
+    if (!this.passivesFlashedAtStart) {
+      this.passivesFlashedAtStart = true;
+      for (const id of this.pickedItems) if (passiveById(id)) this.flashPassive(id);
+      for (const id of this.aiPickedItems) if (passiveById(id)) this.flashPassive(id, 0.45, true);
+    }
     this.introDone = true; // 手动开波则跳过入场
     this.introT = Battle.INTRO_DUR;
     this.wave += 1;
@@ -4280,6 +4291,12 @@ export class Battle {
     else this.playerSkillFx = fx;
   }
 
+  /** 被动技能生效时的图标斜光提示：设斜光剩余时长（玩家/ AI 各一份）。若已闪则取较长的剩余，避免连触发时过早熄灭。 */
+  flashPassive(id: string, dur = 0.45, ai = false): void {
+    const store = ai ? this.aiPassiveFlash : this.passiveFlash;
+    store.set(id, Math.max(store.get(id) ?? 0, dur));
+  }
+
   private frontMonsterCell(ai: boolean): { c: number; r: number } | null {
     const list = ai ? this.aiMonsters : this.monsters;
     if (list.length === 0) return null;
@@ -4297,6 +4314,15 @@ export class Battle {
     if (this.aiSkillFx) {
       this.aiSkillFx.t += dt;
       if (this.aiSkillFx.t >= this.aiSkillFx.dur) this.aiSkillFx = null;
+    }
+    // 被动生效斜光计时衰减（玩家 + AI 两侧）
+    for (const [id, t] of this.passiveFlash) {
+      if (t <= dt) this.passiveFlash.delete(id);
+      else this.passiveFlash.set(id, t - dt);
+    }
+    for (const [id, t] of this.aiPassiveFlash) {
+      if (t <= dt) this.aiPassiveFlash.delete(id);
+      else this.aiPassiveFlash.set(id, t - dt);
     }
   }
 
@@ -4354,11 +4380,11 @@ export class Battle {
   private updateItemEffects(dt: number): void {
     if (this.mods.autoShovel) {
       this.shovelTimer += dt;
-      if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; }
+      if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; this.flashPassive('luoyangchan'); }
     }
     if (this.aiMods.autoShovel) {
       this.aiShovelTimer += dt;
-      if (this.aiShovelTimer >= 45) { this.aiShovelTimer = 0; this.aiShovels += 1; }
+      if (this.aiShovelTimer >= 45) { this.aiShovelTimer = 0; this.aiShovels += 1; this.flashPassive('luoyangchan', 0.45, true); }
     }
   }
 
@@ -4371,6 +4397,7 @@ export class Battle {
         if (this.plantTree()) {
           this.plantTimer = 0;
           this.plantBank = 0;
+          this.flashPassive('pas_pantao'); // 蟠桃园生效：种下一棵新桃树
         } else if (this.tryAutoMergePlant()) {
           this.plantTimer = 0;
         } else {
@@ -4495,12 +4522,16 @@ export class Battle {
   // 陨石：被动「陨石」道具触发，带 mods.meteor 守卫。
   private castMeteor(): void {
     if (!this.mods.meteor || this.monsters.length === 0) return;
-    this.doMeteor(TUNING.meteorPassiveDmgMul);
+    // 传 skillFx=true：复用主动陨石那套「下落陨石+陨石坑」完整特效（此前只画了一个小 death 爆发，
+    // 玩家几乎看不到、误以为怪物凭空被秒；现与 AI 被动陨石、主动陨石视觉一致）。
+    this.doMeteor(TUNING.meteorPassiveDmgMul, true);
+    this.flashPassive('yunshi'); // 陨石生效：HUD 陨石图标划斜光
   }
 
   private castAiMeteor(): void {
     if (!this.aiMods.meteor || this.aiMonsters.length === 0) return;
     this.doAiMeteor(TUNING.meteorPassiveDmgMul, true);
+    this.flashPassive('yunshi', 0.45, true); // AI 侧陨石生效斜光
   }
 
   // 陨石伤害核心（无守卫）：被动道具与「天降陨石」主动技能共用；mul 为相对波血倍率
