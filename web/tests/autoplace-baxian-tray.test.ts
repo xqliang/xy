@@ -25,9 +25,11 @@ function setupBaigulingBaxian(b: Battle) {
 }
 
 describe('tray仙 + 棋盘八 → 一次八仙', () => {
-  it('仅 occupied 解锁时第一步即激活（伴侣可迁座）', () => {
+  it('tray 字一步与棋盘伴侣成对激活（目标邻格已解锁）', () => {
     const b = new Battle(20260809, 4, mapById('baiguling'));
     setupBaigulingBaxian(b);
+    // (4,9) 与 八(3,9) 相邻——实战中八落子后此格自动解锁，故补解锁让 tray 仙能落到位
+    (b as unknown as { unlocked: Set<string> }).unlocked.add(cellKey(4, 9));
 
     planAutoPlaceSteps(
       (b as unknown as { buildPlayerAutoView(): import('../src/autoplace').AutoPlaceView })

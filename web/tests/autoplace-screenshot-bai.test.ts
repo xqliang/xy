@@ -37,6 +37,11 @@ function putWord(b: Battle, char: string, general: string, tier: number, c: numb
   b.words.set(cellKey(c, r), { char, general, tier, cell: { c, r } });
 }
 
+/** tray 实有令牌数（clearTraySlot 用 delete 留空洞，length 不缩，故须过滤空洞） */
+function trayFilled(tray: unknown[]): number {
+  return tray.filter((t) => t).length;
+}
+
 /** 按截图还原的 mid-game 盘面（简化：保留白/八仙/右侧孤字 + 主要武器） */
 function setupScreenshotBoard(b: Battle) {
   const m = b.map;
@@ -108,7 +113,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     const nd = b.nearestPathDist(SCREENSHOT_EMPTY_LEFT[0]!);
     expect(nd).toBeLessThanOrEqual(2.5); // 离路约 1–2 格，任何 1 阶兵都够得着
 
-    const trayBefore = b.tray.length;
+    const trayBefore = trayFilled(b.tray);
     const t0 = performance.now();
     b.autoPlaceTray();
     const elapsed = performance.now() - t0;
@@ -116,7 +121,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     b.flushAutoPlacePlaybackForTest();
     const filled = SCREENSHOT_EMPTY_LEFT.filter(({ c, r }) => b.units.has(cellKey(c, r)));
     expect(filled.length).toBeGreaterThan(0);
-    expect(b.tray.length).toBeLessThan(trayBefore);
+    expect(trayFilled(b.tray)).toBeLessThan(trayBefore);
     expect(elapsed).toBeLessThan(500);
     expect(b.message).not.toBe('布阵：当前暂无可执行操作');
   });
@@ -157,7 +162,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     });
 
     expect(b.units.size).toBe(unitsBefore + 1);
-    expect(b.tray.length).toBe(4);
+    expect(trayFilled(b.tray)).toBe(4);
   });
 
   it('白骨岭变体：骨在远处、白旁空位仍应落 tray 兵', () => {
@@ -201,7 +206,7 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     expect(performance.now() - t0).toBeLessThan(200);
     b.flushAutoPlacePlaybackForTest();
     expect(b.units.has(cellKey(emptyBesideBai.c, emptyBesideBai.r))).toBe(true);
-    expect(b.tray.length).toBeLessThan(5);
+    expect(trayFilled(b.tray)).toBeLessThan(5);
   });
 
   it('常量：玩家布阵步数上限', () => {

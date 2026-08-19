@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
+  root: __dirname,
   resolve: {
     alias: {
       '@core': path.resolve(__dirname, '../game-core/src/index.ts'),
@@ -11,6 +12,9 @@ export default defineConfig({
     },
   },
   test: {
+    root: __dirname,
     include: ['tests/**/*.test.ts'],
+    // 排除 git worktree（.worktrees/、.claude/worktrees/）里的重复测试，避免缺 node_modules 的旧 worktree 污染发现
+    exclude: ['**/.worktrees/**', '**/.claude/worktrees/**', '**/node_modules/**', '**/dist/**'],
   },
 });

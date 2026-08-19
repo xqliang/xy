@@ -1515,16 +1515,16 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return view.pathCover(cell, type, tier) > 0.05;
   }
 
-  /** 可落/可换上的格：须覆盖路径；场上有怪时优先当前能接战的格 */
+  /** 可落/可换上的格：须覆盖路径；有怪时把能接战的格排前面（优先落），但不剔除覆盖格，
+   *  这样接战格落满后兵仍会铺到空着的覆盖格（填满 tray 满兵的空位），而非只挤在怪跟前。 */
   function placementReachCells(cells: Cell[], type: UnitType, tier: number): Cell[] {
-    let reach = cells.filter((c) => canUnitCoverPath(c, type, tier));
+    const reach = cells.filter((c) => canUnitCoverPath(c, type, tier));
     if (reach.length === 0) return [];
     const liveEngage = view.unitEngageScore;
-    if (liveEngage) {
-      const engaging = reach.filter((c) => liveEngage(c, type, tier) > 0);
-      if (engaging.length > 0) reach = engaging;
-    }
-    return reach;
+    if (!liveEngage) return reach;
+    return [...reach].sort(
+      (a, b) => (liveEngage(b, type, tier) ?? 0) - (liveEngage(a, type, tier) ?? 0),
+    );
   }
 
   /** 落位评分：无怪时出怪口优先；有怪时叠加最前段交战威胁 */
@@ -1740,7 +1740,8 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     if (!subopt() && !heroRosterComplete() && tryFamilyUpgrade()) { markHeroLayoutChanged(); return true; }
     if (!subopt() && !heroRosterComplete() && tryUpgradeTransitionToMainHero()) { markHeroLayoutChanged(); return true; }
     // 无 tray 字待凑对时：棋盘孤儿移动相邻激活（含 1 阶新将，如 牛+魔）
-    if (!subopt() && !heroRosterComplete() && !trayWordAwaitingBoardMateActivation() && tryPairBoardOrphans()) {
+    // 但 tray 还有纯兵待落（trayUnitsOnlyPending）时，先让兵上板填格，别让凑字挪位挡住 tray 填格。
+    if (!subopt() && !heroRosterComplete() && !trayWordAwaitingBoardMateActivation() && !trayUnitsOnlyPending() && tryPairBoardOrphans()) {
       markHeroLayoutChanged();
       return true;
     }
@@ -1962,6 +1963,9 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
   /** 把 tray 中兵器落到棋盘（同阶合、射程内、兜底）；不含 tray 内合成/合后换占 */
   function tryPlaceTrayUnitsOnly(): boolean {
     if (tryMergeTrayUnitsOntoBoard()) return true;
+    // 有空格能直接落就先落（填满空位），别急着合并棋盘腾位；
+    // 否则 tray 有兵时第一步变成棋盘合，单步布阵落不了兵、截图类 tray 满兵也填不满空位。
+    if (tryPlaceTrayUnitsOnFreeCells()) return true;
     if (tryBoardMergeForTrayUnits()) return true;
     return tryPlaceTrayUnitsOnFreeCells();
   }

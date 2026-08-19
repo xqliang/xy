@@ -4626,12 +4626,26 @@ export class Battle {
     return true;
   }
 
-  /** AI 埋点：最前妖怪前方约 1.8 格的路径点（让妖怪走入即触发）。 */
+  /** AI 埋点：从离唐僧最近（路径末端）往外（入口方向）找第一个还能埋的路径格。
+   *  让 AI 主动把路径一段段铺满雷，充分利用 CD，而非只在怪跟前埋一颗浪费。 */
   private aiBombPlacementCell(): { c: number; r: number } | null {
-    if (this.aiMonsters.length === 0) return null;
-    const frontDist = this.aiFrontMonsterDist();
-    const d = Math.min(lenOf(this.aiPath), frontDist + 1.8);
-    return posAlong(this.aiPath, d);
+    const path = this.aiPath;
+    const total = lenOf(path);
+    if (total <= 1) return null;
+    const seen = new Set<string>();
+    for (let d = total - 0.4; d > 0.4; d -= 0.5) {
+      const cell = posAlong(path, d);
+      const k = `${Math.round(cell.c * 4)},${Math.round(cell.r * 4)}`; // 0.25 格去重，避免同格重复判
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (this.bombOnPath(true, cell) && !this.bombCellTaken(this.aiBombs, cell)) return cell;
+    }
+    return null;
+  }
+
+  /** AI 是否还有可埋雷的路径格（供 aiShouldTriggerActive 判是否值得触发，避免空触发耗 CD） */
+  private hasAiBombSlot(): boolean {
+    return this.aiBombPlacementCell() !== null;
   }
 
   // 每帧：引信闪烁计时 + 妖怪踏入引爆（逐颗判定）+ 爆炸特效寿命推进
@@ -5457,8 +5471,9 @@ export class Battle {
       case 'frqBuff':
         return this.aiDpsPieceCount() >= 2 && this.aiHasPillTarget(effect);
       case 'bomb':
-        // 有怪且到了攻击型择时窗口就埋（可多颗；同格占用由 placeAiBomb 拦截）
-        return this.aiMonsters.length >= 1 && this.aiOffensiveActiveReady('bomb');
+        // 主动预埋：有怪且 CD 就绪就埋（不依赖陨石/紧箍那套「怪走过一段」的择时窗口，
+        // 避免 CD 就绪却要等择时而浪费）。无有效落点（路径被占满）则留给下帧。
+        return this.aiMonsters.length >= 1 && this.hasAiBombSlot();
       default: {
         const _exhaustive: never = effect;
         void _exhaustive;
