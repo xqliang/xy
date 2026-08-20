@@ -24,6 +24,15 @@ from api_player import (  # noqa: E402
     handle_sync,
     handle_unlock,
 )
+from api_versus import (  # noqa: E402
+    VersusHub,
+    handle_versus_cancel,
+    handle_versus_enqueue,
+    handle_versus_poll,
+    handle_versus_room_create,
+    handle_versus_room_join,
+    handle_versus_tick,
+)
 from config import load_config  # noqa: E402
 from db import DB  # noqa: E402
 from httputil import send_empty, send_json  # noqa: E402
@@ -32,6 +41,7 @@ from httputil import send_empty, send_json  # noqa: E402
 class Handler(SimpleHTTPRequestHandler):
     db: DB
     cfg: dict
+    versus: "VersusHub"
 
     def __init__(self, *args, directory: str | None = None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
@@ -84,6 +94,13 @@ class Handler(SimpleHTTPRequestHandler):
             ("POST", "/api/leaderboard/submit"): handle_submit,
             ("GET", "/api/leaderboard/daily"): handle_daily,
             ("POST", "/api/events"): handle_events,
+            # —— PvP 在线对战（/api/versus/*）——
+            ("POST", "/api/versus/enqueue"): handle_versus_enqueue,
+            ("POST", "/api/versus/poll"): handle_versus_poll,
+            ("POST", "/api/versus/cancel"): handle_versus_cancel,
+            ("POST", "/api/versus/room/create"): handle_versus_room_create,
+            ("POST", "/api/versus/room/join"): handle_versus_room_join,
+            ("POST", "/api/versus/tick"): handle_versus_tick,
         }
         fn = routes.get((method, path))
         if not fn:
@@ -114,6 +131,7 @@ def main() -> None:
 
     BoundHandler.db = db
     BoundHandler.cfg = cfg
+    BoundHandler.versus = VersusHub(db)   # 进程内 PvP 单例：匹配/私房/tick 转发/波次/终局/反作弊
     handler = partial(BoundHandler, directory=static_dir)
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(f"serving static={static_dir} api+admin on {host}:{port}", flush=True)

@@ -1,6 +1,12 @@
 from __future__ import annotations
+import json
 import os, sys
+import threading
+import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -343,3 +349,41 @@ def test_anticheat_db_failure_does_not_500(hub, db):
         hub.db.cursor = orig        # 务必恢复，db fixture 是 module 级共享
     assert isinstance(resp, dict)
     assert resp.get("cheatNotice") is None
+
+
+# —— HTTP 端到端冒烟：起真 ThreadingHTTPServer，跑 /api/versus/* 六条路由 ——
+@pytest.fixture(scope="module")
+def http_base(db):
+    # 复用 module 级 db，在其上挂真实 HTTP server，验证路由→handler→Hub 全链路。
+    from server import Handler
+    from api_versus import VersusHub
+    from config import load_config
+    cfg = load_config(); cfg["static_dir"] = str(ROOT)
+    class H(Handler): pass
+    H.db = db; H.cfg = cfg; H.versus = VersusHub(db)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: H(*a, directory=str(ROOT), **k))
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{port}"
+    httpd.shutdown()
+
+def _post(base, path, body, uid):
+    # 统一 POST 封装：带 X-Uid 头，区分 2xx 与 HTTPError 两条返回路径
+    req = urllib.request.Request(base + path, data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "X-Uid": uid}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            raw = r.read(); return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read(); return e.code, (json.loads(raw) if raw else None)
+
+def test_http_enqueue_poll_match(http_base, db):
+    # 两人同段位入队：第一家拿到 ticket，第二家入队即与之成局；
+    # 第一家 poll 应见 matched 且对手昵称为「乙」。
+    _mk_player(db, "10000501", 3, "甲"); _mk_player(db, "10000502", 3, "乙")
+    st, b1 = _post(http_base, "/api/versus/enqueue", {"rank": 3}, "10000501")
+    assert st == 200 and "ticket" in b1
+    _post(http_base, "/api/versus/enqueue", {"rank": 3}, "10000502")
+    st, p = _post(http_base, "/api/versus/poll", {"ticket": b1["ticket"]}, "10000501")
+    assert st == 200 and p["status"] == "matched"
+    assert p["matchStart"]["opponent"]["nickname"] == "乙"
