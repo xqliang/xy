@@ -157,24 +157,25 @@ class VersusHub:
     def poll(self, ticket: str) -> dict:
         with self.lock:
             now = self._now()
-            # 已成局 → 直接返回 match-start
-            if ticket in self.ticket_match:
-                mid, uid = self.ticket_match[ticket]
-                return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
-            e = self.queue.get(ticket)
-            if not e:
-                # 不在队列也不在对局：已超时或被清理
-                return {"status": "timeout"}
-            # 排队超时 → 摘除并返回 timeout
-            if now - e["enqueued_ms"] >= MATCH_TIMEOUT_MS:
-                self.queue.pop(ticket, None)
-                return {"status": "timeout"}
-            # 仍等待：再尝试一次配对（可能放宽窗口已过）
-            self._try_pair(now)
-            if ticket in self.ticket_match:
-                mid, uid = self.ticket_match[ticket]
-                return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
-            return {"status": "waiting"}
+            # 已成局 → 先判超时；未超时则捕获 (mid, uid)，锁外再组 payload
+            matched = self.ticket_match.get(ticket)
+            if matched is None:
+                e = self.queue.get(ticket)
+                if not e:
+                    # 不在队列也不在对局：已超时或被清理
+                    return {"status": "timeout"}
+                # 排队超时 → 摘除并返回 timeout
+                if now - e["enqueued_ms"] >= MATCH_TIMEOUT_MS:
+                    self.queue.pop(ticket, None)
+                    return {"status": "timeout"}
+                # 仍等待：再尝试一次配对（可能放宽窗口已过）
+                self._try_pair(now)
+                matched = self.ticket_match.get(ticket)
+                if matched is None:
+                    return {"status": "waiting"}
+        # 锁外组 payload：_profile 的 DB 查询不在全局锁内，避免热路径把匹配串在 DB 延迟上
+        mid, uid = matched
+        return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
 
     def cancel(self, ticket: str) -> dict:
         with self.lock:

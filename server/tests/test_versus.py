@@ -6,6 +6,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from api_versus import MATCH_TIMEOUT_MS
+
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
     "XY_DB_PORT": os.environ.get("XY_DB_PORT", "3307"),
@@ -118,6 +120,3 @@ def test_banned_enqueue_rejected(hub, db):
             )
     r = hub.enqueue("10000030", 1)
     assert r.get("banned") is True
-
-
-from api_versus import MATCH_TIMEOUT_MS
