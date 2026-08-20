@@ -34,3 +34,19 @@ def test_migrate_creates_pvp_tables(db):
         assert cur.fetchone() is not None
         cur.execute("SHOW TABLES LIKE 'pvp_anomaly'")
         assert cur.fetchone() is not None
+
+
+@pytest.fixture
+def hub(db):
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(db, now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds),
+                  gen_code=lambda: "ROOM01",
+                  pick_map=lambda: "huoyanshan")
+    h._clock = clock  # 测试里推进时钟用
+    return h
+
+def test_not_banned_by_default(hub):
+    assert hub.is_banned("12345678") is False
