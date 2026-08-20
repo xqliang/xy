@@ -274,6 +274,7 @@ CREATE TABLE IF NOT EXISTS pvp_anomaly (
 - 复用现有 `xy-web.service` 单进程；PvP 状态**进程内**（重启即丢活跃对局，可接受）；`pvp_results`/`pvp_anomaly` 持久。
 - **无新依赖**（PyMySQL + 标准库）；`db.migrate()` 幂等建新表。
 - 生产同源 `/api`；本地 Vite 已代理（`vite.config.ts:17-19`）。
+- **keep-alive**：后端设 `protocol_version="HTTP/1.1"` 开持久连接，1s 轮询复用连接免频繁建连（响应须带 `Content-Length`、未命中路由排空 body）；生产浏览器↔反代（HTTPS/H2）本就持久复用，反代↔后端可配 `proxy_http_version 1.1`。
 - 邀请链接走反代 `peiyin.seealso.cn/xy`，客户端读 `?versus=`（同既有 `?seed=`/`?map=`，`main.ts:190`）。
 
 ## 十二、明确不做（本期 YAGNI）

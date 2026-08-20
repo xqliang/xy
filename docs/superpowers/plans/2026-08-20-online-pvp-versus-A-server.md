@@ -1039,6 +1039,100 @@ git commit -m "feat(versus): /api/versus/* HTTP 路由 + Handler 挂载 + 端到
 
 ---
 
+## Task 9: 开启 HTTP/1.1 keep-alive（1s 轮询避免频繁建连）
+
+**Files:**
+- Modify: `server/server.py`（`Handler.protocol_version` + 404 分支排空 body）
+- Test: `server/tests/test_versus.py`（同一连接连发多请求）
+
+- [ ] **Step 1: 写失败测试**（追加；用 `http.client` 复用单条连接，HTTP/1.0 下第 2 次会断）
+```python
+def test_keepalive_reuses_connection(http_base, db):
+    import http.client, json as _json
+    from urllib.parse import urlparse
+    u = urlparse(http_base)
+    _mk_player(db, "10000601", 3)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=5)
+    # 同一条连接连发 3 个请求，全部应拿到响应（keep-alive 生效）
+    for _ in range(3):
+        conn.request("POST", "/api/versus/enqueue",
+                     body=_json.dumps({"rank": 3}),
+                     headers={"Content-Type": "application/json", "X-Uid": "10000601"})
+        resp = conn.getresponse()
+        assert resp.status == 200
+        resp.read()  # 读干净，供下一请求复用连接
+        assert resp.getheader("Content-Length") is not None
+    assert conn.sock is not None  # 连接未被服务端关闭
+    conn.close()
+```
+
+- [ ] **Step 2: 运行看失败**
+
+Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection -v`
+Expected: FAIL（HTTP/1.0 默认关连接，第 2 次 `getresponse` 抛 `RemoteDisconnected`/`CannotSendRequest`）
+
+- [ ] **Step 3: 开启 keep-alive + 排空 body**
+
+`server/server.py` 的 `Handler` 类体开头加类属性（`SimpleHTTPRequestHandler` 已按 `Content-Length` 输出静态文件；`send_json`/`send_empty` 均带 `Content-Length`）：
+```python
+class Handler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"   # 开持久连接：1s 轮询复用连接，免频繁 TCP/TLS 建连
+    db: DB
+    cfg: dict
+    versus: "VersusHub"
+```
+`_api` 的未命中路由分支，回 404 前**排空请求体**（否则残留 POST body 污染同连接下一请求）：
+```python
+        fn = routes.get((method, path))
+        if not fn:
+            # keep-alive 下必须读掉未消费的 body
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 0:
+                self.rfile.read(n)
+            send_json(self, 404, {"error": {"code": "not_found", "msg": path}})
+            return
+```
+> 其余 handler 都先 `read_json`（读满 `Content-Length`），已把 body 读干净；`read_json` 抛错的分支也已读过长度前缀之外内容——如遇 bad_json，长度已知仍需排空：在 `read_json` 的 `except` 前其实已 `rfile.read(length)`，故 body 已消费，无需额外处理。
+
+- [ ] **Step 4: 运行看通过 + 回归**
+
+Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection tests/ -v`
+Expected: PASS；既有 `test_player_api.py`（urllib 每请求新连接）不受影响，全绿。
+
+- [ ] **Step 5: Benchmark（满足"性能优化必须有 benchmark 数据"）**
+
+写一次性基准脚本 `server/tools/bench_keepalive.py`（新建）：对 `/api/versus/enqueue` 连发 200 次，分别用「单连接复用」与「每次新建连接」，打印总耗时与建连次数：
+```python
+import http.client, json, time, sys
+host, port = "127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 8082
+body = json.dumps({"rank": 1}); hdr = {"Content-Type": "application/json", "X-Uid": "19999999"}
+def run_reuse(n):
+    c = http.client.HTTPConnection(host, port); t = time.time()
+    for _ in range(n):
+        c.request("POST", "/api/versus/enqueue", body, hdr); r = c.getresponse(); r.read()
+    c.close(); return time.time() - t
+def run_fresh(n):
+    t = time.time()
+    for _ in range(n):
+        c = http.client.HTTPConnection(host, port)
+        c.request("POST", "/api/versus/enqueue", body, hdr); r = c.getresponse(); r.read(); c.close()
+    return time.time() - t
+n = 200
+print(f"reuse(1 conn)={run_reuse(n)*1000:.0f}ms  fresh({n} conn)={run_fresh(n)*1000:.0f}ms")
+```
+Run（对本地跑起来的服务）：`cd server && .venv/bin/python tools/bench_keepalive.py <port>`
+记录两者耗时到提交信息/PR（复用应明显更快、且只 1 次建连）。
+
+- [ ] **Step 6: 提交**
+```bash
+git add server/server.py server/tests/test_versus.py server/tools/bench_keepalive.py
+git commit -m "perf(versus): 后端开 HTTP/1.1 keep-alive，1s 轮询复用连接(+bench)"
+```
+
+> 生产侧：浏览器↔反代（HTTPS/H2）本就持久连接复用；如需反代↔后端也复用，nginx 加 `proxy_http_version 1.1; proxy_set_header Connection "";`（部署脚本层，非本仓库代码，随部署确认）。
+
+---
+
 ## Self-Review（对照 spec §5/§7/§10）
 
 - §10.1 六条路由 → Task 8 全覆盖。✓
