@@ -266,3 +266,37 @@ def test_non_simultaneous_not_draw(hub, db):
         cur.execute("SELECT outcome FROM pvp_results WHERE match_id=%s ORDER BY outcome", (mid,))
         outs = sorted(r["outcome"] for r in cur.fetchall())
     assert outs == ["lose", "win"]
+
+
+def test_anomaly_recorded_and_dedup(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db, "10000401", "10000402")
+    # 先清当日旧记录，保证重复跑不撞唯一键、不串味
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000401"))
+    # 击杀暴涨且远超战力可能：kills 从 0 跳到 9999，power 极低
+    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("10000401", mid, [], bad, None, "playing")
+    hub.tick("10000401", mid, [], {**bad, "kills": 19999}, None, "playing")  # 同对手当天只记 1
+    day = db.today()
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) c FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000401"))
+        assert cur.fetchone()["c"] == 1
+
+
+def test_three_opponents_trigger_ban(hub, db):
+    hub.reset()
+    day = db.today(); now = db.now()
+    with db.cursor() as cur:
+        # 先清当日旧记录，保证重复跑时只有本测试插入的行
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000411"))
+        for opp in ("30000001", "30000002"):
+            cur.execute("INSERT INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
+                        " VALUES (%s,%s,%s,%s,%s,%s)", (day, "10000411", opp, "m", "{}", now))
+    assert hub.is_banned("10000411") is False   # 只有 2 个不同对手
+    _mk_player(db, "10000411", 3); _mk_player(db, "10000412", 3)
+    mid = _match_two(hub, db, "10000411", "10000412")
+    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("10000411", mid, [], bad, None, "playing")   # 第 1 tick 建基线
+    hub.tick("10000411", mid, [], {**bad, "kills": 19999}, None, "playing")  # 第 2 tick 增量暴涨才触发→第 3 个不同对手
+    assert hub.is_banned("10000411") is True

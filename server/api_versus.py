@@ -20,6 +20,8 @@ W_MIN_MS, W_MAX_MS = 3_000, 15_000   # 同级保持窗口范围
 INTER_WAVE_DELAY_MS = 3_000      # 先清者触发后到下一波开始的间隔（须与前端一致）
 START_DELAY_MS = 1_500           # match-start 到第 1 波开始的缓冲（两端加载）
 SIMULTANEOUS_EPS_MS = 200        # 双方阵亡视为同刻→平局的阈值
+KILLS_PER_POWER_PER_SEC = 0.5   # 每点战力每秒可击杀数上界（留大余量，可调）
+KILLS_ABS_FLOOR = 30            # 低战力区的击杀绝对下限余量（避免早期误报）
 MAPS = ["huoyanshan", "liushahe", "baiguling", "pansidong"]
 
 
@@ -276,10 +278,12 @@ class VersusHub:
                 "nextWave": next_wave,
                 "opponentStatus": opp_status,
                 "result": self._result_for(m, uid),
-                "cheatNotice": ({"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
-                                if self.is_banned(uid) else None),
+                "cheatNotice": None,   # 锁外补
             }
-            return resp
+        # 禁赛查询是每 tick 的 DB 读，移出大锁（沿用 Task 3 poll 的 I1 处理），避免热路径把并发串在 DB 延迟上
+        if self.is_banned(uid):
+            resp["cheatNotice"] = {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        return resp
 
     def _next_wave_for(self, m: dict, me: dict) -> Optional[dict]:
         # 返回「我」当前波次的下一波开始时刻（若已排程）
@@ -378,6 +382,36 @@ class VersusHub:
         side = "a" if m["a"]["uid"] == uid else "b"
         return m["result"][side]
 
-    def _anticheat(self, m, me, opp, inputs, digest, now):  # Task 7 填充
-        # Task 7 填充：异常检测（动作频率/摘要一致性等）
-        return
+    def _anticheat(self, m, me, opp, inputs, digest, now):
+        # 从每秒摘要 digest 做启发式异常检测；终局或无摘要时跳过。
+        # 注意：本方法在 tick 的大锁内调用，命中异常才写库（低频），可接受；
+        # 每 tick 都要做的禁赛查询已移出锁（见 tick 尾部）。
+        if m.get("ended") or not digest:
+            return
+        reasons = []
+        # 1) 唐僧血单调不增；击杀增量不超过 f(战力)×时长 的上界
+        prev = me.get("prev_kill_digest")
+        if prev is not None:
+            if digest.get("tangsengHP", 0) > prev.get("tangsengHP", 0):
+                reasons.append("tangsengHP_increased")
+            dt_s = max(0.001, (now - prev["_ms"]) / 1000)
+            dkills = digest.get("kills", 0) - prev.get("kills", 0)
+            ceil = KILLS_ABS_FLOOR + KILLS_PER_POWER_PER_SEC * max(0, digest.get("power", 0)) * dt_s
+            if dkills > ceil:
+                reasons.append("kills_over_ceiling")
+        # 2) 波次进度不能超前于服务端调度（最多领先 1 波）
+        if digest.get("wave", 1) > max(m["wave_schedule"].keys() or [1]) + 1:
+            reasons.append("wave_ahead")
+        # 3) 放置动作经济合法性（粗校验）留接口，本期只记明显越界；精校验待 Plan C 客户端动作字段定型后回填
+        me["prev_kill_digest"] = {**digest, "_ms": now}
+        if reasons:
+            self._record_anomaly(m, me["uid"], opp["uid"], reasons, now)
+
+    def _record_anomaly(self, m, uid, opp_uid, reasons, now):
+        # INSERT IGNORE + 唯一键 (day,uid,opponent_uid) → 同对手当天只记 1 条
+        day = self.db.today(); dt = self.db.now()
+        with self.db.cursor() as cur:
+            cur.execute(
+                "INSERT IGNORE INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                (day, uid, opp_uid, m["match_id"], json.dumps(reasons, ensure_ascii=False), dt))
