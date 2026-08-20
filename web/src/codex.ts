@@ -498,6 +498,20 @@ function drawMonsterSprite(
   ctx.fillText(label, cx + box / 2, cy + box + 2);
 }
 
+/** 地图行小 Boss 立绘：跨地图通用光环怪，立绘取代表 kind（5 种详见小 Boss 栏目） */
+function drawMiniBossRowSprite(ctx: CanvasRenderingContext2D, mapId: string, cx: number, cy: number, box: number): void {
+  const spr = miniBossSprite(MINI_BOSS_KINDS[0]!, mapId);
+  if (spr) {
+    const s = Math.min(box / spr.width, box / spr.height);
+    ctx.drawImage(spr, cx, cy + (box - spr.height * s) / 2, spr.width * s, spr.height * s);
+  }
+  ctx.fillStyle = '#7ec8ff';
+  ctx.font = 'bold 11px "PingFang SC", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('小Boss', cx + box / 2, cy + box + 2);
+}
+
 function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName: string, x: number, y: number, w: number): void {
   roundRect(ctx, x, y, w, MAP_ROW_H, 10);
   ctx.fillStyle = '#241f16';
@@ -535,13 +549,16 @@ function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName
     ctx.fillText('小 Boss 为跨地图通用光环', textX, y + 50);
   }
 
-  const spriteBox = 40;
+  const spriteBox = 34;
   const spriteY = y + 24;
-  const minionX = x + w - 210;
-  const cavalryX = x + w - 142;
-  const bossX = x + w - 74;
+  const step = 48; // 34 立绘 + 14 间距：四格（小妖/骑兵/小Boss/妖王）不压左侧文字区
+  const bossX = x + w - 68;          // 妖王（最右）
+  const miniBossX = bossX - step;    // 小 Boss
+  const cavalryX = miniBossX - step; // 骑兵
+  const minionX = cavalryX - step;   // 小妖
   drawMonsterSprite(ctx, mapId, 'minion', minionX, spriteY, spriteBox, '小妖');
   drawMonsterSprite(ctx, mapId, 'cavalry', cavalryX, spriteY, spriteBox, '骑兵', '#7dff8a');
+  drawMiniBossRowSprite(ctx, mapId, miniBossX, spriteY, spriteBox);
   drawMonsterSprite(ctx, mapId, 'boss', bossX, spriteY, spriteBox, '妖王', '#ff9ab0');
 }
 
