@@ -77,6 +77,18 @@ def _send_html(handler, status: int, html: bytes) -> None:
     handler.wfile.write(html)
 
 
+def _send_redirect(handler, location: str, set_cookie: str | None = None) -> None:
+    """发 302 重定向；补 Content-Length:0：HTTP/1.1 keep-alive 下会读 body 的客户端
+    对未声明 Content-Length 的 302 会挂起到超时（评审实测 TimeoutError）。302 无响应体，
+    统一声明 Content-Length:0 让客户端立即结束读取、连接可被复用。"""
+    handler.send_response(302)
+    if set_cookie:
+        handler.send_header("Set-Cookie", set_cookie)
+    handler.send_header("Location", location)
+    handler.send_header("Content-Length", "0")
+    handler.end_headers()
+
+
 def _login_page(err: str = "") -> bytes:
     e = f'<p class="err">{err}</p>' if err else ""
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>登录</title>
@@ -109,10 +121,8 @@ def handle_admin(handler, db: DB, cfg: dict[str, Any], method: str) -> bool:
         if hmac.compare_digest(user, au) and hmac.compare_digest(pw, ap):
             tok = _token()
             SESSIONS[tok] = au
-            handler.send_response(302)
-            handler.send_header("Set-Cookie", f"xy_admin={tok}; Path=/admin; HttpOnly; SameSite=Lax")
-            handler.send_header("Location", "/admin/overview")
-            handler.end_headers()
+            _send_redirect(handler, "/admin/overview",
+                           f"xy_admin={tok}; Path=/admin; HttpOnly; SameSite=Lax")
         else:
             _send_html(handler, 401, _login_page("账号或密码错误"))
         return True
@@ -124,22 +134,15 @@ def handle_admin(handler, db: DB, cfg: dict[str, Any], method: str) -> bool:
         morsel = cookie.get("xy_admin")
         if morsel and morsel.value in SESSIONS:
             del SESSIONS[morsel.value]
-        handler.send_response(302)
-        handler.send_header("Set-Cookie", "xy_admin=; Path=/admin; Max-Age=0")
-        handler.send_header("Location", "/admin/login")
-        handler.end_headers()
+        _send_redirect(handler, "/admin/login", "xy_admin=; Path=/admin; Max-Age=0")
         return True
 
     if path in ("/admin", "/admin/"):
-        handler.send_response(302)
-        handler.send_header("Location", "/admin/overview")
-        handler.end_headers()
+        _send_redirect(handler, "/admin/overview")
         return True
 
     if not _check_login(handler, cfg):
-        handler.send_response(302)
-        handler.send_header("Location", "/admin/login")
-        handler.end_headers()
+        _send_redirect(handler, "/admin/login")
         return True
 
     qs = parse_qs(urlparse(handler.path).query)

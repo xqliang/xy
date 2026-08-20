@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """keep-alive 基准：/api/versus/poll(未知 ticket) 连发 N 次，比较「单连接复用」与「每次新建连接」。
 自起进程内 ThreadingHTTPServer（真实 Handler，HTTP/1.1），无需外部服务。探针无 DB、无状态累积，纯测连接开销。
-用法：XY_DB_PORT=3308 XY_DB_NAME=xy_game_test .venv/bin/python tools/bench_keepalive.py [N]"""
+用法：XY_DB_PORT=3308 XY_DB_NAME=xy_game_test .venv/bin/python tools/bench_keepalive.py [N]
+注：loopback 上 TCP 握手极廉价，speedup 是收益下界；真实网络(蜂窝 RTT 50–200ms)下省掉握手的收益远大于此。"""
 import http.client, json, sys, threading, time
 from http.server import ThreadingHTTPServer
 from pathlib import Path

@@ -40,6 +40,7 @@ from httputil import send_empty, send_json  # noqa: E402
 
 class Handler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"   # 开持久连接：1s 轮询复用连接，免频繁 TCP 建连（响应均带 Content-Length，边界完整）
+    timeout = 5                     # keep-alive 空闲超时(秒)：>1s 轮询间隔留足余量；由 StreamRequestHandler.setup() 经 settimeout 施加到连接 socket，空闲 5s 后 handle_one_request 的 readline 抛 socket.timeout→close_connection=True→线程退出，防客户端异常离开(切后台/断网/崩溃不发 FIN)时线程无界泄漏。活跃 1s 轮询与处理中请求不受影响（读 body 紧随请求行，远不到 5s）
     db: DB
     cfg: dict
     versus: "VersusHub"
@@ -106,7 +107,9 @@ class Handler(SimpleHTTPRequestHandler):
         fn = routes.get((method, path))
         if not fn:
             # keep-alive 下必须读掉未消费的 body，否则残留 body 会串进同连接的下一请求
-            n = int(self.headers.get("Content-Length") or 0)
+            # 仅按 Content-Length 排空；当前所有客户端都发 Content-Length（不使用 chunked 请求体）
+            raw_len = self.headers.get("Content-Length") or "0"
+            n = int(raw_len) if raw_len.isdigit() else 0   # 畸形 Content-Length(如 "abc")容错：isdigit 守卫，int() 不抛 ValueError
             if n > 0:
                 self.rfile.read(n)
             send_json(self, 404, {"error": {"code": "not_found", "msg": path}})
