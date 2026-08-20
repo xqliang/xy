@@ -292,6 +292,7 @@ function onPvpFailed(_reason: string): void {
   scheduleFrame();
 }
 function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): void {
+  if (screen === 'pvpMatching') return; // 防重入：已在匹配屏则忽略（避免并发 ensure 建出多个 controller 泄漏）
   pvpMatchLazy.ensure((m) => {
     pvpScreenLazy.ensure(() => {
       pvpMode = mode; pvpCopied = false;
@@ -1445,7 +1446,7 @@ function onPointerDown(e: PointerEvent) {
       pvpController = null; screen = 'menu'; scheduleFrame();
     } else if (hit === 'copy' && pvpController.state.link) {
       const link = pvpController.state.link;
-      try { void navigator.clipboard?.writeText(link); } catch { /* 剪贴板不可用则忽略 */ }
+      try { void navigator.clipboard?.writeText(link).catch(() => {}); } catch { /* 剪贴板不可用则忽略 */ }
       pvpCopied = true; scheduleFrame();
     }
     return;
@@ -1677,6 +1678,7 @@ function onPointerMove(e: PointerEvent) {
   scheduleFrame(); // 拖拽中持续重绘（战斗界面本就连续；此处保证拖影跟手）
 }
 function onPointerUp(e?: PointerEvent, cancelled = false) {
+  if (screen === 'pvpMatching') return; // 匹配屏交互只在 pointerdown 处理，pointerup 无动作（与 onPointerDown 对称）
   if (screen === 'menu') {
     if (merchantPointerActive) {
       const upX = e && !cancelled ? toLogical(e.clientX, e.clientY).x : merchantDownX;
