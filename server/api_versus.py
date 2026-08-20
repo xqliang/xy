@@ -28,6 +28,11 @@ def _adaptive_window_ms(n: int) -> int:
     return int(max(W_MIN_MS, min(W_MAX_MS, w)))
 
 
+def _mask(uid: str) -> str:
+    # 对外输出时脱敏 uid，仅留尾 4 位
+    return "***" + uid[-4:] if uid and len(uid) >= 4 else "***"
+
+
 class VersusHub:
     def __init__(self, db: DB,
                  now_ms: Callable[[], int] | None = None,
@@ -61,3 +66,124 @@ class VersusHub:
             )
             row = cur.fetchone()
         return bool(row and int(row["c"]) >= 3)
+
+    # —— 内部工具 ——
+    def _prune_recent(self, now: int) -> None:
+        # 清理 recent 中超出 RECENT_WINDOW_MS 的旧记录，空段位顺手删除
+        for rank, lst in list(self.recent.items()):
+            self.recent[rank] = [(u, t) for (u, t) in lst if t >= now - RECENT_WINDOW_MS]
+            if not self.recent[rank]:
+                del self.recent[rank]
+
+    def _recent_distinct(self, rank: int, exclude_uid: str, now: int) -> int:
+        # 近窗口内该段位去重对手数（排除自己）
+        return len({u for (u, t) in self.recent.get(rank, []) if u != exclude_uid and t >= now - RECENT_WINDOW_MS})
+
+    def _profile(self, uid: str) -> dict:
+        # 读取对手展示档案；查无此人给默认档，uid 一律脱敏
+        with self.db.cursor() as cur:
+            cur.execute("SELECT uid,nickname,avatar_id,rank_level FROM players WHERE uid=%s", (uid,))
+            row = cur.fetchone()
+        if not row:
+            return {"uid": _mask(uid), "nickname": None, "avatarId": "wukong", "rankLevel": 0}
+        return {"uid": _mask(uid), "nickname": row["nickname"], "avatarId": row["avatar_id"], "rankLevel": int(row["rank_level"] or 0)}
+
+    def _new_side(self, uid: str, rank: int, now: int) -> dict:
+        # 新建对局一方的实时状态壳
+        return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
+                "last_digest": None, "wave": 1, "prev_kill_digest": None, "status": "playing"}
+
+    def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
+        # 组装 Match、建 ticket->match 索引，返回 match_id
+        mid = secrets.token_hex(8)
+        m = {
+            "match_id": mid, "seed": self._gen_seed(), "map": map_id or self._pick_map(),
+            "start_at_ms": now + START_DELAY_MS,
+            "a": self._new_side(e1["uid"], e1["rank"], now),
+            "b": self._new_side(e2["uid"], e2["rank"], now),
+            "wave_schedule": {1: now + START_DELAY_MS}, "first_clear": {},
+            "result": None, "created_ms": now, "ended": False,
+        }
+        self.matches[mid] = m
+        self.ticket_match[e1["ticket"]] = (mid, e1["uid"])
+        self.ticket_match[e2["ticket"]] = (mid, e2["uid"])
+        return mid
+
+    def _try_pair(self, now: int) -> None:
+        # 第一轮：同段位两两配对（按入队先后）
+        waiting = list(self.queue.values())
+        by_rank: dict[int, list[dict]] = {}
+        for e in waiting:
+            by_rank.setdefault(e["rank"], []).append(e)
+        for rank, lst in by_rank.items():
+            lst.sort(key=lambda e: e["enqueued_ms"])
+            while len(lst) >= 2:
+                a = lst.pop(0); b = lst.pop(0)
+                self._pair(a, b, now)
+        # 第二轮：已过保持窗口者与任意等待者配对（放宽段位限制）
+        waiting = sorted(self.queue.values(), key=lambda e: e["enqueued_ms"])
+        i = 0
+        while i < len(waiting):
+            a = waiting[i]
+            if a["ticket"] in self.queue and now >= a["hold_until_ms"]:
+                partner = next((x for x in waiting if x["ticket"] in self.queue and x["ticket"] != a["ticket"]), None)
+                if partner:
+                    self._pair(a, partner, now)
+                    waiting = sorted(self.queue.values(), key=lambda e: e["enqueued_ms"]); i = 0; continue
+            i += 1
+
+    def _pair(self, a: dict, b: dict, now: int) -> None:
+        # 从队列摘除双方并成局
+        self.queue.pop(a["ticket"], None); self.queue.pop(b["ticket"], None)
+        self._make_match(a, b, now)
+
+    # —— 对外匹配 API ——
+    def enqueue(self, uid: str, rank: int) -> dict:
+        # 禁赛拦截
+        if self.is_banned(uid):
+            return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        with self.lock:
+            now = self._now()
+            self._prune_recent(now)
+            # 记录本次入队用于自适应窗口统计，再算去重人数决定窗口
+            self.recent.setdefault(rank, []).append((uid, now))
+            n = self._recent_distinct(rank, uid, now)
+            ticket = secrets.token_hex(8)
+            self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
+                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n)}
+            self._try_pair(now)
+            return {"ticket": ticket}
+
+    def poll(self, ticket: str) -> dict:
+        with self.lock:
+            now = self._now()
+            # 已成局 → 直接返回 match-start
+            if ticket in self.ticket_match:
+                mid, uid = self.ticket_match[ticket]
+                return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
+            e = self.queue.get(ticket)
+            if not e:
+                # 不在队列也不在对局：已超时或被清理
+                return {"status": "timeout"}
+            # 排队超时 → 摘除并返回 timeout
+            if now - e["enqueued_ms"] >= MATCH_TIMEOUT_MS:
+                self.queue.pop(ticket, None)
+                return {"status": "timeout"}
+            # 仍等待：再尝试一次配对（可能放宽窗口已过）
+            self._try_pair(now)
+            if ticket in self.ticket_match:
+                mid, uid = self.ticket_match[ticket]
+                return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
+            return {"status": "waiting"}
+
+    def cancel(self, ticket: str) -> dict:
+        with self.lock:
+            self.queue.pop(ticket, None)
+            return {"ok": True}
+
+    def _match_start_payload(self, mid: str, uid: str) -> dict:
+        # 组 match-start：matchId/seed/map/startAt/对手档案
+        m = self.matches[mid]
+        opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
+        return {"matchId": mid, "seed": m["seed"], "map": m["map"],
+                "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}
