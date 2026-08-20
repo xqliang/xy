@@ -48,8 +48,9 @@ import {
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
-import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, type Stamina } from './stamina';
+import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, STAMINA_COST, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
+import * as pvpClient from './api/pvp-client';
 import { loadMerit, metaBonuses, meritReward, addMerit, type MeritState } from './merit';
 import {
   loadLoadout,
@@ -186,6 +187,7 @@ let loadingUiVisible = false;
 const LOADING_UI_DELAY_MS = 200;
 
 const params = new URLSearchParams(location.search);
+const versusCode = params.get('versus'); // 好友邀请深链 ?versus=<code>
 // ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
 const fixedSeed = params.get('seed');
 const seed = Number(fixedSeed ?? '1') || 1;
@@ -193,10 +195,10 @@ function nextSeed(): number {
   return fixedSeed != null ? seed : (Math.floor(Math.random() * 0x7fffffff) || 1);
 }
 
-type Screen = 'loading' | 'menu' | 'battle' | 'codex' | 'rank' | 'bag';
+type Screen = 'loading' | 'menu' | 'battle' | 'codex' | 'rank' | 'bag' | 'pvpMatching';
 
 function usesMenuMusic(s: Screen): boolean {
-  return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag';
+  return s === 'menu' || s === 'codex' || s === 'rank' || s === 'bag' || s === 'pvpMatching';
 }
 
 function audioScreenKind(s: Screen): 'menu' | 'battle' | 'other' {
@@ -234,6 +236,8 @@ const leaderboardLazy = lazyModule(() => import('./leaderboard'));
 const menuHelpLazy = lazyModule(() => import('./menu-help'));
 const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
 const merchantLazy = lazyModule(() => import('./merchant'));
+const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
+const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 
 function enterCodex(tab?: CodexTab): void {
   codexLazy.ensure((m) => {
@@ -269,6 +273,40 @@ function openMapPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'map'; scheduleFrame(); });
 }
 
+// PvP 网络适配：把 pvp-client 的五个函数喂给状态机（签名逐字一致）
+function pvpNet() {
+  return {
+    enqueue: pvpClient.versusEnqueue, poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
+    roomCreate: pvpClient.versusRoomCreate, roomJoin: pvpClient.versusRoomJoin,
+  };
+}
+// 集成缝：匹配成功。Plan B 先回首页提示；Plan C 覆盖为进入 PvP 对局。
+function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
+  pvpController = null;
+  screen = 'menu';
+  menuToast = `已匹配到 ${ms.opponent.nickname ?? '对手'}（对战功能开发中）`;
+  scheduleFrame();
+}
+function onPvpFailed(_reason: string): void {
+  // 失败态由匹配屏「确认」按钮回首页；这里仅确保重绘（needsContinuousLoop 已保持帧）
+  scheduleFrame();
+}
+function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): void {
+  pvpMatchLazy.ensure((m) => {
+    pvpScreenLazy.ensure(() => {
+      pvpMode = mode; pvpCopied = false;
+      pvpController = new m.PvpMatchController({
+        net: pvpNet(), now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
+      });
+      screen = 'pvpMatching';
+      if (mode === 'random') void pvpController.startRandom(rank.level);
+      else if (mode === 'invite') void pvpController.startInvite(rank.level);
+      else if (mode === 'join' && code) void pvpController.joinCode(code);
+      scheduleFrame();
+    });
+  });
+}
+
 // 先加载资源，再进首页；进度页延迟 LOADING_UI_DELAY_MS，缓存秒进则不闪进度 UI
 void (async () => {
   const showUiTimer = window.setTimeout(() => {
@@ -289,6 +327,7 @@ void (async () => {
     bootstrapMenuMusic();
     ensureUserId();
     screen = 'menu';
+    if (versusCode) enterPvpMatching('join', versusCode);
     void cloudLogin().then((ok) => {
       if (ok) track('login');
       scheduleFrame();
@@ -317,6 +356,9 @@ let bag: BagState = safePersisted(loadBag, { owned: {}, fragments: {}, equipped:
 let bagToast = '';
 let bagPopup: string | null = null; // 打开详情 tips 的神兵 id（null=未开）
 let menuToast = '';
+let pvpController: import('./pvp-match').PvpMatchController | null = null;
+let pvpMode: 'random' | 'invite' | 'join' = 'random';
+let pvpCopied = false;
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
@@ -899,6 +941,14 @@ function handleMenu(id: string) {
     newGame();
     screen = 'battle';
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
+  } else if (id === 'pvpMatch' || id === 'pvpInvite') {
+    if (stamina.value < STAMINA_COST) {
+      menuToast = '体力不足（需 5 点）！点 + 补充';
+      pushMenuFloatToast('体力不足，无法进入匹配');
+      scheduleFrame();
+      return;
+    }
+    enterPvpMatching(id === 'pvpInvite' ? 'invite' : 'random');
   } else if (id === 'codex') {
     enterCodex();
   } else if (id === 'rank') {
@@ -1383,6 +1433,23 @@ function onPointerDown(e: PointerEvent) {
     if (menuDownId) canvas.setPointerCapture(e.pointerId);
     return;
   }
+  if (screen === 'pvpMatching') {
+    const mc = pvpMatchLazy.get(); const sc = pvpScreenLazy.get();
+    if (!mc || !sc || !pvpController) return;
+    const view = mc.toMatchView(pvpController.state, pvpMode, pvpCopied);
+    if (!view) { screen = 'menu'; scheduleFrame(); return; }
+    const hit = sc.pvpMatchingHitAt(x, y, view);
+    if (hit === 'exit') {
+      playSfx('click'); void pvpController.cancel(); pvpController = null; screen = 'menu'; scheduleFrame();
+    } else if (hit === 'ok') {
+      pvpController = null; screen = 'menu'; scheduleFrame();
+    } else if (hit === 'copy' && pvpController.state.link) {
+      const link = pvpController.state.link;
+      try { void navigator.clipboard?.writeText(link); } catch { /* 剪贴板不可用则忽略 */ }
+      pvpCopied = true; scheduleFrame();
+    }
+    return;
+  }
   if (screen === 'codex') {
     const cx = codexLazy.get()!;
     if (cx.codexHitBack(x, y)) {
@@ -1812,6 +1879,7 @@ function scheduleFrame(): void {
 function needsContinuousLoop(): boolean {
   if (screen === 'loading') return loadingUiVisible;
   if (screen === 'menu') return true;
+  if (screen === 'pvpMatching') return true;
   if (screen === 'battle') {
     if (isSettleOpen()) {
       return !isSettleAnimDone(performance.now() - settleStart) || visibleWeaponPickups().length > 0;
@@ -1880,6 +1948,13 @@ function frame(now: number): void {
   } else if (screen === 'bag') {
     bagLazy.get()!.drawBag(ctx, bag, bagToast, bagScrollY);
     if (bagPopup) bagLazy.get()!.drawBagPopup(ctx, bag, bagPopup);
+  } else if (screen === 'pvpMatching') {
+    const mc = pvpMatchLazy.get(); const sc = pvpScreenLazy.get();
+    if (mc && sc && pvpController) {
+      pvpController.pump(performance.now());
+      const view = mc.toMatchView(pvpController.state, pvpMode, pvpCopied);
+      if (view) sc.drawPvpMatching(ctx, view);
+    }
   } else {
     // —— 战斗（含局内结算弹层） —— //
     // 新手引导展示期间强制唐僧渲染于归位点，避免引导指向的格子里唐僧还没走到（不影响 introT 计时）
