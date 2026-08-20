@@ -443,43 +443,74 @@ def _hub(handler):
     # 从 Handler 类属性取进程内 VersusHub 单例（main() 里 BoundHandler.versus 注入）
     return handler.versus
 
+def _read_body(handler):
+    # 输入解析容错：坏/空 JSON 回 400 bad_json，返回 None 让调用方终止（对齐 handle_login 等）
+    try:
+        return read_json(handler)
+    except ValueError as e:
+        send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
+        return None
+
+def _parse_rank(handler, body):
+    # rank 非数字回 400 bad_body（对齐 handle_unlock 对 rankLevel 的处理）；合法时返回 int（含 0），出错返回 None 让调用方终止
+    try:
+        return int(body.get("rank") or 0)
+    except (TypeError, ValueError):
+        send_json(handler, 400, {"error": {"code": "bad_body", "msg": "rank must be int"}})
+        return None
+
 def handle_versus_enqueue(handler, db: DB) -> None:
     # 随机匹配入队：返回 ticket，客户端凭此 poll 拿配对结果
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
-    rank = int(body.get("rank") or 0)
+    rank = _parse_rank(handler, body)
+    if rank is None: return
     send_json(handler, 200, _hub(handler).enqueue(uid, rank))
 
 def handle_versus_poll(handler, db: DB) -> None:
     # 轮询排队/对局状态：waiting / matched / timeout
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).poll(str(body.get("ticket") or "")))
 
 def handle_versus_cancel(handler, db: DB) -> None:
     # 取消排队（离开队列；已成局的不受影响）
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).cancel(str(body.get("ticket") or "")))
 
 def handle_versus_room_create(handler, db: DB) -> None:
     # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
-    rank = int(body.get("rank") or 0)
+    rank = _parse_rank(handler, body)
+    if rank is None: return
     base = (handler.headers.get("Origin") or "").rstrip("/")
     send_json(handler, 200, _hub(handler).room_create(uid, rank, base_url=base))
 
 def handle_versus_room_join(handler, db: DB) -> None:
     # 客人凭码加入私房：直接与房主成局
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
-    rank = int(body.get("rank") or 0)
+    rank = _parse_rank(handler, body)
+    if rank is None: return
     send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank))
 
 def handle_versus_tick(handler, db: DB) -> None:
     # 对局心跳：上报本端动作/摘要/波次清场，转发对手动作 + 波次调度 + 终局裁决
-    body = read_json(handler); uid = require_uid(handler, body)
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_uid(handler, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).tick(
         uid, str(body.get("matchId") or ""), body.get("inputs") or [],

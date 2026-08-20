@@ -351,7 +351,8 @@ def test_anticheat_db_failure_does_not_500(hub, db):
     assert resp.get("cheatNotice") is None
 
 
-# —— HTTP 端到端冒烟：起真 ThreadingHTTPServer，跑 /api/versus/* 六条路由 ——
+# —— HTTP 端到端冒烟：起真 ThreadingHTTPServer，跑 /api/versus/* 路由 ——
+# 抽样 enqueue/poll 全链路，其余路由见 test_http_room_create_join_tick_cancel 与 hub 单测。
 @pytest.fixture(scope="module")
 def http_base(db):
     # 复用 module 级 db，在其上挂真实 HTTP server，验证路由→handler→Hub 全链路。
@@ -387,3 +388,37 @@ def test_http_enqueue_poll_match(http_base, db):
     st, p = _post(http_base, "/api/versus/poll", {"ticket": b1["ticket"]}, "10000501")
     assert st == 200 and p["status"] == "matched"
     assert p["matchStart"]["opponent"]["nickname"] == "乙"
+
+def test_http_room_create_join_tick_cancel(http_base, db):
+    # HTTP 打通其余路由：room/create → room/join 成局 → tick → cancel
+    _mk_player(db, "10000511", 4, "房主"); _mk_player(db, "10000512", 4, "客人")
+    st, rc = _post(http_base, "/api/versus/room/create", {"rank": 4}, "10000511")
+    assert st == 200 and "code" in rc
+    st, rj = _post(http_base, "/api/versus/room/join", {"code": rc["code"]}, "10000512")
+    assert st == 200 and rj["status"] == "matched"
+    mid = rj["matchStart"]["matchId"]
+    st, tk = _post(http_base, "/api/versus/tick",
+                   {"matchId": mid, "inputs": [],
+                    "digest": {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1},
+                    "status": "playing"}, "10000511")
+    assert st == 200 and "serverMs" in tk
+    st, cc = _post(http_base, "/api/versus/cancel", {"ticket": "nope"}, "10000511")
+    assert st == 200
+
+def test_http_bad_json_returns_400(http_base):
+    # I1 回归：畸形 body 回 400 bad_json，不是 500
+    import urllib.request as _u, urllib.error as _ue
+    req = _u.Request(http_base + "/api/versus/enqueue", data=b"not-json",
+                     headers={"Content-Type": "application/json", "X-Uid": "10000599"}, method="POST")
+    try:
+        with _u.urlopen(req, timeout=5) as r:
+            status = r.status
+    except _ue.HTTPError as e:
+        status = e.code
+    assert status == 400
+
+def test_http_bad_rank_returns_400(http_base, db):
+    # I2 回归：rank 非数字回 400 bad_body，不是 500
+    _mk_player(db, "10000598", 1)
+    st, b = _post(http_base, "/api/versus/enqueue", {"rank": "abc"}, "10000598")
+    assert st == 400
