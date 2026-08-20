@@ -22,6 +22,8 @@ START_DELAY_MS = 1_500           # match-start 到第 1 波开始的缓冲（两
 SIMULTANEOUS_EPS_MS = 200        # 双方阵亡视为同刻→平局的阈值
 KILLS_PER_POWER_PER_SEC = 0.5   # 每点战力每秒可击杀数上界（留大余量，可调）
 KILLS_ABS_FLOOR = 30            # 低战力区的击杀绝对下限余量（避免早期误报）
+_MIN_DT_S = 0.001               # 摘要间隔下限秒：防止 now 未前进/回退致 dt≤0 把击杀上界压到过小而误报
+BAN_DISTINCT_OPPONENTS = 3      # 当天被这么多个不同对手判异常即禁赛
 MAPS = ["huoyanshan", "liushahe", "baiguling", "pansidong"]
 
 
@@ -68,7 +70,7 @@ class VersusHub:
                 (day, uid),
             )
             row = cur.fetchone()
-        return bool(row and int(row["c"]) >= 3)
+        return bool(row and int(row["c"]) >= BAN_DISTINCT_OPPONENTS)
 
     # —— 内部工具 ——
     def _prune_recent(self, now: int) -> None:
@@ -94,7 +96,7 @@ class VersusHub:
     def _new_side(self, uid: str, rank: int, now: int) -> dict:
         # 新建对局一方的实时状态壳
         return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
-                "last_digest": None, "wave": 1, "prev_kill_digest": None, "status": "playing"}
+                "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False, "status": "playing"}
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 组装 Match、建 ticket->match 索引，返回 match_id
@@ -280,9 +282,13 @@ class VersusHub:
                 "result": self._result_for(m, uid),
                 "cheatNotice": None,   # 锁外补
             }
-        # 禁赛查询是每 tick 的 DB 读，移出大锁（沿用 Task 3 poll 的 I1 处理），避免热路径把并发串在 DB 延迟上
-        if self.is_banned(uid):
-            resp["cheatNotice"] = {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        # 禁赛查询是每 tick 的 DB 读，移出大锁（沿用 Task 3 poll 的 I1 处理），避免热路径把并发串在 DB 延迟上。
+        # DB 抖动时默默降级为「本 tick 不通知禁赛」，绝不让 tick 因此 500（下 tick 会再查）。
+        try:
+            if self.is_banned(uid):
+                resp["cheatNotice"] = {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        except Exception:
+            logging.exception("is_banned 查询失败 uid=%s（本 tick 跳过禁赛通知）", uid)
         return resp
 
     def _next_wave_for(self, m: dict, me: dict) -> Optional[dict]:
@@ -390,11 +396,12 @@ class VersusHub:
             return
         reasons = []
         # 1) 唐僧血单调不增；击杀增量不超过 f(战力)×时长 的上界
-        prev = me.get("prev_kill_digest")
+        prev = me.get("prev_digest")
         if prev is not None:
             if digest.get("tangsengHP", 0) > prev.get("tangsengHP", 0):
                 reasons.append("tangsengHP_increased")
-            dt_s = max(0.001, (now - prev["_ms"]) / 1000)
+            # _ms 是该摘要的服务端采样时刻；_MIN_DT_S 下限无除法，仅用于时钟不前进/回退时钉住击杀上界窗口、防误报
+            dt_s = max(_MIN_DT_S, (now - prev["_ms"]) / 1000)
             dkills = digest.get("kills", 0) - prev.get("kills", 0)
             ceil = KILLS_ABS_FLOOR + KILLS_PER_POWER_PER_SEC * max(0, digest.get("power", 0)) * dt_s
             if dkills > ceil:
@@ -403,15 +410,24 @@ class VersusHub:
         if digest.get("wave", 1) > max(m["wave_schedule"].keys() or [1]) + 1:
             reasons.append("wave_ahead")
         # 3) 放置动作经济合法性（粗校验）留接口，本期只记明显越界；精校验待 Plan C 客户端动作字段定型后回填
-        me["prev_kill_digest"] = {**digest, "_ms": now}
-        if reasons:
-            self._record_anomaly(m, me["uid"], opp["uid"], reasons, now)
+        me["prev_digest"] = {**digest, "_ms": now}
+        if reasons and not me.get("anomaly_recorded"):
+            # 同对手当天内存内只成功写一次，真正兑现「低频」；写库失败(返回 False)则下 tick 重试。重启即丢，与临时对局定位一致。
+            if self._record_anomaly(m, me["uid"], opp["uid"], reasons, now):
+                me["anomaly_recorded"] = True
 
-    def _record_anomaly(self, m, uid, opp_uid, reasons, now):
-        # INSERT IGNORE + 唯一键 (day,uid,opponent_uid) → 同对手当天只记 1 条
+    def _record_anomaly(self, m, uid, opp_uid, reasons, now) -> bool:
+        # INSERT IGNORE + 唯一键 (day,uid,opponent_uid) → 同对手当天只记 1 条。
+        # 与 _persist_result 一致：写库失败不向上抛（否则作弊者这一 tick 直接 500）。
+        # 返回是否成功落库（INSERT IGNORE 命中唯一键的 no-op 也算成功）；失败记日志，交调用方下 tick 重试。
         day = self.db.today(); dt = self.db.now()
-        with self.db.cursor() as cur:
-            cur.execute(
-                "INSERT IGNORE INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
-                " VALUES (%s,%s,%s,%s,%s,%s)",
-                (day, uid, opp_uid, m["match_id"], json.dumps(reasons, ensure_ascii=False), dt))
+        try:
+            with self.db.cursor() as cur:
+                cur.execute(
+                    "INSERT IGNORE INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
+                    " VALUES (%s,%s,%s,%s,%s,%s)",
+                    (day, uid, opp_uid, m["match_id"], json.dumps(reasons, ensure_ascii=False), dt))
+            return True
+        except Exception:
+            logging.exception("pvp_anomaly 记录失败 uid=%s opp=%s match_id=%s", uid, opp_uid, m.get("match_id"))
+            return False

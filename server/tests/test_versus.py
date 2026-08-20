@@ -300,3 +300,46 @@ def test_three_opponents_trigger_ban(hub, db):
     hub.tick("10000411", mid, [], bad, None, "playing")   # 第 1 tick 建基线
     hub.tick("10000411", mid, [], {**bad, "kills": 19999}, None, "playing")  # 第 2 tick 增量暴涨才触发→第 3 个不同对手
     assert hub.is_banned("10000411") is True
+
+def test_anticheat_tangseng_hp_increase(hub, db):
+    # 唐僧血单调不增：基线 HP=3，下一 tick 涨到 5 → 记 tangsengHP_increased
+    hub.reset()
+    mid = _match_two(hub, db, "10000421", "10000422")
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000421"))
+    base = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("10000421", mid, [], base, None, "playing")                       # 建基线
+    hub.tick("10000421", mid, [], {**base, "tangsengHP": 5}, None, "playing")  # HP 上涨→异常
+    with db.cursor() as cur:
+        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000421"))
+        row = cur.fetchone()
+    assert row is not None and "tangsengHP_increased" in row["reasons_json"]
+
+def test_anticheat_wave_ahead(hub, db):
+    # 波次超前：wave_schedule 初始只有 {1}，上报 wave=5 远超 max+1=2 → wave_ahead（首 tick 即触发，无需基线）
+    hub.reset()
+    mid = _match_two(hub, db, "10000431", "10000432")
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000431"))
+    hub.tick("10000431", mid, [], {"wave": 5, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}, None, "playing")
+    with db.cursor() as cur:
+        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000431"))
+        row = cur.fetchone()
+    assert row is not None and "wave_ahead" in row["reasons_json"]
+
+def test_anticheat_db_failure_does_not_500(hub, db):
+    # DB 抖动时 _record_anomaly / is_banned 都不得把 tick 打成 500，降级为不通知
+    hub.reset()
+    mid = _match_two(hub, db, "10000441", "10000442")
+    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("10000441", mid, [], bad, None, "playing")  # 建基线（真实库）
+    orig = hub.db.cursor
+    def boom(*a, **k):
+        raise RuntimeError("db down")
+    hub.db.cursor = boom            # 之后所有 DB 访问抛错
+    try:
+        resp = hub.tick("10000441", mid, [], {**bad, "kills": 99999}, None, "playing")
+    finally:
+        hub.db.cursor = orig        # 务必恢复，db fixture 是 module 级共享
+    assert isinstance(resp, dict)
+    assert resp.get("cheatNotice") is None
