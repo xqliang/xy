@@ -1156,6 +1156,23 @@ git commit -m "perf(versus): 后端开 HTTP/1.1 keep-alive，1s 轮询复用连�
 - §10.3 两表 + 当日禁赛实时查 → Task 1 + Task 2 `is_banned`。✓
 - §11 无新依赖、`db.migrate()` 幂等 → Task 1。✓
 - **体力**：spec §2 客户端权威，服务端不校验（本计划不做体力逻辑，Plan B 客户端做 ≥5 门禁与扣减）。✓
+
+---
+
+## Task 10：进程内状态惰性回收（防无界内存增长）+ 终局后停止转发
+
+（最终整体评审发现：`matches`/`ticket_match` 每局 +1/+2 永不清、孤儿 `queue`/`rooms` 永不清、终局后 `relay_buffer` 仍增长。无正确性风险、重启即清，但是真实无界泄漏，本任务用惰性回收一次性消掉。）
+
+**Files:** Modify `server/api_versus.py`；Test `server/tests/test_versus.py`
+
+- [ ] 常量区追加：`REAP_INTERVAL_MS = 10_000`、`MATCH_REAP_MS = 120_000`、`IDLE_REAP_MS = 300_000`、`ROOM_TTL_MS = MATCH_TIMEOUT_MS`、`QUEUE_TTL_MS = MATCH_TIMEOUT_MS + 30_000`。
+- [ ] `__init__` 与 `reset()` 加 `self._last_reap_ms = 0`。
+- [ ] 新增 `_reap(now)`（时间闸门 REAP_INTERVAL_MS，避免每 poll 都 O(N) 扫描并占锁）：回收「终局超 MATCH_REAP_MS 或双方久未心跳超 IDLE_REAP_MS」的 match 并连带删 `ticket_match` 对应 ticket；prune 入队超 QUEUE_TTL_MS 的孤儿 queue；prune 建房超 ROOM_TTL_MS 的孤儿 rooms。遍历用 `list(...)` 拷贝。在 `enqueue`/`poll` 的锁内开头调用。
+- [ ] I2：`tick` 里 relay 扩展改为 `if inputs and not m.get("ended"):`（终局后不再累积对手缓冲）。
+- [ ] 测试：`_reap` 回收终局 match（含 ticket_match 清空）、孤儿 room、孤儿 queue；终局后 relay_buffer 不再增长；两线程并发 tick 同一局不抛异常/不撕裂 result。
+- [ ] 全量 `XY_DB_PORT=3308 pytest tests/ -v` 全绿后提交。
+
+> 延后项（评审 Minor，本期不做，记录备查）：M1 versus 软错误体是 200+body 的短码字符串（与 player API 的 `{code,msg}` 不同层，客户端按 HTTP status 分层解析，可接受）；M2 每 tick 新建 DB 连接（全代码库既有模式，后续加连接池/is_banned 短 TTL 缓存，属需 benchmark 的性能项）；M3 DB 宕机时终局重试在锁内（仅故障降级态）；M4 poll 对不存在 ticket 报 timeout（无害）。
 - **未覆盖/留给后续**：放置动作经济级精校验（Task 7 只做明显越界，spec §7①的完整经济校验在真实字段确定后补，Plan C 客户端动作字段定型后回填）；`match-start` 的 `startAtServerMs`→客户端 simTick 换算在 Plan C。
 
 ## 执行说明
