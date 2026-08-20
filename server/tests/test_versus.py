@@ -6,7 +6,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from api_versus import MATCH_TIMEOUT_MS
+from api_versus import MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -200,3 +200,45 @@ def test_first_clear_schedules_next_wave(hub, db):
     start2 = resp["nextWave"]["startAtServerMs"]
     resp_b = hub.tick("10000202", mid, [], d, {"wave": 1, "t": 950}, "playing")
     assert resp_b["nextWave"]["startAtServerMs"] == start2
+
+
+def _dig(w=1): return {"wave": w, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+
+def test_surrender_opponent_wins(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db, "10000301", "10000302")
+    hub.tick("10000301", mid, [], _dig(), None, "surrender")
+    rb = hub.tick("10000302", mid, [], _dig(), None, "playing")
+    assert rb["result"]["outcome"] == "win"
+    assert rb["result"]["reason"] == "opponentSurrender"
+    ra = hub.tick("10000301", mid, [], _dig(), None, "surrender")
+    assert ra["result"]["outcome"] == "lose"
+    with db.cursor() as cur:
+        cur.execute("SELECT outcome,reason FROM pvp_results WHERE match_id=%s AND uid=%s", (mid, "10000302"))
+        assert cur.fetchone()["outcome"] == "win"
+
+def test_tangseng_dead(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db, "10000311", "10000312")
+    hub.tick("10000311", mid, [], _dig(), None, "tangsengDead")
+    rb = hub.tick("10000312", mid, [], _dig(), None, "playing")
+    assert rb["result"]["reason"] == "opponentTangsengDead"
+
+def test_disconnect_timeout(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db, "10000321", "10000322")
+    hub.tick("10000321", mid, [], _dig(), None, "playing")
+    hub.tick("10000322", mid, [], _dig(), None, "playing")
+    hub._clock["ms"] += DISCONNECT_GRACE_MS + 500
+    ra = hub.tick("10000321", mid, [], _dig(), None, "playing")
+    assert ra["opponentStatus"] == "disconnected"
+    assert ra["result"]["outcome"] == "win"
+    assert ra["result"]["reason"] == "opponentDisconnectTimeout"
+
+def test_simultaneous_draw(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db, "10000331", "10000332")
+    hub.tick("10000331", mid, [], _dig(), None, "tangsengDead")
+    hub._clock["ms"] += 100
+    rb = hub.tick("10000332", mid, [], _dig(), None, "tangsengDead")
+    assert rb["result"]["outcome"] == "draw"
