@@ -39,6 +39,7 @@ from httputil import send_empty, send_json  # noqa: E402
 
 
 class Handler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"   # 开持久连接：1s 轮询复用连接，免频繁 TCP 建连（响应均带 Content-Length，边界完整）
     db: DB
     cfg: dict
     versus: "VersusHub"
@@ -104,6 +105,10 @@ class Handler(SimpleHTTPRequestHandler):
         }
         fn = routes.get((method, path))
         if not fn:
+            # keep-alive 下必须读掉未消费的 body，否则残留 body 会串进同连接的下一请求
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 0:
+                self.rfile.read(n)
             send_json(self, 404, {"error": {"code": "not_found", "msg": path}})
             return
         try:

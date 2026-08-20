@@ -422,3 +422,24 @@ def test_http_bad_rank_returns_400(http_base, db):
     _mk_player(db, "10000598", 1)
     st, b = _post(http_base, "/api/versus/enqueue", {"rank": "abc"}, "10000598")
     assert st == 400
+
+def test_keepalive_reuses_connection(http_base, db):
+    # HTTP/1.1 keep-alive：同一条 TCP 连接连发 3 个请求应全部拿到响应，
+    # 且服务端不关闭连接（conn.sock 仍存在）。若仍是 HTTP/1.0（默认关连接），
+    # 第 2 次 getresponse 会抛 RemoteDisconnected。
+    import http.client, json as _json
+    from urllib.parse import urlparse
+    u = urlparse(http_base)
+    _mk_player(db, "10000601", 3)
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=5)
+    # 同一条连接连发 3 个请求，全部应拿到响应（keep-alive 生效）
+    for _ in range(3):
+        conn.request("POST", "/api/versus/enqueue",
+                     body=_json.dumps({"rank": 3}),
+                     headers={"Content-Type": "application/json", "X-Uid": "10000601"})
+        resp = conn.getresponse()
+        assert resp.status == 200
+        resp.read()  # 读干净，供下一请求复用连接
+        assert resp.getheader("Content-Length") is not None
+    assert conn.sock is not None  # 连接未被服务端关闭
+    conn.close()
