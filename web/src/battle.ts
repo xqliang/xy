@@ -702,6 +702,8 @@ export interface HeroUltFx {
   crit: boolean;         // true=暴击(单体) false=群攻(范围)
   fromC?: number;        // 施法者格坐标（大圣飞棒 / 二郎·牛郎射线起点）
   fromR?: number;
+  biteC?: number;        // 二郎神哮天犬咬击目标格（最前怪 3 格内血量最高者）
+  biteR?: number;
 }
 
 // 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
@@ -1637,6 +1639,8 @@ export class Battle {
   activeSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
   ultFlash = 0; // AOE 技能(紧箍咒/陨石)释放特效计时(秒)
   ultCenter: { c: number; r: number } | null = null; // AOE 爆心（渲染用）
+  /** 二郎神大招「哮天犬」本帧咬击目标格（触发时写入、pushHeroUltFx 消费后清空） */
+  biteTarget: { c: number; r: number } | null = null;
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
@@ -5658,6 +5662,8 @@ export class Battle {
       : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? 0.85
       : 0.6;
     const fxAtCaster = g.def.skill === 'buff' || g.def.skill === 'cdr';
+    const bite = this.biteTarget;
+    this.biteTarget = null; // 消费即清，避免下次大招残留旧目标
     this.heroUltFx.push({
       heroId: g.def.id,
       c: fxAtCaster ? gAx : center.c,
@@ -5670,6 +5676,7 @@ export class Battle {
         || g.def.skill === 'buff' || g.def.skill === 'cdr'
         ? { fromC: gAx, fromR: gAy }
         : {}),
+      ...(bite ? { biteC: bite.c, biteR: bite.r } : {}),
     });
   }
 
@@ -5761,6 +5768,8 @@ export class Battle {
     switch (g.def.skill) {
       case 'burst': {
         for (const t of inRange) hurt(t.m, damage(atk * 3), t.p, 0.15);
+        // 哪吒「万火齐发」命中音效（单个清脆穿刺声，对齐枪雨落点）
+        if (g.def.id === 'nezha' && inRange.length > 0) this.emit('hit');
         break;
       }
       case 'ranged': {
@@ -5787,6 +5796,20 @@ export class Battle {
         for (const t of line) hurt(t.m, dmg, t.p, 0.2, true);
         // 光束延伸到最远命中目标，凸显「贯穿一整条线」
         center = line[line.length - 1]?.p ?? primary.p;
+        // 哮天犬：咬住「最前怪 3 格内血量最高者」定身 2s（无伤害，纯控制）；视觉咬点同步到该怪
+        if (g.def.id === 'erlang' && line.length > 0) {
+          const front = line[0]!;
+          let pick: { m: Monster; p: { c: number; r: number } } | null = null;
+          for (const t of line) {
+            const d = Math.hypot(t.p.c - front.p.c, t.p.r - front.p.r);
+            if (d > 3) continue;
+            if (!pick || t.m.maxHp > pick.m.maxHp) pick = t;
+          }
+          if (pick) {
+            pick.m.stunT = Math.max(pick.m.stunT ?? 0, 2.0);
+            this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r) };
+          }
+        }
         break;
       }
       case 'stun': {

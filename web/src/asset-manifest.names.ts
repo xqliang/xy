@@ -41,6 +41,7 @@ export const ASSET_FILENAMES: Record<string, string> = {
   'hero-guanyin': 'hero-guanyin.png',
   'hero-nezha': 'hero-nezha.png',
   'hero-erlang': 'hero-erlang.png',
+  'hero-ttg': 'hero-ttg.png', // 二郎神大招冲出咬怪的哮天犬（drawErlangDog 用）
   'hero-tangseng-hero': 'hero-tangseng-hero.png',
   'hero-honghaier': 'hero-honghaier.png',
   'hero-tieshan': 'hero-tieshan.png',

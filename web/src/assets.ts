@@ -39,6 +39,7 @@ export type AssetKey =
   | 'hero-nezha'
   | 'hero-erlang'
   | 'hero-tangseng-hero'
+  | 'hero-ttg' // 二郎神大招冲出咬怪的哮天犬
   | 'hero-honghaier'
   | 'hero-tieshan'
   | 'hero-baigujing'

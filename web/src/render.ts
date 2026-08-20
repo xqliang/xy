@@ -3361,7 +3361,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     switch (f.heroId) {
       // —— 暴击 ——
       case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
-      case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
+      case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR, f.biteC, f.biteR); break;
       case 'niulang': drawUltNiulang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
       // —— 满5 群攻 ——
       case 'dasheng': drawUltDasheng(ctx, x, y, prog, fade, f.tier, R, f.fromC, f.fromR); break;
@@ -3538,11 +3538,29 @@ function drawHuojianSpearGlyph(
 
 // 哪吒 火尖枪·万火齐发：多枪自天错落倾泻聚点 + 落地万火爆点
 function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number) {
-  const n = 8 + tier;
+  const n = 12 + tier * 2; // 更多枪，齐发气势更足
   const fallEnd = 0.55;
   // 全局可见度：中段最亮，避免后半 fade 线性掉光导致「万火」看不见
   const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
   const vis = Math.max(fade, life * 0.85);
+
+  // 齐发瞬间的英雄中心强光闪（枪从英雄处向上迸出）
+  if (p < 0.28) {
+    const fp = p / 0.28;
+    const peak = Math.sin(Math.min(1, fp / 0.4) * Math.PI);
+    const fr = CELL * (0.5 + tier * 0.08) * (0.5 + peak * 0.9);
+    ctx.save();
+    ctx.globalAlpha = vis * peak * 0.9;
+    const fg = ctx.createRadialGradient(x, y, 1, x, y, fr);
+    fg.addColorStop(0, 'rgba(255,255,240,0.95)');
+    fg.addColorStop(0.35, 'rgba(255,200,80,0.7)');
+    fg.addColorStop(1, 'rgba(255,90,20,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(x, y, fr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   // 上空余烬雨
   const emberN = 12 + tier * 3;
@@ -3572,8 +3590,12 @@ function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
     const startOx = (((seed % 21) - 10) / 10) * CELL * (0.55 + tier * 0.04);
     const startY = y - CELL * (2.7 + (seed % 7) * 0.22);
     const sx = x + startOx * (1 - fall * 0.96);
-    const sy = startY + (y - startY) * fall;
-    const spearAng = Math.PI / 2 + (startOx / CELL) * 0.04 * (1 - fall);
+    // 抛物线弧：每枪从 hero 往落点移动时先向上扬起(arc=sin(π·fall)·crest)再落下，
+    // 形成「从英雄迸出→高抛→俯冲砸落」的轨迹，crest 较高时可越到 AI 地图区域
+    const crest = CELL * (1.4 + (seed % 5) * 0.35 + tier * 0.08);
+    const arc = Math.sin(Math.min(1, local) * Math.PI) * crest;
+    const sy = startY + (y - startY) * fall - arc;
+    const spearAng = Math.PI / 2 + (startOx / CELL) * 0.04 * (1 - fall) - arc * 0.004;
     const trail = Math.sin(local * Math.PI) * 0.95;
     const len = CELL * (0.46 + tier * 0.035 + (seed % 3) * 0.02);
     const a = vis * (0.5 + local * 0.5) * (local < 0.9 ? 1 : Math.max(0, 1 - (local - 0.9) / 0.1));
@@ -3770,6 +3792,7 @@ function drawUltErlang(
   x: number, y: number,
   p: number, fade: number, tier: number,
   fromC?: number, fromR?: number,
+  biteC?: number, biteR?: number,
 ) {
   const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
   const vis = Math.max(fade, life * 0.85);
@@ -3845,6 +3868,9 @@ function drawUltErlang(
   }
   ctx.restore();
 
+  // 哮天犬：沿光束冲锋撕咬（中段叠加，不挡光束）
+  drawErlangDog(ctx, eyeX, eyeY, tipX, tipY, ang, p, tier, vis, biteC, biteR);
+
   // 诛邪爆点 + 放射符纹（比普攻的柔光爆点更大更华丽）
   if (beamReach > 0.6) {
     const bp = (beamReach - 0.6) / 0.4;
@@ -3877,6 +3903,98 @@ function drawUltErlang(
 }
 
 // —— 输出群攻 ——
+// 二郎神大招「哮天犬」：中段从 eye(施法者)沿光束冲向落点撕咬（被定身怪），带冲刺速度线与咬中爆点
+function drawErlangDog(
+  ctx: CanvasRenderingContext2D,
+  eyeX: number, eyeY: number,
+  tipX: number, tipY: number,
+  ang: number,
+  p: number, tier: number, vis: number,
+  biteC?: number, biteR?: number,
+): void {
+  // 咬点优先用被定身怪位置（castGeneralSkill 写入 biteTarget），否则回退光束落点
+  const bx = biteC != null ? BOARD_X + biteC * CELL + CELL / 2 : tipX;
+  const by = biteR != null ? BOARD_Y + biteR * CELL + CELL / 2 : tipY;
+  const DOG_START = 0.2;
+  const DOG_BITE = 0.5;
+  const DOG_END = 0.78;
+  if (p < DOG_START) return;
+  const tp = Math.max(0, Math.min(1, (p - DOG_START) / (DOG_END - DOG_START)));
+  const ease = easeOut(tp);
+  const rx = eyeX + (bx - eyeX) * ease;
+  const ry = eyeY + (by - eyeY) * ease;
+  const biteT = tp >= (DOG_BITE - DOG_START) / (DOG_END - DOG_START);
+
+  ctx.save();
+  // 冲刺残影（沿移动反方向）
+  if (tp < 0.96) {
+    const trailLen = CELL * (0.5 + 0.5 * Math.sin(tp * Math.PI));
+    const tx = rx - Math.cos(ang) * trailLen;
+    const ty = ry - Math.sin(ang) * trailLen;
+    ctx.globalAlpha = vis * 0.5 * Math.sin(tp * Math.PI);
+    const tg = ctx.createLinearGradient(rx, ry, tx, ty);
+    tg.addColorStop(0, 'rgba(255,235,150,0.85)');
+    tg.addColorStop(1, 'rgba(255,170,40,0)');
+    ctx.strokeStyle = tg;
+    ctx.lineWidth = 3 + tier * 0.25;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(rx, ry);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+  }
+
+  const size = CELL * (0.42 + tier * 0.035);
+  const spr = sprite('hero-ttg');
+  ctx.globalAlpha = vis * (tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
+  if (spr) {
+    ctx.save();
+    ctx.translate(rx, ry);
+    ctx.rotate(ang); // 冲锋方向对齐光束
+    const s = (size * 2) / Math.max(spr.width, spr.height);
+    ctx.drawImage(spr, (-spr.width * s) / 2, (-spr.height * s) / 2, spr.width * s, spr.height * s);
+    ctx.restore();
+  } else {
+    // 无立绘兜底：金色三角冲锋剪影
+    ctx.translate(rx, ry);
+    ctx.rotate(ang);
+    ctx.fillStyle = 'rgba(255,220,120,0.92)';
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(-size * 0.6, -size * 0.5);
+    ctx.lineTo(-size * 0.3, 0);
+    ctx.lineTo(-size * 0.6, size * 0.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 咬中瞬间爆点 + 定身环
+  if (biteT) {
+    const bp = Math.min(1, (tp - (DOG_BITE - DOG_START) / (DOG_END - DOG_START)) / ((DOG_END - DOG_BITE) / (DOG_END - DOG_START)));
+    const peak = Math.sin(Math.min(1, bp / 0.4) * Math.PI);
+    const rad = CELL * (0.32 + tier * 0.03) * (0.7 + peak * 0.5);
+    ctx.save();
+    ctx.globalAlpha = vis * peak * 0.85;
+    const g = ctx.createRadialGradient(tipX, tipY, 1, tipX, tipY, rad);
+    g.addColorStop(0, 'rgba(255,255,220,0.95)');
+    g.addColorStop(0.4, 'rgba(255,160,60,0.55)');
+    g.addColorStop(1, 'rgba(255,80,20,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, rad, 0, Math.PI * 2);
+    ctx.fill();
+    // 定身环（青色减速/定身视觉）
+    ctx.globalAlpha = vis * peak * 0.75;
+    ctx.strokeStyle = 'rgba(140,225,255,0.9)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.ellipse(tipX, tipY, rad * 1.1, rad * 0.75, ang, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 // 悟空 金箍棒大范围横扫：从大圣飞出→目标处横扫→飞回缩小隐藏
 // 大圣 七十二变·横扫：分身汇聚 + 多影扇形横扫 + 金光四散收束（区别于普攻单棍投掷回收）
 function drawUltDasheng(

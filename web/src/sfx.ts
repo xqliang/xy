@@ -109,6 +109,11 @@ export function playSfx(name: string): void {
       tone(820, 0.03, { type: 'triangle', gain: 0.06 });
       break;
     }
+    case 'hit': // 火尖枪/大招命中妖怪：清脆金属穿刺 + 短促爆点（与普攻节流的 attack 区分）
+      noise(0.05, { gain: 0.16, hp: 2400, lp: 7000 }); // 穿刺嘶响
+      tone(1200, 0.06, { type: 'square', gain: 0.12, to: 620 }); // 命中高频下坠
+      tone(240, 0.08, { type: 'triangle', gain: 0.13, delay: 0.02 }); // 爆点低频
+      break;
     case 'kill': noise(0.14, { gain: 0.18, hp: 200, lp: 3000 }); break;
     case 'bosskill': noise(0.3, { gain: 0.26, lp: 1400 }); tone(120, 0.32, { type: 'sine', to: 60, gain: 0.24 }); break;
     case 'general': tone(523, 0.1, { type: 'triangle', gain: 0.2 }); tone(784, 0.14, { type: 'triangle', gain: 0.18, delay: 0.07 }); tone(1046, 0.16, { type: 'sine', gain: 0.14, delay: 0.14 }); break;

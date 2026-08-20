@@ -37,6 +37,7 @@ const TARGET = {
   'monster-miniboss-quake.png': 200,
   'monster-miniboss-gale.png': 200,
   'monster-miniboss-blood.png': 200,
+  'hero-ttg.png': 200, // 二郎神大招冲出咬怪的哮天犬：与小 Boss 同尺度
   // 菜单主角立绘 240×3；武将卡同套素材
   'hero-wukong.png': 780,
   'hero-bajie.png': 780,
