@@ -143,6 +143,8 @@ export const PARAM_ZH: Record<string, string> = {
   miniBossChance: '小 Boss 概率',
   miniBossHpMul: '小 Boss 血量倍率',
   miniBossSpdMul: '小 Boss 移速倍率',
+  miniBossSpdMulSlow: '小 Boss 移速(霜魄/撼地)',
+  miniBossSpdMulFast: '小 Boss 移速(疾风)',
   miniBossRadius: '小 Boss 光环半径',
   miniBossInterval: '小 Boss 施法间隔',
   miniBossFirstDelay: '小 Boss 首次施法延迟',

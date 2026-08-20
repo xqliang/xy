@@ -7148,7 +7148,7 @@ function drawWordSelection(
   // 多出的行高 descExtra 要顺移下方所有行并计入面板高度 ph，避免溢出弹窗。
   const skillDescLines = wrapText(ctx, def.skillDesc, pw - 24);
   const descExtra = (skillDescLines.length - 1) * 15;
-  // 激活多「大招CD」+「经验」；未激活也展示配置 CD
+  // 激活多「大招」+「经验」；未激活也展示配置 CD
   const ph = (active ? 196 : 176) + descExtra + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
@@ -7224,7 +7224,8 @@ function drawWordSelection(
             ['攻击力', damage(st.atk).toFixed(2)],
             ['攻速', `${st.frq.toFixed(2)}/s`],
             ['范围', st.rge.toFixed(1)],
-            ['大招CD', skillCdText],
+            ['目标数', def.targets.toFixed(1)],
+            ['大招', skillCdText],
             ['等级', `Lv.${active.state.level}`],
             ['经验', expText],
           ];
@@ -7233,7 +7234,8 @@ function drawWordSelection(
           ['攻击力', damage(b.generalAtk(active)).toFixed(2)],
           ['攻速', `${b.generalFrq(active).toFixed(2)}/s`],
           ['范围', b.generalRge(active).toFixed(1)],
-          ['大招CD', skillCdText],
+          ['目标数', def.targets.toFixed(1)],
+          ['大招', skillCdText],
           ['等级', `Lv.${active.state.level}`],
           ['经验', expText],
         ]
@@ -7241,7 +7243,8 @@ function drawWordSelection(
         ['基础攻击', def.atk.toFixed(1)],
         ['攻速', `${def.frq.toFixed(1)}/s`],
         ['范围', def.rge.toFixed(1)],
-        ['大招CD', skillCdText],
+        ['目标数', def.targets.toFixed(1)],
+        ['大招', skillCdText],
       ];
   ctx.font = '13px "PingFang SC", sans-serif';
   let ry = py + statTop;
@@ -9738,14 +9741,14 @@ function drawActivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) 
 }
 
 // 路径上已埋地雷的信息弹窗（点击地雷打开）：显示归属、伤害、范围、触发方式、CD
+// 与武器信息面板同款：放对方半场（玩家雷→AI半场、对手雷→玩家半场），水平居中，避免挡自己的棋盘。
 function drawBombPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
   if (!ui.bombPopup || performance.now() > ui.bombPopup.until) return;
   const { c, r } = ui.bombPopup;
-  const { x: bx, y: by } = cellCenterPx(c, r);
   const isAi = b.aiBombs.some((bm) => bm.c === c && bm.r === r);
   const def = activeById('act_bomb');
   if (!def) return;
-  const w = 252, pad = 14, lineH = 18;
+  const w = 248, pad = 14, lineH = 18;
   ctx.save();
   ctx.font = '13px "PingFang SC", sans-serif';
   const desc = wrapText(ctx, def.desc, w - pad * 2);
@@ -9755,28 +9758,29 @@ function drawBombPopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): v
     `范围：半径 ${TUNING.bombExplodeRadius} 格 · 踏入即爆`,
     `CD：${def.cd}s · 每格最多 1 颗`,
   ];
-  const h = 58 + desc.length * lineH + stats.length * lineH;
-  // 优先贴在地雷上方，放不下则落到下方；水平夹在视口内
-  let x = Math.max(8, Math.min(VIEW_W - w - 8, bx - w / 2));
-  let y = by - h - CELL * 0.6;
-  if (y < 6) y = by + CELL * 0.7;
+  const h = 52 + desc.length * lineH + stats.length * lineH;
+  // 对方半场 + 水平居中（与 drawUnitInfoPanel 一致）：玩家雷放 AI 半场，对手雷放玩家半场
+  const panelHalf = isAi ? 'player' : 'ai';
+  const x = BOARD_X + (COLS * CELL) / 2 - w / 2;
+  const y = infoPanelTop(h, panelHalf);
   roundRect(ctx, x, y, w, h, 10);
-  ctx.fillStyle = 'rgba(30,24,18,0.95)';
+  ctx.fillStyle = 'rgba(28,22,14,0.92)';
   ctx.fill();
-  ctx.strokeStyle = isAi ? '#ff9a5a' : '#6ab0ff'; // 对手橙 / 我方蓝
   ctx.lineWidth = 2;
+  ctx.strokeStyle = '#c8792b'; // 与其他信息面板统一的棕金描边
   ctx.stroke();
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  drawSkillGlyph(ctx, x + pad + 9, y + 17, 12, def.icon, isAi ? '#ff9a5a' : '#6ab0ff', true, def.id);
-  ctx.fillStyle = SKILL_TITLE_COLOR;
-  ctx.font = 'bold 16px "PingFang SC", sans-serif';
-  ctx.fillText(def.name, x + pad + 26, y + 9);
-  let ty = y + 36;
+  ctx.textBaseline = 'middle';
+  // 标题（大号、统一金色）
+  ctx.fillStyle = '#ffe6b0';
+  ctx.font = 'bold 17px "PingFang SC", sans-serif';
+  ctx.fillText(def.name, x + pad, y + 18);
+  let ty = y + 42;
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '13px "PingFang SC", sans-serif';
+  ctx.textBaseline = 'top';
   for (const ln of desc) { ctx.fillText(ln, x + pad, ty); ty += lineH; }
-  ctx.fillStyle = '#ffd27a';
+  ctx.fillStyle = '#ffd76a';
   for (const ln of stats) { ctx.fillText(ln, x + pad, ty); ty += lineH; }
   ctx.restore();
 }

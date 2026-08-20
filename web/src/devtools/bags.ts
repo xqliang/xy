@@ -122,6 +122,7 @@ export const TUNING_MONSTER_ELITE_KEYS = new Set([
   'cavalrySpdMul', 'cavalryHpMul',
   'eliteFromWave', 'eliteChance', 'eliteMinGap', 'eliteHpMul',
   'miniBossFromWave', 'miniBossChance', 'miniBossHpMul', 'miniBossSpdMul',
+  'miniBossSpdMulSlow', 'miniBossSpdMulFast',
   'miniBossRadius', 'miniBossInterval', 'miniBossFirstDelay',
   'heroBossFromCount', 'heroBossIntervalMin', 'heroBossIntervalMaxBase',
   'heroBossIntervalShrinkCap', 'heroBossMaxPerWave',

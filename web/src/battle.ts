@@ -178,8 +178,8 @@ export const TUNING = {
   skillTargetMax: 3, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
-  stunDur: 1.4, // 眩晕：武将暂停攻击（秒）
-  slowDur: 3, // 减速：攻击间隔拉长（秒）
+  stunDur: 4.0, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
+  slowDur: 6, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
@@ -190,14 +190,16 @@ export const TUNING = {
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.5, // 非 BOSS 波出现小 Boss 的概率
   miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
-  miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口
+  miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口（blight/blood 等未特指种类用此默认）
+  miniBossSpdMulSlow: 0.75, // 霜魄/撼地小 Boss 本体移速倍率（偏慢，给玩家反应）
+  miniBossSpdMulFast: 1.1, // 疾风小 Boss 本体移速倍率（本身很快）
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 4.0, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
-  knockdownDur: 2.0, // 倒下：武器横躺、无法攻击（秒）
+  knockdownDur: 4.0, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
   hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
-  hasteSpdMul: 1.25, // 加速期间移速倍率
+  hasteSpdMul: 1.25, // 疾风光环：周围妖怪加速期间移速倍率
   healPct: 0.08, // 血泉：每次回复目标最大生命的比例
   // —— AI 清场 / 紧箍咒 ——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
@@ -209,7 +211,7 @@ export const TUNING = {
   meteorRadius: 2, // 陨石半径；被动「陨石」亦等最前活怪走过 ≥ 该值后再砸
   meteorPassiveDmgMul: 1.4, // 被动陨石更弱，避免与主动双吃
   jingguDmgMul: 2.3, // 紧箍咒伤害倍率（与 aiClear 对齐，用有效难度）
-  bombDmgMul: 2.6, // 埋雷炸药：波基础怪血 × 有效难度 × 该系数（略高于陨石，因需预判埋点）
+  bombDmgMul: 2.0, // 埋雷炸药：波基础怪血 × 有效难度 × 该系数（预判埋点，不需高于陨石）
   bombExplodeRadius: 2, // 炸药引爆后的 AOE 伤害半径（格）
   bombContactRadius: 0.55, // 妖怪进入炸药此半径即引爆（踏入触发）
   atkBuffMul: 1.4, // 仙丹单体攻击倍率
@@ -4592,7 +4594,10 @@ export class Battle {
 
   // —— 埋雷炸药（主动技能 bomb）——
   // 落点必须在路径上（妖怪必经之路）；可埋多颗，但同一格子最多一颗（炸响后该格释放，可再埋）。
+  // 唐僧所在格不能埋（怪到此即被收/通关，埋雷无意义）。
   private bombOnPath(ai: boolean, cell: { c: number; r: number }): boolean {
+    const tang = ai ? this.aiTangseng : this.map.tangseng;
+    if (cell.c === tang.c && cell.r === tang.r) return false;
     return Battle.nearestPathDistOn(ai ? this.aiPath : this.map.path, cell) <= 0.75;
   }
 
@@ -4626,19 +4631,16 @@ export class Battle {
     return true;
   }
 
-  /** AI 埋点：从离唐僧最近（路径末端）往外（入口方向）找第一个还能埋的路径格。
-   *  让 AI 主动把路径一段段铺满雷，充分利用 CD，而非只在怪跟前埋一颗浪费。 */
+  /** AI 埋点：从离唐僧最近（路径末端）往外（入口方向）找第一个还能埋的路径格，
+   *  必须落在路径格正中间（整数格），不能放 fractional 位置。 */
   private aiBombPlacementCell(): { c: number; r: number } | null {
     const path = this.aiPath;
-    const total = lenOf(path);
-    if (total <= 1) return null;
-    const seen = new Set<string>();
-    for (let d = total - 0.4; d > 0.4; d -= 0.5) {
-      const cell = posAlong(path, d);
-      const k = `${Math.round(cell.c * 4)},${Math.round(cell.r * 4)}`; // 0.25 格去重，避免同格重复判
-      if (seen.has(k)) continue;
-      seen.add(k);
-      if (this.bombOnPath(true, cell) && !this.bombCellTaken(this.aiBombs, cell)) return cell;
+    const tang = this.aiTangseng;
+    for (let i = path.length - 1; i >= 0; i--) {
+      const cell = path[i]!;
+      if (cell.c === tang.c && cell.r === tang.r) continue; // 唐僧格禁埋
+      if (this.bombCellTaken(this.aiBombs, cell)) continue; // 每格最多一颗
+      return { c: cell.c, r: cell.r };
     }
     return null;
   }
@@ -4945,6 +4947,17 @@ export class Battle {
     return TUNING.bossEscortMin + this.rng.int(span);
   }
 
+  /** 小 Boss 按种类的移速倍率（本体固有移速，非疾风光环加速，DevTools 可调）：
+   *  霜魄/撼地用 miniBossSpdMulSlow、疾风用 miniBossSpdMulFast、其余用默认 miniBossSpdMul。 */
+  static miniBossSpawnSpdMul(
+    kind: MiniBossKind | null,
+    t: { miniBossSpdMul: number; miniBossSpdMulSlow: number; miniBossSpdMulFast: number },
+  ): number {
+    if (kind === 'frost' || kind === 'quake') return t.miniBossSpdMulSlow;
+    if (kind === 'gale') return t.miniBossSpdMulFast;
+    return t.miniBossSpdMul;
+  }
+
   /** @param distOffset 相对出怪口沿路偏移（负值=尚未走到门口，用于同批错位） */
   private spawnMonster(distOffset = 0, opts?: { forceBoss?: boolean }): void {
     // BOSS：强制（双雄引妖王）/ boss 波的最后一只
@@ -4996,14 +5009,15 @@ export class Battle {
       if (isCavalry) hp *= TUNING.cavalryHpMul;
     }
 
-    // 移速倍率：BOSS/小 Boss 略慢、骑兵翻倍（互斥）
+    // 移速倍率：BOSS/小 Boss 略慢、骑兵快（互斥）；小 Boss 再按种类细分（霜魄/撼地慢、疾风快）
     const spdMul = isBoss
       ? TUNING.bossSpdMul
       : isMiniBoss
-        ? TUNING.miniBossSpdMul
+        ? Battle.miniBossSpawnSpdMul(miniKind, TUNING)
         : isCavalry
           ? TUNING.cavalrySpdMul
           : 1;
+
     const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
     type MonsterSpec = {
       hp: number;
@@ -6197,7 +6211,8 @@ export class Battle {
 
   /** 仙丹/风火轮：拖到单体兵器或武将，本局 +40%，每单位各一次 */
   applyPillActive(i: number, cell: Cell): boolean {
-    if (this.status !== 'playing') return false;
+    // 备战(ready)与对战(playing)都可给兵器/武将上仙丹/风火轮（预布增益）
+    if (this.status !== 'playing' && this.status !== 'ready') return false;
     const slot = this.activeSlots[i];
     if (!slot?.ready) return false;
     const def = activeById(slot.id);

@@ -1,10 +1,10 @@
 // 图鉴：兵器 / 英雄 / 妖怪 / 技能 四 Tab。从主菜单进入，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
 import { UNITS, getUnitStat, towerPOW, MAX_TIER, monsterPOW, type UnitType } from '@core';
-import { sprite, unitAsset, type AssetKey } from './assets';
+import { sprite, unitAsset, miniBossSprite, type AssetKey } from './assets';
 import { MAPS } from './board';
 import { GENERALS, generalStat, generalPOW, type GeneralDef } from './generals';
-import { TUNING, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS, type MonsterSkill } from './battle';
+import { TUNING, Battle, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS, type MiniBossKind, type MonsterSkill } from './battle';
 import { enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import { skillRarityColor } from './merchant';
@@ -577,6 +577,81 @@ function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
     drawMapMonsterRow(ctx, map.id, map.name, GRID_LEFT, y, GRID_W);
     y += MAP_ROW_H + 10;
   });
+
+  drawMiniBossCodexSection(ctx, y + 6);
+}
+
+// 小 Boss 独立栏目：5 种各一张立绘 + 血量/移速/技能说明（跨地图通用，立绘取 pansidong 作代表）
+function drawMiniBossCodexSection(ctx: CanvasRenderingContext2D, y0: number): void {
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#ff9ab0';
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText('小 Boss（跨地图光环）', GRID_LEFT, y0);
+  ctx.fillStyle = 'rgba(255,240,210,0.6)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.fillText('血量=普通怪×' + TUNING.miniBossHpMul + ' · 移速按种类（霜魄/撼地慢、疾风快）', GRID_LEFT + 168, y0 + 3);
+
+  const CARD_GAP = 10;
+  const cardW = (GRID_W - CARD_GAP) / 2;
+  const cardH = 96;
+  const refMap = 'pansidong'; // 小 Boss 立绘与地图无关，取一张作展示
+  let y = y0 + 26;
+  MINI_BOSS_KINDS.forEach((kind, i) => {
+    const col = i % 2;
+    if (col === 0 && i > 0) y += cardH + CARD_GAP;
+    const x = GRID_LEFT + col * (cardW + CARD_GAP);
+    drawMiniBossCard(ctx, kind, x, y, cardW, cardH, refMap);
+  });
+}
+
+function drawMiniBossCard(
+  ctx: CanvasRenderingContext2D,
+  kind: MiniBossKind,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  mapId: string,
+): void {
+  const meta = MINI_BOSS_META[kind];
+  const spd = Battle.miniBossSpawnSpdMul(kind, TUNING);
+  roundRect(ctx, x, y, w, h, 10);
+  ctx.fillStyle = '#241f16';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = meta.color;
+  ctx.stroke();
+
+  // 立绘
+  const box = 56;
+  const spr = miniBossSprite(kind, mapId);
+  if (spr) {
+    const s = Math.min(box / spr.width, box / spr.height);
+    ctx.drawImage(spr, x + 8, y + (h - spr.height * s) / 2, spr.width * s, spr.height * s);
+  } else {
+    ctx.fillStyle = meta.color;
+    ctx.font = 'bold 22px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(meta.icon, x + 8 + box / 2, y + h / 2);
+  }
+
+  const tx = x + box + 18;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = meta.color;
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText(meta.name, tx, y + 8);
+  ctx.fillStyle = '#ffe08a';
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.fillText(`技能「${meta.skillName}」`, tx, y + 28);
+  ctx.fillStyle = 'rgba(255,240,210,0.78)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.fillText(truncate(ctx, meta.desc, w - box - 30), tx, y + 46);
+  ctx.fillStyle = 'rgba(255,240,210,0.7)';
+  ctx.fillText(`血量：普通怪×${TUNING.miniBossHpMul}`, tx, y + 64);
+  ctx.fillText(`移速：×${spd.toFixed(2)}`, tx, y + 78);
 }
 
 function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y: number, w: number, h: number): void {
