@@ -182,7 +182,10 @@ function heroContentHeight(): number {
 
 function monsterContentHeight(): number {
   const types = monsterTypeCards().length;
-  return 28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) + 8;
+  const miniBossRows = Math.ceil(MINI_BOSS_KINDS.length / 2); // 小 Boss 两列排布
+  const miniBossCardH = 96, miniBossGap = 10;
+  const miniBossH = 6 + 26 + miniBossRows * miniBossCardH + (miniBossRows - 1) * miniBossGap + 8;
+  return 28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) + miniBossH;
 }
 
 function skillContentHeight(): number {

@@ -5796,7 +5796,7 @@ export class Battle {
         for (const t of line) hurt(t.m, dmg, t.p, 0.2, true);
         // 光束延伸到最远命中目标，凸显「贯穿一整条线」
         center = line[line.length - 1]?.p ?? primary.p;
-        // 哮天犬：咬住「最前怪 3 格内血量最高者」定身 2s（无伤害，纯控制）；视觉咬点同步到该怪
+        // 哮天犬：咬住「最前怪 3 格内血量最高者」定身 3s（无伤害，纯控制）；视觉咬点同步到该怪
         if (g.def.id === 'erlang' && line.length > 0) {
           const front = line[0]!;
           let pick: { m: Monster; p: { c: number; r: number } } | null = null;
@@ -5806,7 +5806,7 @@ export class Battle {
             if (!pick || t.m.maxHp > pick.m.maxHp) pick = t;
           }
           if (pick) {
-            pick.m.stunT = Math.max(pick.m.stunT ?? 0, 2.0);
+            pick.m.stunT = Math.max(pick.m.stunT ?? 0, 3.0);
             this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r) };
           }
         }
