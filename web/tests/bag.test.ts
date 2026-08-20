@@ -32,23 +32,27 @@ describe('bag display order', () => {
     expect(bagMaxScroll()).toBeGreaterThan(0);
   });
 
-  it('神兵碎片：低级1片激活，高级4片', () => {
-    expect(weaponFragmentsRequired('xiaodingpa')).toBe(1);
-    expect(weaponFragmentsRequired('jingping')).toBe(2);
-    expect(weaponFragmentsRequired('sanjianliangrendao')).toBe(3);
-    expect(weaponFragmentsRequired('jingubang')).toBe(4);
+  it('神兵碎片：低级1片、普通2片、中级3片、高级4片', () => {
+    expect(weaponFragmentsRequired('xiaodingpa')).toBe(1);   // 大蟒 过渡 → low
+    expect(weaponFragmentsRequired('jingping')).toBe(2);     // 观音 辅助 → normal
+    expect(weaponFragmentsRequired('huntianling')).toBe(3);  // 红孩 T1 输出 → mid
+    expect(weaponFragmentsRequired('sanjianliangrendao')).toBe(4); // 二郎 T0 输出 → high
+    expect(weaponFragmentsRequired('jingubang')).toBe(4);    // 大圣 T0 输出 → high
   });
 
   it('addWeaponFragment 集齐后激活', () => {
     let s = { owned: {}, fragments: {}, equipped: [] };
     let r = addWeaponFragment(s, 'sanjianliangrendao');
-    expect(r.activated).toBe(false);
+    expect(r.activated).toBe(false); // 1/4
     s = r.state;
     r = addWeaponFragment(s, 'sanjianliangrendao');
-    expect(r.activated).toBe(false);
+    expect(r.activated).toBe(false); // 2/4
     s = r.state;
     r = addWeaponFragment(s, 'sanjianliangrendao');
-    expect(r.activated).toBe(true);
+    expect(r.activated).toBe(false); // 3/4
+    s = r.state;
+    r = addWeaponFragment(s, 'sanjianliangrendao');
+    expect(r.activated).toBe(true); // 4/4 集齐激活（二郎 T0 → 三尖两刃刀 high 级 4 片）
     expect(r.state.owned['sanjianliangrendao']).toBe(1);
     expect(isWeaponFragmentsComplete(r.state, 'sanjianliangrendao')).toBe(false);
   });

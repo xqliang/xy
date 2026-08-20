@@ -66,7 +66,7 @@ export const GENERALS: GeneralDef[] = [
     maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
 
   // ——— 郎：远程暴击 ———
-  { id: 'erlang', name: '二郎', chars: ['二', '郎'], role: '输出', rank: 'T1', skill: 'ranged',
+  { id: 'erlang', name: '二郎', chars: ['二', '郎'], role: '输出', rank: 'T0', skill: 'ranged',
     skillName: '天眼诛邪', skillDesc: '远距穿透重击', atk: 5.58, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-erlang',
     maxTier: 5, atkStyle: '远程暴击', family: '郎' },
   { id: 'niulang', name: '牛郎', chars: ['牛', '郎'], role: '过渡', rank: 'T2', skill: 'ranged',
@@ -126,7 +126,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '龙牙突进', skillDesc: '突进撕咬并减速', atk: 5.31, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
     maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 8.7, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
+    skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 7.41, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
     maxTier: 3, atkStyle: '单体突进', family: '白' },
 
   // ——— 音：辅助治疗 ———
