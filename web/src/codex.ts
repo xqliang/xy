@@ -189,7 +189,8 @@ function monsterContentHeight(): number {
     28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) // 种类区
     + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) // 各地图行
     + 6 + miniBossSectionH() // 小 Boss 区（紧贴地图行）
-    + bossH // 妖王区（紧贴小 Boss，无额外间距）
+    + 20 // 小 Boss 与妖王区间距
+    + bossH // 妖王区
   );
 }
 
@@ -610,7 +611,7 @@ function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
   });
 
   drawMiniBossCodexSection(ctx, y + 6);
-  drawBossCodexSection(ctx, y + 6 + miniBossSectionH());
+  drawBossCodexSection(ctx, y + 6 + miniBossSectionH() + 20);
 }
 
 // 小 Boss 独立栏目：5 种各一张立绘 + 血量/移速/技能说明（跨地图通用，立绘取 pansidong 作代表）
@@ -812,7 +813,7 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
   ctx.font = '11px "PingFang SC", sans-serif';
   const cdText = g.skillCd > 0 ? `　技能 ${g.skillCd}s` : '';
   ctx.fillText(
-    `白阶 攻${stat1.atk.toFixed(1)} 速${stat1.frq.toFixed(1)} 距${stat1.rge}${cdText}`,
+    `白阶 攻${stat1.atk.toFixed(1)} 速${stat1.frq.toFixed(1)} 距${stat1.rge} 目${g.targets}${cdText}`,
     x + 72,
     y + 84,
   );

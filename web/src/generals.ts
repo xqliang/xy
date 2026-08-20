@@ -78,7 +78,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发', atk: 5.97, frq: 1.5, rge: 3.0, targets: 1.5, skillCd: 10, weight: 1, asset: 'hero-nezha',
     maxTier: 5, atkStyle: '远程清场', family: '吒' },
   { id: 'jinzha', name: '金吒', chars: ['金', '吒'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '砍妖刀', skillDesc: '小范围火焰爆发（过渡）', atk: 5.97, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-jinzha',
+    skillName: '砍妖刀', skillDesc: '小范围火焰爆发（过渡）', atk: 3.73, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-jinzha',
     maxTier: 3, atkStyle: '远程清场', family: '吒' },
 
   // ——— 红：范围灼烧 ———
@@ -94,7 +94,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '钉耙震地', skillDesc: '大范围长时间定身并轻伤', atk: 3.86, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '八' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 3.86, frq: 1.1, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
+    skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 3.86, frq: 1.25, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
     maxTier: 3, atkStyle: '定身控制', family: '八' },
 
   // ——— 牛：冲撞击晕 ———
@@ -102,7 +102,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '蛮牛冲撞', skillDesc: '近身重创并短晕', atk: 5.65, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '牛角顶', skillDesc: '短距撞击轻晕并轻伤（过渡）', atk: 5.65, frq: 1.0, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
+    skillName: '牛角顶', skillDesc: '短距撞击轻晕并轻伤（过渡）', atk: 5.65, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
     maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
 
   // ——— 铁：狂风击退 ———
