@@ -86,6 +86,18 @@ describe('验收：门派与神兵', () => {
     }
   });
 
+  it('满3过渡 base atk = 同门满5 base atk（满3@3 攻击力对齐满5@3 水平）', () => {
+    // 推翻方案A（过渡 base atk 高于主力）：过渡基础 atk 改回与同门满5持平，
+    // 满3@3 与满5@3 同档（如哪吒@3≈12.5、红孩@3≈8.9），满5靠 tier4-5 更高上限
+    // 与更强 frq/rge/目标/技能取胜，保证 满5主力 > 满3过渡。
+    for (const f of new Set(GENERALS.map((g) => g.family))) {
+      const gs = GENERALS.filter((g) => g.family === f);
+      const main = gs.find((g) => g.maxTier === 5)!;
+      const transit = gs.find((g) => g.maxTier === 3)!;
+      expect(transit.atk).toBe(main.atk);
+    }
+  });
+
   it('君/殊辅助配置：skill 与字序正确', () => {
     expect(generalById('laojun')).toMatchObject({
       chars: ['老', '君'], skill: 'buff', role: '辅助', maxTier: 5, skillCd: 13, rge: 2.5,
