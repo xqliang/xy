@@ -62,7 +62,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '七十二变·横扫', skillDesc: '大范围贯穿爆发', atk: 4.22, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
     maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
   { id: 'damang', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '蟒影横扫', skillDesc: '小范围贯穿（过渡）', atk: 4.22, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-damang',
+    skillName: '蟒影横扫', skillDesc: '小范围贯穿（过渡）', atk: 5.40, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-damang',
     maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
 
   // ——— 郎：远程暴击 ———
@@ -70,7 +70,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '天眼诛邪', skillDesc: '远距穿透重击', atk: 5.58, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-erlang',
     maxTier: 5, atkStyle: '远程暴击', family: '郎' },
   { id: 'niulang', name: '牛郎', chars: ['牛', '郎'], role: '过渡', rank: 'T2', skill: 'ranged',
-    skillName: '织云箭', skillDesc: '单体远距轻击（过渡）', atk: 5.58, frq: 1.3, rge: 2.5, targets: 1, skillCd: 11, weight: 3, asset: 'hero-niulang',
+    skillName: '织云箭', skillDesc: '单体远距轻击（过渡）', atk: 7.0, frq: 1.3, rge: 2.5, targets: 1, skillCd: 11, weight: 3, asset: 'hero-niulang',
     maxTier: 3, atkStyle: '远程暴击', family: '郎' },
 
   // ——— 吒：远程清场 ———
@@ -78,7 +78,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发', atk: 5.97, frq: 1.5, rge: 3.0, targets: 1.5, skillCd: 10, weight: 1, asset: 'hero-nezha',
     maxTier: 5, atkStyle: '远程清场', family: '吒' },
   { id: 'jinzha', name: '金吒', chars: ['金', '吒'], role: '过渡', rank: 'T2', skill: 'burst',
-    skillName: '砍妖刀', skillDesc: '小范围火焰爆发（过渡）', atk: 3.73, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-jinzha',
+    skillName: '砍妖刀', skillDesc: '小范围火焰爆发（过渡）', atk: 4.65, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-jinzha',
     maxTier: 3, atkStyle: '远程清场', family: '吒' },
 
   // ——— 红：范围灼烧 ———
@@ -86,7 +86,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '三昧真火', skillDesc: '命中后持续灼烧掉血', atk: 4.22, frq: 1.6, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-honghaier',
     maxTier: 5, atkStyle: '范围灼烧', family: '红' },
   { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burn',
-    skillName: '赤焰', skillDesc: '命中后小范围灼烧（过渡）', atk: 4.22, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-hongpao',
+    skillName: '赤焰', skillDesc: '命中后小范围灼烧（过渡）', atk: 5.40, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-hongpao',
     maxTier: 3, atkStyle: '范围灼烧', family: '红' },
 
   // ——— 八：定身控制 ———
@@ -94,7 +94,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '钉耙震地', skillDesc: '大范围长时间定身并轻伤', atk: 3.86, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '八' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 3.86, frq: 1.25, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
+    skillName: '仙缘定身', skillDesc: '小范围短定身并轻伤（过渡）', atk: 4.55, frq: 1.25, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
     maxTier: 3, atkStyle: '定身控制', family: '八' },
 
   // ——— 牛：冲撞击晕 ———
@@ -102,7 +102,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '蛮牛冲撞', skillDesc: '近身重创并短晕', atk: 5.65, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '牛角顶', skillDesc: '短距撞击轻晕并轻伤（过渡）', atk: 5.65, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
+    skillName: '牛角顶', skillDesc: '短距撞击轻晕并轻伤（过渡）', atk: 6.6, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
     maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
 
   // ——— 铁：狂风击退 ———
@@ -110,7 +110,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退并轻伤', atk: 4.11, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
     maxTier: 5, atkStyle: '狂风击退', family: '铁' },
   { id: 'tiebei', name: '铁背', chars: ['铁', '背'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '铁背开山', skillDesc: '小范围击退并轻伤（过渡）', atk: 4.11, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tiebei',
+    skillName: '铁背开山', skillDesc: '小范围击退并轻伤（过渡）', atk: 4.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tiebei',
     maxTier: 3, atkStyle: '狂风击退', family: '铁' },
 
   // ——— 沙：杖扫击退 ———
@@ -118,7 +118,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '降妖宝杖', skillDesc: '横扫伤害并轻击退', atk: 4.42, frq: 1.3, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-shaseng',
     maxTier: 5, atkStyle: '杖扫击退', family: '沙' },
   { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '流沙涌', skillDesc: '短距轻击退并轻伤（过渡）', atk: 4.42, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-liusha',
+    skillName: '流沙涌', skillDesc: '短距轻击退并轻伤（过渡）', atk: 4.7, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-liusha',
     maxTier: 3, atkStyle: '杖扫击退', family: '沙' },
 
   // ——— 白：单体突进 ———
@@ -126,7 +126,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '龙牙突进', skillDesc: '突进撕咬并减速', atk: 5.31, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
     maxTier: 5, atkStyle: '单体突进', family: '白' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 5.31, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
+    skillName: '骨雾', skillDesc: '减速并轻伤（前期过渡）', atk: 8.7, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
     maxTier: 3, atkStyle: '单体突进', family: '白' },
 
   // ——— 音：辅助治疗 ———
@@ -134,7 +134,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '甘露·净瓶', skillDesc: '减速来敌并为唐僧续命', atk: 3.11, frq: 1.5, rge: 3, targets: 2, skillCd: 12, weight: 1, asset: 'hero-guanyin',
     maxTier: 5, atkStyle: '辅助治疗', family: '音' },
   { id: 'fanyin', name: '梵音', chars: ['梵', '音'], role: '过渡', rank: 'T2', skill: 'heal',
-    skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 3.11, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-fanyin',
+    skillName: '梵音浅润', skillDesc: '弱减速与微量续命（过渡）', atk: 2.8, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-fanyin',
     maxTier: 3, atkStyle: '辅助治疗', family: '音' },
 
   // ——— 君：炼丹增攻 ———
@@ -142,7 +142,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '炼丹·金丹', skillDesc: '短时提升全体武将与兵器攻击', atk: 3.33, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-laojun',
     maxTier: 5, atkStyle: '炼丹增攻', family: '君' },
   { id: 'danjun', name: '丹君', chars: ['丹', '君'], role: '过渡', rank: 'T2', skill: 'buff',
-    skillName: '小还丹', skillDesc: '短时弱提升武将与兵器攻击（过渡）', atk: 3.33, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-danjun',
+    skillName: '小还丹', skillDesc: '短时弱提升武将与兵器攻击（过渡）', atk: 3.8, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-danjun',
     maxTier: 3, atkStyle: '炼丹增攻', family: '君' },
 
   // ——— 殊：般若减 CD ———
@@ -150,7 +150,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '般若·慧剑', skillDesc: '缩短其他武将大招与兵器攻击剩余冷却', atk: 3.33, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-wenshu',
     maxTier: 5, atkStyle: '般若减CD', family: '殊' },
   { id: 'huishu', name: '慧殊', chars: ['慧', '殊'], role: '过渡', rank: 'T2', skill: 'cdr',
-    skillName: '慧光浅照', skillDesc: '略缩短友军大招与兵器冷却（过渡）', atk: 3.33, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
+    skillName: '慧光浅照', skillDesc: '略缩短友军大招与兵器冷却（过渡）', atk: 3.8, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
     maxTier: 3, atkStyle: '般若减CD', family: '殊' },
 ];
 

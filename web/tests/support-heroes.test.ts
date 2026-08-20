@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Battle, TUNING, makePlacedUnit } from '../src/battle';
-import { GENERALS, generalById } from '../src/generals';
+import { GENERALS, generalById, generalPOW } from '../src/generals';
 import { WEAPONS } from '../src/weapons';
 import { ECONOMY, getUnitStat } from '@core';
 import { readFileSync } from 'node:fs';
@@ -86,16 +86,15 @@ describe('验收：门派与神兵', () => {
     }
   });
 
-  it('满3过渡 base atk ≤ 同门满5 base atk（满3@3 攻击力不超主力同档水平）', () => {
-    // 推翻方案A（过渡 base atk 高于主力）：过渡基础 atk 对齐或不高于同门满5，
-    // 使满3@3 攻击力与满5@3 同档（如哪吒@3≈12.5、红孩@3≈8.9），满5靠 tier4-5 更高上限
-    // 与更强 frq/rge/目标/技能取胜，保证 满5主力 > 满3过渡。
-    // 个别过渡（如金吒 3.73 < 哪吒 5.97）刻意压低 atk，避免其@3战力超出同门主力一档。
+  it('主力@5 战力 > 过渡@3 战力（核心排序：满5主力 > 满3过渡）', () => {
+    // 过渡 base atk 可高于主力（过渡是早期 carry，同档 tier3 短暂强于主力），
+    // 但主力靠 tier4-5 更高上限反超，保证 主力@5 > 过渡@3。
+    // 目标：输出型@3≈100 / 控制型@3≈75 / 辅助型@3≈60，主力@5 远高于此。
     for (const f of new Set(GENERALS.map((g) => g.family))) {
       const gs = GENERALS.filter((g) => g.family === f);
       const main = gs.find((g) => g.maxTier === 5)!;
       const transit = gs.find((g) => g.maxTier === 3)!;
-      expect(transit.atk).toBeLessThanOrEqual(main.atk);
+      expect(generalPOW(main, main.maxTier)).toBeGreaterThan(generalPOW(transit, transit.maxTier));
     }
   });
 
