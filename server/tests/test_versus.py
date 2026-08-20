@@ -12,7 +12,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from api_versus import MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS, SIMULTANEOUS_EPS_MS
+from api_versus import (MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS, SIMULTANEOUS_EPS_MS,
+                        MATCH_REAP_MS, REAP_INTERVAL_MS, ROOM_TTL_MS, QUEUE_TTL_MS)
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -443,3 +444,65 @@ def test_keepalive_reuses_connection(http_base, db):
         assert resp.getheader("Content-Length") is not None
     assert conn.sock is not None  # 连接未被服务端关闭
     conn.close()
+
+
+# === Task 10：进程内状态惰性回收(_reap) + 终局后停止转发 + 并发 ===
+def test_reap_removes_ended_match(hub, db):
+    # 终局超回收窗后，match 及其 ticket_match 索引应被清
+    hub.reset()
+    mid = _match_two(hub, db, "10000361", "10000362")
+    hub.tick("10000361", mid, [], _dig(), None, "surrender")
+    hub.tick("10000362", mid, [], _dig(), None, "playing")
+    assert mid in hub.matches
+    hub._clock["ms"] += MATCH_REAP_MS + REAP_INTERVAL_MS + 1
+    hub.poll("bogus")  # 任意 poll 触发锁内 _reap
+    assert mid not in hub.matches
+    assert all(v[0] != mid for v in hub.ticket_match.values())
+
+def test_reap_removes_orphan_room(hub, db):
+    # 房主建房后蒸发：超 ROOM_TTL_MS 的孤儿房应被清
+    hub.reset()
+    _mk_player(db, "10000371", 3)
+    rc = hub.room_create("10000371", 3)
+    assert rc["code"] in hub.rooms
+    hub._clock["ms"] += ROOM_TTL_MS + REAP_INTERVAL_MS + 1
+    hub.poll("bogus")
+    assert rc["code"] not in hub.rooms
+
+def test_reap_removes_stale_queue(hub, db):
+    # 入队后从不 poll/cancel 的孤儿等待者：超 QUEUE_TTL_MS 应被清
+    hub.reset()
+    _mk_player(db, "10000381", 5)
+    r = hub.enqueue("10000381", 5)
+    assert r["ticket"] in hub.queue
+    hub._clock["ms"] += QUEUE_TTL_MS + REAP_INTERVAL_MS + 1
+    hub.poll("bogus")
+    assert r["ticket"] not in hub.queue
+
+def test_relay_stops_after_ended(hub, db):
+    # I2：终局后一方仍发动作，不应再被转发给对手
+    hub.reset()
+    mid = _match_two(hub, db, "10000351", "10000352")
+    hub.tick("10000351", mid, [], _dig(), None, "surrender")   # A 认输→终局
+    hub.tick("10000352", mid, [], _dig(), None, "playing")
+    hub.tick("10000351", mid, [{"t": 9, "op": "place", "cell": "r1c1"}], _dig(), None, "surrender")
+    rb = hub.tick("10000352", mid, [], _dig(), None, "playing")
+    assert rb["opponentInputs"] == []
+
+def test_concurrent_tick_no_crash(hub, db):
+    # 两线程同时 tick 同一局：大锁串行化，应无异常、result 不撕裂、无 KeyError
+    import threading
+    hub.reset()
+    mid = _match_two(hub, db, "10000391", "10000392")
+    errors = []
+    def spam(uid):
+        try:
+            for _ in range(15):
+                hub.tick(uid, mid, [{"t": 1, "op": "place", "cell": "r1c1"}], _dig(), None, "playing")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+    ta = threading.Thread(target=spam, args=("10000391",))
+    tb = threading.Thread(target=spam, args=("10000392",))
+    ta.start(); tb.start(); ta.join(5); tb.join(5)
+    assert not errors
+    assert mid in hub.matches

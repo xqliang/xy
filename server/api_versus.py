@@ -26,6 +26,13 @@ _MIN_DT_S = 0.001               # 摘要间隔下限秒：防止 now 未前进/�
 BAN_DISTINCT_OPPONENTS = 3      # 当天被这么多个不同对手判异常即禁赛
 MAPS = ["huoyanshan", "liushahe", "baiguling", "pansidong"]
 
+# —— 进程内状态惰性回收（防字典无界增长；无后台线程，挂在最高频的 enqueue/poll/tick 锁内）——
+REAP_INTERVAL_MS = 10_000                 # 回收时间闸门：最多每 10s 扫一次，避免每 poll 都 O(N) 扫描占锁
+MATCH_REAP_MS = 120_000                   # 终局后多久回收该 match（给客户端重连/看结果留余量）
+IDLE_REAP_MS = 300_000                    # 建局后双方都久未心跳(废弃局)多久回收
+ROOM_TTL_MS = MATCH_TIMEOUT_MS            # 孤儿私房存活上限（与匹配总超时一致）
+QUEUE_TTL_MS = MATCH_TIMEOUT_MS + 30_000  # 孤儿等待者存活上限（略长于匹配总超时）
+
 
 def _adaptive_window_ms(n: int) -> int:
     # W = clamp(3 + 12*min(n,5)/5, 3s, 15s)：同级越冷清窗口越短
@@ -55,11 +62,13 @@ class VersusHub:
         self.rooms: dict[str, dict] = {}          # code -> room
         self.matches: dict[str, dict] = {}        # match_id -> Match
         self.ticket_match: dict[str, tuple[str, str]] = {}  # ticket -> (match_id, uid)
+        self._last_reap_ms = 0                    # 上次惰性回收时刻（时间闸门，0 保证冷启动首个 reap 即跑）
 
     def reset(self) -> None:  # 测试用
         with self.lock:
             self.queue.clear(); self.recent.clear(); self.rooms.clear()
             self.matches.clear(); self.ticket_match.clear()
+            self._last_reap_ms = 0                 # 归零闸门，保证测试后首个 reap 立即触发
 
     def is_banned(self, uid: str) -> bool:
         # 当天有 ≥3 个不同对手判定异常 → 禁赛
@@ -143,6 +152,31 @@ class VersusHub:
         self.queue.pop(a["ticket"], None); self.queue.pop(b["ticket"], None)
         self._make_match(a, b, now)
 
+    def _reap(self, now: int) -> None:
+        # 惰性回收进程内字典，防无界增长（无后台线程，挂在最高频的 enqueue/poll 锁内）。
+        # 时间闸门：最多每 REAP_INTERVAL_MS 扫一次，避免每 poll 都做 O(N) 扫描并占锁。
+        if now - self._last_reap_ms < REAP_INTERVAL_MS:
+            return
+        self._last_reap_ms = now
+        # 1) 活跃对局：终局超 MATCH_REAP_MS，或非终局但双方久未心跳超 IDLE_REAP_MS（废弃局）→ 删，连带清 ticket_match
+        dead = []
+        for mid, m in list(self.matches.items()):
+            if m.get("ended"):
+                if now - m.get("ended_ms", m["created_ms"]) > MATCH_REAP_MS:
+                    dead.append(mid)
+            elif now - max(m["a"]["last_tick_ms"], m["b"]["last_tick_ms"]) > IDLE_REAP_MS:
+                dead.append(mid)
+        for mid in dead:
+            self.matches.pop(mid, None)
+            for tk in [t for t, (mm, _u) in list(self.ticket_match.items()) if mm == mid]:
+                self.ticket_match.pop(tk, None)
+        # 2) 孤儿等待者：入队超 QUEUE_TTL_MS 仍在队列（从不 poll/cancel）
+        for tk in [t for t, e in list(self.queue.items()) if now - e["enqueued_ms"] > QUEUE_TTL_MS]:
+            self.queue.pop(tk, None)
+        # 3) 孤儿私房：建房超 ROOM_TTL_MS 无人加入
+        for code in [c for c, r in list(self.rooms.items()) if now - r["created_ms"] > ROOM_TTL_MS]:
+            self.rooms.pop(code, None)
+
     # —— 对外匹配 API ——
     def enqueue(self, uid: str, rank: int) -> dict:
         # 禁赛拦截
@@ -151,6 +185,7 @@ class VersusHub:
         with self.lock:
             now = self._now()
             self._prune_recent(now)
+            self._reap(now)                    # 惰性回收终局/孤儿状态，防字典无界增长
             # 记录本次入队用于自适应窗口统计，再算去重人数决定窗口
             self.recent.setdefault(rank, []).append((uid, now))
             n = self._recent_distinct(rank, uid, now)
@@ -163,6 +198,7 @@ class VersusHub:
     def poll(self, ticket: str) -> dict:
         with self.lock:
             now = self._now()
+            self._reap(now)                    # 惰性回收（最高频入口之一），先清理再处理本请求
             # 已成局 → 先判超时；未超时则捕获 (mid, uid)，锁外再组 payload
             matched = self.ticket_match.get(ticket)
             if matched is None:
@@ -256,8 +292,8 @@ class VersusHub:
                 me["last_digest"] = digest
                 me["wave"] = int(digest.get("wave", me["wave"]))
             self._anticheat(m, me, opp, inputs, digest, now)
-            # 把我的动作放进对手的转发缓冲
-            if inputs:
+            # 把我的动作放进对手的转发缓冲；终局后不再累积（对手已无需重放，防泄漏）
+            if inputs and not m.get("ended"):
                 opp["relay_buffer"].extend(inputs)
             # 先清者定下一波
             if wave_cleared_at:
