@@ -23,6 +23,7 @@ import {
   FORCE_MATCH_HALF_PAIR_P,
   YIN_SUPPORT_PRESS_MUL,
   RECENT_HERO_REPEAT_MUL,
+  transitUpgradeBoostMul,
 } from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
 import { hintGeneralForChar, charHeroCapacity } from '../src/generals';
@@ -430,5 +431,50 @@ describe('AI 征兵匹配保底', () => {
     expect((b as any).aiSummon()).toBe(true);
     const trayChars = b.aiTray.filter((t) => t?.kind === 'word').map((t) => (t!.kind === 'word' ? t.char : ''));
     expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+  });
+});
+
+describe('满3在场 → 抽同门满5非共享字爬坡', () => {
+  // 场上有满3过渡（如牛郎 牛+郎）时，提升同门满5（二郎 二+郎）非共享字「二」的权重，
+  // 使 6-10 波能抽到「二」、把满3换非共享字升为同门满5。共享字「郎」两英雄共用，不 boost。
+  it('transitUpgradeBoostMul：wave≤4 为 1、wave6 已生效、wave8 达满额 8、后保持', () => {
+    expect(transitUpgradeBoostMul(2)).toBe(1);
+    expect(transitUpgradeBoostMul(4)).toBe(1);
+    expect(transitUpgradeBoostMul(6)).toBeGreaterThan(1);
+    expect(transitUpgradeBoostMul(8)).toBe(8);
+    expect(transitUpgradeBoostMul(12)).toBe(8);
+  });
+
+  it('满3在场(郎) wave8：同门满5非共享字「二」权重 ×8', () => {
+    const base = wordDrawEntries(8, [], [], [], undefined, { activeTransitFamilies: new Set() })
+      .find((e) => e.char === '二')?.w ?? 0;
+    const boosted = wordDrawEntries(8, [], [], [], undefined, {
+      activeTransitFamilies: new Set(['郎']),
+      transitUpgradeBoostMul: transitUpgradeBoostMul(8),
+    }).find((e) => e.char === '二')?.w ?? 0;
+    expect(base).toBeGreaterThan(0);
+    expect(boosted).toBeCloseTo(base * 8, 5);
+  });
+
+  it('boost 只作用于满5非共享字：共享字「郎」不受 boost 影响', () => {
+    const base = wordDrawEntries(8, [], [], [], undefined, {
+      activeTransitFamilies: new Set(['郎']),
+      transitUpgradeBoostMul: 1,
+    }).find((e) => e.char === '郎')?.w ?? 0;
+    const boosted = wordDrawEntries(8, [], [], [], undefined, {
+      activeTransitFamilies: new Set(['郎']),
+      transitUpgradeBoostMul: 8,
+    }).find((e) => e.char === '郎')?.w ?? 0;
+    expect(boosted).toBeCloseTo(base, 5);
+  });
+
+  it('wave2（满3可能刚出场）不 boost，避免前期过早强抽满5', () => {
+    const off = wordDrawEntries(2, [], [], [], undefined, { activeTransitFamilies: new Set() })
+      .find((e) => e.char === '二')?.w ?? 0;
+    const on = wordDrawEntries(2, [], [], [], undefined, {
+      activeTransitFamilies: new Set(['郎']),
+      transitUpgradeBoostMul: transitUpgradeBoostMul(2),
+    }).find((e) => e.char === '二')?.w ?? 0;
+    expect(on).toBeCloseTo(off, 5);
   });
 });

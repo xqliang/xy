@@ -8,6 +8,7 @@ import {
   hintGeneralForChar,
   maxTierForChar,
   partnerChars,
+  variantChar,
   type GeneralDef,
   type GeneralRole,
 } from './generals';
@@ -57,6 +58,20 @@ export function phaseWeight(wave: number, maxTier: 3 | 5): number {
   if (w <= 4) return maxTier === 3 ? 0.8 : 0.2;
   if (w <= 7) return 0.5;
   return maxTier === 3 ? 0.2 : 0.8;
+}
+
+// —— 满3→满5 切换爬坡：场上有满3过渡武将时，随波次提升同门满5"非共享字"权重，
+//    使 6-10 波能抽到该字、把满3换非共享字升为同门满5（如牛郎 牛+郎 → 抽到 二 → 二郎）。 ——
+export const TRANSIT_UPGRADE_BOOST_FROM_WAVE = 4; // 第 4 波起开始爬坡
+export const TRANSIT_UPGRADE_BOOST_FULL_WAVE = 8; // 第 8 波达到满额
+export const TRANSIT_UPGRADE_BOOST_MUL_MAX = 8; // 满额倍率（×8，强压过满5基础 weight=1 与其它衰减）
+/** 波次爬坡倍率：wave<from→1（前期不影响）；from→full 线性升至 max；full 后保持。 */
+export function transitUpgradeBoostMul(wave: number): number {
+  const w = Math.max(1, wave);
+  if (w < TRANSIT_UPGRADE_BOOST_FROM_WAVE) return 1;
+  if (w >= TRANSIT_UPGRADE_BOOST_FULL_WAVE) return TRANSIT_UPGRADE_BOOST_MUL_MAX;
+  const t = (w - TRANSIT_UPGRADE_BOOST_FROM_WAVE) / (TRANSIT_UPGRADE_BOOST_FULL_WAVE - TRANSIT_UPGRADE_BOOST_FROM_WAVE);
+  return 1 + (TRANSIT_UPGRADE_BOOST_MUL_MAX - 1) * t;
 }
 
 export interface WordPick {
@@ -189,6 +204,8 @@ function buildWeightedEntries(
   tier5BiasMul = 1,
   fieldCharCounts?: ReadonlyMap<string, number>,
   activeMax5Families?: ReadonlySet<string>,
+  activeTransitFamilies?: ReadonlySet<string>,
+  transitUpgradeBoostMul = 1,
   tier5CapableOnly = false,
   excludeChars: readonly string[] = [],
   preferRoles: readonly GeneralRole[] = [],
@@ -227,6 +244,11 @@ function buildWeightedEntries(
       }
       if (g.role !== '过渡' && roleBoost.has(g.role)) mult *= ROLE_DIVERSITY_BOOST;
       mult *= familyPenalty;
+      // 满3在场 → 提升同门满5"非共享字"权重（满3→满5 切换爬坡；只 boost 非共享字，
+      // 共享字=门派字两英雄共用，且满3已在场说明该字已有，无需再 boost）
+      if (activeTransitFamilies?.has(g.family) && g.maxTier === 5 && c === variantChar(g) && transitUpgradeBoostMul > 1) {
+        mult *= transitUpgradeBoostMul;
+      }
       if (yinPressActive && YIN_PRESS_FAMILIES.has(g.family)) mult *= YIN_SUPPORT_PRESS_MUL;
       if (recentSet.size > 0 && charInRecentMatchedHeroes(c, recentSet)) {
         mult *= RECENT_HERO_REPEAT_MUL;
@@ -265,6 +287,10 @@ export interface WordPickOpts {
   fieldCharCounts?: ReadonlyMap<string, number>;
   /** 已激活满5 武将的门派 family 集合 */
   activeMax5Families?: ReadonlySet<string>;
+  /** 已激活满3过渡武将的门派集合 → 提升同门满5"非共享字"权重（满3→满5 切换爬坡） */
+  activeTransitFamilies?: ReadonlySet<string>;
+  /** 满3在场时同门满5非共享字的波次爬坡倍率（1=不 boost；caller 按 wave 用 transitUpgradeBoostMul 算） */
+  transitUpgradeBoostMul?: number;
   /** 只抽可升到 5 阶的字（排除满3过渡字） */
   tier5CapableOnly?: boolean;
   /** 已在激活武将上的字（非配对缺口时不抽） */
@@ -374,6 +400,8 @@ export function wordDrawEntries(
     opts?.tier5BiasMul ?? 1,
     opts?.fieldCharCounts,
     opts?.activeMax5Families,
+    opts?.activeTransitFamilies,
+    opts?.transitUpgradeBoostMul ?? 1,
     opts?.tier5CapableOnly ?? false,
     opts?.excludeChars ?? [],
     opts?.preferRoles ?? [],
@@ -598,6 +626,8 @@ export function pickWordChar(
   const tier5BiasMul = opts?.tier5BiasMul ?? 1;
   const fieldCharCounts = opts?.fieldCharCounts;
   const activeMax5Families = opts?.activeMax5Families;
+  const activeTransitFamilies = opts?.activeTransitFamilies;
+  const transitUpgradeBoostMul = opts?.transitUpgradeBoostMul ?? 1;
   const tier5CapableOnly = opts?.tier5CapableOnly ?? false;
   const excludeChars = opts?.excludeChars ?? [];
   const preferRoles = opts?.preferRoles ?? [];
@@ -622,6 +652,8 @@ export function pickWordChar(
       tier5BiasMul,
       fieldCharCounts,
       activeMax5Families,
+      activeTransitFamilies,
+      transitUpgradeBoostMul,
       tier5CapableOnly,
       excludeChars,
       preferRoles,

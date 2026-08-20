@@ -219,6 +219,8 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | `wordDrawChance` | **0.08** | 每兵槽独立转字概率（英雄随机） |
 | `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
 | `PARTNER_BOOST` | **0.12** | 非保底时：半对孤儿所需配对字的抽字权重倍率（软加权） |
+| `TRANSIT_UPGRADE_BOOST_FROM/FULL_WAVE` | 4 / 8 | 满3过渡武将在场时，同门满5**非共享字**权重随波次爬坡的起点/满额波（wave5-7 线性、wave8 达满额）；确保 6-10 波能抽到该字，把满3换非共享字升为同门满5（如牛郎 牛+郎 → 抽「二」→ 二郎） |
+| `TRANSIT_UPGRADE_BOOST_MUL_MAX` | **8** | 上述爬坡满额倍率（×8，强压过满5基础 weight=1 与其它衰减） |
 | `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制抽一张配对字 |
 | `PAIR_PITY_FOCUS_MIN_ORPHANS` | **3** | 半对保底聚焦阈值：场上独特单字 ≥ 该数 |
 | `PAIR_PITY_FOCUS_W` | **0.4** | 保底时随机选中的孤儿，其配对字相对权重 |

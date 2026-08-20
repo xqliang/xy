@@ -37,6 +37,7 @@ import {
   forcedMatchWordChars,
   matchedHeroIds,
   pickWordChar,
+  transitUpgradeBoostMul,
   yinSupportCharsPresent,
   PAIR_PITY_AFTER,
   type SummonWordPolicy,
@@ -2079,6 +2080,7 @@ export class Battle {
     const ownedBoard = this.boardWordCharsNow();
     const fieldCharCounts = this.boardFieldCharCounts();
     const activeMax5Families = this.activeMax5FamiliesNow();
+    const activeTransitFamilies = this.activeTransitFamiliesNow();
     const wordPolicy = this.summonWordPolicyNow();
     const wordSlotsCap = Math.min(wordPolicy.maxWordSlots, early.maxWords);
     const forcePartner = wordPolicy.allowForcePartner
@@ -2096,6 +2098,8 @@ export class Battle {
       tier5BiasMul: this.versusBand.playerWordTier5Bias,
       fieldCharCounts,
       activeMax5Families,
+      activeTransitFamilies,
+      transitUpgradeBoostMul: transitUpgradeBoostMul(Math.max(1, this.wave)),
       tier5CapableOnly: wordPolicy.tier5CapableOnly,
       excludeChars: wordPolicy.excludeChars,
       preferRoles: wordPolicy.preferRoles,
@@ -2611,6 +2615,15 @@ export class Battle {
     return families;
   }
 
+  /** 已激活满3过渡武将的门派集合（满3→满5 切换爬坡：提升同门满5非共享字权重） */
+  private activeTransitFamiliesNow(): Set<string> {
+    const families = new Set<string>();
+    for (const g of this.activeGenerals()) {
+      if (g.def.maxTier === 3) families.add(g.def.family);
+    }
+    return families;
+  }
+
   /**
    * 满盘且场上激活将均为满5：布阵可优先用兵器顶孤儿单字。
    * 征兵仍可出字（见 `computeSummonWordPolicy`）。
@@ -2686,6 +2699,15 @@ export class Battle {
     const families = new Set<string>();
     for (const g of this.aiActiveGenerals()) {
       if (g.def.maxTier === 5) families.add(g.def.family);
+    }
+    return families;
+  }
+
+  /** AI 侧已激活满3过渡武将的门派集合（与玩家对称，满3→满5 切换爬坡） */
+  private aiActiveTransitFamiliesNow(): Set<string> {
+    const families = new Set<string>();
+    for (const g of this.aiActiveGenerals()) {
+      if (g.def.maxTier === 3) families.add(g.def.family);
     }
     return families;
   }
@@ -3071,6 +3093,7 @@ export class Battle {
     const ownedBoard = this.aiBoardWordCharsNow();
     const fieldCharCounts = this.aiBoardFieldCharCounts();
     const activeMax5Families = this.aiActiveMax5FamiliesNow();
+    const activeTransitFamilies = this.aiActiveTransitFamiliesNow();
     const wordPolicy = this.aiSummonWordPolicyNow();
     const wordSlotsCap = Math.min(wordPolicy.maxWordSlots, early.maxWords);
     const forcePartner = wordPolicy.allowForcePartner
@@ -3088,6 +3111,8 @@ export class Battle {
       tier5BiasMul: this.versusBand.aiWordTier5Bias,
       fieldCharCounts,
       activeMax5Families,
+      activeTransitFamilies,
+      transitUpgradeBoostMul: transitUpgradeBoostMul(Math.max(1, this.wave)),
       tier5CapableOnly: wordPolicy.tier5CapableOnly,
       excludeChars: wordPolicy.excludeChars,
       preferRoles: wordPolicy.preferRoles,
