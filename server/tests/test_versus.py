@@ -120,3 +120,25 @@ def test_banned_enqueue_rejected(hub, db):
             )
     r = hub.enqueue("10000030", 1)
     assert r.get("banned") is True
+
+
+def test_room_create_join(hub, db):
+    hub.reset()
+    _mk_player(db, "10000101", rank=4, nickname="房主")
+    _mk_player(db, "10000102", rank=7, nickname="客人")
+    rc = hub.room_create("10000101", 4)
+    assert rc["code"] == "ROOM01"
+    assert "?versus=ROOM01" in rc["link"]
+    assert hub.poll(rc["ticket"])["status"] == "waiting"
+    rj = hub.room_join("ROOM01", "10000102", 7)
+    assert rj["status"] == "matched"
+    ph = hub.poll(rc["ticket"])
+    assert ph["status"] == "matched"
+    assert ph["matchStart"]["matchId"] == rj["matchStart"]["matchId"]
+    assert ph["matchStart"]["opponent"]["nickname"] == "客人"
+
+
+def test_room_join_bad_code(hub, db):
+    hub.reset()
+    _mk_player(db, "10000103", rank=1)
+    assert hub.room_join("NOPE", "10000103", 1).get("error") == "room_not_found"

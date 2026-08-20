@@ -182,6 +182,49 @@ class VersusHub:
             self.queue.pop(ticket, None)
             return {"ok": True}
 
+    # —— 私房（邀请对战）：房主建房间占 ticket 挂起，客人凭码加入直接成局 ——
+    def room_create(self, uid: str, rank: int, base_url: str = "") -> dict:
+        # 禁赛拦截：与匹配一致，异常玩家当日不得开私房
+        if self.is_banned(uid):
+            return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        with self.lock:
+            now = self._now()
+            code = self._gen_code()
+            ticket = secrets.token_hex(8)
+            # 房间记录：code -> 房间元信息（含房主 ticket，便于加入时定位房主）
+            self.rooms[code] = {"code": code, "host_uid": uid, "host_rank": rank,
+                                "map": self._pick_map(), "created_ms": now, "ticket": ticket}
+            # 房主也占一张 ticket，复用同一张 queue 表；标记 room 表示私房挂起（poll 见之仍等待）
+            self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
+                                  "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS, "room": code}
+            link = f"{base_url}/?versus={code}"
+            return {"code": code, "link": link, "ticket": ticket, "map": self.rooms[code]["map"]}
+
+    def room_join(self, code: str, uid: str, rank: int) -> dict:
+        # 禁赛拦截
+        if self.is_banned(uid):
+            return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+        with self.lock:
+            now = self._now()
+            room = self.rooms.get(code)
+            if not room:
+                # 无此码：可能输错或已被占用
+                return {"error": "room_not_found"}
+            host_ticket = room["ticket"]
+            host_entry = self.queue.get(host_ticket)
+            if not host_entry:
+                # 房已存在但房主 ticket 已不在队列（超时/被清理）
+                return {"error": "room_expired"}
+            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）
+            joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank, "enqueued_ms": now}
+            # 成局即销毁房间与房主挂起态，保证一码一局、不能重复加入
+            self.queue.pop(host_ticket, None)
+            self.rooms.pop(code, None)
+            mid = self._make_match(host_entry, joiner, now, map_id=room["map"])
+            # 注意：_match_start_payload 在锁内调用（含 DB 读档）。
+            # 私房加入是一次性低频操作，可接受；不改动 Task 3 的 poll 热路径。
+            return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
+
     def _match_start_payload(self, mid: str, uid: str) -> dict:
         # 组 match-start：matchId/seed/map/startAt/对手档案
         m = self.matches[mid]
