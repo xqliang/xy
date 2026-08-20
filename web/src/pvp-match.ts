@@ -1,6 +1,7 @@
 // 匹配状态机：帧驱动（pump）轮询 + 倒计时，依赖注入 net/now 便于单测；不直接用 Date.now/setInterval。
 // 由游戏主循环每帧 pump(nowMs) 驱动：每 POLL_INTERVAL_MS 轮询一次，总时长到 MATCH_TIMEOUT_MS 判超时。
 import type { ApiResult, EnqueueResp, PollResp, RoomCreateResp, RoomJoinResp, MatchStart } from './api/pvp-client';
+import type { PvpMatchingView } from './pvp-screen'; // 仅类型导入：pvp-screen 不 import 本文件，无循环依赖
 
 export const MATCH_TIMEOUT_MS = 120_000; // 与服务端一致的 2 分钟总倒计时
 export const POLL_INTERVAL_MS = 1_000;   // 轮询间隔（1s）
@@ -34,7 +35,7 @@ interface Deps {
   net: PvpMatchNet;
   now: () => number;
   onMatched: (ms: MatchStart) => void;
-  onFailed: (reason: FailReason, msg?: string) => void;
+  onFailed: (reason: FailReason) => void; // 收紧：msg 已落入 state.message，回调只传 reason
 }
 
 export class PvpMatchController {
@@ -55,6 +56,11 @@ export class PvpMatchController {
     this.state.phase = phase;
     this.state.startedAt = t;
     this.state.remainMs = MATCH_TIMEOUT_MS;
+    // 清掉上一轮残留：防止 failed 后再开一轮时旧 opponent/message/code/link 串到新 queuing 窗口。
+    this.state.opponent = null;
+    this.state.message = '';
+    this.state.code = null;
+    this.state.link = null;
     this.lastPollAt = t;
   }
 
@@ -114,8 +120,10 @@ export class PvpMatchController {
 
   /** 主动取消匹配：尝试通知服务端取消，然后回 idle。 */
   async cancel(): Promise<void> {
-    await this.safeCancel();
+    // 先脱离匹配态再 await 取消请求：防止在途 poll 在 net.cancel 完成前 resolve 为 matched 而误触发 onMatched。
+    // phase 置 idle 后，poll 回调的守卫（phase 非 queuing/inviting 直接丢弃）会放行拒绝迟到 matched。
     this.state.phase = 'idle';
+    await this.safeCancel();
   }
   /** 尽力取消：有 ticket 就调 net.cancel，异常忽略（取消失败不影响前端回 idle）。 */
   private async safeCancel(): Promise<void> {
@@ -136,4 +144,18 @@ export class PvpMatchController {
     // 回调只传 reason（msg 已存入 state.message）；与单测 toHaveBeenCalledWith(reason) 对齐。
     this.d.onFailed(reason);
   }
+}
+
+/** 把 controller 状态映射成匹配屏 view；idle（未开始/已取消）返回 null，表示不该画 PvP 匹配屏（应回菜单）。 */
+export function toMatchView(state: PvpMatchState, mode: 'random' | 'invite' | 'join', copied: boolean): PvpMatchingView | null {
+  if (state.phase === 'idle') return null; // 收窄：其余 4 个 phase 恰好等于 PvpMatchingView.phase 联合
+  return {
+    mode,
+    phase: state.phase,
+    remainMs: state.remainMs,
+    opponent: state.opponent, // 宽结构(含 uid)赋给窄结构，变量赋值不触发多余属性检查
+    link: state.link,
+    copied,
+    message: state.message,
+  };
 }

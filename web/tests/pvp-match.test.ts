@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PvpMatchController, MATCH_TIMEOUT_MS, POLL_INTERVAL_MS } from '../src/pvp-match';
+import { PvpMatchController, MATCH_TIMEOUT_MS, POLL_INTERVAL_MS, toMatchView } from '../src/pvp-match';
 import type { MatchStart } from '../src/api/pvp-client';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -66,5 +66,29 @@ describe('PvpMatchController 随机匹配', () => {
     const c = new PvpMatchController({ net: n as any, now: () => t, onMatched: vi.fn(), onFailed });
     await c.startRandom(3); await flush();
     expect(onFailed).toHaveBeenCalledWith('banned');
+  });
+
+  it('cancel() 期间在途 poll 迟到返回 matched，不触发 onMatched（竞态回归）', async () => {
+    let t = 0; const onMatched = vi.fn();
+    let resolvePoll: (v: any) => void = () => {};
+    const n = net({ poll: vi.fn(() => new Promise((res) => { resolvePoll = res; })) });
+    const c = new PvpMatchController({ net: n as any, now: () => t, onMatched, onFailed: vi.fn() });
+    await c.startRandom(3); await flush();
+    t = POLL_INTERVAL_MS + 1; c.pump(t);   // 触发一笔在途 poll（pending）
+    await c.cancel();                       // 取消：phase 先置 idle
+    resolvePoll({ ok: true, data: { status: 'matched', matchStart: MS }, status: 200 }); // 迟到 matched
+    await flush();
+    expect(onMatched).not.toHaveBeenCalled();
+    expect(c.state.phase).toBe('idle');
+  });
+
+  it('toMatchView：idle→null，queuing→view(mode/phase 对)', async () => {
+    let t = 0;
+    const c = new PvpMatchController({ net: net() as any, now: () => t, onMatched: vi.fn(), onFailed: vi.fn() });
+    expect(toMatchView(c.state, 'random', false)).toBeNull(); // 初始 idle
+    await c.startRandom(3); await flush();
+    const v = toMatchView(c.state, 'random', false);
+    expect(v?.phase).toBe('queuing');
+    expect(v?.mode).toBe('random');
   });
 });
