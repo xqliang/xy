@@ -2,7 +2,7 @@
 import { VIEW_W, VIEW_H } from './render';
 import { UNITS, getUnitStat, towerPOW, MAX_TIER, monsterPOW, type UnitType } from '@core';
 import { sprite, unitAsset, miniBossSprite, type AssetKey } from './assets';
-import { MAPS } from './board';
+import { MAPS, type GameMap } from './board';
 import { GENERALS, generalStat, generalPOW, type GeneralDef } from './generals';
 import { TUNING, Battle, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS, type MiniBossKind, type MonsterSkill } from './battle';
 import { enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
@@ -182,10 +182,15 @@ function heroContentHeight(): number {
 
 function monsterContentHeight(): number {
   const types = monsterTypeCards().length;
-  const miniBossRows = Math.ceil(MINI_BOSS_KINDS.length / 2); // 小 Boss 两列排布
-  const miniBossCardH = 96, miniBossGap = 10;
-  const miniBossH = 6 + 26 + miniBossRows * miniBossCardH + (miniBossRows - 1) * miniBossGap + 8;
-  return 28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) + miniBossH;
+  const bossRows = Math.ceil(MAPS.length / 2); // 妖王两列排布
+  const bossCardH = 110, bossGap = 10;
+  const bossH = 26 + bossRows * bossCardH + (bossRows - 1) * bossGap;
+  return (
+    28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) // 种类区
+    + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) // 各地图行
+    + 6 + miniBossSectionH() // 小 Boss 区（紧贴地图行）
+    + bossH // 妖王区（紧贴小 Boss，无额外间距）
+  );
 }
 
 function skillContentHeight(): number {
@@ -473,7 +478,7 @@ function drawMonsterTypeCard(ctx: CanvasRenderingContext2D, card: MonsterTypeCar
 function drawMonsterSprite(
   ctx: CanvasRenderingContext2D,
   mapId: string,
-  role: 'minion' | 'boss',
+  role: 'minion' | 'boss' | 'cavalry',
   cx: number,
   cy: number,
   box: number,
@@ -536,7 +541,7 @@ function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName
   const cavalryX = x + w - 142;
   const bossX = x + w - 74;
   drawMonsterSprite(ctx, mapId, 'minion', minionX, spriteY, spriteBox, '小妖');
-  drawMonsterSprite(ctx, mapId, 'minion', cavalryX, spriteY, spriteBox, '骑兵', '#7dff8a');
+  drawMonsterSprite(ctx, mapId, 'cavalry', cavalryX, spriteY, spriteBox, '骑兵', '#7dff8a');
   drawMonsterSprite(ctx, mapId, 'boss', bossX, spriteY, spriteBox, '妖王', '#ff9ab0');
 }
 
@@ -549,6 +554,12 @@ function drawUnitTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
     const y = y0 + row * (UNIT_CARD_H + UNIT_GAP);
     drawUnitCard(ctx, type, x, y, CARD_W, UNIT_CARD_H);
   });
+}
+
+// 小 Boss 区在怪物 Tab 中占据的垂直高度（与 drawMiniBossCodexSection 布局一致，供滚动上限与下区定位）
+function miniBossSectionH(): number {
+  const rows = Math.ceil(MINI_BOSS_KINDS.length / 2);
+  return 26 + rows * 96 + (rows - 1) * 10;
 }
 
 function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
@@ -582,6 +593,7 @@ function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
   });
 
   drawMiniBossCodexSection(ctx, y + 6);
+  drawBossCodexSection(ctx, y + 6 + miniBossSectionH());
 }
 
 // 小 Boss 独立栏目：5 种各一张立绘 + 血量/移速/技能说明（跨地图通用，立绘取 pansidong 作代表）
@@ -655,6 +667,85 @@ function drawMiniBossCard(
   ctx.fillStyle = 'rgba(255,240,210,0.7)';
   ctx.fillText(`血量：普通怪×${TUNING.miniBossHpMul}`, tx, y + 64);
   ctx.fillText(`移速：×${spd.toFixed(2)}`, tx, y + 78);
+}
+
+// 妖王独立栏目：每张图一只妖王，展示立绘 + 血量/移速/技能/护卫（地图专属减益）
+function drawBossCodexSection(ctx: CanvasRenderingContext2D, y0: number): void {
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#ff9ab0';
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText('妖王（每图专属）', GRID_LEFT, y0);
+  ctx.fillStyle = 'rgba(255,240,210,0.6)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.fillText(
+    `血量 普通怪×${TUNING.bossHpMulEarly}~×${TUNING.bossHpMul} · 移速×${TUNING.bossSpdMul}（慢血厚）· 出场带护卫`,
+    GRID_LEFT + 120,
+    y0 + 3,
+  );
+
+  const CARD_GAP = 10;
+  const cardW = (GRID_W - CARD_GAP) / 2;
+  const cardH = 110;
+  let y = y0 + 26;
+  MAPS.forEach((map, i) => {
+    const col = i % 2;
+    if (col === 0 && i > 0) y += cardH + CARD_GAP;
+    const x = GRID_LEFT + col * (cardW + CARD_GAP);
+    drawBossCard(ctx, map, x, y, cardW, cardH);
+  });
+}
+
+function drawBossCard(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const skillId = MAP_SKILL[map.id];
+  const meta = skillId ? SKILL_META[skillId] : null;
+  const desc = skillId ? SKILL_DESC[skillId] : '';
+  const spd = TUNING.monsterSpd * TUNING.bossSpdMul;
+  const color = meta ? meta.color : '#ff5a8a';
+  roundRect(ctx, x, y, w, h, 10);
+  ctx.fillStyle = '#241f16';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+
+  // 立绘（每图专属妖王）
+  const box = 56;
+  const spr = sprite(`monster-boss-${map.id}` as AssetKey);
+  if (spr) {
+    const s = Math.min(box / spr.width, box / spr.height);
+    ctx.drawImage(spr, x + 8, y + (h - spr.height * s) / 2, spr.width * s, spr.height * s);
+  } else {
+    ctx.fillStyle = color;
+    ctx.font = 'bold 22px "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(meta ? meta.icon : '王', x + 8 + box / 2, y + h / 2);
+  }
+
+  const tx = x + box + 18;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = color;
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText(`${map.name}妖王`, tx, y + 8);
+  ctx.fillStyle = '#ffe08a';
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.fillText(meta ? `技能「${meta.name}」` : '技能：本地图专属', tx, y + 26);
+  ctx.fillStyle = 'rgba(255,240,210,0.78)';
+  ctx.font = '11px "PingFang SC", sans-serif';
+  ctx.fillText(truncate(ctx, desc, w - box - 30), tx, y + 42);
+  ctx.fillStyle = 'rgba(255,240,210,0.7)';
+  ctx.fillText(`血量：普通怪×${TUNING.bossHpMulEarly}~×${TUNING.bossHpMul}`, tx, y + 60);
+  ctx.fillText(`移速：×${TUNING.bossSpdMul}（≈ ${spd.toFixed(2)} 格/s，慢血厚）`, tx, y + 76);
+  ctx.fillText(`护卫：${TUNING.bossEscortMin}~${TUNING.bossEscortMax} 名 · 分血`, tx, y + 92);
 }
 
 function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y: number, w: number, h: number): void {
