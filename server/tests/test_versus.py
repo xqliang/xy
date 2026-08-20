@@ -142,3 +142,34 @@ def test_room_join_bad_code(hub, db):
     hub.reset()
     _mk_player(db, "10000103", rank=1)
     assert hub.room_join("NOPE", "10000103", 1).get("error") == "room_not_found"
+
+
+def test_room_host_not_pulled_into_random(hub, db):
+    hub.reset()
+    _mk_player(db, "10000111", rank=3, nickname="房主")
+    _mk_player(db, "10000112", rank=3, nickname="路人")
+    _mk_player(db, "10000113", rank=3, nickname="好友")
+    rc = hub.room_create("10000111", 3)                 # 房主 rank3 建私房
+    r_stranger = hub.enqueue("10000112", 3)             # 同段位路人进随机池
+    # 房主不应被路人配走：房主仍 waiting，路人也 waiting（池里只有他自己）
+    assert hub.poll(rc["ticket"])["status"] == "waiting"
+    assert hub.poll(r_stranger["ticket"])["status"] == "waiting"
+    # 只有真正 room_join 才能与房主成局，且对手是好友
+    rj = hub.room_join(rc["code"], "10000113", 3)
+    assert rj["status"] == "matched"
+    ph = hub.poll(rc["ticket"])
+    assert ph["status"] == "matched"
+    assert ph["matchStart"]["opponent"]["nickname"] == "好友"
+
+
+def test_room_banned_rejected(hub, db):
+    hub.reset()
+    _mk_player(db, "10000121", rank=1)
+    day = db.today(); now = db.now()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE uid=%s", ("10000121",))
+        for opp in ("21000001", "21000002", "21000003"):
+            cur.execute("INSERT INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
+                        " VALUES (%s,%s,%s,%s,%s,%s)", (day, "10000121", opp, "m", "{}", now))
+    assert hub.room_create("10000121", 1).get("banned") is True
+    assert hub.room_join("ANY", "10000121", 1).get("banned") is True

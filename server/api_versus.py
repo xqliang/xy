@@ -110,8 +110,9 @@ class VersusHub:
         return mid
 
     def _try_pair(self, now: int) -> None:
-        # 第一轮：同段位两两配对（按入队先后）
-        waiting = list(self.queue.values())
+        # 私房房主(带 room 标记)不参与随机匹配池，只能经 room_join 成局
+        # 第一轮：同段位两两配对
+        waiting = [e for e in self.queue.values() if not e.get("room")]
         by_rank: dict[int, list[dict]] = {}
         for e in waiting:
             by_rank.setdefault(e["rank"], []).append(e)
@@ -120,8 +121,8 @@ class VersusHub:
             while len(lst) >= 2:
                 a = lst.pop(0); b = lst.pop(0)
                 self._pair(a, b, now)
-        # 第二轮：已过保持窗口者与任意等待者配对（放宽段位限制）
-        waiting = sorted(self.queue.values(), key=lambda e: e["enqueued_ms"])
+        # 第二轮：已过保持窗口者与任意(非私房)等待者配对
+        waiting = sorted([e for e in self.queue.values() if not e.get("room")], key=lambda e: e["enqueued_ms"])
         i = 0
         while i < len(waiting):
             a = waiting[i]
@@ -129,7 +130,7 @@ class VersusHub:
                 partner = next((x for x in waiting if x["ticket"] in self.queue and x["ticket"] != a["ticket"]), None)
                 if partner:
                     self._pair(a, partner, now)
-                    waiting = sorted(self.queue.values(), key=lambda e: e["enqueued_ms"]); i = 0; continue
+                    waiting = sorted([e for e in self.queue.values() if not e.get("room")], key=lambda e: e["enqueued_ms"]); i = 0; continue
             i += 1
 
     def _pair(self, a: dict, b: dict, now: int) -> None:
