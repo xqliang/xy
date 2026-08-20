@@ -7,6 +7,7 @@ import { STARS_PER_TIER } from './rank';
 import { APP_VERSION } from './version';
 import {
   roundRect,
+  drawInkActionButton,
   drawInkResourceBar,
   drawInkPlusButton,
   drawInkCheckbox,
@@ -122,6 +123,15 @@ const BAG_BTN = {
   w: BAG_SIZE,
   h: BAG_SIZE,
 };
+// PvP 入口：无尽行下方、底部栏上方的空档，左右并排（与开始按钮同总宽居中）
+const PVP_ROW_Y = 772;
+const PVP_BTN_H = 64;
+const PVP_GAP = 12;
+// 两个按钮总宽 = START_W - 中间间隔；与「开始」按钮同总宽，保持左右栏对齐
+const PVP_BTN_W = (START_W - PVP_GAP) / 2;
+const PVP_ROW_X = (VIEW_W - START_W) / 2;
+const PVP_MATCH_BTN = { x: PVP_ROW_X, y: PVP_ROW_Y, w: PVP_BTN_W, h: PVP_BTN_H };
+const PVP_INVITE_BTN = { x: PVP_ROW_X + PVP_BTN_W + PVP_GAP, y: PVP_ROW_Y, w: PVP_BTN_W, h: PVP_BTN_H };
 
 export function menuButtons(): MenuButton[] {
   return [
@@ -133,6 +143,8 @@ export function menuButtons(): MenuButton[] {
     { id: 'mapPick', ...MAP_PICK_BTN },
     { id: 'endless', ...ENDLESS_HIT },
     { id: 'start', ...START_BTN },
+    { id: 'pvpMatch', ...PVP_MATCH_BTN },
+    { id: 'pvpInvite', ...PVP_INVITE_BTN },
     { id: 'rank', ...RANK_BTN },
     { id: 'bag', ...BAG_BTN },
   ];
@@ -337,6 +349,15 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
         'primary',
         'cover',
       );
+      continue;
+    }
+    // PvP 入口：水墨按钮。真人对战为主操作（primary）、邀请好友为次操作（secondary）
+    if (b.id === 'pvpMatch') {
+      drawInkActionButton(ctx, b, '真人对战', info.pressedId === 'pvpMatch', 'primary');
+      continue;
+    }
+    if (b.id === 'pvpInvite') {
+      drawInkActionButton(ctx, b, '邀请好友', info.pressedId === 'pvpInvite', 'secondary');
       continue;
     }
     if (b.id === 'endless') {
