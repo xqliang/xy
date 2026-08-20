@@ -6,7 +6,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from api_versus import MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS
+from api_versus import MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS, SIMULTANEOUS_EPS_MS
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -213,9 +213,14 @@ def test_surrender_opponent_wins(hub, db):
     assert rb["result"]["reason"] == "opponentSurrender"
     ra = hub.tick("10000301", mid, [], _dig(), None, "surrender")
     assert ra["result"]["outcome"] == "lose"
+    assert ra["result"]["reason"] == "selfSurrender"   # 败方原因也要对
     with db.cursor() as cur:
         cur.execute("SELECT outcome,reason FROM pvp_results WHERE match_id=%s AND uid=%s", (mid, "10000302"))
-        assert cur.fetchone()["outcome"] == "win"
+        win_row = cur.fetchone()
+        assert win_row["outcome"] == "win" and win_row["reason"] == "opponentSurrender"
+        cur.execute("SELECT outcome,reason FROM pvp_results WHERE match_id=%s AND uid=%s", (mid, "10000301"))
+        lose_row = cur.fetchone()
+        assert lose_row["outcome"] == "lose" and lose_row["reason"] == "selfSurrender"
 
 def test_tangseng_dead(hub, db):
     hub.reset()
@@ -242,3 +247,22 @@ def test_simultaneous_draw(hub, db):
     hub._clock["ms"] += 100
     rb = hub.tick("10000332", mid, [], _dig(), None, "tangsengDead")
     assert rb["result"]["outcome"] == "draw"
+
+def test_non_simultaneous_not_draw(hub, db):
+    # A 先阵亡（B 判赢），B 在 EPS 之外才阵亡 → 不得改判平局，仍是 B 赢
+    hub.reset()
+    mid = _match_two(hub, db, "10000341", "10000342")
+    hub.tick("10000341", mid, [], _dig(), None, "tangsengDead")   # A 先死
+    rb = hub.tick("10000342", mid, [], _dig(), None, "playing")   # B 报 playing → B 判赢
+    assert rb["result"]["outcome"] == "win"
+    assert rb["result"]["reason"] == "opponentTangsengDead"
+    hub._clock["ms"] += SIMULTANEOUS_EPS_MS + 50                  # 拉开到 EPS 之外
+    ra = hub.tick("10000341", mid, [], _dig(), None, "tangsengDead")  # A 再报死
+    assert ra["result"]["outcome"] == "lose"                     # A 仍判负（非平局）
+    rb2 = hub.tick("10000342", mid, [], _dig(), None, "playing")
+    assert rb2["result"]["outcome"] == "win"                     # B 仍判赢，未被改判平局
+    # DB 落库也应是 win/lose 两行，无 draw
+    with db.cursor() as cur:
+        cur.execute("SELECT outcome FROM pvp_results WHERE match_id=%s ORDER BY outcome", (mid,))
+        outs = sorted(r["outcome"] for r in cur.fetchall())
+    assert outs == ["lose", "win"]
