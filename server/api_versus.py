@@ -26,7 +26,7 @@ _MIN_DT_S = 0.001               # 摘要间隔下限秒：防止 now 未前进/�
 BAN_DISTINCT_OPPONENTS = 3      # 当天被这么多个不同对手判异常即禁赛
 MAPS = ["huoyanshan", "liushahe", "baiguling", "pansidong"]
 
-# —— 进程内状态惰性回收（防字典无界增长；无后台线程，挂在最高频的 enqueue/poll/tick 锁内）——
+# —— 进程内状态惰性回收（防字典无界增长；无后台线程，挂在最高频的 enqueue/poll 锁内）——
 REAP_INTERVAL_MS = 10_000                 # 回收时间闸门：最多每 10s 扫一次，避免每 poll 都 O(N) 扫描占锁
 MATCH_REAP_MS = 120_000                   # 终局后多久回收该 match（给客户端重连/看结果留余量）
 IDLE_REAP_MS = 300_000                    # 建局后双方都久未心跳(废弃局)多久回收
@@ -216,8 +216,13 @@ class VersusHub:
                 if matched is None:
                     return {"status": "waiting"}
         # 锁外组 payload：_profile 的 DB 查询不在全局锁内，避免热路径把匹配串在 DB 延迟上
+        # 注意：锁外此时 match 可能被并发 _reap 回收（仅当该局已可回收＝废弃局），
+        # 直接 self.matches[mid] 会抛 KeyError 导致 poll 500，故 _match_start_payload 用 .get() 兜底。
         mid, uid = matched
-        return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
+        payload = self._match_start_payload(mid, uid)
+        if payload is None:                    # 期间被并发 _reap 回收（仅废弃局）→ 视为超时，避免 KeyError 500
+            return {"status": "timeout"}
+        return {"status": "matched", "matchStart": payload}
 
     def cancel(self, ticket: str) -> dict:
         with self.lock:
@@ -267,9 +272,13 @@ class VersusHub:
             # 私房加入是一次性低频操作，可接受；不改动 Task 3 的 poll 热路径。
             return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
 
-    def _match_start_payload(self, mid: str, uid: str) -> dict:
+    def _match_start_payload(self, mid: str, uid: str) -> Optional[dict]:
+        # 注意：poll 在锁外调用本方法（DB 读档不占锁）；对局可能已被并发 _reap 回收 → 返回 None 由调用方兜底。
+        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid，成局后不再变），无撕裂读。
+        m = self.matches.get(mid)
+        if m is None:
+            return None
         # 组 match-start：matchId/seed/map/startAt/对手档案
-        m = self.matches[mid]
         opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
         return {"matchId": mid, "seed": m["seed"], "map": m["map"],
                 "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}

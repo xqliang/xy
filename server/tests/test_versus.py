@@ -506,3 +506,14 @@ def test_concurrent_tick_no_crash(hub, db):
     ta.start(); tb.start(); ta.join(5); tb.join(5)
     assert not errors
     assert mid in hub.matches
+
+
+def test_reap_keeps_active_match(hub, db):
+    # 回收器最该防的：最近有心跳的活跃对局，reap 后必须仍在
+    hub.reset()
+    mid = _match_two(hub, db, "10000461", "10000462")
+    hub.tick("10000461", mid, [], _dig(), None, "playing")  # 刷新 last_tick_ms
+    hub.tick("10000462", mid, [], _dig(), None, "playing")
+    hub._clock["ms"] += 10_000   # 越过 REAP 闸门(>=10s)，但 now-last_tick=10s << IDLE_REAP(300s)
+    hub.poll("bogus")            # 触发锁内 _reap
+    assert mid in hub.matches    # 活跃对局未被误删
