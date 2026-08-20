@@ -78,6 +78,38 @@ SCHEMA = [
       updated_at DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 在线真人对战（PvP）Plan A：单局结果归档。match_id 由撮合层分配，
+    # 对同一局两名玩家各落一行（各写自己的 outcome/reason），按 (uid, day) 查询历史。
+    """
+    CREATE TABLE IF NOT EXISTS pvp_results (
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      match_id VARCHAR(40) NOT NULL,
+      day CHAR(10) NOT NULL,
+      uid VARCHAR(20) NOT NULL,
+      opponent_uid VARCHAR(20) NOT NULL,
+      outcome ENUM('win','lose','draw') NOT NULL,
+      reason VARCHAR(32) NOT NULL,
+      wave INT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL,
+      KEY idx_uid_day (uid, day),
+      KEY idx_match (match_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    # PvP 对局异常记录（防作弊/不一致复核）。同一天同一对对手只保留一行，
+    # reasons_json 为异常原因数组（如卡顿重连、战绩分歧），便于后续人工/离线核对。
+    """
+    CREATE TABLE IF NOT EXISTS pvp_anomaly (
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      day CHAR(10) NOT NULL,
+      uid VARCHAR(20) NOT NULL,
+      opponent_uid VARCHAR(20) NOT NULL,
+      match_id VARCHAR(40) NOT NULL,
+      reasons_json MEDIUMTEXT NULL,
+      created_at DATETIME NOT NULL,
+      UNIQUE KEY uniq_day_uid_opp (day, uid, opponent_uid),
+      KEY idx_uid_day (uid, day)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 

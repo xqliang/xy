@@ -39,7 +39,7 @@ def _reset_db():
     with conn.cursor() as cur:
         cur.execute(f"CREATE DATABASE IF NOT EXISTS `{DSN_ENV['XY_DB_NAME']}` CHARACTER SET utf8mb4")
         cur.execute(f"USE `{DSN_ENV['XY_DB_NAME']}`")
-        for t in ("events", "daily_stats", "daily_leaderboard", "player_avatars", "players"):
+        for t in ("pvp_anomaly", "pvp_results", "events", "daily_stats", "daily_leaderboard", "player_avatars", "players"):
             cur.execute(f"DROP TABLE IF EXISTS {t}")
     conn.close()
 
