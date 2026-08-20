@@ -87,7 +87,7 @@ def test_migrate_creates_pvp_tables(db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_migrate_creates_pvp_tables -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_migrate_creates_pvp_tables -v`
 Expected: FAIL（表不存在）
 
 - [ ] **Step 3: 追加 schema**
@@ -131,7 +131,7 @@ Expected: FAIL（表不存在）
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_migrate_creates_pvp_tables -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_migrate_creates_pvp_tables -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -168,7 +168,7 @@ def test_not_banned_by_default(hub):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_not_banned_by_default -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_not_banned_by_default -v`
 Expected: FAIL（`No module named api_versus`）
 
 - [ ] **Step 3: 建 `server/api_versus.py`（骨架）**
@@ -242,7 +242,7 @@ class VersusHub:
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_not_banned_by_default -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_not_banned_by_default -v`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -325,7 +325,7 @@ def test_banned_enqueue_rejected(hub, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "match or widen or timeout or banned"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "match or widen or timeout or banned"`
 Expected: FAIL（方法未定义）
 
 - [ ] **Step 3: 实现匹配方法**（在 `VersusHub` 内追加）
@@ -447,7 +447,7 @@ def _mask(uid: str) -> str:
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "match or widen or timeout or banned"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "match or widen or timeout or banned"`
 Expected: PASS（4 项）
 
 - [ ] **Step 5: 提交**
@@ -489,7 +489,7 @@ def test_room_join_bad_code(hub, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k room`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k room`
 Expected: FAIL
 
 - [ ] **Step 3: 实现房间方法**（在 `VersusHub` 内追加）
@@ -532,7 +532,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k room`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k room`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -582,7 +582,7 @@ def test_first_clear_schedules_next_wave(hub, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k tick`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k tick`
 Expected: FAIL
 
 - [ ] **Step 3: 实现 tick（转发 + 波次调度骨架）**（在 `VersusHub` 内追加；终局/断线在 Task 6）
@@ -657,7 +657,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k tick`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k tick`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -721,7 +721,7 @@ def test_simultaneous_draw(hub, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "surrender or tangseng or disconnect or draw"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "surrender or tangseng or disconnect or draw"`
 Expected: FAIL
 
 - [ ] **Step 3: 完善终局逻辑**（替换 Task 5 的三个占位方法 + 加落库）
@@ -798,7 +798,7 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "surrender or tangseng or disconnect or draw"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "surrender or tangseng or disconnect or draw"`
 Expected: PASS（4 项）
 
 - [ ] **Step 5: 提交**
@@ -846,7 +846,7 @@ def test_three_opponents_trigger_ban(hub, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "anomaly or ban"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "anomaly or ban"`
 Expected: FAIL
 
 - [ ] **Step 3: 实现反作弊**（替换 Task 5 的 `_anticheat` 占位 + 常量 + 记录方法）
@@ -893,7 +893,7 @@ KILLS_ABS_FLOOR = 30            # 低战力区的击杀绝对下限余量（避�
 
 - [ ] **Step 4: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v -k "anomaly or ban"`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v -k "anomaly or ban"`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
@@ -954,7 +954,7 @@ def test_http_enqueue_poll_match(http_base, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_http_enqueue_poll_match -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_http_enqueue_poll_match -v`
 Expected: FAIL（路由 404）
 
 - [ ] **Step 3: 加 HTTP 封装**（`server/api_versus.py` 末尾，类外）
@@ -1028,7 +1028,7 @@ from api_versus import (  # noqa: E402
 
 - [ ] **Step 5: 运行看通过**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py -v`
 Expected: PASS（全部）；再跑既有回归 `python -m pytest tests/ -v` 全绿。
 
 - [ ] **Step 6: 提交**
@@ -1068,7 +1068,7 @@ def test_keepalive_reuses_connection(http_base, db):
 
 - [ ] **Step 2: 运行看失败**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection -v`
 Expected: FAIL（HTTP/1.0 默认关连接，第 2 次 `getresponse` 抛 `RemoteDisconnected`/`CannotSendRequest`）
 
 - [ ] **Step 3: 开启 keep-alive + 排空 body**
@@ -1096,7 +1096,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 - [ ] **Step 4: 运行看通过 + 回归**
 
-Run: `cd server && XY_DB_PORT=3307 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection tests/ -v`
+Run: `cd server && XY_DB_PORT=3308 .venv/bin/python -m pytest tests/test_versus.py::test_keepalive_reuses_connection tests/ -v`
 Expected: PASS；既有 `test_player_api.py`（urllib 每请求新连接）不受影响，全绿。
 
 - [ ] **Step 5: Benchmark（满足"性能优化必须有 benchmark 数据"）**
@@ -1148,5 +1148,5 @@ git commit -m "perf(versus): 后端开 HTTP/1.1 keep-alive，1s 轮询复用连�
 
 ## 执行说明
 
-- 依赖：本机 docker MariaDB @3307（见 `server/README.md`）。跑前确保容器在。
+- 依赖：本机 docker MariaDB。本环境 3307 被别项目占用，已起一次性容器 `xy-mysql-test` 于 **3308**（空 root 密码、库 `xy_game_test`）；测试命令均带 `XY_DB_PORT=3308`。test 文件默认仍写 3307，靠命令行 env 覆盖。
 - 每个 Task 独立可测、独立提交；全部完成后 `/api/versus/*` 可用真实 HTTP 联调（Plan B 客户端接入）。
