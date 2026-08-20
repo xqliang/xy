@@ -97,6 +97,11 @@ import {
 
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
+
+// DevTools 模块级配置：第 N 波征兵必出指定英雄两字（跨 restart 持久）
+// null = 关闭；非 null = 新 Battle 构造时自动读取
+let DEV_FORCE_WAVE_HERO: { heroId: string; wave: number } | null = null;
+
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
@@ -706,6 +711,8 @@ export interface HeroUltFx {
   fromR?: number;
   biteC?: number;        // 二郎神哮天犬咬击目标格（最前怪 3 格内血量最高者）
   biteR?: number;
+  /** 二郎神哮天犬咬住的怪物 id（3s 内狗跟随该怪；怪死亡则狗消失） */
+  biteMid?: number;
 }
 
 // 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
@@ -1642,9 +1649,16 @@ export class Battle {
   ultFlash = 0; // AOE 技能(紧箍咒/陨石)释放特效计时(秒)
   ultCenter: { c: number; r: number } | null = null; // AOE 爆心（渲染用）
   /** 二郎神大招「哮天犬」本帧咬击目标格（触发时写入、pushHeroUltFx 消费后清空） */
-  biteTarget: { c: number; r: number } | null = null;
+  biteTarget: { c: number; r: number; mid: number } | null = null;
+  /** 二郎哮天犬咬住怪物后的持续跟随特效（3s 内狗停在怪物位置，怪死亡则消失） */
+  erlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number }[] = [];
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
+
+  // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
+  devForceWave: number = 0; // 0 = 关闭；非 0 = 该波征兵必出
+  devForceHeroId: string = ''; // 武将 id（如 'erlang'），空 = 关闭
+  private devForceWaveCharsDrawn: Set<string> = new Set(); // 已强制出的字（防重复）
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -1875,6 +1889,11 @@ export class Battle {
       this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next(), this.aiAdjustIntervalScale);
     }
     this.warmPathDistCaches();
+    // DevTools：读取模块级强制出英雄配置（跨 restart 持久）
+    if (DEV_FORCE_WAVE_HERO) {
+      this.devForceHeroId = DEV_FORCE_WAVE_HERO.heroId;
+      this.devForceWave = DEV_FORCE_WAVE_HERO.wave;
+    }
   }
 
   private warmPathDistCaches(): void {
@@ -2113,6 +2132,23 @@ export class Battle {
       if (trayWordsSoFar.length >= wordSlotsCap) {
         return null;
       }
+      // DevTools：第 N 波必出指定英雄的两字（测试用）
+      if (this.devForceHeroId && this.wave === this.devForceWave) {
+        const def = generalById(this.devForceHeroId);
+        if (def) {
+          for (const ch of def.chars) {
+            if (this.devForceWaveCharsDrawn.has(ch)) continue;
+            // 跳过已在 tray 或棋盘上的字
+            const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
+            const onBoard = [...this.words.values()].some((w) => w.char === ch);
+            if (inTray || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
+            this.devForceWaveCharsDrawn.add(ch);
+            trayWordsSoFar.push(ch);
+            this.bumpWordCharCount(ch);
+            return { kind: 'word' as const, char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
+          }
+        }
+      }
       const w = pickWordChar(
         this.rng,
         Math.max(1, this.wave),
@@ -2142,6 +2178,27 @@ export class Battle {
       }
       return tok;
     });
+    // DevTools：第 N 波必出指定英雄两字——若 tray 里还没有，强制替换 unit 槽
+    if (this.devForceHeroId && this.wave === this.devForceWave) {
+      const def = generalById(this.devForceHeroId);
+      if (def) {
+        for (const ch of def.chars) {
+          if (this.devForceWaveCharsDrawn.has(ch)) continue;
+          const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
+          const inDraws = draws.some((t) => t.kind === 'word' && t.char === ch);
+          const onBoard = [...this.words.values()].some((w) => w.char === ch);
+          if (inTray || inDraws || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
+          // 找一个 unit 槽替换
+          const idx = draws.findIndex((t) => t.kind === 'unit');
+          if (idx >= 0) {
+            draws[idx] = { kind: 'word', char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
+            trayWordsSoFar.push(ch);
+            this.bumpWordCharCount(ch);
+            this.devForceWaveCharsDrawn.add(ch);
+          }
+        }
+      }
+    }
     if (
       wordPolicy.allowForceWord
       && forceWord
@@ -2559,6 +2616,28 @@ export class Battle {
   /** 测试钩子：将半对保底计数设为阈值 */
   forcePairPityForTest(): void { this.summonsSincePair = TUNING.pairPityAfter; }
   setWaveForTest(wave: number): void { this.wave = Math.max(0, wave); }
+
+  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。 */
+  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。跨 restart 持久。 */
+  setDevForceWave2Hero(heroId: string, wave = 2): void {
+    DEV_FORCE_WAVE_HERO = { heroId, wave };
+    this.devForceHeroId = heroId;
+    this.devForceWave = wave;
+    this.devForceWaveCharsDrawn.clear();
+  }
+  /** DevTools：关闭强制出英雄 */
+  clearDevForceWave2Hero(): void {
+    DEV_FORCE_WAVE_HERO = null;
+    this.devForceHeroId = '';
+    this.devForceWave = 0;
+    this.devForceWaveCharsDrawn.clear();
+  }
+  /** DevTools：获取当前强制配置（供 UI 显示）。优先读模块级配置（跨 restart）。 */
+  devForceWave2HeroStatus(): { wave: number; heroId: string } {
+    if (DEV_FORCE_WAVE_HERO) return { wave: DEV_FORCE_WAVE_HERO.wave, heroId: DEV_FORCE_WAVE_HERO.heroId };
+    return { wave: this.devForceWave, heroId: this.devForceHeroId };
+  }
+
   earlySummonStatsForTest(): {
     wordsCap: number;
     wordsGuarantee: number;
@@ -5706,7 +5785,7 @@ export class Battle {
         || g.def.skill === 'buff' || g.def.skill === 'cdr'
         ? { fromC: gAx, fromR: gAy }
         : {}),
-      ...(bite ? { biteC: bite.c, biteR: bite.r } : {}),
+      ...(bite ? { biteC: bite.c, biteR: bite.r, biteMid: bite.mid } : {}),
     });
   }
 
@@ -5837,7 +5916,11 @@ export class Battle {
           }
           if (pick) {
             pick.m.stunT = Math.max(pick.m.stunT ?? 0, 3.0);
-            this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r) };
+            this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r), mid: pick.m.id };
+            // 光束角度：从施法者中心→咬点（让狗朝向光束冲锋方向）
+            const beamAng = Math.atan2(pick.p.r - gAy, pick.p.c - gAx);
+            // 哮天犬咬住后持续跟随 3s（怪死亡则消失）
+            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng });
           }
         }
         break;
@@ -6512,6 +6595,7 @@ export class Battle {
     this.fx = [];
     this.bursts = [];
     this.heroUltFx = [];
+    this.erlangDogFx = []; // 二郎哮天犬跟随特效
     this.bombFx = []; // 爆炸残影清掉；已埋未引爆的地雷（bombs/aiBombs）作为玩法状态保留跨波
     this.peachFloats = [];
     this.damageFloats = [];
@@ -6552,7 +6636,24 @@ export class Battle {
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
     for (const uf of this.heroUltFx) uf.ttl -= dt;
-    this.heroUltFx = this.heroUltFx.filter((uf) => uf.ttl > 0);
+    // 二郎哮天犬：被咬怪物死亡则狗立即消失（否则跟随 3s）；玩家/AI 怪物分属两数组，都要查
+    this.heroUltFx = this.heroUltFx.filter((uf) => {
+      if (uf.ttl <= 0) return false;
+      if (uf.biteMid != null) {
+        const m = this.monsters.find((mm) => mm.id === uf.biteMid)
+          ?? this.aiMonsters.find((mm) => mm.id === uf.biteMid);
+        if (!m || m.hp <= 0) return false;
+      }
+      return true;
+    });
+    // 二郎哮天犬跟随特效：3s 递减；被咬怪物死亡则立即移除
+    for (const d of this.erlangDogFx) d.ttl -= dt;
+    this.erlangDogFx = this.erlangDogFx.filter((d) => {
+      if (d.ttl <= 0) return false;
+      const m = this.monsters.find((mm) => mm.id === d.mid)
+        ?? this.aiMonsters.find((mm) => mm.id === d.mid);
+      return !!m && m.hp > 0;
+    });
     for (const p of this.peachFloats) {
       p.vy += PEACH_FLOAT_GRAVITY * dt;
       p.y += p.vy * dt;

@@ -1990,6 +1990,10 @@ interface GameHook {
   battle: Battle;
   summon: () => boolean;
   wave: () => boolean;
+  // DevTools：第 N 波征兵必出指定英雄两字（测试用）
+  forceWaveHero: (heroId: string, wave?: number) => void;
+  clearForceWaveHero: () => void;
+  forceWaveHeroStatus: () => { wave: number; heroId: string };
   ult: () => boolean; // 兼容垫片：绝招已移除，恒返回 false（旧工具不报错）
   triggerActive: (i: number) => boolean;
   equipActives: (ids: string[]) => void;
@@ -2020,6 +2024,10 @@ const hook: GameHook = {
   },
   summon: () => battle.summon(),
   wave: () => battle.startNextWave(),
+  // DevTools：第 N 波征兵必出指定英雄两字（测试用）
+  forceWaveHero: (heroId: string, wave = 2) => battle.setDevForceWave2Hero(heroId, wave),
+  clearForceWaveHero: () => battle.clearDevForceWave2Hero(),
+  forceWaveHeroStatus: () => battle.devForceWave2HeroStatus(),
   ult: () => false, // 绝招已移除，保留空实现兼容旧脚本
   triggerActive: (i: number) => battle.triggerActive(i),
   equipActives: (ids: string[]) => {

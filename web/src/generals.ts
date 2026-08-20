@@ -86,7 +86,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '三昧真火', skillDesc: '命中后持续灼烧掉血', atk: 4.22, frq: 1.6, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-honghaier',
     maxTier: 5, atkStyle: '范围灼烧', family: '红' },
   { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burn',
-    skillName: '赤焰', skillDesc: '命中后小范围灼烧（过渡）', atk: 5.40, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-hongpao',
+    skillName: '赤焰', skillDesc: '命中后小范围灼烧（过渡）', atk: 4.59, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-hongpao',
     maxTier: 3, atkStyle: '范围灼烧', family: '红' },
 
   // ——— 八：定身控制 ———

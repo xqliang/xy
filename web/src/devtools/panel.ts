@@ -40,7 +40,7 @@ import { ECONOMY } from '@core';
 import { BOARD_POWER } from '../board-power';
 import { PLACE_TIMING, PEACH_TREE } from '../battle';
 import { AI_TIMING } from '../autoplace';
-import { GENERAL_TUNING, GENERALS } from '../generals';
+import { GENERAL_TUNING, GENERALS, generalById } from '../generals';
 import { WEAPON_TUNING, WEAPONS, weaponBonusLabel } from '../weapons';
 import { ACTIVE_SKILLS } from '../actives';
 import { PASSIVE_SKILLS } from '../passives';
@@ -615,6 +615,48 @@ export class DevToolsPanel {
       row.appendChild(eqBtn);
       card.appendChild(row);
       body.appendChild(card);
+    }
+
+    // —— 测试：第 N 波必出指定英雄两字 ——
+    body.appendChild(section('测试：第 N 波必出英雄'));
+    const testHint = document.createElement('p');
+    testHint.className = 'xy-dt-hint';
+    testHint.textContent = '配置后，指定波次征兵必定产出该英雄的两个字，方便测试英雄效果。0 = 关闭。';
+    body.appendChild(testHint);
+    const gHook = window as unknown as { __game?: { forceWaveHero: (id: string, w?: number) => void; clearForceWaveHero: () => void; forceWaveHeroStatus: () => { wave: number; heroId: string } } };
+    const fwStatus = gHook.__game?.forceWaveHeroStatus?.() ?? { wave: 0, heroId: '' };
+    const heroRow = document.createElement('div');
+    heroRow.className = 'xy-dt-row';
+    const heroSel = document.createElement('select');
+    heroSel.innerHTML = '<option value="">关闭</option>' +
+      GENERALS.map((g) => `<option value="${g.id}"${g.id === fwStatus.heroId ? ' selected' : ''}>${g.name}(${g.id})</option>`).join('');
+    heroRow.appendChild(heroSel);
+    const waveInput = numInput(fwStatus.wave || 2, () => {}, '1');
+    waveInput.style.width = '40px';
+    heroRow.appendChild(document.createTextNode(' 第 '));
+    heroRow.appendChild(waveInput);
+    heroRow.appendChild(document.createTextNode(' 波 '));
+    body.appendChild(heroRow);
+    const testActions = document.createElement('div');
+    testActions.className = 'xy-dt-actions';
+    testActions.appendChild(btn('设置', () => {
+      const id = heroSel.value;
+      const w = Math.max(0, Math.floor(Number(waveInput.value))) || 2;
+      if (!id) { gHook.__game?.clearForceWaveHero?.(); }
+      else { gHook.__game?.forceWaveHero?.(id, w); }
+      this.renderBody();
+    }, 'primary'));
+    testActions.appendChild(btn('关闭', () => {
+      gHook.__game?.clearForceWaveHero?.();
+      this.renderBody();
+    }));
+    body.appendChild(testActions);
+    if (fwStatus.heroId) {
+      const st = document.createElement('div');
+      st.className = 'xy-dt-card';
+      const fwDef = generalById(fwStatus.heroId);
+      st.textContent = `当前：第 ${fwStatus.wave} 波必出「${fwDef?.name ?? fwStatus.heroId}」两字：${fwDef?.chars.join('') ?? ''}`;
+      body.appendChild(st);
     }
   }
 

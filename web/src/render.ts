@@ -3390,6 +3390,27 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     }
     ctx.restore();
   }
+
+  // 二郎哮天犬跟随特效：咬住怪物后持续 3s（狗停在怪物位置，怪死亡则消失）
+  for (const d of b.erlangDogFx) {
+    const prog = 1 - d.ttl / d.maxTtl;
+    const fade = Math.max(0.35, 1 - prog * 0.65); // 前段保持，末段淡出
+    const bx = BOARD_X + d.c * CELL + CELL / 2;
+    const by = BOARD_Y + d.r * CELL + CELL / 2;
+    ctx.save();
+    // 定身环（提示怪物被咬定住）
+    const ringR = CELL * (0.35 + d.tier * 0.03);
+    ctx.globalAlpha = fade * 0.5;
+    ctx.strokeStyle = '#ffe9a0';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.arc(bx, by, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    drawErlangDog(ctx, bx, by, bx, by, d.ang, 1, d.tier, fade, d.c, d.r, true);
+    ctx.restore();
+  }
 }
 
 function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
@@ -3911,6 +3932,7 @@ function drawErlangDog(
   ang: number,
   p: number, tier: number, vis: number,
   biteC?: number, biteR?: number,
+  latched?: boolean, // true=咬住后定在怪物位置（3s 跟随），不冲锋
 ): void {
   // 咬点优先用被定身怪位置（castGeneralSkill 写入 biteTarget），否则回退光束落点
   const bx = biteC != null ? BOARD_X + biteC * CELL + CELL / 2 : tipX;
@@ -3918,16 +3940,23 @@ function drawErlangDog(
   const DOG_START = 0.2;
   const DOG_BITE = 0.5;
   const DOG_END = 0.78;
-  if (p < DOG_START) return;
-  const tp = Math.max(0, Math.min(1, (p - DOG_START) / (DOG_END - DOG_START)));
-  const ease = easeOut(tp);
-  const rx = eyeX + (bx - eyeX) * ease;
-  const ry = eyeY + (by - eyeY) * ease;
-  const biteT = tp >= (DOG_BITE - DOG_START) / (DOG_END - DOG_START);
+
+  let rx: number, ry: number, tp: number;
+  if (latched) {
+    // latched 模式：直接定在咬点，不冲锋
+    rx = bx; ry = by; tp = 1;
+  } else {
+    if (p < DOG_START) return;
+    tp = Math.max(0, Math.min(1, (p - DOG_START) / (DOG_END - DOG_START)));
+    const ease = easeOut(tp);
+    rx = eyeX + (bx - eyeX) * ease;
+    ry = eyeY + (by - eyeY) * ease;
+  }
+  const biteT = !latched && tp >= (DOG_BITE - DOG_START) / (DOG_END - DOG_START);
 
   ctx.save();
-  // 冲刺残影（沿移动反方向）
-  if (tp < 0.96) {
+  // 冲刺残影（沿移动反方向）— latched 模式不画残影
+  if (!latched && tp < 0.96) {
     const trailLen = CELL * (0.5 + 0.5 * Math.sin(tp * Math.PI));
     const tx = rx - Math.cos(ang) * trailLen;
     const ty = ry - Math.sin(ang) * trailLen;
@@ -3944,13 +3973,19 @@ function drawErlangDog(
     ctx.stroke();
   }
 
-  const size = CELL * (0.42 + tier * 0.035);
+  const size = CELL * (0.42 + tier * 0.035) * 1.5; // 放大 1.5×，让哮天犬更清晰
   const spr = sprite('hero-ttg');
   ctx.globalAlpha = vis * (tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
   if (spr) {
     ctx.save();
     ctx.translate(rx, ry);
-    ctx.rotate(ang); // 冲锋方向对齐光束
+    // 朝左时水平翻转素材，避免旋转 ~180° 导致狗倒立
+    if (Math.cos(ang) < 0) {
+      ctx.scale(-1, 1);
+      ctx.rotate(ang - Math.PI);
+    } else {
+      ctx.rotate(ang);
+    }
     const s = (size * 2) / Math.max(spr.width, spr.height);
     ctx.drawImage(spr, (-spr.width * s) / 2, (-spr.height * s) / 2, spr.width * s, spr.height * s);
     ctx.restore();

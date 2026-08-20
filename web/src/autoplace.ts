@@ -1410,7 +1410,7 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     return selectOrphansToKeep([...orphans, candidate], maxKeep).includes(candidate);
   }
 
-  /** 超出 AI 孤儿上限：低分单字顶回候选区，满则移除 */
+  /** 超出孤儿上限：低分单字顶回候选区； tray 满则留在棋盘（绝不丢弃） */
   function tryCullExcessOrphans(): boolean {
     const maxKeep = opts.maxOrphanWords;
     if (maxKeep == null) return false;
@@ -1422,11 +1422,12 @@ export function planAutoPlaceSteps(view: AutoPlaceView, opts: AutoPlaceOpts): nu
     const eject = orphans
       .filter((w) => !keepKeys.has(cellKey(w.cell)) && !view.isActiveHeroCell(w.cell))
       .sort((a, b) => orphanKeepScore(a, []) - orphanKeepScore(b, []));
+    let any = false;
     for (const w of eject) {
-      if (view.displaceToTray(w.cell)) return true;
-      if (view.removeWord?.(w.cell)) return true;
+      if (view.displaceToTray(w.cell)) any = true;
+      // tray 满：保留在棋盘上（绝不丢弃），不删除
     }
-    return false;
+    return any;
   }
 
   /** 有空格且 tray 仍有兵 → 优先落子；tray 字未清完则暂缓落兵 */
