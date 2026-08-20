@@ -827,10 +827,12 @@ git commit -m "feat(versus): 终局裁决(认输/唐僧被吃/断线超时/平�
 def test_anomaly_recorded_and_dedup(hub, db):
     hub.reset()
     mid = _match_two(hub, db, "10000401", "10000402")
+    with db.cursor() as cur:  # 防重复跑串味：清当日该 uid 旧异常行
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000401"))
     # 击杀暴涨且远超战力可能：kills 从 0 跳到 9999，power 极低
     bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000401", mid, [], bad, None, "playing")
-    hub.tick("10000401", mid, [], {**bad, "kills": 19999}, None, "playing")  # 同对手当天只记 1
+    hub.tick("10000401", mid, [], bad, None, "playing")                     # 首 tick 建基线 prev_kill_digest
+    hub.tick("10000401", mid, [], {**bad, "kills": 19999}, None, "playing")  # 第 2 tick 增量暴涨才触发；同对手当天只记 1
     day = db.today()
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) c FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000401"))
@@ -840,6 +842,7 @@ def test_three_opponents_trigger_ban(hub, db):
     hub.reset()
     day = db.today(); now = db.now()
     with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000411"))  # 防重复跑串味
         for opp in ("30000001", "30000002"):
             cur.execute("INSERT INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
                         " VALUES (%s,%s,%s,%s,%s,%s)", (day, "10000411", opp, "m", "{}", now))
@@ -847,7 +850,9 @@ def test_three_opponents_trigger_ban(hub, db):
     _mk_player(db, "10000411", 3); _mk_player(db, "10000412", 3)
     mid = _match_two(hub, db, "10000411", "10000412")
     bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000411", mid, [], bad, None, "playing")   # 第 3 个不同对手
+    # _anticheat 是增量检测：首 tick 仅建基线(prev_kill_digest)，第 2 tick 增量暴涨才记异常→第 3 个不同对手
+    hub.tick("10000411", mid, [], bad, None, "playing")
+    hub.tick("10000411", mid, [], {**bad, "kills": 19999}, None, "playing")
     assert hub.is_banned("10000411") is True
 ```
 
