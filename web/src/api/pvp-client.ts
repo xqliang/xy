@@ -1,6 +1,7 @@
 // PvP 匹配/私房网络层：apiFetch 薄封装，X-Uid 由 apiFetch 自动带。
 // tick 转发/心跳属对局阶段，放到 Plan C，本文件只覆盖匹配前的入队/轮询/取消/私房。
 import { apiFetch, type ApiResult } from './client';
+export type { ApiResult };
 
 /** 对手展示档（uid 已脱敏） */
 export interface OpponentProfile {
