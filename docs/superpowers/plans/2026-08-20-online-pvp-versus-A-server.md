@@ -743,12 +743,14 @@ Expected: FAIL
         self._persist_result(m, now)
 
     def _set_draw(self, m, now: int) -> None:
+        # 双方 EPS 内阵亡 → 平局（可覆盖先到阵亡者已判的胜负）
         m["result"] = {"a": {"outcome": "draw", "reason": "draw"},
                        "b": {"outcome": "draw", "reason": "draw"}}
         m["ended"] = True; m["ended_ms"] = now
         self._persist_result(m, now)
 
     def _persist_result(self, m, now: int) -> None:
+        # 幂等：先删该 match 旧行再插，允许平局改判覆盖先前的胜负行
         day = self.db.today(); dt = self.db.now()
         rows = []
         for key, other in (("a", "b"), ("b", "a")):
@@ -756,20 +758,25 @@ Expected: FAIL
             rows.append((m["match_id"], day, m[key]["uid"], m[other]["uid"],
                          r["outcome"], r["reason"], int(m[key].get("wave", 0)), dt))
         with self.db.cursor() as cur:
+            cur.execute("DELETE FROM pvp_results WHERE match_id=%s", (m["match_id"],))
             cur.executemany(
                 "INSERT INTO pvp_results (match_id,day,uid,opponent_uid,outcome,reason,wave,created_at)"
                 " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
 
     def _resolve_terminal(self, m, me, opp, status, now):
-        if m.get("ended"):
+        if status not in ("tangsengDead", "surrender"):
             return
         me_key = "a" if m["a"]["uid"] == me["uid"] else "b"
-        if status in ("tangsengDead", "surrender"):
+        # 记录我方终局时刻（幂等，只记第一次）
+        if me.get("dead_ms") is None:
             me["status"] = status
             me["dead_ms"] = now
-            # 同刻双亡 → 平局
-            if opp.get("dead_ms") is not None and abs(now - opp["dead_ms"]) <= SIMULTANEOUS_EPS_MS:
-                self._set_draw(m, now); return
+        # 双方在 EPS 内阵亡 → 平局（即便对手已先判赢，也改判为平局）
+        if opp.get("dead_ms") is not None and abs(me["dead_ms"] - opp["dead_ms"]) <= SIMULTANEOUS_EPS_MS:
+            self._set_draw(m, now)
+            return
+        # 首个终局者判负（对手判赢）；若已 ended 则不重复
+        if not m.get("ended"):
             self._set_result(m, me_key, self.LOSE_STATUS[status], now)
 
     def _opp_status(self, m, opp, now) -> str:
