@@ -37,7 +37,6 @@ import {
   forcedMatchWordChars,
   matchedHeroIds,
   pickWordChar,
-  transitUpgradeBoostMul,
   yinSupportCharsPresent,
   PAIR_PITY_AFTER,
   type SummonWordPolicy,
@@ -629,6 +628,8 @@ export interface GeneralState {
   buffAtkT?: number;
   /** 炼丹增益期间生效的攻击倍率（由施法者满5/满3决定） */
   buffAtkMul?: number;
+  /** 该武将对首次组成时的波次（满3→满5 切换爬坡用：相对此波次后续 4-10 波提升同门满5非共享字权重） */
+  formedWave?: number;
 }
 
 // 由「左右紧邻的两个同将字牌」激活的武将（占两格，带金框）
@@ -2099,7 +2100,6 @@ export class Battle {
       fieldCharCounts,
       activeMax5Families,
       activeTransitFamilies,
-      transitUpgradeBoostMul: transitUpgradeBoostMul(Math.max(1, this.wave)),
       tier5CapableOnly: wordPolicy.tier5CapableOnly,
       excludeChars: wordPolicy.excludeChars,
       preferRoles: wordPolicy.preferRoles,
@@ -2615,13 +2615,15 @@ export class Battle {
     return families;
   }
 
-  /** 已激活满3过渡武将的门派集合（满3→满5 切换爬坡：提升同门满5非共享字权重） */
-  private activeTransitFamiliesNow(): Set<string> {
-    const families = new Set<string>();
+  /** 已激活满3过渡武将的门派 → 组成波次（满3→满5 切换爬坡：相对组成波次后续 4-10 波提升同门满5非共享字） */
+  private activeTransitFamiliesNow(): Map<string, number> {
+    const map = new Map<string, number>();
     for (const g of this.activeGenerals()) {
-      if (g.def.maxTier === 3) families.add(g.def.family);
+      if (g.def.maxTier === 3 && !map.has(g.def.family)) {
+        map.set(g.def.family, g.state.formedWave ?? this.wave);
+      }
     }
-    return families;
+    return map;
   }
 
   /**
@@ -2703,13 +2705,15 @@ export class Battle {
     return families;
   }
 
-  /** AI 侧已激活满3过渡武将的门派集合（与玩家对称，满3→满5 切换爬坡） */
-  private aiActiveTransitFamiliesNow(): Set<string> {
-    const families = new Set<string>();
+  /** AI 侧已激活满3过渡武将的门派 → 组成波次（与玩家对称，满3→满5 切换爬坡） */
+  private aiActiveTransitFamiliesNow(): Map<string, number> {
+    const map = new Map<string, number>();
     for (const g of this.aiActiveGenerals()) {
-      if (g.def.maxTier === 3) families.add(g.def.family);
+      if (g.def.maxTier === 3 && !map.has(g.def.family)) {
+        map.set(g.def.family, g.state.formedWave ?? this.wave);
+      }
     }
-    return families;
+    return map;
   }
 
   /** 抽字用：历次抽字计数 + 当前棋盘各字实例数 */
@@ -2796,6 +2800,7 @@ export class Battle {
         skillCd: Battle.initialHeroSkillCd(def),
         firePulse: 0,
         skillFlash: 0,
+        formedWave: this.wave,
       };
       this.generalStates.set(key, s);
     }
@@ -2935,6 +2940,7 @@ export class Battle {
         firePulse: 0,
         fireDir: undefined,
         skillFlash: 0,
+        formedWave: this.wave,
       };
       this.aiGeneralStates.set(key, s);
     }
@@ -3112,7 +3118,6 @@ export class Battle {
       fieldCharCounts,
       activeMax5Families,
       activeTransitFamilies,
-      transitUpgradeBoostMul: transitUpgradeBoostMul(Math.max(1, this.wave)),
       tier5CapableOnly: wordPolicy.tier5CapableOnly,
       excludeChars: wordPolicy.excludeChars,
       preferRoles: wordPolicy.preferRoles,

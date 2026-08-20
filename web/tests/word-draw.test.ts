@@ -434,47 +434,49 @@ describe('AI 征兵匹配保底', () => {
   });
 });
 
-describe('满3在场 → 抽同门满5非共享字爬坡', () => {
-  // 场上有满3过渡（如牛郎 牛+郎）时，提升同门满5（二郎 二+郎）非共享字「二」的权重，
-  // 使 6-10 波能抽到「二」、把满3换非共享字升为同门满5。共享字「郎」两英雄共用，不 boost。
-  it('transitUpgradeBoostMul：wave≤4 为 1、wave6 已生效、wave8 达满额 8、后保持', () => {
-    expect(transitUpgradeBoostMul(2)).toBe(1);
-    expect(transitUpgradeBoostMul(4)).toBe(1);
-    expect(transitUpgradeBoostMul(6)).toBeGreaterThan(1);
-    expect(transitUpgradeBoostMul(8)).toBe(8);
-    expect(transitUpgradeBoostMul(12)).toBe(8);
+describe('满3在场 → 抽同门满5非共享字爬坡（相对满3组成波次）', () => {
+  // 场上有满3过渡（如牛郎 牛+郎）时，相对其组成波次在后续 4-10 波内提升同门满5
+  // （二郎 二+郎）非共享字「二」的权重，使玩家能抽到「二」、把满3换非共享字升为同门满5。
+  // 共享字「郎」两英雄共用，不 boost。各满3各自独立计时（不同波次组成各自爬坡）。
+  it('transitUpgradeBoostMul：age<4 为 1、age10 达满额 8、后保持', () => {
+    // formed=5：age0/3 →1；age5 已生效；age10/20 →8
+    expect(transitUpgradeBoostMul(5, 5)).toBe(1);   // age0 刚组成
+    expect(transitUpgradeBoostMul(5, 8)).toBe(1);   // age3 喘息期
+    expect(transitUpgradeBoostMul(5, 10)).toBeGreaterThan(1); // age5 爬坡中
+    expect(transitUpgradeBoostMul(5, 15)).toBe(8);  // age10 满额
+    expect(transitUpgradeBoostMul(5, 25)).toBe(8);  // age20 保持
   });
 
-  it('满3在场(郎) wave8：同门满5非共享字「二」权重 ×8', () => {
-    const base = wordDrawEntries(8, [], [], [], undefined, { activeTransitFamilies: new Set() })
+  it('满3(郎)第5波组成、第15波抽字：同门满5非共享字「二」权重 ×8', () => {
+    const base = wordDrawEntries(15, [], [], [], undefined, { activeTransitFamilies: new Map() })
       .find((e) => e.char === '二')?.w ?? 0;
-    const boosted = wordDrawEntries(8, [], [], [], undefined, {
-      activeTransitFamilies: new Set(['郎']),
-      transitUpgradeBoostMul: transitUpgradeBoostMul(8),
+    const boosted = wordDrawEntries(15, [], [], [], undefined, {
+      activeTransitFamilies: new Map([['郎', 5]]),
     }).find((e) => e.char === '二')?.w ?? 0;
     expect(base).toBeGreaterThan(0);
     expect(boosted).toBeCloseTo(base * 8, 5);
   });
 
   it('boost 只作用于满5非共享字：共享字「郎」不受 boost 影响', () => {
-    const base = wordDrawEntries(8, [], [], [], undefined, {
-      activeTransitFamilies: new Set(['郎']),
-      transitUpgradeBoostMul: 1,
+    const withBoost = wordDrawEntries(15, [], [], [], undefined, {
+      activeTransitFamilies: new Map([['郎', 5]]),
     }).find((e) => e.char === '郎')?.w ?? 0;
-    const boosted = wordDrawEntries(8, [], [], [], undefined, {
-      activeTransitFamilies: new Set(['郎']),
-      transitUpgradeBoostMul: 8,
-    }).find((e) => e.char === '郎')?.w ?? 0;
-    expect(boosted).toBeCloseTo(base, 5);
+    const without = wordDrawEntries(15, [], [], [], undefined, { activeTransitFamilies: new Map() })
+      .find((e) => e.char === '郎')?.w ?? 0;
+    expect(withBoost).toBeCloseTo(without, 5);
   });
 
-  it('wave2（满3可能刚出场）不 boost，避免前期过早强抽满5', () => {
-    const off = wordDrawEntries(2, [], [], [], undefined, { activeTransitFamilies: new Set() })
-      .find((e) => e.char === '二')?.w ?? 0;
-    const on = wordDrawEntries(2, [], [], [], undefined, {
-      activeTransitFamilies: new Set(['郎']),
-      transitUpgradeBoostMul: transitUpgradeBoostMul(2),
+  it('相对性：同当前波、不同组成波次的满3，爬坡进度不同', () => {
+    // 当前第 10 波：郎第5波组成(age5 爬坡中) > 郎第9波组成(age1 未 boost) ≈ 无满3
+    const formedEarly = wordDrawEntries(10, [], [], [], undefined, {
+      activeTransitFamilies: new Map([['郎', 5]]),
     }).find((e) => e.char === '二')?.w ?? 0;
-    expect(on).toBeCloseTo(off, 5);
+    const formedLate = wordDrawEntries(10, [], [], [], undefined, {
+      activeTransitFamilies: new Map([['郎', 9]]),
+    }).find((e) => e.char === '二')?.w ?? 0;
+    const none = wordDrawEntries(10, [], [], [], undefined, { activeTransitFamilies: new Map() })
+      .find((e) => e.char === '二')?.w ?? 0;
+    expect(formedEarly).toBeGreaterThan(formedLate);
+    expect(formedLate).toBeCloseTo(none, 5);
   });
 });
