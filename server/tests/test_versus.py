@@ -173,3 +173,30 @@ def test_room_banned_rejected(hub, db):
                         " VALUES (%s,%s,%s,%s,%s,%s)", (day, "10000121", opp, "m", "{}", now))
     assert hub.room_create("10000121", 1).get("banned") is True
     assert hub.room_join("ANY", "10000121", 1).get("banned") is True
+
+
+def _match_two(hub, db, ua="10000201", ub="10000202", rank=3):
+    _mk_player(db, ua, rank=rank, nickname="甲"); _mk_player(db, ub, rank=rank, nickname="乙")
+    r1 = hub.enqueue(ua, rank); hub.enqueue(ub, rank)
+    mid = hub.poll(r1["ticket"])["matchStart"]["matchId"]
+    return mid
+
+def test_tick_relays_inputs(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db)
+    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("10000201", mid, [{"t": 5, "op": "place", "cell": "r1c1"}], d, None, "playing")
+    resp = hub.tick("10000202", mid, [], d, None, "playing")
+    assert resp["opponentInputs"] == [{"t": 5, "op": "place", "cell": "r1c1"}]
+    resp2 = hub.tick("10000202", mid, [], d, None, "playing")
+    assert resp2["opponentInputs"] == []
+
+def test_first_clear_schedules_next_wave(hub, db):
+    hub.reset()
+    mid = _match_two(hub, db)
+    d = {"wave": 1, "power": 10, "kills": 5, "tangsengHP": 3, "peach": 20, "units": 3}
+    resp = hub.tick("10000201", mid, [], d, {"wave": 1, "t": 900}, "playing")
+    assert resp["nextWave"]["wave"] == 2
+    start2 = resp["nextWave"]["startAtServerMs"]
+    resp_b = hub.tick("10000202", mid, [], d, {"wave": 1, "t": 950}, "playing")
+    assert resp_b["nextWave"]["startAtServerMs"] == start2

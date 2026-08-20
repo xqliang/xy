@@ -232,3 +232,76 @@ class VersusHub:
         opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
         return {"matchId": mid, "seed": m["seed"], "map": m["map"],
                 "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}
+
+    # —— tick 转发 + 波次调度（先清者定下一波）——
+    def _sides(self, m: dict, uid: str) -> tuple[dict, dict]:
+        # 根据 uid 判断自己是 a 还是 b，返回 (我, 对手)
+        return (m["a"], m["b"]) if m["a"]["uid"] == uid else (m["b"], m["a"])
+
+    def tick(self, uid: str, match_id: str, inputs: list, digest: dict,
+             wave_cleared_at: Optional[dict], status: str) -> dict:
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(match_id)
+            if not m:
+                return {"error": "match_not_found"}
+            me, opp = self._sides(m, uid)
+            me["last_tick_ms"] = now
+            if digest:
+                me["last_digest"] = digest
+                me["wave"] = int(digest.get("wave", me["wave"]))
+            self._anticheat(m, me, opp, inputs, digest, now)
+            # 把我的动作放进对手的转发缓冲
+            if inputs:
+                opp["relay_buffer"].extend(inputs)
+            # 先清者定下一波
+            if wave_cleared_at:
+                w = int(wave_cleared_at.get("wave", 0))
+                if w and (w + 1) not in m["wave_schedule"]:
+                    m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
+                    m["first_clear"][w] = uid
+            self._resolve_terminal(m, me, opp, status, now)
+            # 取走给「我」的对手动作
+            out = me["relay_buffer"]; me["relay_buffer"] = []
+            next_wave = self._next_wave_for(m, me)
+            opp_status = self._opp_status(m, opp, now)
+            resp = {
+                "serverMs": now,
+                "opponentInputs": out,
+                "opponentDigest": opp.get("last_digest"),
+                "nextWave": next_wave,
+                "opponentStatus": opp_status,
+                "result": self._result_for(m, uid),
+                "cheatNotice": ({"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
+                                if self.is_banned(uid) else None),
+            }
+            return resp
+
+    def _next_wave_for(self, m: dict, me: dict) -> Optional[dict]:
+        # 返回「我」当前波次的下一波开始时刻（若已排程）
+        w = me["wave"]
+        nxt = w + 1
+        if nxt in m["wave_schedule"]:
+            return {"wave": nxt, "startAtServerMs": m["wave_schedule"][nxt]}
+        return None
+
+    # 以下三个在 Task 6 完善；先给最小占位以便本任务测试通过
+    def _resolve_terminal(self, m, me, opp, status, now):
+        # Task 6 填充：终局判定（唐僧阵亡/投降/断线判赢）
+        if status in ("tangsengDead", "surrender"):
+            me["status"] = status
+
+    def _opp_status(self, m, opp, now) -> str:
+        # Task 6 填充：对手状态（playing/断线/已终局）
+        return opp.get("status", "playing")
+
+    def _result_for(self, m, uid) -> Optional[dict]:
+        # Task 6 填充：终局后按 side 返回该玩家的结果
+        if not m.get("result"):
+            return None
+        side = "a" if m["a"]["uid"] == uid else "b"
+        return m["result"][side]
+
+    def _anticheat(self, m, me, opp, inputs, digest, now):  # Task 7 填充
+        # Task 7 填充：异常检测（动作频率/摘要一致性等）
+        return
