@@ -8,11 +8,15 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
 
 export type PausePhase = 'main' | 'confirmQuit';
 
+// 暂停来源：battle=单人（继续/终止，终止走二次确认），match=在线 PvP（继续/认输，认输一步到位）。
+export type PauseContext = 'battle' | 'match';
+
 export type PauseHit =
   | { kind: 'continue' }
   | { kind: 'quit' }
   | { kind: 'confirmQuit' }
   | { kind: 'cancelQuit' }
+  | { kind: 'surrender' }
   | null;
 
 const PW = 340;
@@ -33,29 +37,37 @@ const CONF_CLOSE = inkPopupCloseRect(PX, CONF_PY);
 const CONF_CANCEL = { x: PX + PAD, y: CONF_PY + CONF_PH - PAD - BTN_H, w: (PW - PAD * 2 - 12) / 2, h: BTN_H };
 const CONF_OK = { x: PX + PW / 2 + 6, y: CONF_CANCEL.y, w: CONF_CANCEL.w, h: BTN_H };
 
-export function pausePopupHitAt(x: number, y: number, phase: PausePhase): PauseHit {
+export function pausePopupHitAt(x: number, y: number, phase: PausePhase, context: PauseContext = 'battle'): PauseHit {
   if (phase === 'main') {
     if (inRect(x, y, MAIN_CLOSE) || inRect(x, y, MAIN_CONTINUE)) return { kind: 'continue' };
-    if (inRect(x, y, MAIN_QUIT)) return { kind: 'quit' };
+    // 第二按钮：单人=终止（走二次确认），PvP=认输（一步到位）
+    if (inRect(x, y, MAIN_QUIT)) return context === 'match' ? { kind: 'surrender' } : { kind: 'quit' };
     if (x >= PX && x <= PX + PW && y >= MAIN_PY && y <= MAIN_PY + MAIN_PH) return null;
     return { kind: 'continue' };
   }
+  // confirmQuit 阶段只属于单人（PvP 没有确认终止，认输一步生效），context 不影响判定。
   if (inRect(x, y, CONF_CANCEL) || inRect(x, y, CONF_CLOSE)) return { kind: 'cancelQuit' };
   if (inRect(x, y, CONF_OK)) return { kind: 'confirmQuit' };
   if (x >= PX && x <= PX + PW && y >= CONF_PY && y <= CONF_PY + CONF_PH) return null;
   return null;
 }
 
-export function drawPausePopup(ctx: CanvasRenderingContext2D, phase: PausePhase): void {
+export function drawPausePopup(ctx: CanvasRenderingContext2D, phase: PausePhase, context: PauseContext = 'battle'): void {
   if (phase === 'main') {
     const bodyTop = drawInkPopupFrame(ctx, PX, MAIN_PY, PW, MAIN_PH, '暂停', MAIN_CLOSE);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#5a3a12';
     ctx.font = '15px "PingFang SC", serif';
-    ctx.fillText('游戏已暂停，可随时继续', PX + PW / 2, bodyTop + 28);
+    // 单人提示「可随时继续」；PvP 提示认输后果（认输一步判负，之后等服务端 result 结算）
+    ctx.fillText(
+      context === 'match' ? '认输将直接判负' : '游戏已暂停，可随时继续',
+      PX + PW / 2,
+      bodyTop + 28,
+    );
     drawInkActionButton(ctx, MAIN_CONTINUE, '继续游戏', false, 'primary');
-    drawInkActionButton(ctx, MAIN_QUIT, '终止游戏', false, 'secondary');
+    // 第二按钮文案随 context 变化
+    drawInkActionButton(ctx, MAIN_QUIT, context === 'match' ? '认输' : '终止游戏', false, 'secondary');
     return;
   }
 

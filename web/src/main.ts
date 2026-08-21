@@ -46,7 +46,7 @@ import {
   type PausePhase,
 } from './pause-popup';
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
-import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult } from './settle';
+import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, STAMINA_COST, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
@@ -299,6 +299,8 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   bindBattleWeaponPickup();
   pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => Date.now() });
   pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
+  // Task 10：记对手档案（结算屏展示）、认输标志归零；PvP 结算屏归零。
+  pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
   // Task 9 波驱动状态 reset：开局纪元 + 波号→startTick 缓存清空 + 清波上报/下降沿归零。
   pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPendingWaveClear = null; pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
@@ -324,12 +326,25 @@ function startPvpTickLoop(): void {
 }
 function stopPvpTickLoop(): void { if (pvpTickTimer) { clearTimeout(pvpTickTimer); pvpTickTimer = null; } }
 
+/** 结束当前 PvP 对局并清理所有对局态（所有「离开 battle 屏」的路径都必须调用；幂等）。
+ *  单人时这些字段本就是 null/0，调用无副作用。停在心跳最前（否则残留定时器会再 pump 一次打服务端）。 */
+function endPvpSession(): void {
+  stopPvpTickLoop();
+  pvpSync = null; oppBattle = null;
+  pvpResult = null; pvpNextWave = null; pvpSettleResult = null; pvpOpponent = null;
+  pvpSurrendered = false;
+  pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpLastServerOkMs = 0; pvpMatchStartMs = 0;
+  pvpWaveStartTicks.clear(); pvpPendingWaveClear = null; pvpPrevWaveActive = false;
+}
+
 // 单次 tick：组摘要+请求→发服务端→应用响应（对手动作入库、记联络时刻、存下一波/终局）。
 async function pumpPvpTick(): Promise<void> {
   if (!pvpSync) return;
   const s = battle.snapshot();
   const digest = { wave: s.wave, power: s.towerPow, kills: s.kills, tangsengHP: s.tangsengHP, peach: s.peach, units: s.units };
-  const status: 'playing' | 'tangsengDead' | 'surrender' = battle.status === 'lost' ? 'tangsengDead' : 'playing';
+  // status：认输 > 唐僧死 > 正常（Task 10 新增 surrender；认走后服务端据此下发 lose/opponentSurrender）
+  const status: 'playing' | 'tangsengDead' | 'surrender' =
+    pvpSurrendered ? 'surrender' : (battle.status === 'lost' ? 'tangsengDead' : 'playing');
   // 清波上报：捕获待上报快照（防 await 期间被新一轮下降沿覆盖；成功后再按同一引用清除）。
   const wc = pvpPendingWaveClear;
   const req = pvpSync.buildTick(digest, wc, status);
@@ -344,12 +359,15 @@ async function pumpPvpTick(): Promise<void> {
       const st = pvpWaveStartTick(r.data.nextWave.startAtServerMs, pvpMatchStartMs);
       pvpWaveStartTicks.set(r.data.nextWave.wave, st);
     }
-    if (r.data.result) pvpResult = r.data.result;            // Task 10 消费
+    if (r.data.result) pvpResult = r.data.result;            // Task 10 消费（服务端权威终局 → frame() 驱动结算）
+    // 断线提示：对手断线（服务端 opponentStatus=disconnected）时给一条战场提示，真正判负由服务端 DisconnectTimeout→result 驱动。
+    if (r.data.opponentStatus === 'disconnected') battle.message = '对手网络中断…';
+    // 反作弊提示：若服务端下发 cheatNotice（作弊封禁），给一条提示（UI-only，复杂封禁流程后续迭代）。
+    if (r.data.cheatNotice) battle.message = r.data.cheatNotice.msg;
     // 仅当上报的是我们刚捕获的那份（未被新一轮清波替换）才清除，避免 await 期间新值被误清。
     if (pvpPendingWaveClear === wc) pvpPendingWaveClear = null;
-    // opponentStatus / cheatNotice：Task 10 处理；本任务先不动 UI
   }
-  // 失败(r.ok===false)：Task 10 做断线判定；本任务先忽略（下次心跳重试）
+  // 失败(r.ok===false)：Task 10 做断线判定（frame() 按 pvpLastServerOkMs>6s 提示）；本任务先忽略（下次心跳重试）
 }
 function onPvpFailed(_reason: string): void {
   // 失败态由匹配屏「确认」按钮回首页；这里仅确保重绘（needsContinuousLoop 已保持帧）
@@ -439,6 +457,11 @@ let pvpMatchStartMs = 0;                        // 开局纪元（服务端 star
 const pvpWaveStartTicks = new Map<number, number>(); // 波号→该波本地开波 tick（缓存：两端各按自己 wave+1 查表）
 let pvpPendingWaveClear: { wave: number; t: number } | null = null; // 待上报的清波（本方 waveActive 下降沿，交给下次 tick 上报）
 let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波）
+// —— Task 10：PvP 终局（认输 / 服务端 result 权威结算 / 断线提示）——
+let pvpSurrendered = false;                     // 本方已点「认输」：tick status 改报 surrender，等服务端 result 驱动终局
+let pvpOpponent: import('./api/pvp-client').OpponentProfile | null = null; // 当前对手档案（结算屏展示头像/昵称）
+let pvpSettleResult: PvpSettleResult | null = null; // PvP 结算屏 payload（服务端 result 一到即构造，null=未结算）
+let pvpSettleStart = 0;                         // 打开 PvP 结算屏的时间戳（虽无加减星动画，保留供可能的淡入/时间线复用）
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
@@ -532,7 +555,8 @@ let merchant: MerchantUiState = {
 let gameSettings: GameSettings = safePersisted(getSettings, resetSettings());
 
 function isSettleOpen(): boolean {
-  return settleChange !== null || endlessResult !== null;
+  // Task 10：PvP 结算屏也视为「结算打开」态（冻结战斗 + 阻断暂停弹窗 + 点击返回生效）。
+  return settleChange !== null || endlessResult !== null || pvpSettleResult !== null;
 }
 
 function syncAudioFromSettings(): void {
@@ -961,6 +985,7 @@ function newGame() {
 }
 
 function abortBattleToMenu(): void {
+  endPvpSession(); // Task 10：统一清理 PvP 对局态（停心跳、清 pvpSync/oppBattle/pvpSettleResult 等），单人调用无副作用（幂等）
   ui.paused = false;
   pausePhase = 'main';
   ui.passivePopup = null;
@@ -1331,6 +1356,7 @@ function claimWeaponPickup(id: string): void {
 }
 
 function leaveSettleToMenu(): void {
+  endPvpSession(); // Task 10：统一清理 PvP 对局态（PvP 结算点「返回」也走此路径；幂等）
   settleChange = null;
   endlessResult = null;
   screen = 'menu';
@@ -1484,7 +1510,7 @@ function handleButton(x: number, y: number): boolean {
         ui.passivePopup = Number(btn.id.slice(3));
         ui.passivePopupUntil = performance.now() + 2500;
       } // 点击被动图标看详情
-      else if (btn.id === 'restart') screen = 'menu'; // 结束后返回主菜单（看更新的境界/体力）
+      else if (btn.id === 'restart') { endPvpSession(); screen = 'menu'; } // 结束后返回主菜单（看更新的境界/体力）；Task 10 补清 PvP 对局态（幂等）
       return true;
     }
   }
@@ -1605,21 +1631,33 @@ function onPointerDown(e: PointerEvent) {
       claimWeaponPickup(pickupId);
       return;
     }
-    if (endlessResult || isSettleAnimDone(performance.now() - settleStart)) {
+    // PvP 结算用 pvpSettleStart 计时；单人仍用 settleStart。动画未完成则跳到终态（允许点击）。
+    const animDone = pvpSettleResult
+      ? isSettleAnimDone(performance.now() - pvpSettleStart)
+      : (endlessResult || isSettleAnimDone(performance.now() - settleStart));
+    if (animDone) {
+      // leaveSettleToMenu 开头会调 endPvpSession()：PvP 下清 pvpSync/pvpSettleResult 等全部对局态。
       leaveSettleToMenu();
-    } else {
+    } else if (!pvpSettleResult) {
+      // 单人结算才允许「点击跳到终态」；PvP 无加减星动画，保持计时不动。
       settleStart = performance.now() - SETTLE_ANIM_MS;
     }
     return;
   }
-  // —— 局内暂停：弹窗内继续 / 终止（二次确认） —— //
+  // —— 局内暂停：弹窗内继续 / 终止（二次确认） / 认输（PvP 一步到位） —— //
   if (ui.paused) {
-    const hit = pausePopupHitAt(x, y, pausePhase);
+    const hit = pausePopupHitAt(x, y, pausePhase, pvpSync ? 'match' : 'battle');
     if (hit === null) return;
     playSfx('click');
     if (hit.kind === 'continue') {
       ui.paused = false;
       pausePhase = 'main';
+    } else if (hit.kind === 'surrender') {
+      // PvP 认输：标记 surrendered，关暂停，走服务端 result→结算（不直接 abortBattleToMenu，否则泄漏对局且无结算）。
+      pvpSurrendered = true;
+      ui.paused = false;
+      pausePhase = 'main';
+      battle.message = '已认输，等待结算…';
     } else if (hit.kind === 'quit') {
       pausePhase = 'confirmQuit';
     } else if (hit.kind === 'cancelQuit') {
@@ -2081,8 +2119,12 @@ function frame(now: number): void {
     // 结算弹层 / 暂停 / 引导时冻结战斗（不 step），仍连续重绘以播动画
     if (!ui.paused && !tutorialOverlay && !isSettleOpen()) {
       try {
-        if (pvpSync) {
-          // PvP：累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）
+        if (pvpSync && !pvpResult) {
+          // PvP：累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
+          // Task 10：服务端 result 一到即冻结本方半场（`&& !pvpResult`）——胜可能来自对手唐僧死而本方仍 playing，
+          // 继续 step 会让本方唐僧也死，破坏「冻结定格」语义，所以终局后不再步进。
+          // 断线提示（UI-only）：>6s 未收到服务端确认即提示；真正判负由服务端 DisconnectTimeout→result 驱动（上方 pumpPvpTick 消费）。
+          if (performance.now() - pvpLastServerOkMs > 6000) battle.message = '网络中断，可能判负…';
           const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 8);
           pvpAcc = rest;
           for (let i = 0; i < steps; i++) {
@@ -2109,8 +2151,9 @@ function frame(now: number): void {
       for (const ev of battle.sfxEvents) playSfx(ev);
       battle.sfxEvents.length = 0;
     }
-    // 胜负结算入境界 + 功德（仅一次），随后在战斗页弹出结算层
-    if (!endHandled && (battle.status === 'won' || battle.status === 'lost')) {
+    // 胜负结算入境界 + 功德（仅一次），随后在战斗页弹出结算层。
+    // Task 10：PvP 由「服务端 result 权威」终局（下方块），单人不吃 pvpSync 分支——故这里加 `&& !pvpSync` 分流。
+    if (!endHandled && (battle.status === 'won' || battle.status === 'lost') && !pvpSync) {
       endHandled = true;
       pendingMerchant = true;
       recordHeroMatchGame(battle.heroMatchedIdsThisGame());
@@ -2163,15 +2206,32 @@ function frame(now: number): void {
         scheduleCloudSync(1000);
       }
     }
+    // —— Task 10：PvP 终局由「服务端 result」权威驱动 ——
+    // 与单人块互斥（单人块已加 && !pvpSync）。result 一到：停心跳（保留 pvpSync/pvpSettleResult 供冻结渲染+结算）、
+    // 构造结算 payload、不记境界/功德/商人（PvP 与境界解耦）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
+    if (pvpSync && pvpResult && !pvpSettleResult) {
+      stopPvpTickLoop();                        // 终局停心跳（保留 pvpSync/pvpSettleResult 供冻结渲染+结算，点击返回时 endPvpSession 才清）
+      pvpSettleResult = {
+        outcome: pvpResult.outcome,
+        reason: pvpResult.reason,
+        opponent: { nickname: pvpOpponent?.nickname ?? null, avatarId: pvpOpponent?.avatarId ?? '' },
+      };
+      pvpSettleStart = performance.now();
+      battle.message = pvpResult.outcome === 'win' ? '对局胜利' : pvpResult.outcome === 'lose' ? '对局失败' : '平局';
+      // 故意不做：recordWin/recordLose、meritReward/addMerit、pendingMerchant（PvP 不动境界/功德/商人）
+      // 注：PvP 终局遥测未接 track（TelemetryType 联合未含 pvp_end，避免扩 schema）；后续如需统计再加。
+    }
     setHudRank(rankName(rank.level));
     // PvP 渲染桥（Task 8）：每帧渲染前把 oppBattle 本方侧镜像进 battle.ai*，复用 drawAiSide 画对手半场。
     // 仅 pvpSync 非空（在线对局中）时桥一次；单人路径完全不碰，零影响。
     if (pvpSync && oppBattle) battle.bridgeOpponentFrom(oppBattle);
     draw(ctx, battle, ui);
-    if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
+    // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
+    if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
+    else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
-    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase);
+    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase, pvpSync ? 'match' : 'battle');
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
@@ -2238,6 +2298,17 @@ interface GameHook {
     localSimTick: number; pvpOppSimTick: number; matchStartMs: number;
     waveCache: [number, number][]; pendingClear: boolean;
   } | null;
+  // Task 10 自测探针：PvP 终局态（冒烟验证 result 驱动结算 + endPvpSession 清理）。
+  pvpEndProbe: () => {
+    pvpSync: boolean;               // 非空=对局未清（心跳在跑）
+    pvpSettleResult: PvpSettleResult | null; // 非空=已进 PvP 结算
+    pvpSurrendered: boolean;
+    curScreen: string;
+  };
+  // Task 10 自测钩子：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，走服务端 result→结算）。
+  pvpSurrender: () => void;
+  // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
+  rankMerit: () => { rankLevel: number; merit: number };
 }
 const hook: GameHook = {
   get battle() {
@@ -2280,6 +2351,7 @@ const hook: GameHook = {
     void import('./devtools').then(({ openDevTools }) => openDevTools({ onUserApplied: applyDevUserResult }));
   },
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
+    endPvpSession(); // Task 10：DevTools 重开前先清上一局 PvP 对局态（防泄漏 1s 心跳 + oppBattle 残留）；单人调用幂等无副作用
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
     bindBattleWeaponPickup();
     endHandled = false;
@@ -2338,5 +2410,21 @@ const hook: GameHook = {
       pendingClear: pvpPendingWaveClear !== null,
     };
   },
+  // Task 10：PvP 终局态探针（冒烟验证 result 驱动结算 + endPvpSession 清理）。
+  pvpEndProbe: () => ({
+    pvpSync: pvpSync !== null,
+    pvpSettleResult,
+    pvpSurrendered,
+    curScreen: screen,
+  }),
+  // Task 10：触发认输（镜像 pause→认输命中处理，保持与真实 UI 路径同源）。
+  pvpSurrender: () => {
+    pvpSurrendered = true;
+    ui.paused = false;
+    pausePhase = 'main';
+    battle.message = '已认输，等待结算…';
+  },
+  // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
+  rankMerit: () => ({ rankLevel: rank.level, merit: merit.merit }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;

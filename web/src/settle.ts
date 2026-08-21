@@ -3,6 +3,8 @@
 import { VIEW_W, VIEW_H } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
 import { drawRankStarsAnimated, roundRect } from './menu-ui';
+import { avatarById } from './avatar-catalog';
+import { sprite } from './assets';
 
 // 动画时间线（毫秒）：先按变化前星态停顿，再播放加/减星，最后停在终态。
 const HOLD_MS = 480; // 展示"变化前"星态的停顿
@@ -258,6 +260,99 @@ export function drawEndlessSettle(ctx: CanvasRenderingContext2D, r: EndlessResul
   ctx.fillText(`功德 +${r.merit}`, cx, contentTop + 168);
 
   drawSettleHint(ctx, '点击任意处返回', panelY + panelH - 28);
+
+  ctx.restore();
+}
+
+// —— PvP 在线对战结算（Task 11）——
+// 与服务端 tick 下发 result.reason 契约串一一对应（见 pvp-client.ts 注释 + server/api_versus.py REASON 表）。
+export interface PvpSettleResult {
+  outcome: 'win' | 'lose' | 'draw';
+  reason: string;
+  opponent: { nickname: string | null; avatarId: string };
+}
+
+// reason 契约串 → 中文文案（纯函数，可单测）。PvP 不动境界/功德/商人，所以这里只解释「为什么结束」。
+export function pvpReasonText(reason: string): string {
+  switch (reason) {
+    case 'opponentTangsengDead': return '对手唐僧被消灭';
+    case 'selfTangsengDead': return '你的唐僧被消灭';
+    case 'opponentSurrender': return '对手认输';
+    case 'selfSurrender': return '你已认输';
+    case 'opponentDisconnectTimeout': return '对手掉线';
+    case 'selfDisconnect': return '你已掉线';
+    case 'draw': return '势均力敌';
+    default: return '对局结束';
+  }
+}
+
+// 标题：win/lose/draw 三态。
+function pvpSettleTitle(outcome: PvpSettleResult['outcome']): string {
+  if (outcome === 'win') return '对局胜利';
+  if (outcome === 'lose') return '对局失败';
+  return '平局';
+}
+
+// PvP 结算屏：只展示结果与对手信息，**不画星、不动段位**（PvP 与境界解耦）。
+// 标题条色调沿用单人（win 绿 / lose 赭红 / draw 黄），复用 drawSettlePanel 的水墨卷轴骨架。
+// 点击返回由 main.ts 在「动画完成」后处理（这里只负责绘制）。
+export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult, _tMs: number): void {
+  const tone: 'win' | 'lose' | 'endless' = r.outcome === 'win' ? 'win' : r.outcome === 'lose' ? 'lose' : 'endless';
+  ctx.save();
+  drawSettleAtmosphere(ctx, tone);
+
+  const panelH = 360;
+  const panelX = (VIEW_W - PANEL_W) / 2;
+  const panelY = VIEW_H * 0.22;
+  const title = pvpSettleTitle(r.outcome);
+  const contentTop = drawSettlePanel(ctx, panelX, panelY, PANEL_W, panelH, tone, title);
+
+  const cx = VIEW_W / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // 对手头像（与 profile-popup 一致的圆形裁剪 + 底部对齐画法）
+  const a = avatarById(r.opponent.avatarId);
+  const spr = a ? sprite(a.art) : undefined;
+  const AV = 120; // 头像框边长
+  const avY = contentTop + 12;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,248,230,0.9)';
+  ctx.fill();
+  ctx.clip();
+  if (spr) {
+    const sc = Math.min(AV / spr.width, AV / spr.height);
+    const dw = spr.width * sc;
+    const dh = spr.height * sc;
+    ctx.drawImage(spr, cx - dw / 2, avY + AV - dh, dw, dh);
+  } else {
+    // 资源缺失时的占位字
+    ctx.fillStyle = '#a07018';
+    ctx.font = 'bold 40px serif';
+    ctx.fillText('?', cx, avY + AV / 2);
+  }
+  ctx.restore();
+  // 头像描边
+  ctx.strokeStyle = 'rgba(120,90,40,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 对手昵称
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = 'bold 22px "PingFang SC", "STKaiti", serif';
+  ctx.fillText(`对手：${r.opponent.nickname ?? '对手'}`, cx, avY + AV + 32);
+
+  // 终局原因（副文）
+  ctx.fillStyle = '#7a5230';
+  ctx.font = '20px "PingFang SC", serif';
+  ctx.fillText(pvpReasonText(r.reason), cx, avY + AV + 64);
+
+  drawSettleHint(ctx, '点击返回', panelY + panelH - 28);
 
   ctx.restore();
 }
