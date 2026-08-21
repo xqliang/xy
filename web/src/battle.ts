@@ -95,6 +95,9 @@ import {
   type Cell,
 } from './board';
 
+// 快照序列化 + 对手插值视图（Plan C Task 4）。fxAlive 供桥内特效老化；类型供 pvpOwnSnapshot 返回类型。
+import { fxAlive, type PvpSnap, type PvpSnapView } from './pvp-snap';
+
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 
@@ -1760,6 +1763,168 @@ export class Battle {
     // 帧间"新激活检测"集合：同步镜像，避免桥接首帧把既有对误判为新激活、重置大招 CD 为满
     const lp = new Set<string>();
     for (const key of opp.lastActivePairKeys) {
+      const [k1, k2] = key.split('|');
+      const [c1, r1] = k1!.split(',');
+      const [c2, r2] = k2!.split(',');
+      const m1 = mirrorCell({ c: +c1!, r: +r1! });
+      const m2 = mirrorCell({ c: +c2!, r: +r2! });
+      lp.add(Battle.heroPairKey(m1, m2));
+    }
+    this.lastAiActivePairKeys = lp;
+  }
+
+  // —— 本方半场快照序列化（Plan C Task 4，供 WS 每 100ms 推给对手）——
+  // 背景：Model C 下对手半场由对手 WS 推来的本方渲染态快照重建。本方法把本方半场的渲染态序列化为
+  // 纯 JSON（PvpSnap），字段面与上方 bridgeOpponentFrom 的消费面一一对应（镜像/老化留给桥做）。
+  // 为何是 Battle 的方法：本方侧字段（monsters/units/words/…）多为 private，只有类内方法能读；
+  // TS 的 private 是「类级别」，故本方法可读本实例 private。t 由调用方（main.ts 帧循环）以墙钟 ms 戳传入。
+  pvpOwnSnapshot(t: number): PvpSnap {
+    return {
+      t,
+      wave: this.wave,
+      waveActive: this.waveActive,
+      spawnRemaining: this.spawnRemaining,
+      tangsengHP: this.tangsengHP,
+      // 仅 'lost' 让桥置 aiDefeated；'won'/'ready' 等一律按 'playing'（本方未败，对手见我唐僧存活）。
+      status: this.status === 'lost' ? 'lost' : 'playing',
+      peach: this.peach,
+      kills: this.kills,
+      spawnGateT: this.spawnGateT,
+      introT: this.introT,
+      introDone: this.introDone,
+      monsters: this.monsters.map((m) => ({ ...m })),
+      units: [...this.units.values()].map((u) => ({ ...u })),
+      words: [...this.words.values()].map((w) => ({ ...w })),
+      unlocked: [...this.unlocked], // Set<string> → 内部 cellKey "c,r" 数组
+      generalStates: [...this.generalStates], // Map → [heroPairKey, GeneralState][]（键待桥内镜像重排）
+      lastActivePairKeys: [...this.lastActivePairKeys], // Set → string[]
+      activeSlots: this.activeSlots.map((s) => ({ ...s })),
+      pickedItems: this.pickedItems.slice(),
+      bombs: this.bombs.map((b) => ({ ...b })),
+      digFx: this.digFx.map((d) => ({ ...d })),
+      fx: this.serializeSnapFx(t),
+      mods: { ...this.mods },
+    };
+  }
+
+  /**
+   * 把本方瞬态特效（playerSkillFx/palmPushFx/passiveFlash）序列化为带发送端时刻 t 的 fx 数组。
+   * t = 序列化时刻(ms)（即 pvpOwnSnapshot 入参），接收端按 (nowMs - t) 老化（fxAlive）。
+   * 注意：fx.t 是「出生时刻」而非播放进度——桥内据 (nowMs - t) 重建播放进度，与老化共用同一时基。
+   */
+  private serializeSnapFx(t: number): PvpSnap['fx'] {
+    const out: PvpSnap['fx'] = [];
+    if (this.playerSkillFx) {
+      const f = this.playerSkillFx;
+      out.push({ kind: 'skill', t, skillKind: f.kind, dur: f.dur, c: f.c, r: f.r });
+    }
+    if (this.palmPushFx) {
+      const f = this.palmPushFx;
+      out.push({ kind: 'palm', t, dur: f.dur, fadeT: f.fadeT, cells: f.cells, frontStartDist: f.frontStartDist });
+    }
+    for (const [id, value] of this.passiveFlash) {
+      out.push({ kind: 'flash', t, id, value });
+    }
+    return out;
+  }
+
+  // —— 快照渲染桥（Plan C Task 4，bridgeOpponentFrom 的快照源版本）——
+  // 背景：对手半场由 PvpOppView.interpAt(nowMs) 的插值视图重建。镜像规则与上方 bridgeOpponentFrom
+  // 逐字一致（cell 镜像 / fireDir+π / words 键镜像 / unlocked 逐元素镜像 / heroPairKey 重排），
+  // 仅数据源从「oppBattle 本方侧直引」换成「插值视图」：
+  //   - aiMonsters = view.monsters（dist 已双缓冲插值，其余全字段取 cur）；
+  //   - 其余实体取 view.snap（cur），逐条镜像；
+  //   - 瞬态特效按 nowMs 老化后重建（fxAlive）。
+  // 本方法与 bridgeOpponentFrom 并存（后者由 Task 5/6 删除），不重构旧桥。
+  bridgeOpponentFromSnap(view: PvpSnapView): void {
+    const { snap, monsters, nowMs } = view;
+
+    // —— A. 直接重建（同类型、无需镜像；非怪物字段取 cur）——
+    this.aiMonsters = monsters; // 整怪，dist 已插值（PvpSnapMonster extends Monster）
+    this.aiTangsengHP = snap.tangsengHP;
+    this.aiDefeated = snap.status === 'lost'; // 本方侧无 defeated 字段，用 status 判
+    this.aiSpawnGateT = snap.spawnGateT;
+    this.aiMods = snap.mods; // 供 aiActiveGenerals 的 generalTierDelta
+    this.aiPickedItems = snap.pickedItems.slice();
+    this.aiActiveSlots = snap.activeSlots.map((s) => ({ ...s }));
+
+    // —— A2. 瞬态特效：按 nowMs 老化后重建渲染对象 ——
+    // 每种特效至多一个活动实例（playerSkillFx/palmPushFx 本就是单例；passiveFlash 可多个）。
+    this.aiSkillFx = null;
+    this.aiPalmPushFx = null;
+    this.aiPassiveFlash = new Map<string, number>();
+    for (const fx of snap.fx) {
+      if (!fxAlive(fx, nowMs)) continue; // 出生超过寿命 → 已播完，丢弃
+      if (fx.kind === 'skill') {
+        // 重建 SkillFx：播放进度 = 出生至今的秒数（与老化同基，保证存活期内进度自洽）。
+        if (!this.aiSkillFx) {
+          this.aiSkillFx = {
+            kind: fx.skillKind,
+            t: Math.max(0, (nowMs - fx.t) / 1000),
+            dur: fx.dur,
+            c: fx.c,
+            r: fx.r,
+          };
+        }
+      } else if (fx.kind === 'palm') {
+        if (!this.aiPalmPushFx) {
+          this.aiPalmPushFx = {
+            t: Math.max(0, (nowMs - fx.t) / 1000),
+            dur: fx.dur,
+            fadeT: fx.fadeT,
+            cells: fx.cells,
+            frontStartDist: fx.frontStartDist,
+            snapshots: [], // 接收端不驱动怪物回推，仅沿 aiPath 画掌印，故快照可空
+          };
+        }
+      } else {
+        // flash：剩余秒数原样进 Map（render 读作 alpha）；老化已由 fxAlive 保证只留活的。
+        this.aiPassiveFlash.set(fx.id, fx.value);
+      }
+    }
+
+    // —— B. 需要镜像 cell（重建新容器；drawAiSide 直接用 cell 不再二次镜像）——
+    // units: cell 镜像，fireDir 有值才 +π（对手半场整体 180°）
+    this.aiUnits = snap.units.map((u) => ({
+      ...u,
+      cell: mirrorCell(u.cell),
+      fireDir: u.fireDir != null ? u.fireDir + Math.PI : undefined,
+    }));
+    // words: 逐条镜像 cell 与 Map 键（键不镜像会让 aiActiveGenerals 左右邻接配对失准）
+    const wm = new Map<string, PlacedWord>();
+    for (const w of snap.words) {
+      const c = mirrorCell(w.cell);
+      wm.set(cellKey(c.c, c.r), { ...w, cell: c });
+    }
+    this.aiWords = wm;
+    // bombs / digFx：元素 {c,r,t}，镜像 c/r 保留 t
+    this.aiBombs = snap.bombs.map((b) => ({ ...b, ...mirrorCell({ c: b.c, r: b.r }) }));
+    this.aiDigFx = snap.digFx.map((d) => ({ ...d, ...mirrorCell({ c: d.c, r: d.r }) }));
+
+    // —— C. readonly Set：aiUnlocked 不能整体赋值，clear 后逐元素重建 ——
+    // 元素是内部 cellKey="c,r"（逗号、c,r 顺序；注意别与协议 r{r}c{c} 混）
+    this.aiUnlocked.clear();
+    for (const s of snap.unlocked) {
+      const [a, b] = s.split(',');
+      const mc = mirrorCell({ c: +a!, r: +b! });
+      this.aiUnlocked.add(cellKey(mc.c, mc.r));
+    }
+
+    // —— D. 武将激活组：aiGeneralStates（键 heroPairKey 按镜像两格重建）+ lastAiActivePairKeys（同步镜像）——
+    // generalStates 键格式：heroPairKey = 两格 cellKey 按字典序拼接 "c1,r1|c2,r2"。把每格坐标镜像后重算键。
+    const gm = new Map<string, GeneralState>();
+    for (const [key, state] of snap.generalStates) {
+      const [k1, k2] = key.split('|');
+      const [c1, r1] = k1!.split(',');
+      const [c2, r2] = k2!.split(',');
+      const m1 = mirrorCell({ c: +c1!, r: +r1! });
+      const m2 = mirrorCell({ c: +c2!, r: +r2! });
+      gm.set(Battle.heroPairKey(m1, m2), { ...state });
+    }
+    this.aiGeneralStates = gm;
+    // 帧间"新激活检测"集合：同步镜像，避免桥接首帧把既有对误判为新激活、重置大招 CD 为满
+    const lp = new Set<string>();
+    for (const key of snap.lastActivePairKeys) {
       const [k1, k2] = key.split('|');
       const [c1, r1] = k1!.split(',');
       const [c2, r2] = k2!.split(',');
