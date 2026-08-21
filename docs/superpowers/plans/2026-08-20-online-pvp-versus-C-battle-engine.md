@@ -35,7 +35,7 @@
 | `web/src/main.ts` | `frame()` 固定步长累加器 + 插值 alpha（PvP 门）；12 输入点打点；`onPvpMatched` 建局 + tick 循环；status/result 终局；深链 join | 修改 |
 | `web/src/pause-popup.ts` | `context:'match'` → 「认输」 | 修改 |
 | `web/src/settle.ts` | PvP 结算分支（胜/负/平 + 原因 + 对手） | 修改 |
-| `web/src/*.test.ts` | 各任务 vitest | 创建 |
+| `web/tests/**/*.test.ts` | 各任务 vitest（**注意：必须放 web/tests/，vitest include 只收 tests/**，放 src/ 旁不被发现**；导入用 `../../src/...`） | 创建 |
 
 ---
 
