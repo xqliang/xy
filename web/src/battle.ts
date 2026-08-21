@@ -844,6 +844,9 @@ export interface MetaBonuses {
 }
 export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, atkPct: 0, frqPct: 0 };
 
+/** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充 */
+export interface PvpInit { enabled: boolean; delayTicks?: number }
+
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
 export class Battle {
@@ -1764,11 +1767,16 @@ export class Battle {
   private waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
+  private pvp = false; // 在线 PvP：关本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充
+  private pvpDelayTicks = 15; // PvP 对手侧首次征兵延迟（与单人 AI 对称的节流）
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
   private bossWaves = new Set<number>(); // 分段预排的妖王波（对战/无尽共用）
   private bossScheduleRng: RNG; // 妖王波专用 RNG，不扰动出怪/掉落主序列
   private bossScheduleThrough = 0; // 已排程覆盖到的最高波号
+  /** 对手侧怪物生成用独立 RNG：用同一 seed 播种（镜像本方 this.rng），
+   *  使对手侧怪物波序与本方一致（PvP 全保真的地基），但独立推进不干扰本方 this.rng。 */
+  private aiSpawnRng: RNG;
   /** 本波按最优输出算出的压力方案（开波时刷新；供出怪血量/数量使用） */
   private wavePressure: PressurePlan | null = null;
   /** 上一局未匹配 → 本局强制至少达成一次可组合双字 */
@@ -1798,20 +1806,25 @@ export class Battle {
     aiSkill = DEFAULT_AI_SKILL,
     aiAdjustIntervalScale = 1,
     heroMatch?: { forceMatchThisGame?: boolean; recentMatchedHeroIds?: readonly string[] },
+    pvpInit?: PvpInit,
   ) {
+    this.pvp = pvpInit?.enabled ?? false;
+    this.pvpDelayTicks = pvpInit?.delayTicks ?? 15;
     this.aiAdjustIntervalScale = aiAdjustIntervalScale;
     this.forceMatchThisGame = !!heroMatch?.forceMatchThisGame;
     this.aiForceMatchThisGame = !!heroMatch?.forceMatchThisGame;
     this.recentMatchedHeroIds = heroMatch?.recentMatchedHeroIds ?? [];
-    this.versusBand = versusRubberBand(
-      endless ? 0 : loadPlayerWinStreak(),
-      endless ? 0 : loadPlayerLossStreak(),
-    );
-    const effectiveSkill = effectiveAiSkill(aiSkill, this.versusBand);
+    this.versusBand = this.pvp
+      ? versusRubberBand(0, 0) // PvP 无跨局强度调节，rubber-band 中性化
+      : versusRubberBand(endless ? 0 : loadPlayerWinStreak(), endless ? 0 : loadPlayerLossStreak());
+    const effectiveSkill = this.pvp ? aiSkill : effectiveAiSkill(aiSkill, this.versusBand);
     this.weaponBonuses = weapons;
-    this.aiWeaponBonuses = scaleWeaponBonuses(weapons, aiWeaponScale(effectiveSkill));
+    this.aiWeaponBonuses = this.pvp
+      ? weapons // PvP 占位对称：对手真实战力保真留后续任务（D2/Task 7），此处不缩放
+      : scaleWeaponBonuses(weapons, aiWeaponScale(effectiveSkill));
     this.rng = new RNG(seed);
     this.aiRng = new RNG((seed * 2654435761 + 1013904223) >>> 0); // 派生独立流：生成策略同、结果不同
+    this.aiSpawnRng = new RNG(seed); // 对手侧怪物独立 RNG：同 seed 播种，镜像本方 this.rng，使波序一致
     this.aiSkill = effectiveSkill;
     this.difficultyMul = difficultyMul;
     this.endless = endless;
@@ -1861,7 +1874,7 @@ export class Battle {
       this.applyItem(id);
       this.pickedItems.push(id);
     }
-    if (!endless) {
+    if (!endless && !this.pvp) {
       const aiRoll = rollAiLoadout(
         actives.slice(0, MAX_EQUIPPED_ACTIVES),
         passives.slice(0, MAX_EQUIPPED_PASSIVES),
@@ -1889,8 +1902,8 @@ export class Battle {
       this.aiRepositionTimer = rollAiAdjustInterval(false, () => this.aiRng.next(), this.aiAdjustIntervalScale);
     }
     this.warmPathDistCaches();
-    // DevTools：读取模块级强制出英雄配置（跨 restart 持久）
-    if (DEV_FORCE_WAVE_HERO) {
+    // DevTools：读取模块级强制出英雄配置（跨 restart 持久）；PvP 关掉（否则破坏两端 tray 对称）
+    if (DEV_FORCE_WAVE_HERO && !this.pvp) {
       this.devForceHeroId = DEV_FORCE_WAVE_HERO.heroId;
       this.devForceWave = DEV_FORCE_WAVE_HERO.wave;
     }
