@@ -59,7 +59,7 @@ export type PvpAction =
   | { t: number; op: 'recall'; from: string; slot: number }
   | { t: number; op: 'shovel'; cell: string }
   | { t: number; op: 'active'; id: string; cell?: string; slot?: number }
-  | { t: number; op: 'autoplace'; cells: Array<{ token: string; cell: string }> }
+  | { t: number; op: 'autoplace'; cells?: Array<{ token: string; cell: string }> }
   | { t: number; op: 'startWave' }
   | { t: number; op: 'claimDrop'; id: string };
 /** 每秒摘要（digest）：服务端据此做反作弊启发式（唐僧血单调不增/击杀上界/波次不超前） */

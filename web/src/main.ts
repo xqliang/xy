@@ -239,6 +239,7 @@ const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 import type { PvpSync } from './pvp-battle';                 // PvP 对局同步记账类型（Task 10 的 onPvpMatched 实例化）
+import { toPvpAction } from './pvp-record';                  // 玩家输入 → PvpAction 命令映射（本方打点，Task 5）
 import { drainFixedSteps, PVP_SIM_DT } from './pvp-fixedstep'; // PvP 固定步长累加器（对局期 frame() 用）
 
 function enterCodex(tab?: CodexTab): void {
@@ -365,6 +366,8 @@ let pvpCopied = false;
 // —— PvP 对局期状态（battle 阶段，区别于匹配期 pvpController）——
 let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（Task 10 的 onPvpMatched 赋值）
 let pvpAcc = 0;                        // 固定步长累加器余量
+/** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
+const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /** 每个 PvP 固定子步后回调：施加对手动作 / 触发 tick 上报节流。Task 10 填实现。 */
 function onPvpSimTick(): void { /* Plan C Task 10 填：takeReady 应用对手动作 + tick 节流 */ }
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
@@ -1214,6 +1217,7 @@ function visibleWeaponPickups(): string[] {
 function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
+  if (pvpSync) pvpSync.record(toPvpAction('claimDrop', { id })); // 成功拾取后记命令（仅命令，不记碎片结果）
   battle.pendingWeaponPickups.splice(idx, 1);
   playSfx('click');
   const r = addWeaponFragment(bag, id);
@@ -1360,13 +1364,13 @@ function handleButton(x: number, y: number): boolean {
       }
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
-        if (battle.summon()) pendingFirstSummonTutorial = true;
-      } else if (btn.id === 'autoplace') battle.autoPlaceTray();
+        if (battle.summon()) { pendingFirstSummonTutorial = true; if (pvpSync) pvpSync.record(toPvpAction('summon', {})); }
+      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); if (pvpSync) pvpSync.record(toPvpAction('autoplace', {})); }
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
         if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
-        if (battle.activeSlots[i]?.ready) battle.triggerActive(i);
+        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: i, id: battle.activeSlots[i]?.id })); }
         else {
           ui.activePopup = i;
           ui.activePopupUntil = performance.now() + 2500;
@@ -1791,8 +1795,9 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       const target = pxToCell(ui.dragPos.x, ui.dragPos.y);
       if (target) {
         const slotDef = activeById(battle.activeSlots[ui.dragActiveSlot]?.id ?? '');
-        if (slotDef && isBombActiveEffect(slotDef.effect)) battle.placeBomb(ui.dragActiveSlot, target);
-        else battle.applyPillActive(ui.dragActiveSlot, target);
+        const actId = battle.activeSlots[ui.dragActiveSlot]?.id;
+        if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) })); }
+        else { battle.applyPillActive(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) })); }
       }
     }
   } else if (ui.dragPos) {
@@ -1809,15 +1814,17 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       } else if (target) {
         // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
         battle.placeFromTray(ui.dragTrayIndex, target);
+        if (pvpSync) pvpSync.record(toPvpAction('place', { index: ui.dragTrayIndex, cell: cs(target) }));
         ui.selectedTrayIndex = null;
       } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
+        if (pvpSync) pvpSync.record(toPvpAction('merge', { from: ui.dragTrayIndex, to: trayTarget }));
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
       // 棋盘→候选区：空槽放入；槽内有武器/字牌则交换（见 Battle.recallToTray）
       if (trayTarget !== null) {
-        if (battle.recallToTray(ui.dragFrom, trayTarget)) clearBoardSelect();
+        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); if (pvpSync) pvpSync.record(toPvpAction('recall', { from: cs(ui.dragFrom), slot: trayTarget })); }
       } else if (target) {
         if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
           // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
@@ -1827,6 +1834,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
           else selectBoardCell(target);
         } else {
           battle.dragBoard(ui.dragFrom, target);
+          if (pvpSync) pvpSync.record(toPvpAction('move', { from: cs(ui.dragFrom), to: cs(target) }));
           clearBoardSelect();
         }
       }
