@@ -1,12 +1,30 @@
 // web/src/pvp-snap.ts
-// Plan C Task 4：本方半场快照序列化 + 对手双缓冲插值视图。
+// Plan C Task 4/7.5：本方半场快照序列化 + 对手渲染平滑三件套。
 //
 // 背景：在线 PvP 的 Model C 模型下，对手半场不再由确定性重放的 oppBattle 提供，而是由对手
 // 每 100ms 经 WS 推来的「本方半场渲染态快照」重建。本文件提供三件事：
 //   1. PvpSnap schema —— 本方侧渲染态的纯 JSON 序列化（字段面 = 现 bridgeOpponentFrom 的消费面）；
 //   2. Battle.pvpOwnSnapshot(t) —— 读本方 private 字段构快照（方法必须挂在 Battle 上才能读 private）；
-//   3. PvpOppView —— 接收端双缓冲（prev/cur）+ 怪物 dist 线性插值（滞后 INTERP_DELAY_MS）+ 特效老化。
+//   3. PvpOppView —— 接收端快照平滑渲染（自适应缓冲 + 断流外推 + 误差慢纠偏）+ 特效老化。
 // 渲染桥 bridgeOpponentFromSnap 挂在 Battle 上（见 battle.ts），把插值后的视图映射进 battle.ai*。
+//
+// —— 为什么需要「渲染平滑三件套」（Task 7.5）——
+// 对手 dist 是唯一连续运动量，但对手本机均匀推进的 dist 流，经网络到达接收端后已被扭曲：
+//   - normalizeSnapClock 把快照时刻 t 重打成「本机接收时刻」——收发延迟的抖动会把发送端均匀的
+//     100ms 步进压缩/拉长（肉眼可见的「忽快忽慢」速度抖动）。
+//   - 网络抖动/突发/丢包 → 快照到达间隔忽大忽小：晚到的快照让旧的固定滞后插值在 alpha=1 处
+//     冻结、下一帧又猛跳一段（「一顿一顿」的前向跳动）。
+//   - 更致命：晚到的快照携带的是「对手更早时刻」的 dist（因为它是更早发出的），按接收时刻重打戳后
+//     会造成一种错觉——对手怪「被拉回一段路程」。网络造成的回退/卡顿必须消除；只有真实游戏事件
+//     （对手用如来神掌把自己的怪击退：dist 真实下降）才允许显示回退。
+// 三件套按层次各治一端：
+//   A. 自适应缓冲：插值滞后窗口不固定 120ms，而是按实测到达间隔自适应加宽（120~400ms），
+//      吸收抖动突发，避免晚到快照导致冻结→猛跳。
+//   B. 断流外推（dead reckoning）：渲染时刻越过最新快照时不再钳制冻结，而是按最近一对快照推出的
+//      逐怪速度继续匀速前进（限速 + 限时），填平两帧之间的断流空隙、消除前向跳动。
+//   C. 误差慢纠偏：维护逐怪渲染态，对「单调不减」的 dist 流做单调棘轮（只前进不回退，并以略高于
+//      实时速的速率追赶目标，「走慢一点补」误差）；检测到 dist 真实下降（神掌击退）才切到
+//      双向平滑跟随——从而把网络造成的回退彻底消灭，同时让真实回退平滑呈现。
 //
 // 关键不变量（逐一 grep render.ts / battle.ts 的 bridgeOpponentFrom 核对）：
 //   - 怪物 dist 是唯一连续运动量 → 双缓冲线性插值；其余（单位/字牌/武将组/道具）取最新快照
@@ -29,8 +47,41 @@ import type {
 import { mirrorCell } from './board';
 
 // —— 插值参数 ——
-/** 渲染滞后窗口(ms)：渲染时刻 = nowMs - INTERP_DELAY_MS，保证渲染时总有 prev+cur 两份快照可插值。 */
+/** 渲染滞后窗口下限(ms)：自适应缓冲的 floor。renderTime = nowMs - adaptiveDelay，delay≥此值。 */
 export const INTERP_DELAY_MS = 120;
+
+// —— Task 7.5：渲染平滑三件套参数 ——
+// 取值依据（见文件头「为什么需要渲染平滑三件套」）：
+// 怪物移速 = dist 为沿路格数、TUNING.monsterSpd=0.6 格/秒；骑兵 ×1.25=0.75；疾风 ×1.25；
+// 故单怪真实最大移速 ≈ 0.94 格/秒。外推限速须明显高于真实速（避免正常推进被外推拖慢表现为卡顿），
+// 又不能太高（避免断流时失控前冲）。
+/** 外推硬限速(格/秒)：单怪外推前进速度上限（≈2.5× 真实最快怪速）。 */
+const EXTRAP_HARD_CAP = 2.0;
+/** 外推窄窗(ms)：仅在越过 cur.t 后此窗口内做前冲外推（dead reckoning），超过则冻结（防长断流失控）。
+ *  取 ≈100ms：宽到能填补常见断流首帧、消除前向跳动，窄到 overshoot  settling 停滞可忽略。 */
+const EXTRAP_WINDOW_MS = 100;
+/** 外推距离上限(格)：窄窗外推绝不超出 cur.dist + 此值（ overshoot 上限 → settling 停滞 ≤ ~100ms）。 */
+const EXTRAP_DIST_CAP = 0.1;
+/** 自适应缓冲上限(ms)：实测到达间隔很大时缓冲加宽的上限（吸收突发）。 */
+const ADAPTIVE_DELAY_MAX = 400;
+/** 自适应缓冲：在 gap 估计之上加的固定余量(ms)（吸收单次抖动）。delay = clamp(gapEma+MARGIN, 120, 400)。 */
+const ADAPTIVE_DELAY_MARGIN = 50;
+/**
+ * 自适应缓冲用「到达间隔 EWMA」(gapEma，α=0.3)而非高水位：高水位会在一次 400ms 突发后长期维持
+ * ~400ms 缓冲，导致之后正常的 100ms 到达也冻结近 400ms（一顿一顿）。EWMA 对单次突发平滑、快速回落，
+ * 让缓冲贴着「典型到达间隔」，稳定时 ≈ gap + 余量（100ms→150ms），既吸收抖动又不长冻结。
+ */
+const ADAPTIVE_GAP_ALPHA = 0.3;
+/** 误差纠偏：棘轮追赶目标的「catch-up」加成（格/秒），保证低速怪也能稳步追上、不留永久滞后。 */
+const CATCHUP_MIN = 0.5;
+/** 误差纠偏：棘轮相对实时速的追赶倍率（>1 允许超实时速追赶，逐步吃掉累积误差）。 */
+const CATCHUP_MUL = 1.25;
+/** 真实回退（神掌击退）判定余量：target 低于渲染值超过此量才认定是真实下降而非网络抖动。 */
+const BACKWARD_EPS = 1e-4;
+/** 真实回退平滑跟随的时间常数(ms)：越小跟随越紧（≈150ms 内贴近目标，无瞬移）。 */
+const BACKWARD_TC_MS = 150;
+/** 单次 interpAt 的 dtRender 上限(ms)：防标签页后台恢复后巨大 dt 让棘轮疯狂追赶。 */
+const MAX_DT_RENDER = 100;
 
 // —— 快照字段面（= bridgeOpponentFrom 消费面）——
 // 说明：spec 初稿把怪物字段写成 {dist,hp,type,tier,slowT,freeze}，但真实 Monster 接口并没有
@@ -182,12 +233,12 @@ export function normalizeSnapClock(s: PvpSnap, recvMs: number): PvpSnap {
   return s;
 }
 
-// —— 插值视图：双缓冲 + 怪物 dist 插值 ——
+// —— 平滑渲染视图：双缓冲 + 自适应缓冲 + 断流外推 + 误差慢纠偏 ——
 /**
- * 插值后的快照视图（供桥 bridgeOpponentFromSnap 消费）。
+ * 平滑渲染后的快照视图（供桥 bridgeOpponentFromSnap 消费）。
  * - snap：当前快照 cur（非怪物字段的权威源）；
- * - monsters：怪物数组，dist 已在 prev/cur 间线性插值，其余字段取 cur；
- * - renderTime：渲染时刻 = nowMs - INTERP_DELAY_MS（插值时基）；
+ * - monsters：怪物数组，dist 经「自适应缓冲插值 + 断流外推 + 误差棘轮」平滑后的渲染值，其余字段取 cur；
+ * - renderTime：渲染时刻 = nowMs - adaptiveDelay（插值/外推的时基；delay 随到达抖动自适应）；
  * - nowMs：传入的当前时刻（特效老化用真实时间，与 renderTime 解耦）。
  */
 export interface PvpSnapView {
@@ -198,20 +249,40 @@ export interface PvpSnapView {
 }
 
 /**
- * 对手半场双缓冲快照视图。
- * 维护 prev/cur 两份快照；ingest 推新快照（乱序忽略）；interpAt 按 index 对怪物 dist 线性插值。
+ * 逐怪渲染态（误差慢纠偏的内部棘轮缓冲）。按怪物 index 对齐（与双缓冲一致）。
+ * - renderDist：当前渲染 dist（棘轮只前进，除非判定真实回退）；
+ * - renderVel：本段外推用的逐怪速度(格/ms)，= 最近一对快照推出的逐怪速度（限速后）；棘轮公式也复用它。
+ */
+interface RenderState {
+  renderDist: number;
+  renderVel: number;
+}
+
+/**
+ * 对手半场快照平滑渲染视图（Task 7.5 三件套）。
+ * 维护 prev/cur 两份快照；ingest 推新快照（乱序忽略）；interpAt 做平滑渲染。
+ *
+ * 内部状态（局内可变，每局新建一份，无需显式 reset）：
+ * - 自适应缓冲：gapEma（到达间隔 EWMA）、interpDelayMs（当前缓冲，随 ingest 更新）；
+ * - 逐怪棘轮：render[].renderDist/renderVel（见 RenderState）；
+ * - dtRender：lastInterpAtMs（相邻 interpAt 间隔，钳到 [0, MAX_DT_RENDER]）。
  */
 export class PvpOppView {
   private prev: PvpSnap | null = null;
   private cur: PvpSnap | null = null;
   private ingested = 0; // 累计被 ingest 接受的快照份数（乱序/重复丢弃的不计）；供上层探针观测「是否在收快照」
-
+  private lastArrivalMs: number | null = null; // 上一份被接受快照的归一化到达时刻(cur.t)；算到达间隔
+  private gapEma = INTERP_DELAY_MS; // 到达间隔 EWMA(ms)：自适应缓冲的输入（单次突发平滑、快速回落）
+  private interpDelayMs = INTERP_DELAY_MS; // 当前自适应缓冲(ms)∈[INTERP_DELAY_MS, ADAPTIVE_DELAY_MAX]
+  private render: RenderState[] = []; // 逐怪棘轮渲染态（按 index 对齐 cur.monsters）
+  private lastInterpAtMs: number | null = null; // 上次 interpAt 的 nowMs（算 dtRender）
+  private velEst = 0; // 实时速 EWMA(格/ms)：平滑瞬时尖峰；外推限速用它 → 外推不 overshoot 确认数据
   /** 已 ingest 接受的快照份数（0=尚未收到任何对手快照）。供探针/日志观测连接健康度。 */
   get count(): number {
     return this.ingested;
   }
 
-  /** 是否已有至少一份快照可插值（cur 非空）。interpAt 内部对 cur 非空断言，调用前须先判此，否则空视图会抛。 */
+  /** 是否已有至少一份快照可渲染（cur 非空）。interpAt 内部对 cur 非空断言，调用前须先判此。 */
   get hasSnap(): boolean {
     return this.cur !== null;
   }
@@ -226,35 +297,178 @@ export class PvpOppView {
     return this.cur ? this.cur.units.length : 0;
   }
 
+  /** 自适应缓冲(ms)：当前插值滞后窗口，随到达抖动在 [INTERP_DELAY_MS, ADAPTIVE_DELAY_MAX] 间自适应。 */
+  get adaptiveDelay(): number {
+    return this.interpDelayMs;
+  }
+
+  /**
+   * 自适应缓冲：clamp(gapEma + ADAPTIVE_DELAY_MARGIN, INTERP_DELAY_MS, ADAPTIVE_DELAY_MAX)。
+   * gapEma 是到达间隔 EWMA（单次突发平滑、快速回落），加固定余量吸收抖动。
+   * 稳定 100ms 到达 → gapEma≈100 → 150ms（接近旧 120 手感）；300ms 持续到达 → gapEma≈300 → 350ms；
+   * 单次 400ms 突发 → gapEma 短暂抬升后回落（不像高水位长期维持 400ms 导致后续长冻结）。
+   */
+  private recomputeDelay(): void {
+    this.interpDelayMs = Math.max(
+      INTERP_DELAY_MS,
+      Math.min(ADAPTIVE_DELAY_MAX, this.gapEma + ADAPTIVE_DELAY_MARGIN),
+    );
+  }
+
   /** 吃入一份快照：prev=cur, cur=s。忽略乱序/重复（t 不新于 cur.t 的快照丢弃）。 */
   ingest(s: PvpSnap): void {
     // 乱序或重复：发送端时刻不比当前新 → 丢弃，避免破坏 prev/cur 的时序不变量。
     if (this.cur && s.t < this.cur.t) return;
+    // 自适应缓冲：用本机归一化到达时刻(s.t)算到达间隔（recv 抖动已含在 s.t 内，正是要吸收的抖动源）。
+    if (this.lastArrivalMs !== null) {
+      const gap = Math.max(0, s.t - this.lastArrivalMs);
+      // gapEma：到达间隔 EWMA（α=0.3），单次突发平滑、快速回落，缓冲贴着「典型到达间隔」。
+      this.gapEma = this.gapEma * (1 - ADAPTIVE_GAP_ALPHA) + gap * ADAPTIVE_GAP_ALPHA;
+      this.recomputeDelay();
+    }
+    this.lastArrivalMs = s.t;
     this.ingested++;
     this.prev = this.cur;
     this.cur = s;
+    // 实时速 EWMA：用本段（prev→cur）各怪速度的均值更新 velEst（α=0.5，较快收敛到真实速），
+    // 平滑突发压缩（50ms 内两帧）造成的瞬时尖峰。外推限速用 velEst 而非瞬时值：突发会瞬时抬高
+    // measured 速度，若用它外推会 overshoot 确认数据 → 新段目标低于渲染值 → 网络性回退 dip。
+    if (this.prev && this.cur.t > this.prev.t) {
+      const span = this.cur.t - this.prev.t;
+      let sum = 0;
+      let cnt = 0;
+      for (let i = 0; i < this.cur.monsters.length; i++) {
+        const p = this.prev.monsters[i];
+        if (!p) continue;
+        sum += (this.cur.monsters[i]!.dist - p.dist) / span;
+        cnt++;
+      }
+      if (cnt > 0) this.velEst = this.velEst * 0.5 + (sum / cnt) * 0.5;
+    }
   }
 
-  /** 取插值视图。monsters.dist 在 prev/cur 间按 index 线性插值；其余（含 fx）取 cur。 */
+  /** 取平滑渲染视图：monsters.dist 经自适应缓冲插值 + 断流外推 + 误差棘轮，其余（含 fx）取 cur。 */
   interpAt(nowMs: number): PvpSnapView {
     const cur = this.cur!;
     const prev = this.prev;
-    const renderTime = nowMs - INTERP_DELAY_MS;
+    const delay = this.interpDelayMs;
+    const renderTime = nowMs - delay;
+
+    // dtRender：相邻 interpAt 间隔（钳到 [0, MAX_DT_RENDER]），供棘轮推进；首帧/倒退 nowMs → 0（保持）。
+    let dt = 0;
+    if (this.lastInterpAtMs !== null && nowMs >= this.lastInterpAtMs) {
+      dt = Math.min(MAX_DT_RENDER, nowMs - this.lastInterpAtMs);
+    }
+    this.lastInterpAtMs = nowMs;
+
+    const n = cur.monsters.length;
+    // 逐怪渲染态按 index 对齐：cur 怪数变少则截断（退场怪棘轮态随之丢弃）；变多则补 undefined（惰性初始化）。
+    if (this.render.length > n) this.render.length = n;
+
     let monsters: PvpSnapMonster[];
     if (!prev || cur.t <= prev.t) {
-      // 单快照，或时间戳未推进（cur.t<=prev.t，含乱序被 ingest 挡住后的相等时刻）：
-      // 无法插值，直取 cur（逐条浅拷贝，避免桥改写污染内部缓冲）。
-      monsters = cur.monsters.map((m) => ({ ...m }));
+      // 单快照或时间戳未推进：目标=cur.dist，不外推（span=0 无速度）。逐怪初始化棘轮并贴近目标。
+      monsters = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const m = cur.monsters[i]!;
+        const target = m.dist;
+        const r = this.render[i];
+        if (!r) this.render[i] = { renderDist: target, renderVel: 0 };
+        else r.renderDist = this.ratchet(r, target, r.renderVel, dt);
+        monsters[i] = { ...m, dist: this.render[i]!.renderDist };
+      }
     } else {
-      const span = cur.t - prev.t;
-      const alpha = clamp01((renderTime - prev.t) / span);
-      monsters = cur.monsters.map((m, i) => {
+      const span = cur.t - prev.t; // >0（已排除 cur.t<=prev.t）
+      // beyondMs：renderTime 越过 cur.t 的量(ms)；≤0 表示渲染时刻未超过最新快照（正常插值/冷启动 hold）。
+      const beyondMs = renderTime - cur.t;
+      // 外推限速(格/ms)：实时速 EWMA(velEst) 与硬上限取小。
+      // 用 velEst（平滑突发压缩的瞬时尖峰）：突发（50ms 内两帧）会瞬时抬高 measured 速度，若用它外推
+      // 会 overshoot 确认数据 → 新段目标低于渲染值 → 网络性回退 dip。velEst 贴近平稳真实速，外推不 overshoot。
+      const extrapCap = Math.min(this.velEst, EXTRAP_HARD_CAP / 1000);
+      const monstersArr: PvpSnapMonster[] = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const m = cur.monsters[i]!;
         const p = prev.monsters[i];
-        // 按 index 对齐：prev 无对应怪（数量变少或后到）→ 取 cur 值，不外推。
-        const dist = p ? lerp(p.dist, m.dist, alpha) : m.dist;
-        return { ...m, dist };
-      });
+        let target: number;
+        let vel: number; // 本段实时速(格/ms)：可负（真实回退），棘轮据此区分回退/前进
+        let realBackward = false; // 真实回退（dist 真实下降）→ 平滑跟随；否则单调棘轮
+        if (!p) {
+          // prev 无对应怪（数量变少或后到）：目标=cur.dist，不外推（无前值定速度）。
+          target = m.dist;
+          vel = 0;
+        } else {
+          const realtimeV = (m.dist - p.dist) / span; // 本段诚实实时速
+          realBackward = realtimeV < -1e-9; // dist 真实下降 → 真实回退（如来神掌击退）
+          if (realBackward) {
+            // 真实回退：目标=最后已知 dist，平滑跟随下降（不臆测未来后退幅度）。
+            target = m.dist;
+            vel = realtimeV;
+          } else if (beyondMs <= 0) {
+            // 渲染时刻未超过 cur.t：在 [prev.t, cur.t] 内线性插值（renderTime<prev.t 时钳到 0 → hold 在 prev）。
+            const lagRatio = (renderTime - prev.t) / span;
+            target = lerp(p.dist, m.dist, clamp01(lagRatio));
+            vel = realtimeV;
+          } else if (beyondMs <= EXTRAP_WINDOW_MS) {
+            // 窄窗外推（dead reckoning）：仅在越过 cur.t 后一个短窗口内按实时速前冲，填补断流首帧。
+            // 限速 extrapCap + 距离上限 EXTRAP_DIST_CAP（overshoot ≤ 此值 → settling 停滞 ≤ ~100ms）。
+            vel = Math.min(realtimeV, extrapCap);
+            const extrapDist = Math.min(vel * beyondMs, EXTRAP_DIST_CAP);
+            target = m.dist + extrapDist;
+          } else {
+            // 超窗外推冻结：越过窄窗后不再前冲（避免长断流失控），钳到 cur.dist + EXTRAP_DIST_CAP。
+            vel = realtimeV;
+            target = m.dist + EXTRAP_DIST_CAP;
+          }
+        }
+        // 误差棘轮：从逐怪渲染态向 target 平滑推进（单调棘轮 / 真实回退跟随）。
+        const r = this.render[i];
+        if (!r) {
+          this.render[i] = { renderDist: target, renderVel: vel };
+        } else {
+          r.renderVel = vel;
+          r.renderDist = this.advance(r.renderDist, target, vel, dt, realBackward);
+        }
+        monstersArr[i] = { ...m, dist: this.render[i]!.renderDist };
+      }
+      monsters = monstersArr;
     }
     return { snap: cur, monsters, renderTime, nowMs };
+  }
+
+  /**
+   * 误差慢纠偏：把当前渲染值 curRender 向 target 推进 dt(ms)。
+   * - realBackward（dist 真实下降，如来神掌击退）：双向平滑跟随（时间常数 BACKWARD_TC_MS 的
+   *   指数趋近），允许下降但无瞬移——这是唯一允许渲染倒退的情形。
+   * - 否则（单调不减流，含网络抖动/外推 overshoot  settling）：单调棘轮——只前进不回退。
+   *   target ≥ curRender 时以 max(实时速×CATCHUP_MUL, CATCHUP_MIN/秒) 的速率追赶（逐步吃误差）；
+   *   target < curRender 时（外推 overshoot  settling）→ 保持不回退（外推 overshoot 会随时间被
+   *   真实目标追平，绝不用一次后退修正，避免网络造成回退的错觉）。
+   * vel 为「实时速」(格/ms，可负)；dt 已钳到 [0, MAX_DT_RENDER]。
+   */
+  private advance(
+    curRender: number,
+    target: number,
+    vel: number,
+    dt: number,
+    realBackward: boolean,
+  ): number {
+    if (realBackward) {
+      // 真实回退：指数趋近 target（dt 越大贴得越紧，单步 ≤ MAX_DT_RENDER 防瞬移感）。
+      const k = 1 - Math.exp(-dt / BACKWARD_TC_MS);
+      return curRender + (target - curRender) * k;
+    }
+    // 单调棘轮：实时速(格/ms) 取非负（外推段 vel 已非负；插值段 realtimeV 非负）。
+    const rate = Math.max(vel * CATCHUP_MUL, CATCHUP_MIN / 1000); // 格/ms
+    const step = rate * dt;
+    if (target >= curRender) return Math.min(target, curRender + step); // 前进追赶，绝不超目标
+    return curRender; // target<curRender（外推 overshoot settling）→ 保持，不回退
+  }
+
+  /**
+   * 单快照/无速度时的棘轮贴近：目标=cur.dist，无实时速参考，用最小 catch-up 速率贴近 target（绝不回退）。
+   * 冷启动（render 未初始化）由 interpAt 在 advance 前直接以 target 初始化，不走此方法。
+   */
+  private ratchet(r: RenderState, target: number, _vel: number, dt: number): number {
+    return this.advance(r.renderDist, target, 0, dt, false);
   }
 }
