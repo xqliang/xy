@@ -298,7 +298,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   oppBattle = mk(); // 对手侧确定性重放实例（Task 7 喂对手动作、Task 8 渲染到对手半场）
   bindBattleWeaponPickup();
   pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => performance.now() });
-  pvpAcc = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
+  pvpAcc = 0; pvpOppSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
   const sp = spendStamina(stamina);
   if (sp.ok) stamina = sp.state;
@@ -417,14 +417,26 @@ let pvpCopied = false;
 let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（Task 10 的 onPvpMatched 赋值）
 let pvpAcc = 0;                        // 固定步长累加器余量
 let oppBattle: Battle | null = null;   // 对手侧确定性重放实例（Task 7 喂动作、Task 8 渲染）
+let pvpOppSimTick = 0;                  // oppBattle 已步进到的延迟 simTick（每对局 reset；Task 7 延迟重放节拍）
 let pvpTickTimer: ReturnType<typeof setTimeout> | null = null; // 1s tick 心跳定时器
 let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 存服务端下一波（Task 9 用）
 let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 存服务端终局（Task 10 用）
 let pvpLastServerOkMs = 0;             // 最近一次 tick 成功时刻（断线检测，Task 10）
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
-/** 每个 PvP 固定子步后回调：施加对手动作 / 触发 tick 上报节流。Task 10 填实现。 */
-function onPvpSimTick(): void { /* Plan C Task 10 填：takeReady 应用对手动作 + tick 节流 */ }
+/** 每个 PvP 固定子步后回调：把 oppBattle 追到延迟目标 tick，施加对手转发来的动作（延迟重放）。
+ *  由 frame() 固定步长循环每子步调用（Task 4 已接）。每帧把 oppBattle 追到 aiSimTick（落后本方 DELAY_TICKS），
+ *  实现对手半场的延迟重放；开局前 DELAY_TICKS 帧 aiSimTick=0，oppBattle 不步进（对手侧稍后出现，正常）。 */
+function onPvpSimTick(): void {
+  if (!pvpSync || !oppBattle) return;
+  const target = pvpSync.aiSimTick();          // = simTick - DELAY_TICKS（对手侧延迟目标 tick）
+  let guard = 0;
+  while (pvpOppSimTick < target && guard++ < 240) { // guard 防极端追帧卡死（240 步 = 8s @ 30Hz）
+    for (const a of pvpSync.takeReady(pvpOppSimTick)) oppBattle.applyPvpInput(a); // 到点施加对手动作（缓冲已按 t 升序）
+    oppBattle.step(PVP_SIM_DT);
+    pvpOppSimTick++;
+  }
+}
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null

@@ -66,7 +66,7 @@ import {
   type BoardPowerResult,
   type PressurePlan,
 } from './board-power';
-import { activeById, isPillActiveEffect, isDragActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
+import { activeById, isPillActiveEffect, isDragActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES, type ActiveEffect } from './actives';
 import { MAX_EQUIPPED_PASSIVES, isPassiveEnabled, passiveById } from './passives';
 import {
   DEFAULT_AI_SKILL, rollAiLoadout, skillToKnobs, aiWeaponScale, scaleWeaponBonuses,
@@ -846,6 +846,20 @@ export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, 
 
 /** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充 */
 export interface PvpInit { enabled: boolean; delayTicks?: number }
+
+/** PvP 对手动作重放的窄结构类型（applyPvpInput 入参）。
+ *  仅含各 op 实际用到的字段，是 api 层 PvpAction 的子集；在此定义以避免 battle.ts → api 层的依赖与潜在循环。 */
+export type PvpInputCmd =
+  | { op: 'summon' }
+  | { op: 'autoplace' }
+  | { op: 'place'; cell: string; index?: number }
+  | { op: 'move'; from: string; to: string }
+  | { op: 'merge'; from: number; to: number }
+  | { op: 'recall'; from: string; slot: number }
+  | { op: 'shovel'; cell?: string; index?: number }
+  | { op: 'active'; id: string; cell?: string; slot?: number }
+  | { op: 'startWave' }
+  | { op: 'claimDrop'; id: string };
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
@@ -5190,7 +5204,7 @@ export class Battle {
     const playerSpd = this.normalMonsterSpeed() * spdMul;
     const aiSpd = this.endlessMonsterBaseSpeed() * this.aiMods.monsterSpdMul * spdMul;
     this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
-    if (!this.endless) {
+    if (!this.endless && !this.pvp) { // PvP 不往不用的 ai* 侧出怪（本方 this.monsters 照常出；对手怪来自 oppBattle 自己的 this.monsters）
       this.aiMonsters.push(makeOne(this.aiEntranceDist + off, aiSpd, bossSpec));
     }
     if (isBoss && bossEscortCount > 0) {
@@ -5208,7 +5222,7 @@ export class Battle {
       for (let i = 0; i < bossEscortCount; i++) {
         const escortOff = off - (i + 1) * TUNING.bossEscortSpacing - this.rng.next() * BOARD_POWER.SPAWN_DIST_JITTER;
         this.monsters.push(makeOne(this.entranceDist + escortOff, escortPlayerSpd, escortSpec));
-        if (!this.endless) {
+        if (!this.endless && !this.pvp) { // PvP 不往 ai* 侧出护卫怪（见主怪处说明）
           this.aiMonsters.push(makeOne(this.aiEntranceDist + escortOff, escortAiSpd, escortSpec));
         }
       }
@@ -5333,6 +5347,8 @@ export class Battle {
   // AI 侧推进：真玩家循环（征兵节奏→共享布阵→单位/武将攻击→怪物推进/漏怪扣血/击杀产桃）
   private updateAi(dt: number): void {
     if (this.endless) return; // 无尽模式无 AI 对手
+    if (this.pvp) return; // PvP：关本地 AI 养成/决策（本方 ai* 由渲染桥从 oppBattle 覆盖、oppBattle 的 ai* 不用）；
+    // 同时跳过其中 updateAiActives 等用 performance.now() 作规划器 deadline 的非确定源，保 oppBattle 重放确定。
     const knobs = skillToKnobs(this.aiSkill);
     // 1) 征兵节奏：到点且够桃则征一次，随后共享布阵
     let aiPlacedThisFrame = false;
@@ -5442,6 +5458,8 @@ export class Battle {
   // 对手唐僧阵亡 → 我方获胜（伪竞技对局的胜利条件之一）
   private checkOpponentDefeated(): boolean {
     if (this.endless) return false; // 无尽模式禁用「击败对手=胜」
+    if (this.pvp) return false; // PvP 终局由服务端 result 裁决（对手唐僧死/认输/断线），不由本地 aiDefeated 触发；
+    // 本方 status='lost'（唐僧被吃）仍照常由 updateMonsters 判定，不受此门影响。
     if (this.aiDefeated && this.status !== 'won' && this.status !== 'lost') {
       this.status = 'won';
       this.waveActive = false;
@@ -6507,6 +6525,70 @@ export class Battle {
     return true;
   }
 
+  // —— PvP 对手动作重放（Plan C Task 7）——
+  // 把对手转发来的命令施加到【本实例本方侧】的既有输入方法。仅用于 oppBattle（对手确定性重放实例）：
+  // 对手半场 = oppBattle 的 this.monsters/units/tangsengHP，喂对手的输入命令即忠实复现（同 seed 同序）。
+  // 本方 battle 实例（实时真人操作）不走这里。
+  //
+  // 类型：在 battle.ts 内定义窄结构类型 PvpInputCmd（仅含各 op 实际用到的字段），不依赖 api 层，
+  // 避免 battle.ts → api/pvp-client 的层间耦合与潜在循环依赖。api 层的 PvpAction 是其超集，结构兼容。
+  applyPvpInput(a: PvpInputCmd): void {
+    // 协议 cell 串格式 r{r}c{c}（与 main.ts 的 cs() 一致；注意内部 cellKey 是 c,r 顺序，勿混用）
+    const parseCell = (s: string): Cell => {
+      const m = /^r(\d+)c(\d+)$/.exec(s);
+      if (!m) { console.warn('[pvp] 非法 cell 串', s); return { c: 0, r: 0 }; }
+      return { c: +m[2]!, r: +m[1]! };
+    };
+    switch (a.op) {
+      case 'summon':
+        this.summon();
+        break;
+      case 'autoplace':
+        this.autoPlaceTray(); // pvp 下已确定化（deadlineMs=undefined），见 autoPlaceTray
+        break;
+      case 'place':
+        this.placeFromTray(a.index ?? 0, parseCell(a.cell));
+        break;
+      case 'move':
+        this.dragBoard(parseCell(a.from), parseCell(a.to));
+        break;
+      case 'merge':
+        this.mergeTrayTokens(a.from, a.to);
+        break;
+      case 'recall':
+        this.recallToTray(parseCell(a.from), a.slot);
+        break;
+      case 'shovel':
+        // 洛阳铲实际走 place 路径（placeFromTray 内分派铲子）；通常不单独出现，防御性走 place
+        if (a.cell != null) this.placeFromTray(a.index ?? 0, parseCell(a.cell));
+        break;
+      case 'active': {
+        const slot = a.slot ?? 0;
+        if (a.cell == null) {
+          this.triggerActive(slot); // 即时全场技（掌/陨/冰/咒）
+        } else {
+          const def = activeById(a.id);
+          if (def && isBombActiveEffect(def.effect)) this.placeBomb(slot, parseCell(a.cell)); // 炸药：埋雷到路径格
+          else this.applyPillActive(slot, parseCell(a.cell)); // 仙丹/风火轮：拖到单体兵器/武将
+        }
+        break;
+      }
+      case 'startWave':
+        this.startNextWave(); // 一般由服务端驱动；防御性支持
+        break;
+      case 'claimDrop': {
+        // 仅移「待领碎片」，对局 sim 无关（best-effort；oppBattle 本就不领奖）
+        const i = this.pendingWeaponPickups.indexOf(a.id);
+        if (i >= 0) this.pendingWeaponPickups.splice(i, 1);
+        break;
+      }
+      default: {
+        // 未知 op：记潜在 desync 但不中断重放（保留向前兼容）
+        console.warn('[pvp] 未知动作 op', (a as PvpInputCmd).op);
+      }
+    }
+  }
+
   // 紧箍咒：以最靠前妖怪为中心的大范围 AOE 爆发（复用原英雄绝招效果）。
   private doJingu(): void {
     if (this.monsters.length === 0) return;
@@ -7087,7 +7169,10 @@ export class Battle {
       maxSteps: PLAYER_PLACE_MAX_STEPS,
       maxGuard: PLAYER_PLACE_MAX_GUARD,
       // 有怪时按紧预算截断（防掉帧）；无怪时用更宽松的备战预算兜底，防极端局面单帧卡死。
-      deadlineMs: performance.now() + (this.monsters.length > 0
+      // PvP 下 deadlineMs=undefined：去掉 performance.now() 这个非确定时钟源，规划器仅靠上方 maxSteps/maxGuard
+      // （确定性步数上界）终止 → 结果确定；oppBattle 重放 autoPlaceTray() 逐字复现，且同样消费 this.rng，
+      // 与本机(本方 battle)的 rng 推进保持同步。单人路径不受影响（deadlineMs 照常计算）。
+      deadlineMs: this.pvp ? undefined : performance.now() + (this.monsters.length > 0
         ? PLAYER_PLACE_DEADLINE_MS
         : PLAYER_PLACE_DEADLINE_PREP_MS),
     });
