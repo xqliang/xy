@@ -102,10 +102,12 @@ class VersusHub:
             return {"uid": _mask(uid), "nickname": None, "avatarId": "wukong", "rankLevel": 0}
         return {"uid": _mask(uid), "nickname": row["nickname"], "avatarId": row["avatar_id"], "rankLevel": int(row["rank_level"] or 0)}
 
-    def _new_side(self, uid: str, rank: int, now: int) -> dict:
-        # 新建对局一方的实时状态壳
+    def _new_side(self, uid: str, rank: int, now: int, loadout: Optional[dict] = None) -> dict:
+        # 新建对局一方的实时状态壳。loadout 为该方上交的 PvpLoadout（dict，可能 None——旧客户端不下发，向后兼容），
+        # 供 _match_start_payload 下发给对方作 opponentLoadout，使对手侧 oppBattle 用真实配装忠实重放。
         return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
-                "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False, "status": "playing"}
+                "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False,
+                "status": "playing", "loadout": loadout}
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 组装 Match、建 ticket->match 索引，返回 match_id
@@ -113,8 +115,8 @@ class VersusHub:
         m = {
             "match_id": mid, "seed": self._gen_seed(), "map": map_id or self._pick_map(),
             "start_at_ms": now + START_DELAY_MS,
-            "a": self._new_side(e1["uid"], e1["rank"], now),
-            "b": self._new_side(e2["uid"], e2["rank"], now),
+            "a": self._new_side(e1["uid"], e1["rank"], now, e1.get("loadout")),
+            "b": self._new_side(e2["uid"], e2["rank"], now, e2.get("loadout")),
             "wave_schedule": {1: now + START_DELAY_MS}, "first_clear": {},
             "result": None, "created_ms": now, "ended": False,
         }
@@ -178,7 +180,7 @@ class VersusHub:
             self.rooms.pop(code, None)
 
     # —— 对外匹配 API ——
-    def enqueue(self, uid: str, rank: int) -> dict:
+    def enqueue(self, uid: str, rank: int, loadout: Optional[dict] = None) -> dict:
         # 禁赛拦截
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -190,8 +192,10 @@ class VersusHub:
             self.recent.setdefault(rank, []).append((uid, now))
             n = self._recent_distinct(rank, uid, now)
             ticket = secrets.token_hex(8)
+            # 入队条目携带本方 loadout（可能 None），透传给成局后的 side，再由 _match_start_payload 下发给对方。
             self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
-                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n)}
+                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n),
+                                  "loadout": loadout}
             self._try_pair(now)
             return {"ticket": ticket}
 
@@ -230,7 +234,7 @@ class VersusHub:
             return {"ok": True}
 
     # —— 私房（邀请对战）：房主建房间占 ticket 挂起，客人凭码加入直接成局 ——
-    def room_create(self, uid: str, rank: int, base_url: str = "") -> dict:
+    def room_create(self, uid: str, rank: int, base_url: str = "", loadout: Optional[dict] = None) -> dict:
         # 禁赛拦截：与匹配一致，异常玩家当日不得开私房
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -241,13 +245,15 @@ class VersusHub:
             # 房间记录：code -> 房间元信息（含房主 ticket，便于加入时定位房主）
             self.rooms[code] = {"code": code, "host_uid": uid, "host_rank": rank,
                                 "map": self._pick_map(), "created_ms": now, "ticket": ticket}
-            # 房主也占一张 ticket，复用同一张 queue 表；标记 room 表示私房挂起（poll 见之仍等待）
+            # 房主也占一张 ticket，复用同一张 queue 表；标记 room 表示私房挂起（poll 见之仍等待）。
+            # 房主 loadout 一并挂在这张 ticket 上，room_join 成局时透传给房主 side。
             self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
-                                  "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS, "room": code}
+                                  "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS,
+                                  "room": code, "loadout": loadout}
             link = f"{base_url}/?versus={code}"
             return {"code": code, "link": link, "ticket": ticket, "map": self.rooms[code]["map"]}
 
-    def room_join(self, code: str, uid: str, rank: int) -> dict:
+    def room_join(self, code: str, uid: str, rank: int, loadout: Optional[dict] = None) -> dict:
         # 禁赛拦截
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -262,8 +268,9 @@ class VersusHub:
             if not host_entry:
                 # 房已存在但房主 ticket 已不在队列（超时/被清理）
                 return {"error": "room_expired"}
-            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）
-            joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank, "enqueued_ms": now}
+            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）；携带客人 loadout 透传给客人 side。
+            joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank,
+                      "enqueued_ms": now, "loadout": loadout}
             # 成局即销毁房间与房主挂起态，保证一码一局、不能重复加入
             self.queue.pop(host_ticket, None)
             self.rooms.pop(code, None)
@@ -274,14 +281,17 @@ class VersusHub:
 
     def _match_start_payload(self, mid: str, uid: str) -> Optional[dict]:
         # 注意：poll 在锁外调用本方法（DB 读档不占锁）；对局可能已被并发 _reap 回收 → 返回 None 由调用方兜底。
-        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid，成局后不再变），无撕裂读。
+        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid+loadout，成局后不再变），无撕裂读。
         m = self.matches.get(mid)
         if m is None:
             return None
-        # 组 match-start：matchId/seed/map/startAt/对手档案
+        # 组 match-start：matchId/seed/map/startAt/对手档案 + 对方上交的 loadout（供对手侧忠实重放）。
+        # loadout 放顶层 opponentLoadout，勿塞进脱敏 _profile（profile 是公开档案，职责分离）。
         opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
+        opp_side = m["b"] if m["a"]["uid"] == uid else m["a"]
         return {"matchId": mid, "seed": m["seed"], "map": m["map"],
-                "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}
+                "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid),
+                "opponentLoadout": opp_side.get("loadout")}
 
     # —— tick 转发 + 波次调度（先清者定下一波）——
     def _sides(self, m: dict, uid: str) -> tuple[dict, dict]:
@@ -505,14 +515,14 @@ def _parse_rank(handler, body):
         return None
 
 def handle_versus_enqueue(handler, db: DB) -> None:
-    # 随机匹配入队：返回 ticket，客户端凭此 poll 拿配对结果
+    # 随机匹配入队：返回 ticket，客户端凭此 poll 拿配对结果。loadout 可选（旧客户端不下发→None）。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
-    send_json(handler, 200, _hub(handler).enqueue(uid, rank))
+    send_json(handler, 200, _hub(handler).enqueue(uid, rank, body.get("loadout")))
 
 def handle_versus_poll(handler, db: DB) -> None:
     # 轮询排队/对局状态：waiting / matched / timeout
@@ -531,7 +541,7 @@ def handle_versus_cancel(handler, db: DB) -> None:
     send_json(handler, 200, _hub(handler).cancel(str(body.get("ticket") or "")))
 
 def handle_versus_room_create(handler, db: DB) -> None:
-    # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）
+    # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）。loadout 可选。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
@@ -539,17 +549,17 @@ def handle_versus_room_create(handler, db: DB) -> None:
     rank = _parse_rank(handler, body)
     if rank is None: return
     base = (handler.headers.get("Origin") or "").rstrip("/")
-    send_json(handler, 200, _hub(handler).room_create(uid, rank, base_url=base))
+    send_json(handler, 200, _hub(handler).room_create(uid, rank, base_url=base, loadout=body.get("loadout")))
 
 def handle_versus_room_join(handler, db: DB) -> None:
-    # 客人凭码加入私房：直接与房主成局
+    # 客人凭码加入私房：直接与房主成局。loadout 可选（客人配装）。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
-    send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank))
+    send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank, body.get("loadout")))
 
 def handle_versus_tick(handler, db: DB) -> None:
     # 对局心跳：上报本端动作/摘要/波次清场，转发对手动作 + 波次调度 + 终局裁决

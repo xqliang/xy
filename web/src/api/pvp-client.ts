@@ -10,13 +10,33 @@ export interface OpponentProfile {
   avatarId: string;
   rankLevel: number;
 }
-/** match-start 下发体（与服务端 _match_start_payload 对齐） */
+
+/**
+ * 本方上交/对手下发的配装快照（与服务端 _match_start_payload 的 opponentLoadout 逐字段对齐）。
+ * 使 oppBattle 用对手真实配装忠实重放，修复「对称占位致对手被动不同时逐 tick 结构发散」的缺陷。
+ *   equipped: 主动技 id（决定运行时主动槽；对手触发的主动技须有对应槽才能 applyPvpInput('active') 重放）
+ *   passives: 被动 id（重放正确性关键：zhaoxian→wordRateBonus 改字率、fabaofu→generalTierDelta 改武将阶、
+ *            xianyuan→summonCostDelta 改征兵桃耗——任一不同都会让 oppBattle 抽出不同 tray 而逐 tick 发散）
+ *   weapons: 预计算的武将神兵加成（weaponBonuses(bag) 产物，key=武将id），仅影响怪血数值精度
+ *   meta:    预计算的局外加成（metaBonuses(merit) 产物，当前恒 0），同上仅影响数值
+ * loadout 为可选参数：旧客户端/旧服务端不下发时为 undefined（向后兼容）。
+ */
+export interface PvpLoadout {
+  equipped: string[];
+  passives: string[];
+  weapons: Record<string, { atk: number; frq: number; rge: number }>;
+  meta: { bonusPeach: number; bonusHp: number; bonusSlots: number; atkPct: number; frqPct: number };
+}
+
+/** match-start 下发体（与服务端 _match_start_payload 对齐）。
+ *  opponentLoadout 为对方上交的配装；旧服务端不下发时为 undefined（客户端回退对称占位）。 */
 export interface MatchStart {
   matchId: string;
   seed: number;
   map: string;
   startAtServerMs: number;
   opponent: OpponentProfile;
+  opponentLoadout?: PvpLoadout | null;
 }
 export interface EnqueueResp { ticket?: string; banned?: boolean; msg?: string }
 export type PollResp =
@@ -31,8 +51,8 @@ export type RoomJoinResp =
 
 const J = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) });
 
-export function versusEnqueue(rank: number): Promise<ApiResult<EnqueueResp>> {
-  return apiFetch<EnqueueResp>('/api/versus/enqueue', J({ rank }));
+export function versusEnqueue(rank: number, loadout?: PvpLoadout): Promise<ApiResult<EnqueueResp>> {
+  return apiFetch<EnqueueResp>('/api/versus/enqueue', J({ rank, loadout }));
 }
 export function versusPoll(ticket: string): Promise<ApiResult<PollResp>> {
   return apiFetch<PollResp>('/api/versus/poll', J({ ticket }));
@@ -40,11 +60,11 @@ export function versusPoll(ticket: string): Promise<ApiResult<PollResp>> {
 export function versusCancel(ticket: string): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch<{ ok: boolean }>('/api/versus/cancel', J({ ticket }));
 }
-export function versusRoomCreate(rank: number): Promise<ApiResult<RoomCreateResp>> {
-  return apiFetch<RoomCreateResp>('/api/versus/room/create', J({ rank }));
+export function versusRoomCreate(rank: number, loadout?: PvpLoadout): Promise<ApiResult<RoomCreateResp>> {
+  return apiFetch<RoomCreateResp>('/api/versus/room/create', J({ rank, loadout }));
 }
-export function versusRoomJoin(code: string): Promise<ApiResult<RoomJoinResp>> {
-  return apiFetch<RoomJoinResp>('/api/versus/room/join', J({ code }));
+export function versusRoomJoin(code: string, loadout?: PvpLoadout): Promise<ApiResult<RoomJoinResp>> {
+  return apiFetch<RoomJoinResp>('/api/versus/room/join', J({ code, loadout }));
 }
 
 // —— 对局期 tick（Plan C）：每秒双向心跳 ——

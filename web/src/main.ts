@@ -276,11 +276,15 @@ function openMapPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'map'; scheduleFrame(); });
 }
 
-// PvP 网络适配：把 pvp-client 的五个函数喂给状态机（签名逐字一致）
-function pvpNet() {
+// PvP 网络适配：把 pvp-client 的五个函数喂给状态机。
+// loadout 经闭包烘焙进 enqueue/roomCreate/roomJoin（客户端每次进匹配都上交本方 PvpLoadout），
+// 控制器/PvpMatchNet 接口签名保持不变（状态机不感知 loadout，保持行为不变）。
+function pvpNet(loadout: import('./api/pvp-client').PvpLoadout) {
   return {
-    enqueue: pvpClient.versusEnqueue, poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
-    roomCreate: pvpClient.versusRoomCreate, roomJoin: pvpClient.versusRoomJoin,
+    enqueue: (rank: number) => pvpClient.versusEnqueue(rank, loadout),
+    poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
+    roomCreate: (rank: number) => pvpClient.versusRoomCreate(rank, loadout),
+    roomJoin: (code: string) => pvpClient.versusRoomJoin(code, loadout),
   };
 }
 // 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 6）。
@@ -291,11 +295,20 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   const map = mapById(ms.map) ?? currentMap;
   const meta = metaBonuses(merit), wb = weaponBonuses(bag);
   // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
-  // 对手 loadout 暂用对称占位（MatchStart 未下发对手配装，DONE_WITH_CONCERNS）——aiWeaponBonuses 亦对称占位。
+  // 本方 battle 用本方 meta/wb/equipped/passives（不变）。
   // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
-  const mk = () => new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
-  battle = mk();
-  oppBattle = mk(); // 对手侧确定性重放实例（Task 7 喂对手动作、Task 8 渲染到对手半场）
+  battle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
+  // 对手 oppBattle：用服务端下发的「对手真实 loadout」忠实重放对手动作。
+  //   ——对手 passives≠本方时，对称占位会让 oppBattle 在征兵字牌转换阶段抽出不同 tray（改字率/征兵耗/武将阶），
+  //     从首次出字起逐 tick 结构发散；equipped 对手真实值保证对手触发的主动技有对应槽可重放。
+  //   ——weapons/meta 仅影响怪血数值精度，一并传以求全保真。
+  //   ——回退：旧服务端/异常未下发 opponentLoadout 时退回本方配装（对称占位），与既往行为一致、不崩。
+  const ol = ms.opponentLoadout;
+  if (ol) {
+    oppBattle = new Battle(ms.seed, 1, map, ol.meta, ol.weapons, ol.equipped, ol.passives, false, undefined, 1, undefined, { enabled: true });
+  } else {
+    oppBattle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
+  }
   bindBattleWeaponPickup();
   pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => Date.now() });
   pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
@@ -375,11 +388,17 @@ function onPvpFailed(_reason: string): void {
 }
 function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): void {
   if (screen === 'pvpMatching') return; // 防重入：已在匹配屏则忽略（避免并发 ensure 建出多个 controller 泄漏）
+  // 组装本方配装快照：equipped/passives 直接取 loadout；weapons/meta 预计算（weaponBonuses/metaBonuses）。
+  // 进入匹配即锁定当前配装上交（匹配期间不随背包/功德变动），供服务端转发给对手作 opponentLoadout。
+  const myLoadout: import('./api/pvp-client').PvpLoadout = {
+    equipped: loadout.equipped, passives: loadout.passives,
+    weapons: weaponBonuses(bag), meta: metaBonuses(merit),
+  };
   pvpMatchLazy.ensure((m) => {
     pvpScreenLazy.ensure(() => {
       pvpMode = mode; pvpCopied = false;
       pvpController = new m.PvpMatchController({
-        net: pvpNet(), now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
+        net: pvpNet(myLoadout), now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
       });
       screen = 'pvpMatching';
       if (mode === 'random') void pvpController.startRandom(rank.level);
@@ -2390,10 +2409,12 @@ const hook: GameHook = {
   curScreen: () => screen,
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
   // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
-  enterPvp: (seed) => {
+  // 可选 opponentLoadout：冒烟验证「oppBattle 用对手真实 loadout」时传入与本方不同的 passives。
+  enterPvp: (seed, opponentLoadout?: import('./api/pvp-client').PvpLoadout | null) => {
     const ms = {
       matchId: 'smoke-t8', seed, map: currentMap.id, startAtServerMs: Date.now() - 1000,
       opponent: { uid: 'opp-smoke', nickname: '烟雾对手', avatarId: 'hero-wukong', rankLevel: 1 },
+      opponentLoadout: opponentLoadout ?? null,
     } as import('./api/pvp-client').MatchStart;
     onPvpMatched(ms);
   },
@@ -2408,6 +2429,19 @@ const hook: GameHook = {
       matchStartMs: pvpMatchStartMs,
       waveCache: [...pvpWaveStartTicks.entries()],
       pendingClear: pvpPendingWaveClear !== null,
+      // 对手 loadout 接线验证：oppBattle 的 mods 应反映对手真实被动（如 zhaoxian→wordRateBonus=0.1），
+      // 而本方 battle.mods 反映本方被动；两者不同即证明 oppBattle 用了对手 loadout 而非对称占位。
+      battleWordRateBonus: battle.mods.wordRateBonus,
+      battleSummonCostDelta: battle.mods.summonCostDelta,
+      oppWordRateBonus: oppBattle?.mods.wordRateBonus ?? null,
+      oppSummonCostDelta: oppBattle?.mods.summonCostDelta ?? null,
+      oppPassiveCount: oppBattle ? oppBattle.activeSlots.length : -1,
+      // 对手侧重放后是否真正长出东西（喂对手 summon/autoplace 后 tray 清空、units 上场）——供冒烟验证对手侧可见。
+      oppTray: oppBattle?.tray.length ?? -1,
+      oppUnits: oppBattle?.units.size ?? -1,
+      oppMonsters: oppBattle?.monsters.length ?? -1,
+      // 对手征兵是否真被重放（applyPvpInput(summon) 扣桃）：开局桃 20，喂一次对手 summon 后应下降。
+      oppPeach: oppBattle?.peach ?? null,
     };
   },
   // Task 10：PvP 终局态探针（冒烟验证 result 驱动结算 + endPvpSession 清理）。

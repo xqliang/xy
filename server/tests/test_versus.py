@@ -4,6 +4,7 @@ import os, sys
 import threading
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -517,3 +518,111 @@ def test_reap_keeps_active_match(hub, db):
     hub._clock["ms"] += 10_000   # 越过 REAP 闸门(>=10s)，但 now-last_tick=10s << IDLE_REAP(300s)
     hub.poll("bogus")            # 触发锁内 _reap
     assert mid in hub.matches    # 活跃对局未被误删
+
+
+# === 对手 loadout 下发（followup）：本方上交的 loadout 透传进 match-side，_match_start_payload 下发给对方 ===
+# loadout 存在进程内 match 态（side dict 的 "loadout" 键），非 DB；故本组用例用 _FakeDB 桩，
+# 证明相关逻辑完全不依赖真实 DB（无需 3308），与 _profile 的「查无此人回默认档」配合即可跑通。
+class _FakeDB:
+    # 最小 DB 桩：仅满足 VersusHub 在匹配链路上用到的 today()/now()/cursor()。
+    # cursor() 作上下文管理器、fetchone() 回 None → _profile 回默认档、is_banned 回 False。
+    def today(self): return "2026-01-01"
+    def now(self): return 1_000_000
+
+    @contextmanager
+    def cursor(self):
+        class _Cur:
+            def execute(self, *a, **k): pass
+            def fetchone(self): return None
+            def fetchall(self): return []
+        yield _Cur()
+
+
+def _fresh_hub():
+    # 独立时钟/seed/码/地图的 VersusHub（配 _FakeDB），免 DB、免与 module 级 db fixture 耦合。
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
+                  pick_map=lambda: "huoyanshan")
+    h._clock = clock
+    return h
+
+
+# 契约样本：字段名与服务端/客户端 PvpLoadout 逐字对齐。
+LO_A = {"equipped": ["act_meteor"], "passives": ["xianyuan"],
+        "weapons": {"wukong": {"atk": 0.12, "frq": 0.05, "rge": 0.5}},
+        "meta": {"bonusPeach": 0, "bonusHp": 0, "bonusSlots": 0, "atkPct": 0, "frqPct": 0}}
+LO_B = {"equipped": [], "passives": ["zhaoxian", "fabaofu"], "weapons": {},
+        "meta": {"bonusPeach": 0, "bonusHp": 0, "bonusSlots": 0, "atkPct": 0, "frqPct": 0}}
+
+
+def test_enqueue_loadout_roundtrip_both_sides():
+    # 双方各交不同 loadout：每人 match-start 的 opponentLoadout 应恰好是「对方」那份（非自己）。
+    h = _fresh_hub()
+    r1 = h.enqueue("u1", 3, loadout=LO_A)
+    assert h.poll(r1["ticket"])["status"] == "waiting"
+    r2 = h.enqueue("u2", 3, loadout=LO_B)
+    p2 = h.poll(r2["ticket"])
+    assert p2["status"] == "matched"
+    assert p2["matchStart"]["opponentLoadout"] == LO_A   # u2 看到的对手(u1) loadout
+    p1 = h.poll(r1["ticket"])
+    assert p1["status"] == "matched"
+    assert p1["matchStart"]["opponentLoadout"] == LO_B   # u1 看到的对手(u2) loadout
+    # 同一 matchId（确认为同一局）
+    assert p1["matchStart"]["matchId"] == p2["matchStart"]["matchId"]
+    # 双方 side 内存态确实存了各自上交的 loadout（进程内 match 态，非 DB）。
+    mid = p1["matchStart"]["matchId"]
+    sides = {h.matches[mid]["a"]["uid"]: h.matches[mid]["a"]["loadout"],
+             h.matches[mid]["b"]["uid"]: h.matches[mid]["b"]["loadout"]}
+    assert sides["u1"] == LO_A and sides["u2"] == LO_B
+
+
+def test_enqueue_no_loadout_backward_compat():
+    # 旧客户端不下发 loadout：建局不报错。
+    # u1 无 loadout、u2 交 LO_A → u1(对手是 u2) 看到 LO_A，u2(对手是 u1) 看到 None。
+    h = _fresh_hub()
+    r1 = h.enqueue("u1", 3)                       # u1 无 loadout
+    assert h.poll(r1["ticket"])["status"] == "waiting"
+    r2 = h.enqueue("u2", 3, loadout=LO_A)         # u2 交 LO_A
+    p2 = h.poll(r2["ticket"])                     # u2 视角：对手是 u1（无）→ None
+    assert p2["status"] == "matched"
+    assert p2["matchStart"]["opponentLoadout"] is None
+    p1 = h.poll(r1["ticket"])                     # u1 视角：对手是 u2（LO_A）→ LO_A
+    assert p1["matchStart"]["opponentLoadout"] == LO_A
+
+
+def test_room_create_join_loadout_roundtrip():
+    # 私房：房主建房挂 loadout=LO_A，客人加入挂 loadout=LO_B；双方互见对方 loadout。
+    h = _fresh_hub()
+    rc = h.room_create("host", 3, loadout=LO_A)
+    assert h.poll(rc["ticket"])["status"] == "waiting"
+    rj = h.room_join("ROOM01", "guest", 3, loadout=LO_B)
+    assert rj["status"] == "matched"
+    assert rj["matchStart"]["opponentLoadout"] == LO_A   # 客人看到房主 loadout
+    ph = h.poll(rc["ticket"])
+    assert ph["status"] == "matched"
+    assert ph["matchStart"]["opponentLoadout"] == LO_B   # 房主看到客人 loadout
+
+
+def test_room_join_no_loadout_backward_compat():
+    # 私房双方都不下发 loadout：成局不报错、双方 opponentLoadout 均为 None。
+    h = _fresh_hub()
+    rc = h.room_create("host", 3)
+    rj = h.room_join("ROOM01", "guest", 3)
+    assert rj["status"] == "matched"
+    assert rj["matchStart"]["opponentLoadout"] is None
+    assert h.poll(rc["ticket"])["matchStart"]["opponentLoadout"] is None
+
+
+def test_loadout_not_leaked_into_profile():
+    # profile 仍只含公开档案 4 字段；loadout 只在顶层 opponentLoadout，勿混进脱敏档案。
+    h = _fresh_hub()
+    r1 = h.enqueue("u1", 3, loadout=LO_A)
+    h.enqueue("u2", 3, loadout=LO_B)
+    ms = h.poll(r1["ticket"])["matchStart"]
+    assert set(ms["opponent"].keys()) == {"uid", "nickname", "avatarId", "rankLevel"}
+    assert "loadout" not in ms["opponent"]
+    assert "equipped" not in ms["opponent"]
+    assert ms["opponentLoadout"] == LO_B
