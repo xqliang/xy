@@ -3982,7 +3982,7 @@ function drawErlangDog(
     ctx.stroke();
   }
 
-  const size = CELL * (0.42 + tier * 0.035) * 1.2; // 哮天犬显示大小
+  const size = CELL * (0.42 + tier * 0.035); // 哮天犬显示大小（×1）
   const spr = sprite('hero-ttg');
   // latched 模式 tp=1，不应触发冲锋末段淡出；非 latched 时 tp>0.94 渐隐
   ctx.globalAlpha = vis * (!latched && tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
