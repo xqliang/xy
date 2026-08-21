@@ -811,6 +811,11 @@ def handle_versus_ws(handler, hub) -> None:
             hub.ws_wave_cleared(uid, match_id, msg.get("wave"))
         elif mtype == "status":
             hub.ws_status(uid, match_id, msg.get("v"))
+        elif mtype == "ping":
+            # 应用层心跳回响：客户端发 {"type":"ping","t":<客户端ms>}，原样回 {"type":"pong","t":<同值>}。
+            # 连接层直回（不碰 hub 锁、不改对局态），仅供客户端算 RTT（顶部延迟 HUD）。
+            # t 缺省/非数字时回 None；畸形 t 不影响连接（心跳与业务解耦）。
+            ws_send(json.dumps({"type": "pong", "t": msg.get("t")}, separators=(",", ":")))
         # 未知 type → 忽略
 
     def _mark_gone() -> None:

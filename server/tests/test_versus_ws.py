@@ -297,6 +297,27 @@ def test_hello_returns_welcome():
         a.close()
 
 
+def test_ping_returns_pong_echo():
+    # 2b. 应用层心跳：hello 后发 {"type":"ping","t":123} → 服务端连接层原样回 {"type":"pong","t":123}。
+    #     回响不碰 hub 锁、不改对局态，仅供客户端算 RTT（顶部延迟 HUD）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    with _ws_server(hub) as port:
+        a = WsClient(port, mid, "A1")
+        _hello(a)
+        assert a.recv()["type"] == "welcome"
+        a.send({"type": "ping", "t": 123})
+        p = a.recv()
+        assert p is not None and p["type"] == "pong"
+        assert p["t"] == 123              # 原样回响客户端时间戳
+        # 无 t 的 ping 也应回 pong（t=None），不杀连接。
+        a.send({"type": "ping"})
+        p2 = a.recv()
+        assert p2 is not None and p2["type"] == "pong"
+        assert p2["t"] is None
+        a.close()
+
+
 def test_snap_relayed_verbatim_both_directions():
     # 3. A 发 snap → B 收 oppSnap 原文一致；B 发 snap → A 收。
     hub = _fake_hub()

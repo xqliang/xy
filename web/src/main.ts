@@ -11,6 +11,7 @@ import {
   setHudRank,
   VIEW_W,
   VIEW_H,
+  HUD_H,
   hitPauseBtn,
   hitMonsterAt,
   hitAiItemChip,
@@ -45,6 +46,7 @@ import {
   pausePopupHitAt,
   type PausePhase,
 } from './pause-popup';
+import { drawInkPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
@@ -240,6 +242,7 @@ const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 import { drainFixedSteps, PVP_SIM_DT, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 波起始纪元→tick（Task 9；DELAY_TICKS 延迟重放已随确定性重放拆除）
 import { PvpSocket } from './pvp-ws';                                 // PvP WS 连接层（Task 3）：连/重连/消息分发 + 上行发送
+import { netDead } from './pvp-netwatch';                            // PvP 断线看门狗纯判定（>6s 无入站→判死；Task 7.6）
 import { PvpOppView, normalizeSnapClock } from './pvp-snap';            // 对手双缓冲插值视图 + 跨机时钟归一（Task 4/Task 5）
 import type { PvpSnap } from './pvp-snap';                             // 快照类型（onOppSnap 归一化入参类型标注）
 
@@ -325,6 +328,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpSock.connect();
   // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
+  pvpNetDead = false; // 新对局从干净态开始（上次对局若被判死，endPvpSession 已清；这里再兜底一次）
   pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
   pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
@@ -344,8 +348,66 @@ function endPvpSession(): void {
   pvpSock = null; oppView = null;
   pvpResult = null; pvpNextWave = null; pvpSettleResult = null; pvpOpponent = null;
   pvpSurrendered = false; pvpStatusReported = false;
+  pvpNetDead = false; // 清断线看门狗标志（下次进对局从干净态开始）
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpMatchStartMs = 0;
   pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
+}
+
+// —— Task 7.6：PvP 断线看门狗（弹窗「网络已断开」+ 单按钮「返回首页」）——
+// 布局常量：居中卷轴 + 单按钮（复用 menu-ui 水墨卷轴框 / 水墨按钮）。宽 340、高 220。
+const NET_POP_W = 340;
+const NET_POP_H = 220;
+const NET_POP_X = (VIEW_W - NET_POP_W) / 2;
+const NET_POP_Y = (VIEW_H - NET_POP_H) / 2;
+const NET_POP_PAD = 24;
+const NET_POP_BTN_H = 46;
+// 「返回首页」按钮居中置于弹窗底部。
+const NET_HOME_BTN = {
+  x: NET_POP_X + NET_POP_PAD,
+  y: NET_POP_Y + NET_POP_H - NET_POP_PAD - NET_POP_BTN_H,
+  w: NET_POP_W - NET_POP_PAD * 2,
+  h: NET_POP_BTN_H,
+};
+
+/** 「返回首页」按钮 + 弹窗右上角 × 命中测试（断线弹窗两个可点区域都回首页）。 */
+function netDeadHitHome(x: number, y: number): boolean {
+  if (x >= NET_HOME_BTN.x && x <= NET_HOME_BTN.x + NET_HOME_BTN.w
+    && y >= NET_HOME_BTN.y && y <= NET_HOME_BTN.y + NET_HOME_BTN.h) return true;
+  const closeR = inkPopupCloseRect(NET_POP_X, NET_POP_Y); // × 与按钮同效：回首页
+  return x >= closeR.x && x <= closeR.x + closeR.w && y >= closeR.y && y <= closeR.y + closeR.h;
+}
+
+/** 画顶部网络延迟 HUD：仅 PvP 对局中调用。rttMs 为 null 显示 "--"，否则 "<n>ms"。
+ *  颜色：无样本/未超阈值用墨色，>150ms 用橙色警示。单人不进此函数（frame 里 pvpSock 门控）。 */
+function drawNetLatencyHud(ctx: CanvasRenderingContext2D, rttMs: number | null): void {
+  ctx.save();
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.font = '13px "PingFang SC", sans-serif';
+  const label = rttMs === null ? '延迟 --' : `延迟 ${Math.round(rttMs)}ms`;
+  // 无样本（null）用淡墨；>150ms 橙色警示；其余正常墨绿。
+  if (rttMs === null) ctx.fillStyle = 'rgba(90,60,30,0.5)';
+  else if (rttMs > 150) ctx.fillStyle = '#d04520';
+  else ctx.fillStyle = '#4a6a3a';
+  // 画在顶栏右上（暂停钮在左上），避开暂停钮与蟠桃。
+  ctx.fillText(label, VIEW_W - 12, HUD_H / 2);
+  ctx.restore();
+}
+
+/** 画断线弹窗（PvP 专属，最顶层）：压暗 + 卷轴「网络已断开」+ 单按钮「返回首页」。
+ *  弹窗右上角的 × 与按钮同效（都回首页），hit 测试里一并覆盖。 */
+function drawNetDeadOverlay(ctx: CanvasRenderingContext2D): void {
+  const closeR = inkPopupCloseRect(NET_POP_X, NET_POP_Y);
+  const bodyTop = drawInkPopupFrame(ctx, NET_POP_X, NET_POP_Y, NET_POP_W, NET_POP_H, '网络已断开', closeR);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = '15px "PingFang SC", serif';
+  ctx.fillText('与服务器连接已断开', NET_POP_X + NET_POP_W / 2, bodyTop + 22);
+  ctx.font = '13px "PingFang SC", serif';
+  ctx.fillStyle = 'rgba(90,60,30,0.75)';
+  ctx.fillText('本局已冻结，请返回首页重新匹配', NET_POP_X + NET_POP_W / 2, bodyTop + 48);
+  drawInkActionButton(ctx, NET_HOME_BTN, '返回首页', false, 'primary');
 }
 
 function onPvpFailed(_reason: string): void {
@@ -443,6 +505,8 @@ let pvpSurrendered = false;                     // 本方已点「认输」：�
 let pvpOpponent: import('./api/pvp-client').OpponentProfile | null = null; // 当前对手档案（结算屏展示头像/昵称）
 let pvpSettleResult: PvpSettleResult | null = null; // PvP 结算屏 payload（服务端 result 一到即构造，null=未结算）
 let pvpSettleStart = 0;                         // 打开 PvP 结算屏的时间戳（虽无加减星动画，保留供可能的淡入/时间线复用）
+// —— Task 7.6：PvP 断线看门狗 ——
+let pvpNetDead = false;                         // 本局已判网络断开（>6s 无入站）：置真即冻结本方 + 弹「网络已断开」返回首页
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
@@ -1591,6 +1655,12 @@ function onPointerDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
+  // Task 7.6：断线弹窗独占——展示期间（pvpNetDead）吞掉其它战斗点击，只响应「返回首页」。
+  // 点中按钮/× → 关 WS + 回首页；点弹窗外也吞掉（弹窗模态，无其它可操作）。
+  if (pvpNetDead) {
+    if (netDeadHitHome(x, y)) { playSfx('click'); endPvpSession(); screen = 'menu'; scheduleFrame(); }
+    return;
+  }
   if (isSettleOpen()) {
     const pickupId = weaponPickupHitAt(x, y, visibleWeaponPickups(), bag);
     if (pickupId) {
@@ -2080,8 +2150,14 @@ function frame(now: number): void {
     // —— 战斗（含局内结算弹层） —— //
     // 新手引导展示期间强制唐僧渲染于归位点，避免引导指向的格子里唐僧还没走到（不影响 introT 计时）
     battle.tangsengRenderOverride = !!tutorialOverlay;
-    // 结算弹层 / 暂停 / 引导时冻结战斗（不 step），仍连续重绘以播动画
-    if (!ui.paused && !tutorialOverlay && !isSettleOpen()) {
+    // Task 7.6：PvP 断线看门狗——对局中（pvpSock 非空）且未终局时，>6s 无任意入站即判死。
+    // 纯判定放 netDead()（lastInboundAt===0=尚未 open 时返回 false，避免刚建连误判）。
+    // 一旦置真，本局内保持不变，直到 endPvpSession() 清零（下面冻结 + 弹窗 + 回首页都靠它）。
+    if (pvpSock && !pvpResult && !pvpNetDead && netDead(Date.now(), pvpSock.lastInboundAt)) {
+      pvpNetDead = true;
+    }
+    // 结算弹层 / 暂停 / 引导 / 断线时冻结战斗（不 step），仍连续重绘以播动画（断线时定格画面 + 弹窗）。
+    if (!ui.paused && !tutorialOverlay && !isSettleOpen() && !pvpNetDead) {
       try {
         if (pvpSock && !pvpResult) {
           // PvP（Model C）：本方半场本地权威。累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
@@ -2205,11 +2281,16 @@ function frame(now: number): void {
       }
     }
     draw(ctx, battle, ui);
+    // Task 7.6：顶部网络延迟 HUD——仅 PvP 对局中（pvpSock 非空）显示；单人不画。
+    // rttMs 为首 pong 前为 null → 显示 "--"；否则 EWMA 延迟 ms。颜色：≤150 正常墨色，>150 橙色警示。
+    if (pvpSock) drawNetLatencyHud(ctx, pvpSock.rttMs);
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
     else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
+    // Task 7.6：断线弹窗最顶层（盖住结算/暂停），只有判死后才画。
+    if (pvpNetDead) drawNetDeadOverlay(ctx);
     if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase, pvpSock ? 'match' : 'battle');
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);

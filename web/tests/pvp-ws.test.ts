@@ -198,8 +198,10 @@ describe('PvpSocket 指数退避重连', () => {
     calls[3]!.fn();
     await tick();
     expect(FakeWebSocket.last().readyState).toBe(OPEN);
+    // open 成功会顺带排一次心跳 ping（2000ms）—— captured scheduler 里多这一条。
+    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000, 2000]); // 前 4 条重连退避 + 末条心跳 ping
     dropLast(); // open 成功后再断
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000, 1000]); // 重置回 1s
+    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000, 2000, 1000]); // 重连回 1s
   });
 
   it('重连每次都建一个全新 WebSocket', () => {
@@ -226,7 +228,11 @@ describe('PvpSocket 手动关闭', () => {
     await tick(); // open 成功
     const before = FakeWebSocket.instances.length;
     sock.close();
-    expect(calls.length).toBe(0); // open 态手动关，本就不该有挂起重连
+    // open 会顺带排一次心跳 ping（2000ms）；手动关应清掉它（clearPingTimer），且绝不触发重连。
+    expect(calls.length).toBe(1);            // 仅那次心跳 ping 被调度
+    expect(calls[0]!.ms).toBe(2000);
+    calls[0]!.fn();                          // 触发已排的 ping 计时器
+    expect(calls.length).toBe(1);            // 手动关后 ping 计时器过期：既不发 ping、也不再排下一个
     expect(sock.state).toBe('closed');
     expect(FakeWebSocket.instances.length).toBe(before); // 无新 socket
   });
@@ -243,6 +249,79 @@ describe('PvpSocket 手动关闭', () => {
     calls[0]!.fn(); // 触发已过期的计时器
     expect(FakeWebSocket.instances.length).toBe(before); // 无新 socket
     expect(calls.length).toBe(1); // 也未再调度新计时器
+    expect(sock.state).toBe('closed');
+  });
+});
+
+describe('PvpSocket 应用层心跳 ping / RTT / 入站时间戳', () => {
+  // 便捷：捕获被调度计时器的可控 scheduler（返回 push 的新长度当句柄，close 时 clearTimeout 无害）。
+  function capturingScheduler(): { calls: Array<{ fn: () => void; ms: number }>; schedule: (fn: () => void, ms: number) => unknown } {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const schedule = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    return { calls, schedule };
+  }
+
+  it('open 后每 2s 发一次 ping（信封 {type:ping,t:number}），且 firing 后会重排下一个', async () => {
+    const { calls, schedule } = capturingScheduler();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler: schedule });
+    sock.connect();
+    await tick(); // open 成功
+    const pings = () => calls.filter((c) => c.ms === 2000);
+    expect(pings().length).toBe(1); // open 后排了一次心跳
+    pings()[0]!.fn(); // 到点 → 发 ping
+    const ws = FakeWebSocket.last();
+    const pingMsg = ws.sent.map(JSON.parse).filter((m) => m.type === 'ping');
+    expect(pingMsg.length).toBe(1);
+    expect(typeof pingMsg[0]!.t).toBe('number');
+    expect(pings().length).toBe(2); // 发完重排下一个 2s 心跳
+  });
+
+  it('入站 pong（t=now-40）→ rttMs≈40（EWMA 首样本即取 RTT）', async () => {
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory });
+    sock.connect();
+    await tick();
+    expect(sock.rttMs).toBeNull(); // 首 pong 前为 null
+    const t = Date.now() - 40;
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'pong', t }));
+    expect(sock.rttMs).not.toBeNull();
+    expect(Math.abs(sock.rttMs! - 40)).toBeLessThan(100); // ≈40
+    // 第二次 pong 触发 EWMA 平滑：仍收敛在合理范围（不会跳飞）。
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'pong', t: Date.now() - 80 }));
+    expect(sock.rttMs!).toBeGreaterThan(0);
+    expect(sock.rttMs!).toBeLessThan(200);
+  });
+
+  it('pong 缺 t 时 rttMs 不变（不因畸形心跳污染）', async () => {
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory });
+    sock.connect();
+    await tick();
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'pong' })); // 无 t
+    expect(sock.rttMs).toBeNull();
+  });
+
+  it('任意入站消息都刷新 lastInboundAt（看门狗基线）', async () => {
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory });
+    sock.connect();
+    await tick();
+    sock.lastInboundAt = 1; // 伪造一个很久以前的值
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 1 }));
+    expect(sock.lastInboundAt).toBeGreaterThan(1);
+  });
+
+  it('open 前不排心跳；close 后排的 ping 计时器过期即失效（不发、不重排）', async () => {
+    const { calls, schedule } = capturingScheduler();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler: schedule });
+    sock.connect();
+    expect(calls.filter((c) => c.ms === 2000).length).toBe(0); // 未 open：无心跳
+    await tick(); // open → 排一次心跳
+    const pings = () => calls.filter((c) => c.ms === 2000);
+    expect(pings().length).toBe(1);
+    const ws = FakeWebSocket.last();
+    const sentBefore = ws.sent.length;
+    sock.close(); // 手动关：心跳计时器过期
+    pings()[0]!.fn(); // 触发已过期的心跳
+    expect(ws.sent.length).toBe(sentBefore); // 没多发 ping
+    expect(pings().length).toBe(1); // 也未重排下一个
     expect(sock.state).toBe('closed');
   });
 });

@@ -12,7 +12,7 @@
 
 
 /** 下行消息 type 字面量（与 server/api_versus.py 推送、spec §3 对齐）。 */
-type DownType = 'welcome' | 'oppSnap' | 'nextWave' | 'result' | 'oppGone';
+type DownType = 'welcome' | 'oppSnap' | 'nextWave' | 'result' | 'oppGone' | 'pong';
 
 /** result 回调入参：权威终局 outcome + reason。 */
 export interface PvpResult {
@@ -54,6 +54,10 @@ const WS_OPEN = 1;
 const BACKOFF_BASE_MS = 1_000;
 /** 指数退避上限（最长等 5s）。 */
 const BACKOFF_CAP_MS = 5_000;
+/** 应用层心跳间隔（open 态每 2s 发一次 ping，算 RTT 用）。 */
+const PING_INTERVAL_MS = 2_000;
+/** RTT 指数移动平均系数 α=0.25（越小越平滑，越大越跟手）。 */
+const RTT_EWMA_ALPHA = 0.25;
 /** 默认重连调度器：真实 setTimeout（返回句柄，close 时可 clearTimeout 兜底）。 */
 const defaultScheduler = (fn: () => void, ms: number): unknown => setTimeout(fn, ms);
 
@@ -62,6 +66,10 @@ export class PvpSocket {
   readonly uid: string;
   /** 当前连接状态（只读快照，上层可轮询）。 */
   state: PvpSocketState = 'closed';
+  /** 应用层 RTT（ms，EWMA α=0.25）：首个 pong 前为 null，供顶部延迟 HUD 显示。 */
+  rttMs: number | null = null;
+  /** 最近一次收到任意下行消息的墙钟 ms（Date.now()）：供断线看门狗判定「>6s 无入站」。 */
+  lastInboundAt = 0;
 
   private readonly opts: PvpSocketOpts;
   private readonly factory: (url: string) => PvpWsLike;
@@ -72,6 +80,8 @@ export class PvpSocket {
   private backoff = BACKOFF_BASE_MS; // 当前退避基数（成功 open 后重置为 BASE）
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
+  private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
+  private pingTimer: unknown = null; // 挂起的 ping 计时器句柄（close 时 clearTimeout 兜底）
 
   constructor(opts: PvpSocketOpts) {
     this.opts = opts;
@@ -98,11 +108,34 @@ export class PvpSocket {
     if (this.closed) return; // 握手完成前已被手动关：丢弃，不 hello、不标 open
     this.backoff = BACKOFF_BASE_MS; // 成功 open → 退避序列重置为 1s
     this.state = 'open';
+    this.lastInboundAt = Date.now(); // 连上即视为刚收到（避免刚 open 就被看门狗误判）
     this.sendRaw({ type: 'hello', matchId: this.matchId, uid: this.uid });
+    this.schedulePing(); // 启动应用层心跳（每 2s 一次，算 RTT）
+  }
+
+  /** 调度一次 ping：代数 +1 防过期；open 态每 PING_INTERVAL_MS 发一次应用层 ping。 */
+  private schedulePing(): void {
+    if (this.closed) return;
+    this.pingGen++;
+    const gen = this.pingGen;
+    this.pingTimer = this.schedule(() => {
+      // 过期（已手动关闭或已被新一轮调度取代）→ 忽略，不误发。
+      if (this.closed || gen !== this.pingGen) return;
+      if (this.state === 'open') this.sendPing(); // 仅 open 态真发（中间态不发）
+      this.pingTimer = null;
+      if (!this.closed) this.schedulePing(); // 链式排下一个（close 后 pingGen 已变，新调度立即失效）
+    }, PING_INTERVAL_MS);
+  }
+
+  /** 发一次应用层 ping：带客户端墙钟 t，服务端原样回 pong → 客户端算 RTT。 */
+  private sendPing(): void {
+    this.sendRaw({ type: 'ping', t: Date.now() });
   }
 
   /** 下行消息：JSON 解析（畸形忽略）、按 type 分发（未知忽略）。 */
   private handleMessage(data: string): void {
+    // 任意入站字节都视为连接存活：刷新看门狗时间戳（畸形帧也算有流量，不误判断线）。
+    this.lastInboundAt = Date.now();
     let msg: unknown;
     try {
       msg = JSON.parse(data);
@@ -131,17 +164,40 @@ export class PvpSocket {
       }      case 'oppGone':
         this.opts.onOppGone?.();
         break;
+      case 'pong': {
+        // 心跳回响：服务端原样回 t=发 ping 时的客户端墙钟 → RTT = 收 pong 时刻 − t。
+        const t = (msg as { t?: unknown }).t;
+        if (typeof t === 'number') {
+          const rtt = Date.now() - t;
+          if (rtt >= 0) {
+            // EWMA：首个样本直接取值，之后 α 加权平滑（抑制抖动，仍跟手）。
+            this.rttMs = this.rttMs === null ? rtt : this.rttMs + RTT_EWMA_ALPHA * (rtt - this.rttMs);
+          }
+        }
+        break;
+      }
       default:
         break; // 未知 type：忽略
     }
   }
 
-  /** 非手动断开：清 socket、按退避调度重连。手动关闭由 handleClose 前短路，永不进这里。 */
+  /** 非手动断开：清 socket、清心跳计时器、按退避调度重连。手动关闭由 handleClose 前短路，永不进这里。 */
   private handleClose(): void {
     if (this.closed) return;
+    this.clearPingTimer(); // 连接断了：停心跳、清过期 ping 计时器（重连 open 后会重排）
+    this.rttMs = null; // 旧连接的 RTT 失效：下次首 pong 前一直显示 --
     this.sock = null;
     this.state = 'reconnecting';
     this.scheduleReconnect();
+  }
+
+  /** 清掉挂起的 ping 计时器（代数 +1 让过期回调空转 + clearTimeout 兜底）。 */
+  private clearPingTimer(): void {
+    this.pingGen++; // 让任何挂起的过期 ping 计时器空转
+    if (this.pingTimer !== null && this.pingTimer !== undefined) {
+      clearTimeout(this.pingTimer as ReturnType<typeof setTimeout>);
+    }
+    this.pingTimer = null;
   }
 
   /** 指数退避重连：delay=min(当前退避, 上限)，随后退避翻倍封顶；用代数让过期计时器失效。 */
@@ -185,6 +241,7 @@ export class PvpSocket {
   close(): void {
     this.closed = true;
     this.reconnectGen++; // 让任何挂起的重连计时器失效
+    this.clearPingTimer(); // 让任何挂起的心跳计时器过期（onclose→handleClose 因 closed 早退，这里兜底清）
     if (this.timer !== null && this.timer !== undefined) {
       clearTimeout(this.timer as ReturnType<typeof setTimeout>);
     }
