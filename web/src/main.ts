@@ -277,17 +277,15 @@ function openMapPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'map'; scheduleFrame(); });
 }
 
-// PvP 网络适配：把 pvp-client 的五个函数喂给状态机。
-// loadout 经闭包烘焙进 enqueue/roomCreate/roomJoin（客户端每次进匹配都上交本方 PvpLoadout），
-// 控制器/PvpMatchNet 接口签名保持不变（状态机不感知 loadout，保持行为不变）。
-function pvpNet(loadout: import('./api/pvp-client').PvpLoadout) {
-  return {
-    enqueue: (rank: number) => pvpClient.versusEnqueue(rank, loadout),
-    poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
-    roomCreate: (rank: number) => pvpClient.versusRoomCreate(rank, loadout),
-    roomJoin: (code: string) => pvpClient.versusRoomJoin(code, loadout),
-  };
-}
+// PvP 网络适配：把 pvp-client 的五个函数组成 PvpMatchNet 对象喂给状态机。
+// 注（Task 6 退役）：旧模型曾把本方 loadout 经闭包烘焙进 enqueue/roomCreate/roomJoin 上交服务端，
+// WS 快照模型无消费方（对手侧从快照本地插值重建），故回退为直接透传五个 client 函数。
+const pvpNet = {
+  enqueue: (rank: number) => pvpClient.versusEnqueue(rank),
+  poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
+  roomCreate: (rank: number) => pvpClient.versusRoomCreate(rank),
+  roomJoin: (code: string) => pvpClient.versusRoomJoin(code),
+};
 // 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 5，WS 快照模型）。
 // 本方 battle 本地权威实时 step；建对手插值视图 + PvpSocket（每 100ms 发本方快照、收对手快照/波次/终局）、
 // 扣体力、切战斗屏。确定性重放机器（oppBattle/PvpSync/1s tick）已拆除，单人不走此函数。
@@ -356,17 +354,13 @@ function onPvpFailed(_reason: string): void {
 }
 function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): void {
   if (screen === 'pvpMatching') return; // 防重入：已在匹配屏则忽略（避免并发 ensure 建出多个 controller 泄漏）
-  // 组装本方配装快照：equipped/passives 直接取 loadout；weapons/meta 预计算（weaponBonuses/metaBonuses）。
-  // 进入匹配即锁定当前配装上交（匹配期间不随背包/功德变动），供服务端转发给对手作 opponentLoadout。
-  const myLoadout: import('./api/pvp-client').PvpLoadout = {
-    equipped: loadout.equipped, passives: loadout.passives,
-    weapons: weaponBonuses(bag), meta: metaBonuses(merit),
-  };
+  // 注（Task 6 退役）：旧模型曾在此组装本方配装快照(myLoadout)上交服务端转发给对手；
+  // WS 快照模型无消费方，已删除。net 直接用顶层 pvpNet 对象（五个透传函数）。
   pvpMatchLazy.ensure((m) => {
     pvpScreenLazy.ensure(() => {
       pvpMode = mode; pvpCopied = false;
       pvpController = new m.PvpMatchController({
-        net: pvpNet(myLoadout), now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
+        net: pvpNet, now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
       });
       screen = 'pvpMatching';
       if (mode === 'random') void pvpController.startRandom(rank.level);
@@ -2381,12 +2375,12 @@ const hook: GameHook = {
   curScreen: () => screen,
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 对手快照渲染桥。
   // 注（Task 5）：对手半场现由 WS 快照重建，不在本机确定性重放；fabricated matchId 连不上真实服务端时
-  // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。opponentLoadout 参数保留但已无重放消费方（Task 6 退役）。
-  enterPvp: (seed, opponentLoadout?: import('./api/pvp-client').PvpLoadout | null) => {
+  // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。
+  // 注（Task 6 退役）：旧曾传 opponentLoadout 供本机重放，WS 快照模型无消费方，参数已删除。
+  enterPvp: (seed: number) => {
     const ms = {
       matchId: 'smoke-t8', seed, map: currentMap.id, startAtServerMs: Date.now() - 1000,
       opponent: { uid: 'opp-smoke', nickname: '烟雾对手', avatarId: 'hero-wukong', rankLevel: 1 },
-      opponentLoadout: opponentLoadout ?? null,
     } as import('./api/pvp-client').MatchStart;
     onPvpMatched(ms);
   },

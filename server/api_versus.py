@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-# PvP 在线对战：进程内匹配/房间/对局状态机 + 转发 + 反作弊。
+# PvP 在线对战：进程内匹配/房间/对局状态机 + 反作弊（WS 快照模型）。
+# HTTP tick 心跳转发与 loadout 下发已在 Task 6 退役（快照模型无消费方），对局同步走 /api/versus/ws。
 # 单进程 ThreadingHTTPServer 下用一把大锁保护；重启即丢活跃对局（临时对局可接受）。
 import contextlib
 import json
@@ -39,7 +40,6 @@ MATCH_REAP_MS = 120_000                   # 终局后多久回收该 match（给
 IDLE_REAP_MS = 300_000                    # 建局后双方都久未心跳(废弃局)多久回收
 ROOM_TTL_MS = MATCH_TIMEOUT_MS            # 孤儿私房存活上限（与匹配总超时一致）
 QUEUE_TTL_MS = MATCH_TIMEOUT_MS + 30_000  # 孤儿等待者存活上限（略长于匹配总超时）
-RELAY_RETAIN_MS = 4000                    # 对手动作在 relay 里保留并每 tick 重发的时长，覆盖响应丢包；客户端按 seq 去重幂等施加
 
 
 def _adaptive_window_ms(n: int) -> int:
@@ -110,12 +110,14 @@ class VersusHub:
             return {"uid": _mask(uid), "nickname": None, "avatarId": "wukong", "rankLevel": 0}
         return {"uid": _mask(uid), "nickname": row["nickname"], "avatarId": row["avatar_id"], "rankLevel": int(row["rank_level"] or 0)}
 
-    def _new_side(self, uid: str, rank: int, now: int, loadout: Optional[dict] = None) -> dict:
-        # 新建对局一方的实时状态壳。loadout 为该方上交的 PvpLoadout（dict，可能 None——旧客户端不下发，向后兼容），
-        # 供 _match_start_payload 下发给对方作 opponentLoadout，使对手侧 oppBattle 用真实配装忠实重放。
-        return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
+    def _new_side(self, uid: str, rank: int, now: int) -> dict:
+        # 新建对局一方的实时状态壳。
+        # 注（Task 6 退役）：旧 HTTP tick 模型曾在此携带 relay_buffer/sent_seqs/loadout——
+        # 转发去重（中继重发+seq 去重）与配装下发（opponentLoadout）均服务于「确定性重放」，
+        # WS 快照模型下服务端只转发快照、对手侧本地插值重建，无消费方，故一并删除。
+        return {"uid": uid, "rank": rank, "last_tick_ms": now,
                 "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False,
-                "status": "playing", "loadout": loadout, "sent_seqs": set(),
+                "status": "playing",
                 # —— WebSocket 会话态（Task 2）——
                 # ws_send：该侧 WS 连接的「发送闭包」Callable[[str], bool]，把 JSON 文本帧写回其 socket；
                 #          返回 False 表示发送失败（socket 已坏），hub 据此把该侧判为断线。
@@ -130,8 +132,8 @@ class VersusHub:
         m = {
             "match_id": mid, "seed": self._gen_seed(), "map": map_id or self._pick_map(),
             "start_at_ms": now + START_DELAY_MS,
-            "a": self._new_side(e1["uid"], e1["rank"], now, e1.get("loadout")),
-            "b": self._new_side(e2["uid"], e2["rank"], now, e2.get("loadout")),
+            "a": self._new_side(e1["uid"], e1["rank"], now),
+            "b": self._new_side(e2["uid"], e2["rank"], now),
             "wave_schedule": {1: now + START_DELAY_MS}, "first_clear": {},
             "result": None, "created_ms": now, "ended": False,
         }
@@ -195,7 +197,7 @@ class VersusHub:
             self.rooms.pop(code, None)
 
     # —— 对外匹配 API ——
-    def enqueue(self, uid: str, rank: int, loadout: Optional[dict] = None) -> dict:
+    def enqueue(self, uid: str, rank: int) -> dict:
         # 禁赛拦截
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -207,10 +209,10 @@ class VersusHub:
             self.recent.setdefault(rank, []).append((uid, now))
             n = self._recent_distinct(rank, uid, now)
             ticket = secrets.token_hex(8)
-            # 入队条目携带本方 loadout（可能 None），透传给成局后的 side，再由 _match_start_payload 下发给对方。
+            # 注（Task 6 退役）：旧模型曾把本方 loadout 挂在入队条目上透传给 side 再下发对手；
+            # WS 快照模型无消费方，入队条目只留匹配必需字段。
             self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
-                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n),
-                                  "loadout": loadout}
+                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n)}
             self._try_pair(now)
             return {"ticket": ticket}
 
@@ -249,7 +251,7 @@ class VersusHub:
             return {"ok": True}
 
     # —— 私房（邀请对战）：房主建房间占 ticket 挂起，客人凭码加入直接成局 ——
-    def room_create(self, uid: str, rank: int, base_url: str = "", loadout: Optional[dict] = None) -> dict:
+    def room_create(self, uid: str, rank: int, base_url: str = "") -> dict:
         # 禁赛拦截：与匹配一致，异常玩家当日不得开私房
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -266,14 +268,14 @@ class VersusHub:
             self.rooms[code] = {"code": code, "host_uid": uid, "host_rank": rank,
                                 "map": self._pick_map(), "created_ms": now, "ticket": ticket}
             # 房主也占一张 ticket，复用同一张 queue 表；标记 room 表示私房挂起（poll 见之仍等待）。
-            # 房主 loadout 一并挂在这张 ticket 上，room_join 成局时透传给房主 side。
+            # 注（Task 6 退役）：旧模型曾把房主 loadout 挂在这张 ticket 上透传，WS 快照模型无消费方，已删除。
             self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
                                   "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS,
-                                  "room": code, "loadout": loadout}
+                                  "room": code}
             link = f"{base_url}/?versus={code}"
             return {"code": code, "link": link, "ticket": ticket, "map": self.rooms[code]["map"]}
 
-    def room_join(self, code: str, uid: str, rank: int, loadout: Optional[dict] = None) -> dict:
+    def room_join(self, code: str, uid: str, rank: int) -> dict:
         # 禁赛拦截
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -288,9 +290,10 @@ class VersusHub:
             if not host_entry:
                 # 房已存在但房主 ticket 已不在队列（超时/被清理）
                 return {"error": "room_expired"}
-            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）；携带客人 loadout 透传给客人 side。
+            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）。
+            # 注（Task 6 退役）：旧模型曾携带客人 loadout 透传给客人 side，WS 快照模型无消费方，已删除。
             joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank,
-                      "enqueued_ms": now, "loadout": loadout}
+                      "enqueued_ms": now}
             # 成局即销毁房间与房主挂起态，保证一码一局、不能重复加入
             self.queue.pop(host_ticket, None)
             self.rooms.pop(code, None)
@@ -301,84 +304,22 @@ class VersusHub:
 
     def _match_start_payload(self, mid: str, uid: str) -> Optional[dict]:
         # 注意：poll 在锁外调用本方法（DB 读档不占锁）；对局可能已被并发 _reap 回收 → 返回 None 由调用方兜底。
-        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid+loadout，成局后不再变），无撕裂读。
+        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid，成局后不再变），无撕裂读。
         m = self.matches.get(mid)
         if m is None:
             return None
-        # 组 match-start：matchId/seed/map/startAt/对手档案 + 对方上交的 loadout（供对手侧忠实重放）。
-        # loadout 放顶层 opponentLoadout，勿塞进脱敏 _profile（profile 是公开档案，职责分离）。
+        # 组 match-start：matchId/seed/map/startAt/对手档案。
+        # 注（Task 6 退役）：旧模型曾在此追加对方上交的 loadout 作 opponentLoadout（供对手侧确定性重放）；
+        # WS 快照模型对手侧从快照本地插值重建，无消费方，已删除。
         opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
-        opp_side = m["b"] if m["a"]["uid"] == uid else m["a"]
         return {"matchId": mid, "seed": m["seed"], "map": m["map"],
-                "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid),
-                "opponentLoadout": opp_side.get("loadout")}
+                "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}
 
-    # —— tick 转发 + 波次调度（先清者定下一波）——
+    # —— 内部工具：按 uid 定位自己是 a/b 侧，返回 (我, 对手) ——
+    # 供 ws_* 系列（WS 快照模型）与终局/波次逻辑复用；HTTP tick 转发已在 Task 6 退役。
     def _sides(self, m: dict, uid: str) -> tuple[dict, dict]:
         # 根据 uid 判断自己是 a 还是 b，返回 (我, 对手)
         return (m["a"], m["b"]) if m["a"]["uid"] == uid else (m["b"], m["a"])
-
-    def tick(self, uid: str, match_id: str, inputs: list, digest: dict,
-             wave_cleared_at: Optional[dict], status: str) -> dict:
-        with self.lock:
-            now = self._now()
-            m = self.matches.get(match_id)
-            if not m:
-                return {"error": "match_not_found"}
-            me, opp = self._sides(m, uid)
-            me["last_tick_ms"] = now
-            if digest:
-                me["last_digest"] = digest
-                me["wave"] = int(digest.get("wave", me["wave"]))
-            # 按 seq 去重：客户端重传窗口会重复上报同一动作，只保留 me 首次上报的 seq
-            # （幂等——防重复施加到对手 oppBattle 破坏确定性，也防反作弊按重复计数误判）。
-            # seq 缺失（旧客户端）：不去重（向后兼容，退化=现网行为）。
-            deduped = []
-            for a in (inputs or []):
-                sq = a.get("seq")
-                if sq is None:
-                    deduped.append(a)                    # 旧客户端无 seq：不去重（向后兼容）
-                elif sq not in me["sent_seqs"]:
-                    me["sent_seqs"].add(sq)
-                    deduped.append(a)
-            self._anticheat(m, me, opp, deduped, digest, now)
-            # 把我的新动作放进对手的转发缓冲（带服务端接收时刻，供保留窗口重发）；终局后不再累积
-            if deduped and not m.get("ended"):
-                for a in deduped:
-                    opp["relay_buffer"].append((now, a))
-            # 先清者定下一波
-            if wave_cleared_at:
-                w = int(wave_cleared_at.get("wave", 0))
-                if w and (w + 1) not in m["wave_schedule"]:
-                    m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
-                    m["first_clear"][w] = uid
-            self._resolve_terminal(m, me, opp, status, now)
-            # 取给「我」的对手动作：不再 pop-before-ack，改为保留 RELAY_RETAIN_MS 窗口内的动作每 tick 重发
-            # （客户端按 seq 去重），覆盖「服务端已处理但响应丢包」→ 下 tick 补齐，杜绝永久丢失；剔除过窗口的防泄漏。
-            me["relay_buffer"] = [(ts, a) for (ts, a) in me["relay_buffer"] if now - ts <= RELAY_RETAIN_MS]
-            out = [a for (ts, a) in me["relay_buffer"]]
-            next_wave = self._next_wave_for(m, me)
-            opp_status = self._opp_status(m, opp, now)
-            # 落库兜底重试：已判终局但上次落库失败（DB 抖动）→ 幂等重试，避免永久丢战绩
-            if m.get("ended") and not m.get("persisted"):
-                self._persist_result(m, now)
-            resp = {
-                "serverMs": now,
-                "opponentInputs": out,
-                "opponentDigest": opp.get("last_digest"),
-                "nextWave": next_wave,
-                "opponentStatus": opp_status,
-                "result": self._result_for(m, uid),
-                "cheatNotice": None,   # 锁外补
-            }
-        # 禁赛查询是每 tick 的 DB 读，移出大锁（沿用 Task 3 poll 的 I1 处理），避免热路径把并发串在 DB 延迟上。
-        # DB 抖动时默默降级为「本 tick 不通知禁赛」，绝不让 tick 因此 500（下 tick 会再查）。
-        try:
-            if self.is_banned(uid):
-                resp["cheatNotice"] = {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
-        except Exception:
-            logging.exception("is_banned 查询失败 uid=%s（本 tick 跳过禁赛通知）", uid)
-        return resp
 
     def _next_wave_for(self, m: dict, me: dict) -> Optional[dict]:
         # 返回「我」当前波次的下一波开始时刻（若已排程）
@@ -421,9 +362,9 @@ class VersusHub:
 
     def _persist_result(self, m, now: int) -> None:
         # 幂等落库：先删该 match 旧行再插，允许平局改判覆盖先前的胜负行。
-        # 关键：落库失败绝不向上抛——否则终局 tick 直接 500，客户端连胜负都拿不到；
-        # 且内存已 ended=True 会让后续 tick 短路、永不重试 → pvp_results 永久缺该局。
-        # 这里只记日志并把 persisted 置 False；tick 会在后续心跳里幂等重试。
+        # 关键：落库失败绝不向上抛——否则终局处理直接 500，客户端连胜负都拿不到；
+        # 且内存已 ended=True 会让后续快照/心跳短路（_set_result/_set_draw 见 result 即返回）、永不重试 → pvp_results 永久缺该局。
+        # 这里只记日志并把 persisted 置 False；后续快照处理会幂等重试。
         day = self.db.today(); dt = self.db.now()
         rows = []
         for key, other in (("a", "b"), ("b", "a")):
@@ -438,8 +379,8 @@ class VersusHub:
                     " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
             m["persisted"] = True
         except Exception:
-            # 记录完整堆栈；不重新抛出，保证终局 tick 仍能把 result 返回给客户端
-            logging.exception("pvp_results 落库失败，将在后续 tick 重试 match_id=%s", m.get("match_id"))
+            # 记录完整堆栈；不重新抛出，保证终局处理仍能把 result 返回给客户端
+            logging.exception("pvp_results 落库失败，将在后续处理重试 match_id=%s", m.get("match_id"))
             m["persisted"] = False
 
     def _resolve_terminal(self, m, me, opp, status, now):
@@ -448,7 +389,8 @@ class VersusHub:
         me_key = "a" if m["a"]["uid"] == me["uid"] else "b"
         # 记录我方终局时刻（幂等，只记第一次）
         if me.get("dead_ms") is None:
-            # 记 status：对手 tick 时 _opp_status 读 opp["status"] 派生对手的 opponentStatus，勿删
+            # 记 dead_ms：对手侧宽限判定(_ws_check_gone_locked)与平局 EPS 判定都会读它。
+            # status 字段旧由已退役的 _opp_status（Task 6）读取，当前暂无消费方，保留以备终局态查询。
             me["status"] = status
             me["dead_ms"] = now
         # 双方在 EPS 内阵亡 → 平局（即便对手已先判赢，也改判为平局）
@@ -458,17 +400,6 @@ class VersusHub:
         # 首个终局者判负（对手判赢）；若已 ended 则不重复
         if not m.get("ended"):
             self._set_result(m, me_key, self.LOSE_STATUS[status], now)
-
-    def _opp_status(self, m, opp, now) -> str:
-        if opp.get("status") in ("tangsengDead", "surrender"):
-            return "surrendered" if opp["status"] == "surrender" else "tangsengDead"
-        if now - opp["last_tick_ms"] > DISCONNECT_GRACE_MS:
-            # 对手心跳缺失超过宽限 → 我方判赢(断线超时)
-            if not m.get("ended"):
-                opp_key = "a" if m["a"]["uid"] == opp["uid"] else "b"
-                self._set_result(m, opp_key, "DisconnectTimeout", now)
-            return "disconnected"
-        return "playing"
 
     def _result_for(self, m, uid) -> Optional[dict]:
         # Task 6 填充：终局后按 side 返回该玩家的结果
@@ -564,8 +495,14 @@ class VersusHub:
             return {"serverMs": now}
 
     def ws_snap(self, uid: str, match_id: str, msg: dict) -> None:
-        """收到本方 snap：派生小 digest 存 last_digest/wave（供 _anticheat 与终局），
-        把快照**原样**转发给对手的 ws_send。服务端不解析大字段，只取四个小字段。"""
+        """收到本方 snap：派生小 digest 存 last_digest/wave（供终局），接 _anticheat 做反作弊启发式，
+        再把快照**原样**转发给对手的 ws_send。服务端不解析大字段，只取四个小字段。
+
+        反作弊接线（Task 6）：HTTP tick 退役后，_anticheat 原只在 tick 内调用会失活，故迁到此处。
+        快照模型无「动作(inputs)」概念（客户端不再逐 tick 上报命令），故传空列表 inputs=[]；
+        _anticheat 当前未引用 inputs（放置经济校验留 Plan C 接口），空列表不使任何既有检查失活。
+        注意：WS digest 不含 power（快照无该字段、客户端亦不再自报 digest），击杀上界 ceil 退化为
+        KILLS_ABS_FLOOR=30 的扁平上界（不再随战力缩放），但仍能触发 kills_over_ceiling。"""
         with self.lock:
             now = self._now()
             m = self.matches.get(match_id)
@@ -578,7 +515,7 @@ class VersusHub:
             if not isinstance(s, dict):
                 return                              # 缺 s 的快照忽略（容错）
             units = s.get("units")
-            # 只派生四个小字段做 digest；客户端无需再自报 digest（Model C 与 HTTP tick 的 digest 同源）。
+            # 只派生四个小字段做 digest；客户端无需再自报 digest（HTTP tick 已在 Task 6 退役）。
             digest = {
                 "wave": int(s.get("wave", me.get("wave", 1)) or 1),
                 "tangsengHP": s.get("tangsengHP", 0),
@@ -587,6 +524,9 @@ class VersusHub:
             }
             me["last_digest"] = digest
             me["wave"] = digest["wave"]
+            # Task 6：反作弊接线——退役 HTTP tick 后迁到此处。快照模型无动作概念，传空 inputs=[]。
+            # _anticheat 用 digest 的 delta（唐僧血单调不增/击杀上界/波次不超前）做启发式，空 inputs 不影响。
+            self._anticheat(m, me, opp, [], digest, now)
             if opp.get("ws_send"):
                 self._ws_push_locked(opp, me, m, {"type": "oppSnap", "s": s})
 
@@ -642,8 +582,9 @@ class VersusHub:
 
     def _anticheat(self, m, me, opp, inputs, digest, now):
         # 从每秒摘要 digest 做启发式异常检测；终局或无摘要时跳过。
-        # 注意：本方法在 tick 的大锁内调用，命中异常才写库（低频），可接受；
-        # 每 tick 都要做的禁赛查询已移出锁（见 tick 尾部）。
+        # 注意：本方法在 self.lock 内调用（HTTP tick 退役后改由 ws_snap 在锁内调用），
+        # 命中异常才写库（低频），可接受。inputs 为旧转发模型的动作列表，快照模型无动作概念故传 []，
+        # 当前实现未引用 inputs（放置经济校验留 Plan C 接口）。
         if m.get("ended") or not digest:
             return
         reasons = []
@@ -664,14 +605,14 @@ class VersusHub:
         # 3) 放置动作经济合法性（粗校验）留接口，本期只记明显越界；精校验待 Plan C 客户端动作字段定型后回填
         me["prev_digest"] = {**digest, "_ms": now}
         if reasons and not me.get("anomaly_recorded"):
-            # 同对手当天内存内只成功写一次，真正兑现「低频」；写库失败(返回 False)则下 tick 重试。重启即丢，与临时对局定位一致。
+            # 同对手当天内存内只成功写一次，真正兑现「低频」；写库失败(返回 False)则后续快照处理重试。重启即丢，与临时对局定位一致。
             if self._record_anomaly(m, me["uid"], opp["uid"], reasons, now):
                 me["anomaly_recorded"] = True
 
     def _record_anomaly(self, m, uid, opp_uid, reasons, now) -> bool:
         # INSERT IGNORE + 唯一键 (day,uid,opponent_uid) → 同对手当天只记 1 条。
-        # 与 _persist_result 一致：写库失败不向上抛（否则作弊者这一 tick 直接 500）。
-        # 返回是否成功落库（INSERT IGNORE 命中唯一键的 no-op 也算成功）；失败记日志，交调用方下 tick 重试。
+        # 与 _persist_result 一致：写库失败不向上抛（否则本次反作弊处理直接 500）。
+        # 返回是否成功落库（INSERT IGNORE 命中唯一键的 no-op 也算成功）；失败记日志，交调用方后续处理重试。
         day = self.db.today(); dt = self.db.now()
         try:
             with self.db.cursor() as cur:
@@ -712,14 +653,15 @@ def _parse_rank(handler, body):
         return None
 
 def handle_versus_enqueue(handler, db: DB) -> None:
-    # 随机匹配入队：返回 ticket，客户端凭此 poll 拿配对结果。loadout 可选（旧客户端不下发→None）。
+    # 随机匹配入队：返回 ticket，客户端凭此 poll 拿配对结果。
+    # 注（Task 6 退役）：旧模型曾接收并透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
-    send_json(handler, 200, _hub(handler).enqueue(uid, rank, body.get("loadout")))
+    send_json(handler, 200, _hub(handler).enqueue(uid, rank))
 
 def handle_versus_poll(handler, db: DB) -> None:
     # 轮询排队/对局状态：waiting / matched / timeout
@@ -738,7 +680,8 @@ def handle_versus_cancel(handler, db: DB) -> None:
     send_json(handler, 200, _hub(handler).cancel(str(body.get("ticket") or "")))
 
 def handle_versus_room_create(handler, db: DB) -> None:
-    # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）。loadout 可选。
+    # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）。
+    # 注（Task 6 退役）：旧模型曾透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
@@ -746,27 +689,18 @@ def handle_versus_room_create(handler, db: DB) -> None:
     rank = _parse_rank(handler, body)
     if rank is None: return
     base = (handler.headers.get("Origin") or "").rstrip("/")
-    send_json(handler, 200, _hub(handler).room_create(uid, rank, base_url=base, loadout=body.get("loadout")))
+    send_json(handler, 200, _hub(handler).room_create(uid, rank, base_url=base))
 
 def handle_versus_room_join(handler, db: DB) -> None:
-    # 客人凭码加入私房：直接与房主成局。loadout 可选（客人配装）。
+    # 客人凭码加入私房：直接与房主成局。
+    # 注（Task 6 退役）：旧模型曾透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
     uid = require_uid(handler, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
-    send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank, body.get("loadout")))
-
-def handle_versus_tick(handler, db: DB) -> None:
-    # 对局心跳：上报本端动作/摘要/波次清场，转发对手动作 + 波次调度 + 终局裁决
-    body = _read_body(handler)
-    if body is None: return
-    uid = require_uid(handler, body)
-    if not uid: return
-    send_json(handler, 200, _hub(handler).tick(
-        uid, str(body.get("matchId") or ""), body.get("inputs") or [],
-        body.get("digest") or {}, body.get("waveClearedAt"), str(body.get("status") or "playing")))
+    send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank))
 
 
 # ============================================================================

@@ -13,9 +13,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from api_versus import (MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS, SIMULTANEOUS_EPS_MS,
-                        MATCH_REAP_MS, REAP_INTERVAL_MS, ROOM_TTL_MS, QUEUE_TTL_MS,
-                        RELAY_RETAIN_MS)
+# 注（Task 6 退役）：RELAY_RETAIN_MS / DISCONNECT_GRACE_MS / SIMULTANEOUS_EPS_MS 已不再被本文件用例引用
+# （tick 转发/保留窗口/按 tick 的断线与平局用例随 HTTP tick 退役而删除，其 WS 等价覆盖迁至 test_versus_ws.py）。
+from api_versus import (MATCH_TIMEOUT_MS, MATCH_REAP_MS, REAP_INTERVAL_MS,
+                        ROOM_TTL_MS, QUEUE_TTL_MS)
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -192,8 +193,7 @@ def _match_two(hub, db, ua="10000201", ub="10000202", rank=3):
 
 
 class _FakeDB:
-    """内存 DB 桩：relay/保留窗口测试完全不触库，但 tick() 收尾无条件走 is_banned（try 内），
-    故只需 today()/cursor() 不抛并返回 c=0。无需迁移、无需真实库（3308 不在线时这些用例照跑）。"""
+    """内存 DB 桩：撞码硬化测试完全不触库，cursor() 不抛即可（_profile 查无此人回默认档）。"""
     def today(self):
         return "2026-01-01"
     def now(self):
@@ -204,7 +204,7 @@ class _FakeDB:
             def execute(self, *a, **k):
                 pass
             def fetchone(self):
-                return {"c": 0}
+                return None
         yield _Cur()
 
 
@@ -226,55 +226,6 @@ def _fake_match(hub, ua="A1", ub="B1", rank=3):
     return hub._make_match(e1, e2, hub._now())
 
 
-def test_tick_relays_inputs(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db)
-    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
-    # A 上报一个动作
-    hub.tick("10000201", mid, [{"t": 5, "op": "place", "cell": "r1c1"}], d, None, "playing")
-    # B 首次 tick 收到（保留窗口内）
-    resp = hub.tick("10000202", mid, [], d, None, "playing")
-    assert resp["opponentInputs"] == [{"t": 5, "op": "place", "cell": "r1c1"}]
-    # 新语义：不再 pop-before-ack，改为保留窗口重发。B 再 tick（此响应假设丢失）→ 窗口内仍重发补齐。
-    resp2 = hub.tick("10000202", mid, [], d, None, "playing")
-    assert resp2["opponentInputs"] == [{"t": 5, "op": "place", "cell": "r1c1"}]
-    # 超过保留窗口 → 不再重发
-    hub._clock["ms"] += RELAY_RETAIN_MS + 1
-    resp3 = hub.tick("10000202", mid, [], d, None, "playing")
-    assert resp3["opponentInputs"] == []
-
-
-def test_resend_deduped_to_opponent_once():
-    # cause-2：A 重发同 seq + 新 seq，服务端按 seq 去重 → B 每个 seq 恰好收到一次（幂等）。
-    hub = _fake_hub()
-    mid = _fake_match(hub)
-    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"}], d, None, "playing")
-    # A 再 tick：整窗重发 seq:0（客户端重传）+ 新 seq:1
-    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"},
-                         {"t": 6, "seq": 1, "op": "summon"}], d, None, "playing")
-    resp = hub.tick("B1", mid, [], d, None, "playing")
-    assert sorted(a["seq"] for a in resp["opponentInputs"]) == [0, 1]  # 每个 seq 恰好一次
-    # B 再 tick（响应假设丢失，服务端重发）→ 仍各一次（sent_seqs 幂等，绝不重复施加）
-    resp2 = hub.tick("B1", mid, [], d, None, "playing")
-    assert sorted(a["seq"] for a in resp2["opponentInputs"]) == [0, 1]
-
-
-def test_retain_resend_recovers_lost_response():
-    # cause-2：A 上报一次；B 首次收到；B 再 tick（A 未新增、B 响应假设丢）→ 保留窗口内仍重发补齐。
-    hub = _fake_hub()
-    mid = _fake_match(hub)
-    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
-    t0 = hub._now()
-    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"}], d, None, "playing")
-    resp = hub.tick("B1", mid, [], d, None, "playing")
-    assert [a["seq"] for a in resp["opponentInputs"]] == [0]          # 首次收到
-    resp2 = hub.tick("B1", mid, [], d, None, "playing")
-    assert [a["seq"] for a in resp2["opponentInputs"]] == [0]         # 窗口内重发补齐（覆盖响应丢包）
-    hub._clock["ms"] = t0 + RELAY_RETAIN_MS + 1                        # 超过保留窗口
-    resp3 = hub.tick("B1", mid, [], d, None, "playing")
-    assert resp3["opponentInputs"] == []                               # 超窗不再重发
-
 def test_room_create_avoids_code_collision():
     # Bug2 撞码硬化：gen_code 先吐一个已占用的码，room_create 应重试换新码，绝不静默覆盖既有房间。
     from api_versus import VersusHub
@@ -289,162 +240,8 @@ def test_room_create_avoids_code_collision():
     assert h.rooms["DUP001"]["host_uid"] == "A1"      # 原房间未被覆盖（撞码没顶掉 A1）
 
 
-def test_first_clear_schedules_next_wave(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db)
-    d = {"wave": 1, "power": 10, "kills": 5, "tangsengHP": 3, "peach": 20, "units": 3}
-    resp = hub.tick("10000201", mid, [], d, {"wave": 1, "t": 900}, "playing")
-    assert resp["nextWave"]["wave"] == 2
-    start2 = resp["nextWave"]["startAtServerMs"]
-    resp_b = hub.tick("10000202", mid, [], d, {"wave": 1, "t": 950}, "playing")
-    assert resp_b["nextWave"]["startAtServerMs"] == start2
-
-
-def _dig(w=1): return {"wave": w, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
-
-def test_surrender_opponent_wins(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db, "10000301", "10000302")
-    hub.tick("10000301", mid, [], _dig(), None, "surrender")
-    rb = hub.tick("10000302", mid, [], _dig(), None, "playing")
-    assert rb["result"]["outcome"] == "win"
-    assert rb["result"]["reason"] == "opponentSurrender"
-    ra = hub.tick("10000301", mid, [], _dig(), None, "surrender")
-    assert ra["result"]["outcome"] == "lose"
-    assert ra["result"]["reason"] == "selfSurrender"   # 败方原因也要对
-    with db.cursor() as cur:
-        cur.execute("SELECT outcome,reason FROM pvp_results WHERE match_id=%s AND uid=%s", (mid, "10000302"))
-        win_row = cur.fetchone()
-        assert win_row["outcome"] == "win" and win_row["reason"] == "opponentSurrender"
-        cur.execute("SELECT outcome,reason FROM pvp_results WHERE match_id=%s AND uid=%s", (mid, "10000301"))
-        lose_row = cur.fetchone()
-        assert lose_row["outcome"] == "lose" and lose_row["reason"] == "selfSurrender"
-
-def test_tangseng_dead(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db, "10000311", "10000312")
-    hub.tick("10000311", mid, [], _dig(), None, "tangsengDead")
-    rb = hub.tick("10000312", mid, [], _dig(), None, "playing")
-    assert rb["result"]["reason"] == "opponentTangsengDead"
-
-def test_disconnect_timeout(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db, "10000321", "10000322")
-    hub.tick("10000321", mid, [], _dig(), None, "playing")
-    hub.tick("10000322", mid, [], _dig(), None, "playing")
-    hub._clock["ms"] += DISCONNECT_GRACE_MS + 500
-    ra = hub.tick("10000321", mid, [], _dig(), None, "playing")
-    assert ra["opponentStatus"] == "disconnected"
-    assert ra["result"]["outcome"] == "win"
-    assert ra["result"]["reason"] == "opponentDisconnectTimeout"
-
-def test_simultaneous_draw(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db, "10000331", "10000332")
-    hub.tick("10000331", mid, [], _dig(), None, "tangsengDead")
-    hub._clock["ms"] += 100
-    rb = hub.tick("10000332", mid, [], _dig(), None, "tangsengDead")
-    assert rb["result"]["outcome"] == "draw"
-
-def test_non_simultaneous_not_draw(hub, db):
-    # A 先阵亡（B 判赢），B 在 EPS 之外才阵亡 → 不得改判平局，仍是 B 赢
-    hub.reset()
-    mid = _match_two(hub, db, "10000341", "10000342")
-    hub.tick("10000341", mid, [], _dig(), None, "tangsengDead")   # A 先死
-    rb = hub.tick("10000342", mid, [], _dig(), None, "playing")   # B 报 playing → B 判赢
-    assert rb["result"]["outcome"] == "win"
-    assert rb["result"]["reason"] == "opponentTangsengDead"
-    hub._clock["ms"] += SIMULTANEOUS_EPS_MS + 50                  # 拉开到 EPS 之外
-    ra = hub.tick("10000341", mid, [], _dig(), None, "tangsengDead")  # A 再报死
-    assert ra["result"]["outcome"] == "lose"                     # A 仍判负（非平局）
-    rb2 = hub.tick("10000342", mid, [], _dig(), None, "playing")
-    assert rb2["result"]["outcome"] == "win"                     # B 仍判赢，未被改判平局
-    # DB 落库也应是 win/lose 两行，无 draw
-    with db.cursor() as cur:
-        cur.execute("SELECT outcome FROM pvp_results WHERE match_id=%s ORDER BY outcome", (mid,))
-        outs = sorted(r["outcome"] for r in cur.fetchall())
-    assert outs == ["lose", "win"]
-
-
-def test_anomaly_recorded_and_dedup(hub, db):
-    hub.reset()
-    mid = _match_two(hub, db, "10000401", "10000402")
-    # 先清当日旧记录，保证重复跑不撞唯一键、不串味
-    with db.cursor() as cur:
-        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000401"))
-    # 击杀暴涨且远超战力可能：kills 从 0 跳到 9999，power 极低
-    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000401", mid, [], bad, None, "playing")
-    hub.tick("10000401", mid, [], {**bad, "kills": 19999}, None, "playing")  # 同对手当天只记 1
-    day = db.today()
-    with db.cursor() as cur:
-        cur.execute("SELECT COUNT(*) c FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000401"))
-        assert cur.fetchone()["c"] == 1
-
-
-def test_three_opponents_trigger_ban(hub, db):
-    hub.reset()
-    day = db.today(); now = db.now()
-    with db.cursor() as cur:
-        # 先清当日旧记录，保证重复跑时只有本测试插入的行
-        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "10000411"))
-        for opp in ("30000001", "30000002"):
-            cur.execute("INSERT INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
-                        " VALUES (%s,%s,%s,%s,%s,%s)", (day, "10000411", opp, "m", "{}", now))
-    assert hub.is_banned("10000411") is False   # 只有 2 个不同对手
-    _mk_player(db, "10000411", 3); _mk_player(db, "10000412", 3)
-    mid = _match_two(hub, db, "10000411", "10000412")
-    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000411", mid, [], bad, None, "playing")   # 第 1 tick 建基线
-    hub.tick("10000411", mid, [], {**bad, "kills": 19999}, None, "playing")  # 第 2 tick 增量暴涨才触发→第 3 个不同对手
-    assert hub.is_banned("10000411") is True
-
-def test_anticheat_tangseng_hp_increase(hub, db):
-    # 唐僧血单调不增：基线 HP=3，下一 tick 涨到 5 → 记 tangsengHP_increased
-    hub.reset()
-    mid = _match_two(hub, db, "10000421", "10000422")
-    with db.cursor() as cur:
-        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000421"))
-    base = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000421", mid, [], base, None, "playing")                       # 建基线
-    hub.tick("10000421", mid, [], {**base, "tangsengHP": 5}, None, "playing")  # HP 上涨→异常
-    with db.cursor() as cur:
-        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000421"))
-        row = cur.fetchone()
-    assert row is not None and "tangsengHP_increased" in row["reasons_json"]
-
-def test_anticheat_wave_ahead(hub, db):
-    # 波次超前：wave_schedule 初始只有 {1}，上报 wave=5 远超 max+1=2 → wave_ahead（首 tick 即触发，无需基线）
-    hub.reset()
-    mid = _match_two(hub, db, "10000431", "10000432")
-    with db.cursor() as cur:
-        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000431"))
-    hub.tick("10000431", mid, [], {"wave": 5, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}, None, "playing")
-    with db.cursor() as cur:
-        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (db.today(), "10000431"))
-        row = cur.fetchone()
-    assert row is not None and "wave_ahead" in row["reasons_json"]
-
-def test_anticheat_db_failure_does_not_500(hub, db):
-    # DB 抖动时 _record_anomaly / is_banned 都不得把 tick 打成 500，降级为不通知
-    hub.reset()
-    mid = _match_two(hub, db, "10000441", "10000442")
-    bad = {"wave": 1, "power": 1, "kills": 9999, "tangsengHP": 3, "peach": 20, "units": 1}
-    hub.tick("10000441", mid, [], bad, None, "playing")  # 建基线（真实库）
-    orig = hub.db.cursor
-    def boom(*a, **k):
-        raise RuntimeError("db down")
-    hub.db.cursor = boom            # 之后所有 DB 访问抛错
-    try:
-        resp = hub.tick("10000441", mid, [], {**bad, "kills": 99999}, None, "playing")
-    finally:
-        hub.db.cursor = orig        # 务必恢复，db fixture 是 module 级共享
-    assert isinstance(resp, dict)
-    assert resp.get("cheatNotice") is None
-
-
 # —— HTTP 端到端冒烟：起真 ThreadingHTTPServer，跑 /api/versus/* 路由 ——
-# 抽样 enqueue/poll 全链路，其余路由见 test_http_room_create_join_tick_cancel 与 hub 单测。
+# 抽样 enqueue/poll/room/cancel 全链路（tick 路由已退役，心跳走 WS）。
 @pytest.fixture(scope="module")
 def http_base(db):
     # 复用 module 级 db，在其上挂真实 HTTP server，验证路由→handler→Hub 全链路。
@@ -481,19 +278,13 @@ def test_http_enqueue_poll_match(http_base, db):
     assert st == 200 and p["status"] == "matched"
     assert p["matchStart"]["opponent"]["nickname"] == "乙"
 
-def test_http_room_create_join_tick_cancel(http_base, db):
-    # HTTP 打通其余路由：room/create → room/join 成局 → tick → cancel
+def test_http_room_create_join_cancel(http_base, db):
+    # HTTP 打通其余路由：room/create → room/join 成局 → cancel（tick 路由已退役）。
     _mk_player(db, "10000511", 4, "房主"); _mk_player(db, "10000512", 4, "客人")
     st, rc = _post(http_base, "/api/versus/room/create", {"rank": 4}, "10000511")
     assert st == 200 and "code" in rc
     st, rj = _post(http_base, "/api/versus/room/join", {"code": rc["code"]}, "10000512")
     assert st == 200 and rj["status"] == "matched"
-    mid = rj["matchStart"]["matchId"]
-    st, tk = _post(http_base, "/api/versus/tick",
-                   {"matchId": mid, "inputs": [],
-                    "digest": {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1},
-                    "status": "playing"}, "10000511")
-    assert st == 200 and "serverMs" in tk
     st, cc = _post(http_base, "/api/versus/cancel", {"ticket": "nope"}, "10000511")
     assert st == 200
 
@@ -537,14 +328,15 @@ def test_keepalive_reuses_connection(http_base, db):
     conn.close()
 
 
-# === Task 10：进程内状态惰性回收(_reap) + 终局后停止转发 + 并发 ===
+# === 进程内状态惰性回收(_reap)：终局/孤儿房/孤儿队列回收，活跃对局不误删 ===
 def test_reap_removes_ended_match(hub, db):
-    # 终局超回收窗后，match 及其 ticket_match 索引应被清
+    # 终局超回收窗后，match 及其 ticket_match 索引应被清。
+    # 注（Task 6 退役）：旧用 tick 的 surrender 终局；WS 模型改走 ws_status（终局权威入口）。
     hub.reset()
     mid = _match_two(hub, db, "10000361", "10000362")
-    hub.tick("10000361", mid, [], _dig(), None, "surrender")
-    hub.tick("10000362", mid, [], _dig(), None, "playing")
+    hub.ws_status("10000361", mid, "surrender")   # A 认输→终局
     assert mid in hub.matches
+    assert hub.matches[mid]["ended"] is True
     hub._clock["ms"] += MATCH_REAP_MS + REAP_INTERVAL_MS + 1
     hub.poll("bogus")  # 任意 poll 触发锁内 _reap
     assert mid not in hub.matches
@@ -570,149 +362,14 @@ def test_reap_removes_stale_queue(hub, db):
     hub.poll("bogus")
     assert r["ticket"] not in hub.queue
 
-def test_relay_stops_after_ended(hub, db):
-    # I2：终局后一方仍发动作，不应再被转发给对手
-    hub.reset()
-    mid = _match_two(hub, db, "10000351", "10000352")
-    hub.tick("10000351", mid, [], _dig(), None, "surrender")   # A 认输→终局
-    hub.tick("10000352", mid, [], _dig(), None, "playing")
-    hub.tick("10000351", mid, [{"t": 9, "op": "place", "cell": "r1c1"}], _dig(), None, "surrender")
-    rb = hub.tick("10000352", mid, [], _dig(), None, "playing")
-    assert rb["opponentInputs"] == []
-
-def test_concurrent_tick_no_crash(hub, db):
-    # 两线程同时 tick 同一局：大锁串行化，应无异常、result 不撕裂、无 KeyError
-    import threading
-    hub.reset()
-    mid = _match_two(hub, db, "10000391", "10000392")
-    errors = []
-    def spam(uid):
-        try:
-            for _ in range(15):
-                hub.tick(uid, mid, [{"t": 1, "op": "place", "cell": "r1c1"}], _dig(), None, "playing")
-        except Exception as e:  # noqa: BLE001
-            errors.append(e)
-    ta = threading.Thread(target=spam, args=("10000391",))
-    tb = threading.Thread(target=spam, args=("10000392",))
-    ta.start(); tb.start(); ta.join(5); tb.join(5)
-    assert not errors
-    assert mid in hub.matches
-
-
 def test_reap_keeps_active_match(hub, db):
-    # 回收器最该防的：最近有心跳的活跃对局，reap 后必须仍在
+    # 回收器最该防的：最近有心跳的活跃对局，reap 后必须仍在。
+    # 注（Task 6 退役）：旧用 tick 刷新 last_tick_ms；WS 模型改走 ws_snap（每 100ms 发快照）。
     hub.reset()
     mid = _match_two(hub, db, "10000461", "10000462")
-    hub.tick("10000461", mid, [], _dig(), None, "playing")  # 刷新 last_tick_ms
-    hub.tick("10000462", mid, [], _dig(), None, "playing")
+    snap = {"wave": 1, "tangsengHP": 3, "kills": 0, "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}
+    hub.ws_snap("10000461", mid, {"type": "snap", "t": 1, "s": snap})  # 刷新 last_tick_ms
+    hub.ws_snap("10000462", mid, {"type": "snap", "t": 2, "s": snap})
     hub._clock["ms"] += 10_000   # 越过 REAP 闸门(>=10s)，但 now-last_tick=10s << IDLE_REAP(300s)
     hub.poll("bogus")            # 触发锁内 _reap
     assert mid in hub.matches    # 活跃对局未被误删
-
-
-# === 对手 loadout 下发（followup）：本方上交的 loadout 透传进 match-side，_match_start_payload 下发给对方 ===
-# loadout 存在进程内 match 态（side dict 的 "loadout" 键），非 DB；故本组用例用 _FakeDB 桩，
-# 证明相关逻辑完全不依赖真实 DB（无需 3308），与 _profile 的「查无此人回默认档」配合即可跑通。
-class _FakeDB:
-    # 最小 DB 桩：仅满足 VersusHub 在匹配链路上用到的 today()/now()/cursor()。
-    # cursor() 作上下文管理器、fetchone() 回 None → _profile 回默认档、is_banned 回 False。
-    def today(self): return "2026-01-01"
-    def now(self): return 1_000_000
-
-    @contextmanager
-    def cursor(self):
-        class _Cur:
-            def execute(self, *a, **k): pass
-            def fetchone(self): return None
-            def fetchall(self): return []
-        yield _Cur()
-
-
-def _fresh_hub():
-    # 独立时钟/seed/码/地图的 VersusHub（配 _FakeDB），免 DB、免与 module 级 db fixture 耦合。
-    from api_versus import VersusHub
-    clock = {"ms": 1_000_000}
-    seeds = iter(range(1000, 9999))
-    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
-                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
-                  pick_map=lambda: "huoyanshan")
-    h._clock = clock
-    return h
-
-
-# 契约样本：字段名与服务端/客户端 PvpLoadout 逐字对齐。
-LO_A = {"equipped": ["act_meteor"], "passives": ["xianyuan"],
-        "weapons": {"wukong": {"atk": 0.12, "frq": 0.05, "rge": 0.5}},
-        "meta": {"bonusPeach": 0, "bonusHp": 0, "bonusSlots": 0, "atkPct": 0, "frqPct": 0}}
-LO_B = {"equipped": [], "passives": ["zhaoxian", "fabaofu"], "weapons": {},
-        "meta": {"bonusPeach": 0, "bonusHp": 0, "bonusSlots": 0, "atkPct": 0, "frqPct": 0}}
-
-
-def test_enqueue_loadout_roundtrip_both_sides():
-    # 双方各交不同 loadout：每人 match-start 的 opponentLoadout 应恰好是「对方」那份（非自己）。
-    h = _fresh_hub()
-    r1 = h.enqueue("u1", 3, loadout=LO_A)
-    assert h.poll(r1["ticket"])["status"] == "waiting"
-    r2 = h.enqueue("u2", 3, loadout=LO_B)
-    p2 = h.poll(r2["ticket"])
-    assert p2["status"] == "matched"
-    assert p2["matchStart"]["opponentLoadout"] == LO_A   # u2 看到的对手(u1) loadout
-    p1 = h.poll(r1["ticket"])
-    assert p1["status"] == "matched"
-    assert p1["matchStart"]["opponentLoadout"] == LO_B   # u1 看到的对手(u2) loadout
-    # 同一 matchId（确认为同一局）
-    assert p1["matchStart"]["matchId"] == p2["matchStart"]["matchId"]
-    # 双方 side 内存态确实存了各自上交的 loadout（进程内 match 态，非 DB）。
-    mid = p1["matchStart"]["matchId"]
-    sides = {h.matches[mid]["a"]["uid"]: h.matches[mid]["a"]["loadout"],
-             h.matches[mid]["b"]["uid"]: h.matches[mid]["b"]["loadout"]}
-    assert sides["u1"] == LO_A and sides["u2"] == LO_B
-
-
-def test_enqueue_no_loadout_backward_compat():
-    # 旧客户端不下发 loadout：建局不报错。
-    # u1 无 loadout、u2 交 LO_A → u1(对手是 u2) 看到 LO_A，u2(对手是 u1) 看到 None。
-    h = _fresh_hub()
-    r1 = h.enqueue("u1", 3)                       # u1 无 loadout
-    assert h.poll(r1["ticket"])["status"] == "waiting"
-    r2 = h.enqueue("u2", 3, loadout=LO_A)         # u2 交 LO_A
-    p2 = h.poll(r2["ticket"])                     # u2 视角：对手是 u1（无）→ None
-    assert p2["status"] == "matched"
-    assert p2["matchStart"]["opponentLoadout"] is None
-    p1 = h.poll(r1["ticket"])                     # u1 视角：对手是 u2（LO_A）→ LO_A
-    assert p1["matchStart"]["opponentLoadout"] == LO_A
-
-
-def test_room_create_join_loadout_roundtrip():
-    # 私房：房主建房挂 loadout=LO_A，客人加入挂 loadout=LO_B；双方互见对方 loadout。
-    h = _fresh_hub()
-    rc = h.room_create("host", 3, loadout=LO_A)
-    assert h.poll(rc["ticket"])["status"] == "waiting"
-    rj = h.room_join("ROOM01", "guest", 3, loadout=LO_B)
-    assert rj["status"] == "matched"
-    assert rj["matchStart"]["opponentLoadout"] == LO_A   # 客人看到房主 loadout
-    ph = h.poll(rc["ticket"])
-    assert ph["status"] == "matched"
-    assert ph["matchStart"]["opponentLoadout"] == LO_B   # 房主看到客人 loadout
-
-
-def test_room_join_no_loadout_backward_compat():
-    # 私房双方都不下发 loadout：成局不报错、双方 opponentLoadout 均为 None。
-    h = _fresh_hub()
-    rc = h.room_create("host", 3)
-    rj = h.room_join("ROOM01", "guest", 3)
-    assert rj["status"] == "matched"
-    assert rj["matchStart"]["opponentLoadout"] is None
-    assert h.poll(rc["ticket"])["matchStart"]["opponentLoadout"] is None
-
-
-def test_loadout_not_leaked_into_profile():
-    # profile 仍只含公开档案 4 字段；loadout 只在顶层 opponentLoadout，勿混进脱敏档案。
-    h = _fresh_hub()
-    r1 = h.enqueue("u1", 3, loadout=LO_A)
-    h.enqueue("u2", 3, loadout=LO_B)
-    ms = h.poll(r1["ticket"])["matchStart"]
-    assert set(ms["opponent"].keys()) == {"uid", "nickname", "avatarId", "rankLevel"}
-    assert "loadout" not in ms["opponent"]
-    assert "equipped" not in ms["opponent"]
-    assert ms["opponentLoadout"] == LO_B

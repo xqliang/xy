@@ -31,7 +31,6 @@ from api_versus import (  # noqa: E402
     handle_versus_poll,
     handle_versus_room_create,
     handle_versus_room_join,
-    handle_versus_tick,
     handle_versus_ws,
 )
 from config import load_config  # noqa: E402
@@ -108,7 +107,6 @@ class Handler(SimpleHTTPRequestHandler):
             ("POST", "/api/versus/cancel"): handle_versus_cancel,
             ("POST", "/api/versus/room/create"): handle_versus_room_create,
             ("POST", "/api/versus/room/join"): handle_versus_room_join,
-            ("POST", "/api/versus/tick"): handle_versus_tick,
         }
         fn = routes.get((method, path))
         if not fn:
@@ -145,7 +143,7 @@ def main() -> None:
 
     BoundHandler.db = db
     BoundHandler.cfg = cfg
-    BoundHandler.versus = VersusHub(db)   # 进程内 PvP 单例：匹配/私房/tick 转发/波次/终局/反作弊
+    BoundHandler.versus = VersusHub(db)   # 进程内 PvP 单例：匹配/私房/波次/终局/反作弊（WS 快照模型，HTTP tick 已退役）
     handler = partial(BoundHandler, directory=static_dir)
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(f"serving static={static_dir} api+admin on {host}:{port}", flush=True)

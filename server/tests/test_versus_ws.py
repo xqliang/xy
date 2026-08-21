@@ -40,8 +40,45 @@ from ws import (  # noqa: E402
     ws_accept_key, decode_frame, encode_frame,
 )
 from api_versus import (  # noqa: E402
-    DISCONNECT_GRACE_MS, INTER_WAVE_DELAY_MS, VersusHub,
+    DISCONNECT_GRACE_MS, INTER_WAVE_DELAY_MS, SIMULTANEOUS_EPS_MS, VersusHub,
 )
+
+
+# ---------------------------------------------------------------- 真实 DB 支撑反作弊落库 ----
+# WS 快照模型下的反作弊接线（Task 6）：_anticheat 现由 ws_snap 调用，命中会写 pvp_anomaly。
+# 载 socket 全链路用 _FakeDB（no-op），但反作弊断言需真实落库，故补一个 module 级真实 db fixture。
+DSN_ENV = {
+    "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
+    "XY_DB_PORT": os.environ.get("XY_DB_PORT", "3307"),
+    "XY_DB_USER": os.environ.get("XY_DB_USER", "root"),
+    "XY_DB_PASSWORD": os.environ.get("XY_DB_PASSWORD", ""),
+    "XY_DB_NAME": os.environ.get("XY_DB_NAME", "xy_game_test"),
+    "XY_AGG_INTERVAL": "3600",
+}
+
+def _apply_env():
+    for k, v in DSN_ENV.items():
+        os.environ[k] = v
+
+
+@pytest.fixture(scope="module")
+def db():
+    _apply_env()
+    from config import load_config
+    from db import DB
+    d = DB(load_config()); d.migrate()
+    return d
+
+
+def _real_hub(db):
+    # 真实 DB + 可控时钟的 VersusHub：反作弊命中需落库，不能用 _FakeDB。
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(9000, 9999))
+    h = VersusHub(db, now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
+                  pick_map=lambda: "huoyanshan")
+    h._clock = clock
+    return h
 
 
 # ---------------------------------------------------------------- 客户端帧编码 ----
@@ -529,3 +566,125 @@ def test_bad_upgrade_returns_400():
             data += chunk
         assert b"400" in data.split(b"\r\n", 1)[0]
         s.close()
+
+
+# ============================================================================
+#  Task 6：反作弊接线迁至 ws_snap（退役 HTTP tick 后，_anticheat 原只在 tick 内调用会失活，
+#  现改在 ws_snap 派生 digest 后调用）。以下用例用真实 db + 可控时钟直驱 ws_snap，
+#  证明异常路径（击杀暴涨/唐僧血上涨/波次超前）与三对手禁赛在 WS 快照模型下仍能落库/触发。
+#  注：WS digest 不含 power（快照无该字段、客户端亦不再自报 digest），击杀上界 ceil 退化为
+#  KILLS_ABS_FLOOR=30 的扁平上界（不再随战力缩放），但仍远超正常增量，能稳定触发。
+# ============================================================================
+def test_anticheat_kills_over_ceiling_via_ws_snap(db):
+    # 击杀暴涨远超上界：基线 kills=0，下一快照 kills=9999 → kills_over_ceiling 落库。
+    hub = _real_hub(db)
+    mid = _fake_match(hub, "90000401", "90000402")
+    day = db.today()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000401"))
+    base = {"wave": 1, "tangsengHP": 3, "kills": 0, "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}
+    hub.ws_snap("90000401", mid, {"type": "snap", "t": 1, "s": base})                  # 建基线
+    hub._clock["ms"] += 1000                                                             # 推进时钟
+    hub.ws_snap("90000401", mid, {"type": "snap", "t": 2, "s": {**base, "kills": 9999}})
+    with db.cursor() as cur:
+        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000401"))
+        row = cur.fetchone()
+    assert row is not None and "kills_over_ceiling" in row["reasons_json"]
+
+
+def test_anticheat_tangseng_hp_increase_via_ws_snap(db):
+    # 唐僧血单调不增：基线 HP=3，下一快照涨到 5 → tangsengHP_increased 落库。
+    hub = _real_hub(db)
+    mid = _fake_match(hub, "90000421", "90000422")
+    day = db.today()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000421"))
+    base = {"wave": 1, "tangsengHP": 3, "kills": 0, "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}
+    hub.ws_snap("90000421", mid, {"type": "snap", "t": 1, "s": base})
+    hub._clock["ms"] += 1000
+    hub.ws_snap("90000421", mid, {"type": "snap", "t": 2, "s": {**base, "tangsengHP": 5}})
+    with db.cursor() as cur:
+        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000421"))
+        row = cur.fetchone()
+    assert row is not None and "tangsengHP_increased" in row["reasons_json"]
+
+
+def test_anticheat_wave_ahead_via_ws_snap(db):
+    # 波次超前：wave_schedule 初始只有 {1}，上报 wave=5 远超 max+1=2 → wave_ahead（首快照即触发，无需基线）。
+    hub = _real_hub(db)
+    mid = _fake_match(hub, "90000431", "90000432")
+    day = db.today()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000431"))
+    hub.ws_snap("90000431", mid, {"type": "snap", "t": 1,
+                                   "s": {"wave": 5, "tangsengHP": 3, "kills": 0,
+                                         "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}})
+    with db.cursor() as cur:
+        cur.execute("SELECT reasons_json FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000431"))
+        row = cur.fetchone()
+    assert row is not None and "wave_ahead" in row["reasons_json"]
+
+
+def test_anticheat_three_opponents_trigger_ban_via_ws_snap(db):
+    # 三个不同对手当日判异常 → 禁赛（is_banned）。前两个对手直接插 anomaly 行，第三个经 ws_snap 触发。
+    day = db.today(); now = db.now()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM pvp_anomaly WHERE day=%s AND uid=%s", (day, "90000411"))
+        for opp in ("30000001", "30000002"):
+            cur.execute("INSERT INTO pvp_anomaly (day,uid,opponent_uid,match_id,reasons_json,created_at)"
+                        " VALUES (%s,%s,%s,%s,%s,%s)", (day, "90000411", opp, "m", "{}", now))
+    assert _real_hub(db).is_banned("90000411") is False   # 只有 2 个不同对手
+    hub = _real_hub(db)
+    mid = _fake_match(hub, "90000411", "90000412")
+    base = {"wave": 1, "tangsengHP": 3, "kills": 0, "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}
+    hub.ws_snap("90000411", mid, {"type": "snap", "t": 1, "s": base})                  # 建基线
+    hub._clock["ms"] += 1000
+    hub.ws_snap("90000411", mid, {"type": "snap", "t": 2, "s": {**base, "kills": 19999}})
+    assert hub.is_banned("90000411") is True
+
+
+def test_anticheat_db_failure_does_not_500_via_ws_snap(db):
+    # DB 抖动：_record_anomaly 落库失败时，ws_snap 不得抛错（反作弊降级，快照转发照常）。
+    hub = _real_hub(db)
+    mid = _fake_match(hub, "90000441", "90000442")
+    base = {"wave": 1, "tangsengHP": 3, "kills": 0, "units": [{"cell": {"c": 0, "r": 0}, "type": 1}]}
+    hub.ws_snap("90000441", mid, {"type": "snap", "t": 1, "s": base})   # 建基线
+    orig = hub.db.cursor
+    def boom(*a, **k):
+        raise RuntimeError("db down")
+    hub.db.cursor = boom
+    try:
+        hub.ws_snap("90000441", mid, {"type": "snap", "t": 2, "s": {**base, "kills": 99999}})  # 不得 500
+    finally:
+        hub.db.cursor = orig        # 务必恢复，db fixture 是 module 级共享
+
+
+# ============================================================================
+#  Task 6：终局平局逻辑（原仅 tick 覆盖）迁至 ws_status，避免退役 tick 后丢失 EPS 改判覆盖。
+#  _set_draw 会覆盖先到者的胜负：第二个在 EPS 内阵亡者把结果改成平局。
+#  用 _fake_hub（no-op DB）：_persist_result 走空 cursor 不报错，直接读内存 result 断言。
+# ============================================================================
+def test_simultaneous_death_draw():
+    # 双方 EPS 内先后报 tangsengDead → 平局（第二个的 _set_draw 覆盖先到者的胜负）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    hub.ws_status("A1", mid, "tangsengDead")
+    hub._clock["ms"] += 100                      # SIMULTANEOUS_EPS_MS(200) 内
+    hub.ws_status("B1", mid, "tangsengDead")
+    with hub.lock:
+        res = hub.matches[mid]["result"]
+    assert res["a"]["outcome"] == "draw" and res["b"]["outcome"] == "draw"
+
+
+def test_non_simultaneous_death_stays_win_lose():
+    # A 先死(B 判赢)，B 在 EPS 之外才死 → 不改判平局，仍是 B 赢。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    hub.ws_status("A1", mid, "tangsengDead")
+    hub._clock["ms"] += SIMULTANEOUS_EPS_MS + 50  # 拉到 EPS 之外
+    hub.ws_status("B1", mid, "tangsengDead")
+    with hub.lock:
+        res = hub.matches[mid]["result"]
+    assert res["a"]["outcome"] == "lose"
+    assert res["b"]["outcome"] == "win"
+
