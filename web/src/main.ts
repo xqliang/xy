@@ -1602,10 +1602,12 @@ function onPointerDown(e: PointerEvent) {
       playSfx('click'); void pvpController.cancel(); pvpController = null; screen = 'menu'; scheduleFrame();
     } else if (hit === 'ok') {
       pvpController = null; screen = 'menu'; scheduleFrame();
-    } else if (hit === 'copy' && pvpController.state.link) {
-      const link = pvpController.state.link;
-      try { void navigator.clipboard?.writeText(link).catch(() => {}); } catch { /* 剪贴板不可用则忽略 */ }
-      pvpCopied = true; scheduleFrame();
+    } else if (hit === 'copy' && pvpController.state.code) {
+      // 客户端构造深链（location.origin+pathname 自适应 /xy 子路径）；复制成功才置「已复制」，
+      // 失败也无妨——房号已显示在屏上，可口头/手动分享。
+      const link = sc.versusShareLink(pvpController.state.code);
+      try { void navigator.clipboard?.writeText(link).then(() => { pvpCopied = true; scheduleFrame(); }).catch(() => {}); } catch { /* 剪贴板不可用则忽略（房号已显示） */ }
+      scheduleFrame();
     }
     return;
   }

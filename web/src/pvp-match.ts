@@ -26,7 +26,6 @@ export interface PvpMatchState {
   remainMs: number;
   ticket: string | null;
   code: string | null;
-  link: string | null;
   opponent: MatchStart['opponent'] | null;
   message: string;
 }
@@ -47,7 +46,7 @@ export class PvpMatchController {
   constructor(d: Deps) {
     this.d = d;
     // 初始 idle：剩余时间为满额倒计时，其余字段置空。
-    this.state = { phase: 'idle', startedAt: 0, remainMs: MATCH_TIMEOUT_MS, ticket: null, code: null, link: null, opponent: null, message: '' };
+    this.state = { phase: 'idle', startedAt: 0, remainMs: MATCH_TIMEOUT_MS, ticket: null, code: null, opponent: null, message: '' };
   }
 
   /** 进入一个新的阶段：刷新阶段/起始时间/剩余时间，并重置轮询计时锚点。 */
@@ -60,7 +59,6 @@ export class PvpMatchController {
     this.state.opponent = null;
     this.state.message = '';
     this.state.code = null;
-    this.state.link = null;
     this.lastPollAt = t;
   }
 
@@ -82,7 +80,6 @@ export class PvpMatchController {
     if (r.data.banned) { this.fail('banned', r.data.msg); return; }
     this.state.ticket = r.data.ticket ?? null;
     this.state.code = r.data.code ?? null;
-    this.state.link = r.data.link ?? null;
     if (!this.state.ticket || !this.state.code) this.fail('error', '建房失败');
   }
 
@@ -154,7 +151,7 @@ export function toMatchView(state: PvpMatchState, mode: 'random' | 'invite' | 'j
     phase: state.phase,
     remainMs: state.remainMs,
     opponent: state.opponent, // 宽结构(含 uid)赋给窄结构，变量赋值不触发多余属性检查
-    link: state.link,
+    code: state.code,
     copied,
     message: state.message,
   };

@@ -242,6 +242,11 @@ class VersusHub:
         with self.lock:
             now = self._now()
             code = self._gen_code()
+            # 撞码检查：token_hex(3) 空间 16^6≈1670万，碰撞极罕见但非零；碰撞会静默覆盖既有房间→重试换新码。
+            for _ in range(8):
+                if code not in self.rooms:
+                    break
+                code = self._gen_code()
             ticket = secrets.token_hex(8)
             # 房间记录：code -> 房间元信息（含房主 ticket，便于加入时定位房主）
             self.rooms[code] = {"code": code, "host_uid": uid, "host_rank": rank,

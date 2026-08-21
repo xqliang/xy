@@ -275,6 +275,20 @@ def test_retain_resend_recovers_lost_response():
     resp3 = hub.tick("B1", mid, [], d, None, "playing")
     assert resp3["opponentInputs"] == []                               # 超窗不再重发
 
+def test_room_create_avoids_code_collision():
+    # Bug2 撞码硬化：gen_code 先吐一个已占用的码，room_create 应重试换新码，绝不静默覆盖既有房间。
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    codes = iter(["DUP001", "DUP001", "NEW002"])  # 首建用 DUP001；次建 gen 先撞 DUP001 再换 NEW002
+    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: 1234, gen_code=lambda: next(codes), pick_map=lambda: "huoyanshan")
+    r1 = h.room_create("A1", 3)
+    assert r1["code"] == "DUP001"
+    r2 = h.room_create("B1", 3)
+    assert r2["code"] == "NEW002"                     # 撞 DUP001 后重试拿到 NEW002
+    assert h.rooms["DUP001"]["host_uid"] == "A1"      # 原房间未被覆盖（撞码没顶掉 A1）
+
+
 def test_first_clear_schedules_next_wave(hub, db):
     hub.reset()
     mid = _match_two(hub, db)

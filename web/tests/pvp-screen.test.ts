@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { drawPvpMatching, pvpMatchingHitAt, EXIT_RECT, COPY_RECT, FAIL_OK_RECT, type PvpMatchingView } from '../src/pvp-screen';
+import { drawPvpMatching, pvpMatchingHitAt, versusShareLink, EXIT_RECT, COPY_RECT, FAIL_OK_RECT, type PvpMatchingView } from '../src/pvp-screen';
 
 // 测试专用 stub ctx：Proxy 兜住所有 CanvasRenderingContext2D 方法/属性，
 // 渐变类（createLinearGradient/createRadialGradient/createPattern）返回带 addColorStop 的假对象，
@@ -18,15 +18,15 @@ function stubCtx(): CanvasRenderingContext2D {
 
 // 构造默认视图的工厂：允许按字段覆盖，方便测不同态。
 const view = (o: Partial<PvpMatchingView> = {}): PvpMatchingView =>
-  ({ mode: 'random', phase: 'queuing', remainMs: 90_000, opponent: null, link: null, copied: false, message: '', ...o });
+  ({ mode: 'random', phase: 'queuing', remainMs: 90_000, opponent: null, code: null, copied: false, message: '', ...o });
 
 describe('pvp-screen', () => {
   it('random/invite/failed 各态都能画且不抛', () => {
     const ctx = stubCtx();
     // 默认 random 排队态
     expect(() => drawPvpMatching(ctx, view())).not.toThrow();
-    // 邀请态（带分享链接，应额外画复制按钮）
-    expect(() => drawPvpMatching(ctx, view({ mode: 'invite', link: 'https://x/?versus=AB12CD' }))).not.toThrow();
+    // 邀请态（带房号，应额外画房号 + 复制按钮）
+    expect(() => drawPvpMatching(ctx, view({ mode: 'invite', phase: 'inviting', code: 'AB12CD' }))).not.toThrow();
     // 失败态（画消息 + 确认按钮）
     expect(() => drawPvpMatching(ctx, view({ phase: 'failed', message: '未匹配到对手' }))).not.toThrow();
   });
@@ -38,11 +38,23 @@ describe('pvp-screen', () => {
 
   it('invite 态复制链接命中 copy', () => {
     // 邀请态命中 COPY_RECT 应返回 'copy'
-    expect(pvpMatchingHitAt(COPY_RECT.x + 1, COPY_RECT.y + 1, view({ mode: 'invite', link: 'l' }))).toBe('copy');
+    expect(pvpMatchingHitAt(COPY_RECT.x + 1, COPY_RECT.y + 1, view({ mode: 'invite', phase: 'inviting', code: 'ROOM01' }))).toBe('copy');
   });
 
   it('failed 态确认命中 ok', () => {
     // 失败态命中 FAIL_OK_RECT 应返回 'ok'
     expect(pvpMatchingHitAt(FAIL_OK_RECT.x + 1, FAIL_OK_RECT.y + 1, view({ phase: 'failed' }))).toBe('ok');
+  });
+
+  it('versusShareLink 用 location.origin+pathname 构造深链，自适应子路径部署（/xy）', () => {
+    // 关键修复：服务端按 Origin 派生的根路径链在 /xy 部署下会丢子路径；客户端用 pathname 自适应。
+    const orig = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    Object.defineProperty(globalThis, 'location', {
+      value: { origin: 'https://peiyin.seealso.cn', pathname: '/xy/' }, configurable: true,
+    });
+    expect(versusShareLink('AB12CD')).toBe('https://peiyin.seealso.cn/xy/?versus=AB12CD');
+    // 恢复原 location（node 环境下原本可能是 undefined）。
+    if (orig) Object.defineProperty(globalThis, 'location', orig);
+    else delete (globalThis as { location?: unknown }).location;
   });
 });
