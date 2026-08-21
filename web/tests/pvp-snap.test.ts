@@ -13,7 +13,9 @@ import {
   PvpOppView,
   fxAlive,
   INTERP_DELAY_MS,
+  normalizeSnapClock,
   type PvpSnap,
+  type PvpSnapFx,
   type PvpSnapMonster,
 } from '../src/pvp-snap';
 
@@ -22,24 +24,24 @@ const mkPvp = () =>
   new Battle(1, 1, MAPS[0]!, NO_META, {}, [], [], false, undefined, 1, undefined, { enabled: true });
 
 // 把对手养成「可观察的本方侧状态」：开波出怪 + 征兵/布阵让单位、字牌上板。
-// 复用 pvp-bridge.test.ts 的 seedOpponentBoard 同款确定性输入（applyPvpInput + step）。
+// Task 5 删除了对手确定性重放入口 applyPvpInput；改调其内部等价的公开方法（summon/autoPlaceTray/placeFromTray）。
 function seedBoard(b: Battle): void {
   b.startNextWave();
   for (let i = 0; i < 4; i++) {
-    b.applyPvpInput({ op: 'summon' });
-    b.applyPvpInput({ op: 'autoplace' });
+    b.summon();
+    b.autoPlaceTray();
     for (let k = 0; k < 25; k++) b.step(1 / 30);
   }
   // 兜底：若自动布阵还没落出单位，强制征兵→把首个 unit 令牌放到首个空闲已解锁格（确定性）。
   let guard = 0;
   while (b.units.size === 0 && guard++ < 12) {
-    b.applyPvpInput({ op: 'summon' });
+    b.summon();
     for (let k = 0; k < 5; k++) b.step(1 / 30);
     const idx = b.tray.findIndex((t) => t.kind === 'unit');
     const cell = b.unlockedCells().find(
       (c) => !b.units.has(`${c.c},${c.r}`) && !b.words.has(`${c.c},${c.r}`),
     );
-    if (idx >= 0 && cell) b.applyPvpInput({ op: 'place', cell: `r${cell.r}c${cell.c}`, index: idx });
+    if (idx >= 0 && cell) b.placeFromTray(idx, cell); // placeFromTray 入参本就是内部 Cell {c,r}
     for (let k = 0; k < 5; k++) b.step(1 / 30);
   }
 }
@@ -265,5 +267,35 @@ describe('fxAlive：瞬态特效老化', () => {
     const flash = { kind: 'flash', t: 1000, id: 'pas_x', value: 0.5 } as const;
     expect(fxAlive(flash, 1000 + 699)).toBe(true);
     expect(fxAlive(flash, 1000 + 700)).toBe(false);
+  });
+});
+
+describe('normalizeSnapClock：把收到的发送端时钟快照归一化到本机时钟（Task 5）', () => {
+  // 背景：interpAt 用本机 nowMs 与 snap.t 比较、fx 按 (nowMs - fx.t) 老化。跨机时钟不可混用，
+  // 故收到快照须把 t 与各 fx.t 平移到本机时基（d = 本机接收时刻 − 发送端序列化时刻）。
+  it('t 与各 fx.t 被平移到本机时基（d = recvMs - 原 t，加到每个 fx.t）', () => {
+    const sendT = 1000; // 发送端序列化时刻
+    const recvMs = 1050; // 本机接收时刻（收发延迟 50ms）
+    const fx = { kind: 'skill', t: sendT + 10, skillKind: 'meteor', dur: 0.8, c: 1, r: 1 };
+    const s = mkSnap(sendT, [], { fx: [fx as PvpSnapFx] });
+    const out = normalizeSnapClock(s, recvMs);
+    expect(out).toBe(s); // 原地改写、返回同一引用
+    expect(s.t).toBe(recvMs); // t 直接置为本机接收时刻
+    expect(s.fx[0]!.t).toBe(sendT + 10 + (recvMs - sendT)); // fx.t += d = 1010 + 50 = 1060
+  });
+
+  it('归一化后 interpAt 用本机 nowMs 比较得正确 alpha（跨机时钟不混用）', () => {
+    // 发送端两份快照 t=1000/1100；本机延迟 50ms 收到 → 归一化后 t=1050/1150。
+    const view = new PvpOppView();
+    const s0 = mkSnap(1000, [mkMonster(1.0)]);
+    const s1 = mkSnap(1100, [mkMonster(1.1)]);
+    normalizeSnapClock(s0, 1050);
+    normalizeSnapClock(s1, 1150);
+    view.ingest(s0);
+    view.ingest(s1);
+    // 本机 nowMs=1170 → renderTime=1050；alpha=(1050-1050)/(1150-1050)=0 → 取 prev=1.0
+    expect(view.interpAt(1170).monsters[0]!.dist).toBeCloseTo(1.0, 10);
+    // 本机 nowMs=1220 → renderTime=1100；alpha=(1100-1050)/100=0.5 → 1.05
+    expect(view.interpAt(1220).monsters[0]!.dist).toBeCloseTo(1.05, 10);
   });
 });

@@ -164,6 +164,24 @@ export function fxAlive(fx: PvpSnapFx, nowMs: number): boolean {
   return nowMs - fx.t < FX_LIFE_MS[fx.kind];
 }
 
+/**
+ * 把一份刚收到的对手快照的「发送端时钟」归一化到「本机时钟」（in-place，返回同一引用）。
+ *
+ * 背景：PvpSnap.t 与各 fx.t 原是发送端（对手本机）Date.now() 戳；而接收端 PvpOppView.interpAt
+ * 用本机 Date.now() 作 nowMs 与 snap.t 比较、按 (nowMs - fx.t) 老化特效——跨机物理时钟不可混用
+ * （两端设备钟差会让插值 alpha 乱跳、特效早夭或永存）。故收到快照的瞬间，按「收发时刻差 d」
+ * 把 t 与各 fx.t 整体平移到本机时基，使插值/老化与本机 nowMs 同源、单调。
+ *
+ * 纯函数语义：原地改写入参 s（收到即归一，无需保留原始发送端戳），返回 s 便于链式调用。
+ * recvMs 取本机 Date.now()（消息到达时刻）；d 单调为正（收发总有延迟），平移后时序不变量保持。
+ */
+export function normalizeSnapClock(s: PvpSnap, recvMs: number): PvpSnap {
+  const d = recvMs - s.t; // 本机接收时刻 − 发送端序列化时刻（收发延迟估计，单调为正）
+  s.t = recvMs;
+  for (const fx of s.fx) fx.t += d; // 瞬态特效时刻同步平移，老化时基一致
+  return s;
+}
+
 // —— 插值视图：双缓冲 + 怪物 dist 插值 ——
 /**
  * 插值后的快照视图（供桥 bridgeOpponentFromSnap 消费）。
@@ -186,11 +204,28 @@ export interface PvpSnapView {
 export class PvpOppView {
   private prev: PvpSnap | null = null;
   private cur: PvpSnap | null = null;
+  private ingested = 0; // 累计被 ingest 接受的快照份数（乱序/重复丢弃的不计）；供上层探针观测「是否在收快照」
+
+  /** 已 ingest 接受的快照份数（0=尚未收到任何对手快照）。供探针/日志观测连接健康度。 */
+  get count(): number {
+    return this.ingested;
+  }
+
+  /** 是否已有至少一份快照可插值（cur 非空）。interpAt 内部对 cur 非空断言，调用前须先判此，否则空视图会抛。 */
+  get hasSnap(): boolean {
+    return this.cur !== null;
+  }
+
+  /** 当前快照(cur)的归一化时刻 t（本机时基）；无快照返回 null。供探针暴露最新快照时间。 */
+  get latestT(): number | null {
+    return this.cur ? this.cur.t : null;
+  }
 
   /** 吃入一份快照：prev=cur, cur=s。忽略乱序/重复（t 不新于 cur.t 的快照丢弃）。 */
   ingest(s: PvpSnap): void {
     // 乱序或重复：发送端时刻不比当前新 → 丢弃，避免破坏 prev/cur 的时序不变量。
     if (this.cur && s.t < this.cur.t) return;
+    this.ingested++;
     this.prev = this.cur;
     this.cur = s;
   }

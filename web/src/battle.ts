@@ -847,36 +847,11 @@ export interface MetaBonuses {
 }
 export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, atkPct: 0, frqPct: 0 };
 
-/** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充。
- *  对手侧延迟重放 tick 数（DELAY_TICKS）完全由 main.ts 承担，Battle 本身不再持有 delayTicks（M2 清理死字段）。 */
+/** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策：本方半场由真人实时操作（本地权威）、
+ *  对手半场由 WS 快照经 PvpOppView 插值后 bridgeOpponentFromSnap 重建（Model C），不再确定性重放对手动作。 */
 export interface PvpInit { enabled: boolean }
 
-/** PvP 对手动作重放的窄结构类型（applyPvpInput 入参）。
- *  仅含各 op 实际用到的字段，是 api 层 PvpAction 的子集；在此定义以避免 battle.ts → api 层的依赖与潜在循环。 */
-export type PvpInputCmd =
-  | { op: 'summon' }
-  | { op: 'autoplace' }
-  | { op: 'place'; cell: string; index?: number }
-  | { op: 'move'; from: string; to: string }
-  | { op: 'merge'; from: number; to: number }
-  | { op: 'recall'; from: string; slot: number }
-  | { op: 'shovel'; cell?: string; index?: number }
-  | { op: 'active'; id: string; cell?: string; slot?: number }
-  | { op: 'startWave' }
-  | { op: 'claimDrop'; id: string };
-
 const cellKey = (c: number, r: number) => `${c},${r}`;
-
-/**
- * 解析 PvP 协议 cell 串 `r{r}c{c}` → 内部 Cell（注意内部 cellKey 是 c,r 顺序，协议是 r,c，勿混用）。
- * 提为模块级私有函数：原内联在 applyPvpInput 每次调用都重建闭包，无必要（M4 安全清理）。
- * 非法串记 warn 并回退 {0,0}（与既有 inline 行为逐字一致，保向前兼容、不中断重放）。
- */
-function parsePvpCell(s: string): Cell {
-  const m = /^r(\d+)c(\d+)$/.exec(s);
-  if (!m) { console.warn('[pvp] 非法 cell 串', s); return { c: 0, r: 0 }; }
-  return { c: +m[2]!, r: +m[1]! };
-}
 
 export class Battle {
   peach = ECONOMY.INITIAL_PEACH;
@@ -1688,94 +1663,9 @@ export class Battle {
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
-  // —— 在线 PvP 渲染桥（Plan C Task 8）——
-  // 背景：在线 PvP 本机跑两个确定性 Battle——battle（本方实时权威）+ oppBattle（对手，同 seed、落后
-  // DELAY_TICKS 重放）。pvp 下两实例都不用自身的 ai* 侧（T7 已门控：updateAi 整段 return、spawnMonster
-  // 的 aiMonsters.push 关闭），对手半场靠把 oppBattle 的「本方侧」每帧镜像进 battle.ai*，
-  // 复用现成 drawAiSide / drawAiItemsHud 渲染到上半场。本方法就是这座桥，每帧（渲染前）由 main.ts 调用一次。
-  //
-  // 为何是 Battle 的方法：ai* 字段是 private，只有 Battle 自身方法能写自身 private；且 TS 的 private 是
-  // 「类级别」而非「实例级别」，故本方法可读参数 opp（另一 Battle 实例）的 private 本方侧字段，无需新增 getter。
-  //
-  // 映射分四类（勘定见任务书）：
-  //   A. 直引同源：同类型、无需镜像（dist/坐标无关或自动镜像）。
-  //   B. 镜像 cell：units/words/bombs/digFx 含坐标，绕棋盘中心 180°（mirrorCell）重建新容器；
-  //      drawAiSide 直接用 u.cell 不再二次镜像，故必须写镜像后的 cell；fireDir 对手帧=本方帧+π（有值才 +π）。
-  //   C. readonly Set：aiUnlocked 不能整体赋值，须 clear 后逐元素（cellKey="c,r"）解析→镜像→重建。
-  //   D. 武将激活组：aiActiveGenerals() 派生自 aiWords(已镜像)+aiMods(已桥)+aiGeneralStates；
-  //      generalStates 的键是 heroPairKey（两格的 cellKey 经排序拼接 "c,r|c,r"），按镜像后的两格重建键，
-  //      值浅拷贝；lastAiActivePairKeys（帧间"新激活检测"用）同步镜像，避免桥接首帧误判"全新激活"重置大招 CD。
-  //
-  // 直引别名安全：pvp 下没有 sim 逻辑写 battle.ai*，故与 opp 共享引用不会被 sim 改脏；每帧重桥保证最新。
-  // 本任务不做插值（lerpPos 是可选增强，后续按需）。
-  bridgeOpponentFrom(opp: Battle): void {
-    // —— A. 直接引用赋值（同类型、无需镜像）——
-    this.aiMonsters = opp.monsters; // 怪 dist 沿 aiPath 由 aiMonsterPos() 自动镜像到上半场，勿改 cell/dist
-    this.aiSkillFx = opp.playerSkillFx;
-    this.aiPalmPushFx = opp.palmPushFx;
-    this.aiPassiveFlash = opp.passiveFlash;
-    this.aiPickedItems = opp.pickedItems;
-    this.aiActiveSlots = opp.activeSlots;
-    this.aiSpawnGateT = opp.spawnGateT;
-    this.aiTangsengHP = opp.tangsengHP;
-    this.aiDefeated = opp.status === 'lost'; // 本方侧无 defeated 字段，用 status 判
-    this.aiMods = opp.mods; // 供 aiActiveGenerals 的 generalTierDelta
-
-    // —— B. 需要镜像 cell（重建新容器；drawAiSide 直接用 cell 不再二次镜像）——
-    // units: Map<string,PlacedUnit> → PlacedUnit[]；cell 镜像，fireDir 有值才 +π（对手半场整体 180°）
-    this.aiUnits = [...opp.units.values()].map((u) => ({
-      ...u,
-      cell: mirrorCell(u.cell),
-      fireDir: u.fireDir != null ? u.fireDir + Math.PI : undefined,
-    }));
-    // words: 逐条镜像 cell 与 Map 键（键不镜像会让 aiActiveGenerals 左右邻接配对失准）
-    const wm = new Map<string, PlacedWord>();
-    for (const w of opp.words.values()) {
-      const c = mirrorCell(w.cell);
-      wm.set(cellKey(c.c, c.r), { ...w, cell: c });
-    }
-    this.aiWords = wm;
-    // bombs / digFx：元素 {c,r,t}，镜像 c/r 保留 t
-    this.aiBombs = opp.bombs.map((b) => ({ ...b, ...mirrorCell({ c: b.c, r: b.r }) }));
-    this.aiDigFx = opp.digFx.map((d) => ({ ...d, ...mirrorCell({ c: d.c, r: d.r }) }));
-
-    // —— C. readonly Set：aiUnlocked 不能整体赋值，clear 后逐元素重建 ——
-    // 元素是内部 cellKey="c,r"（逗号、c,r 顺序；注意别与协议 r{r}c{c} 混）
-    this.aiUnlocked.clear();
-    for (const s of opp.unlocked) {
-      const [a, b] = s.split(',');
-      const mc = mirrorCell({ c: +a!, r: +b! });
-      this.aiUnlocked.add(cellKey(mc.c, mc.r));
-    }
-
-    // —— D. 武将激活组：aiGeneralStates（键 heroPairKey 按镜像两格重建）+ lastAiActivePairKeys（同步镜像）——
-    // generalStates 键格式：heroPairKey = 两格 cellKey 按字典序拼接 "c1,r1|c2,r2"。把每格坐标镜像后重算键。
-    const gm = new Map<string, GeneralState>();
-    for (const [key, state] of opp.generalStates) {
-      const [k1, k2] = key.split('|');
-      const [c1, r1] = k1!.split(',');
-      const [c2, r2] = k2!.split(',');
-      const m1 = mirrorCell({ c: +c1!, r: +r1! });
-      const m2 = mirrorCell({ c: +c2!, r: +r2! });
-      gm.set(Battle.heroPairKey(m1, m2), { ...state });
-    }
-    this.aiGeneralStates = gm;
-    // 帧间"新激活检测"集合：同步镜像，避免桥接首帧把既有对误判为新激活、重置大招 CD 为满
-    const lp = new Set<string>();
-    for (const key of opp.lastActivePairKeys) {
-      const [k1, k2] = key.split('|');
-      const [c1, r1] = k1!.split(',');
-      const [c2, r2] = k2!.split(',');
-      const m1 = mirrorCell({ c: +c1!, r: +r1! });
-      const m2 = mirrorCell({ c: +c2!, r: +r2! });
-      lp.add(Battle.heroPairKey(m1, m2));
-    }
-    this.lastAiActivePairKeys = lp;
-  }
-
   // —— 本方半场快照序列化（Plan C Task 4，供 WS 每 100ms 推给对手）——
   // 背景：Model C 下对手半场由对手 WS 推来的本方渲染态快照重建。本方法把本方半场的渲染态序列化为
-  // 纯 JSON（PvpSnap），字段面与上方 bridgeOpponentFrom 的消费面一一对应（镜像/老化留给桥做）。
+  // 纯 JSON（PvpSnap），字段面 = bridgeOpponentFromSnap 的消费面（镜像/老化留给桥做）。
   // 为何是 Battle 的方法：本方侧字段（monsters/units/words/…）多为 private，只有类内方法能读；
   // TS 的 private 是「类级别」，故本方法可读本实例 private。t 由调用方（main.ts 帧循环）以墙钟 ms 戳传入。
   pvpOwnSnapshot(t: number): PvpSnap {
@@ -1828,14 +1718,13 @@ export class Battle {
     return out;
   }
 
-  // —— 快照渲染桥（Plan C Task 4，bridgeOpponentFrom 的快照源版本）——
-  // 背景：对手半场由 PvpOppView.interpAt(nowMs) 的插值视图重建。镜像规则与上方 bridgeOpponentFrom
-  // 逐字一致（cell 镜像 / fireDir+π / words 键镜像 / unlocked 逐元素镜像 / heroPairKey 重排），
-  // 仅数据源从「oppBattle 本方侧直引」换成「插值视图」：
+  // —— 快照渲染桥（Plan C Task 4，bridgeOpponentFrom 的快照源版本；Task 5 删旧桥后这是唯一对手桥）——
+  // 背景：Model C 下对手半场不再由确定性重放的 oppBattle 直引，而是由对手每 100ms 经 WS 推来的
+  // 本方渲染态快照 → PvpOppView 双缓冲插值后重建。镜像规则（cell 镜像 / fireDir+π / words 键镜像 /
+  // unlocked 逐元素镜像 / heroPairKey 重排）与已删除的旧桥 bridgeOpponentFrom 逐字一致，仅数据源换成插值视图：
   //   - aiMonsters = view.monsters（dist 已双缓冲插值，其余全字段取 cur）；
   //   - 其余实体取 view.snap（cur），逐条镜像；
   //   - 瞬态特效按 nowMs 老化后重建（fxAlive）。
-  // 本方法与 bridgeOpponentFrom 并存（后者由 Task 5/6 删除），不重构旧桥。
   bridgeOpponentFromSnap(view: PvpSnapView): void {
     const { snap, monsters, nowMs } = view;
 
@@ -1933,16 +1822,6 @@ export class Battle {
       lp.add(Battle.heroPairKey(m1, m2));
     }
     this.lastAiActivePairKeys = lp;
-  }
-
-  /**
-   * PvP：桥接后用服务端权威信号覆盖「对手半场」的唐僧血/存活显示。
-   * 传入 null 表示「无权威、保留 bridgeOpponentFrom 写入的本地重放值」（判定见 pvp-battle.ts reconcileOppAlive）。
-   * 只在 pvp 桥接后调用（单人无 oppBattle/权威 digest，不会触及）。
-   */
-  applyOppAuthority(tangsengHP: number | null, defeated: boolean | null): void {
-    if (tangsengHP != null) this.aiTangsengHP = tangsengHP;
-    if (defeated != null) this.aiDefeated = defeated;
   }
 
   // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
@@ -5476,7 +5355,7 @@ export class Battle {
     const playerSpd = this.normalMonsterSpeed() * spdMul;
     const aiSpd = this.endlessMonsterBaseSpeed() * this.aiMods.monsterSpdMul * spdMul;
     this.monsters.push(makeOne(this.entranceDist + off, playerSpd, bossSpec));
-    if (!this.endless && !this.pvp) { // PvP 不往不用的 ai* 侧出怪（本方 this.monsters 照常出；对手怪来自 oppBattle 自己的 this.monsters）
+    if (!this.endless && !this.pvp) { // PvP 不往不用的 ai* 侧出怪（本方 this.monsters 照常出；对手怪来自其 WS 快照渲染桥）
       this.aiMonsters.push(makeOne(this.aiEntranceDist + off, aiSpd, bossSpec));
     }
     if (isBoss && bossEscortCount > 0) {
@@ -5619,8 +5498,8 @@ export class Battle {
   // AI 侧推进：真玩家循环（征兵节奏→共享布阵→单位/武将攻击→怪物推进/漏怪扣血/击杀产桃）
   private updateAi(dt: number): void {
     if (this.endless) return; // 无尽模式无 AI 对手
-    if (this.pvp) return; // PvP：关本地 AI 养成/决策（本方 ai* 由渲染桥从 oppBattle 覆盖、oppBattle 的 ai* 不用）；
-    // 同时跳过其中 updateAiActives 等用 performance.now() 作规划器 deadline 的非确定源，保 oppBattle 重放确定。
+    if (this.pvp) return; // PvP：关本地 AI 养成/决策（本方 ai* 由快照渲染桥覆盖、对手半场不再确定性重放）；
+    // 同时跳过其中 updateAiActives 等用 performance.now() 作规划器 deadline 的非确定源，保本方行为确定。
     const knobs = skillToKnobs(this.aiSkill);
     // 1) 征兵节奏：到点且够桃则征一次，随后共享布阵
     let aiPlacedThisFrame = false;
@@ -6795,61 +6674,6 @@ export class Battle {
     slot.ready = false;
     slot.flash = 0.6;
     return true;
-  }
-
-  // —— PvP 对手动作重放（Plan C Task 7）——
-  // 把对手转发来的命令施加到【本实例本方侧】的既有输入方法。仅用于 oppBattle（对手确定性重放实例）：
-  // 对手半场 = oppBattle 的 this.monsters/units/tangsengHP，喂对手的输入命令即忠实复现（同 seed 同序）。
-  // 本方 battle 实例（实时真人操作）不走这里。
-  //
-  // 类型：在 battle.ts 内定义窄结构类型 PvpInputCmd（仅含各 op 实际用到的字段），不依赖 api 层，
-  // 避免 battle.ts → api/pvp-client 的层间耦合与潜在循环依赖。api 层的 PvpAction 是其超集，结构兼容。
-  applyPvpInput(a: PvpInputCmd): void {
-    // 协议 cell 串解析见模块级 parsePvpCell（M4 提取；不再每次调用重建闭包）
-    switch (a.op) {
-      case 'summon':
-        this.summon();
-        break;
-      case 'autoplace':
-        this.autoPlaceTray(); // pvp 下已确定化（deadlineMs=undefined），见 autoPlaceTray
-        break;
-      case 'place':
-        this.placeFromTray(a.index ?? 0, parsePvpCell(a.cell));
-        break;
-      case 'move':
-        this.dragBoard(parsePvpCell(a.from), parsePvpCell(a.to));
-        break;
-      case 'merge':
-        this.mergeTrayTokens(a.from, a.to);
-        break;
-      case 'recall':
-        this.recallToTray(parsePvpCell(a.from), a.slot);
-        break;
-      case 'active': {
-        const slot = a.slot ?? 0;
-        if (a.cell == null) {
-          this.triggerActive(slot); // 即时全场技（掌/陨/冰/咒）
-        } else {
-          const def = activeById(a.id);
-          if (def && isBombActiveEffect(def.effect)) this.placeBomb(slot, parsePvpCell(a.cell)); // 炸药：埋雷到路径格
-          else this.applyPillActive(slot, parsePvpCell(a.cell)); // 仙丹/风火轮：拖到单体兵器/武将
-        }
-        break;
-      }
-      case 'startWave':
-        this.startNextWave(); // 一般由服务端驱动；防御性支持
-        break;
-      case 'claimDrop': {
-        // 仅移「待领碎片」，对局 sim 无关（best-effort；oppBattle 本就不领奖）
-        const i = this.pendingWeaponPickups.indexOf(a.id);
-        if (i >= 0) this.pendingWeaponPickups.splice(i, 1);
-        break;
-      }
-      default: {
-        // 未知 op：记潜在 desync 但不中断重放（保留向前兼容）
-        console.warn('[pvp] 未知动作 op', (a as PvpInputCmd).op);
-      }
-    }
   }
 
   // 紧箍咒：以最靠前妖怪为中心的大范围 AOE 爆发（复用原英雄绝招效果）。

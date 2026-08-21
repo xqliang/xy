@@ -238,9 +238,10 @@ const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
 const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
-import { PvpSync, reconcileOppAlive } from './pvp-battle';                   // PvP 对局同步记账（Task 6 的 onPvpMatched 实例化）+ 权威纠正
-import { toPvpAction } from './pvp-record';                  // 玩家输入 → PvpAction 命令映射（本方打点，Task 5）
-import { drainFixedSteps, PVP_SIM_DT, DELAY_TICKS, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 延迟重放 tick 数 + 波起始纪元→tick（Task 9）
+import { drainFixedSteps, PVP_SIM_DT, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 波起始纪元→tick（Task 9；DELAY_TICKS 延迟重放已随确定性重放拆除）
+import { PvpSocket } from './pvp-ws';                                 // PvP WS 连接层（Task 3）：连/重连/消息分发 + 上行发送
+import { PvpOppView, normalizeSnapClock } from './pvp-snap';            // 对手双缓冲插值视图 + 跨机时钟归一（Task 4/Task 5）
+import type { PvpSnap } from './pvp-snap';                             // 快照类型（onOppSnap 归一化入参类型标注）
 
 function enterCodex(tab?: CodexTab): void {
   codexLazy.ensure((m) => {
@@ -287,35 +288,47 @@ function pvpNet(loadout: import('./api/pvp-client').PvpLoadout) {
     roomJoin: (code: string) => pvpClient.versusRoomJoin(code, loadout),
   };
 }
-// 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 6）。
-// 建两个确定性 Battle 实例（本方 battle + 对手 oppBattle，同 MatchStart.seed）、建 PvpSync、
-// 扣体力、切战斗屏、起 1s tick 轮询（上报本方摘要、收对手动作/下一波/终局）。
+// 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 5，WS 快照模型）。
+// 本方 battle 本地权威实时 step；建对手插值视图 + PvpSocket（每 100ms 发本方快照、收对手快照/波次/终局）、
+// 扣体力、切战斗屏。确定性重放机器（oppBattle/PvpSync/1s tick）已拆除，单人不走此函数。
 function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpController = null;
   const map = mapById(ms.map) ?? currentMap;
   const meta = metaBonuses(merit), wb = weaponBonuses(bag);
   // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
-  // 本方 battle 用本方 meta/wb/equipped/passives（不变）。
+  // 本方 battle 用本方 meta/wb/equipped/passives（本方侧权威）。
   // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
   battle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
-  // 对手 oppBattle：用服务端下发的「对手真实 loadout」忠实重放对手动作。
-  //   ——对手 passives≠本方时，对称占位会让 oppBattle 在征兵字牌转换阶段抽出不同 tray（改字率/征兵耗/武将阶），
-  //     从首次出字起逐 tick 结构发散；equipped 对手真实值保证对手触发的主动技有对应槽可重放。
-  //   ——weapons/meta 仅影响怪血数值精度，一并传以求全保真。
-  //   ——回退：旧服务端/异常未下发 opponentLoadout 时退回本方配装（对称占位），与既往行为一致、不崩。
-  const ol = ms.opponentLoadout;
-  if (ol) {
-    oppBattle = new Battle(ms.seed, 1, map, ol.meta, ol.weapons, ol.equipped, ol.passives, false, undefined, 1, undefined, { enabled: true });
-  } else {
-    oppBattle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
-  }
   bindBattleWeaponPickup();
-  pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => Date.now() });
-  pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
-  // Task 10：记对手档案（结算屏展示）、认输标志归零；PvP 结算屏归零。
+  // 对手半场 = WS 快照插值视图（不再确定性重放）。PvpOppView 双缓冲，每收到一份对手快照 ingest 一份。
+  oppView = new PvpOppView();
+  // WS 连接：本方权威半场每 100ms 发快照；下行 oppSnap→插值视图、nextWave→开波排程、result→结算、oppGone→提示。
+  // uid 复用 user-id 的 ensureUserId（与 apiFetch 的 X-Uid 同源，不另起存储）。
+  pvpSock = new PvpSocket({
+    matchId: ms.matchId,
+    uid: ensureUserId(),
+    onWelcome: (_serverMs) => { /* 对时暂留空：快照时钟已由 normalizeSnapClock 归一化到本机时基，无需 serverMs */ },
+    onOppSnap: (s) => {
+      if (!oppView) return;
+      // 跨机时钟归一：把发送端时刻的快照平移到本机时基再 ingest（interpAt/fx 老化用本机 nowMs，跨机钟差不可混用）。
+      const snap = s as PvpSnap;
+      normalizeSnapClock(snap, Date.now());
+      oppView.ingest(snap);
+    },
+    onNextWave: (wave, startAtServerMs) => {
+      // 沿用旧 tick-response：服务端纪元 → 本地开波 tick 缓存；pvpNextWave 存原始值（兼容旧语义）。
+      const st = pvpWaveStartTick(startAtServerMs, pvpMatchStartMs);
+      pvpWaveStartTicks.set(wave, st);
+      pvpNextWave = { wave, startAtServerMs };
+    },
+    onResult: (r) => { pvpResult = r; }, // 服务端权威终局 → frame() 结算门控消费（不变）
+    onOppGone: () => { battle.message = '对手网络中断…'; }, // UI-only；真正判负由服务端 result 驱动
+  });
+  pvpSock.connect();
+  // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
+  pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
   pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
-  // Task 9 波驱动状态 reset：开局纪元 + 波号→startTick 缓存清空 + 清波上报/下降沿归零。
-  pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPendingWaveClear = null; pvpPrevWaveActive = false;
+  pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
   const sp = spendStamina(stamina);
   if (sp.ok) stamina = sp.state;
@@ -323,65 +336,20 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pausePhase = 'main';
   ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null; pendingFirstSummonTutorial = false;
   screen = 'battle';
-  startPvpTickLoop();
   scheduleFrame();
 }
 
-// PvP 1s tick 心跳：上报本方摘要（含 kills）、收对手动作/下一波/终局。pvpSync 门控，离局即停。
-function startPvpTickLoop(): void {
-  if (pvpTickTimer) { clearTimeout(pvpTickTimer); pvpTickTimer = null; }
-  const loop = () => {
-    if (!pvpSync) return;               // 已离开 PvP（结算/退出）→ 停
-    void pumpPvpTick();
-    pvpTickTimer = setTimeout(loop, 1000); // 1s 心跳（放置动作即时补发的 ~300ms 去抖留后续优化）
-  };
-  pvpTickTimer = setTimeout(loop, 1000);
-}
-function stopPvpTickLoop(): void { if (pvpTickTimer) { clearTimeout(pvpTickTimer); pvpTickTimer = null; } }
-
 /** 结束当前 PvP 对局并清理所有对局态（所有「离开 battle 屏」的路径都必须调用；幂等）。
- *  单人时这些字段本就是 null/0，调用无副作用。停在心跳最前（否则残留定时器会再 pump 一次打服务端）。 */
+ *  单人时这些字段本就是 null/0，调用无副作用。关 WS 最前（否则残留连接会继续重连/收快照）。 */
 function endPvpSession(): void {
-  stopPvpTickLoop();
-  pvpSync = null; oppBattle = null;
+  pvpSock?.close();            // 关 WS：置 closed、让挂起重连计时器失效、关底层 socket（之后永不重连）
+  pvpSock = null; oppView = null;
   pvpResult = null; pvpNextWave = null; pvpSettleResult = null; pvpOpponent = null;
-  pvpSurrendered = false;
-  pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpLastServerOkMs = 0; pvpMatchStartMs = 0;
-  pvpWaveStartTicks.clear(); pvpPendingWaveClear = null; pvpPrevWaveActive = false;
+  pvpSurrendered = false; pvpStatusReported = false;
+  pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpMatchStartMs = 0;
+  pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
 }
 
-// 单次 tick：组摘要+请求→发服务端→应用响应（对手动作入库、记联络时刻、存下一波/终局）。
-async function pumpPvpTick(): Promise<void> {
-  if (!pvpSync) return;
-  const s = battle.snapshot();
-  const digest = { wave: s.wave, power: s.towerPow, kills: s.kills, tangsengHP: s.tangsengHP, peach: s.peach, units: s.units };
-  // status：认输 > 唐僧死 > 正常（Task 10 新增 surrender；认走后服务端据此下发 lose/opponentSurrender）
-  const status: 'playing' | 'tangsengDead' | 'surrender' =
-    pvpSurrendered ? 'surrender' : (battle.status === 'lost' ? 'tangsengDead' : 'playing');
-  // 清波上报：捕获待上报快照（防 await 期间被新一轮下降沿覆盖；成功后再按同一引用清除）。
-  const wc = pvpPendingWaveClear;
-  const req = pvpSync.buildTick(digest, wc, status);
-  const r = await pvpClient.versusTick(req);
-  if (!pvpSync) return;                 // await 期间可能已离局
-  if (r.ok) {
-    pvpSync.applyResponse(r.data);
-    pvpLastServerOkMs = performance.now();
-    if (r.data.nextWave) {
-      pvpNextWave = r.data.nextWave;
-      // 缓存 波号→本地开波 tick：两端同 server 纪元→同 tick；各实例按自己 wave+1 查表在各自时钟到点开波。
-      const st = pvpWaveStartTick(r.data.nextWave.startAtServerMs, pvpMatchStartMs);
-      pvpWaveStartTicks.set(r.data.nextWave.wave, st);
-    }
-    if (r.data.result) pvpResult = r.data.result;            // Task 10 消费（服务端权威终局 → frame() 驱动结算）
-    // 断线提示：对手断线（服务端 opponentStatus=disconnected）时给一条战场提示，真正判负由服务端 DisconnectTimeout→result 驱动。
-    if (r.data.opponentStatus === 'disconnected') battle.message = '对手网络中断…';
-    // 反作弊提示：若服务端下发 cheatNotice（作弊封禁），给一条提示（UI-only，复杂封禁流程后续迭代）。
-    if (r.data.cheatNotice) battle.message = r.data.cheatNotice.msg;
-    // 仅当上报的是我们刚捕获的那份（未被新一轮清波替换）才清除，避免 await 期间新值被误清。
-    if (pvpPendingWaveClear === wc) pvpPendingWaveClear = null;
-  }
-  // 失败(r.ok===false)：Task 10 做断线判定（frame() 按 pvpLastServerOkMs>6s 提示）；本任务先忽略（下次心跳重试）
-}
 function onPvpFailed(_reason: string): void {
   // 失败态由匹配屏「确认」按钮回首页；这里仅确保重绘（needsContinuousLoop 已保持帧）
   scheduleFrame();
@@ -462,22 +430,22 @@ let pvpController: import('./pvp-match').PvpMatchController | null = null;
 let pvpMode: 'random' | 'invite' | 'join' = 'random';
 let pvpCopied = false;
 // —— PvP 对局期状态（battle 阶段，区别于匹配期 pvpController）——
-let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（Task 10 的 onPvpMatched 赋值）
-let pvpAcc = 0;                        // 固定步长累加器余量
-let oppBattle: Battle | null = null;   // 对手侧确定性重放实例（Task 7 喂动作、Task 8 渲染）
-let pvpOppSimTick = 0;                  // oppBattle 已步进到的延迟 simTick（每对局 reset；Task 7 延迟重放节拍）
-let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引；record 打点与对手延迟的统一时钟基准（每对局 reset）
-let pvpTickTimer: ReturnType<typeof setTimeout> | null = null; // 1s tick 心跳定时器
-let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 存服务端下一波（Task 9 用）
-let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 存服务端终局（Task 10 用）
-let pvpLastServerOkMs = 0;             // 最近一次 tick 成功时刻（断线检测，Task 10）
+// Model C（Plan C）：本方半场本地权威实时 step；每 100ms 经 WS 发本方快照；对手半场由 WS 快照
+// → PvpOppView 双缓冲插值 → bridgeOpponentFromSnap 渲染。pvpSock 非空即「在线对局中」的唯一哨兵。
+let pvpSock: PvpSocket | null = null;   // 非空=当前在线 PvP 对局中（WS 已连）；本方权威发快照，终局后冻结
+let pvpAcc = 0;                        // 固定步长累加器余量（本方半场 fixed-step，保留）
+let oppView: PvpOppView | null = null; // 对手半场双缓冲插值视图（WS 快照 → bridgeOpponentFromSnap）
+let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引（maybeOpenPvpWave 时钟基准；每对局 reset）
+let pvpLastSnapMs = 0;                  // 上次发本方快照的墙钟 ms（100ms 节流）
+let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 服务端下一波（WS nextWave 缓存，Task 9 用）
+let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 服务端权威终局（WS result → frame 驱动结算）
+let pvpStatusReported = false;          // 终局 status 已上报一次性标志（surrender / tangsengDead 各只经 WS 发一次）
 // —— Task 9：先清者定波次（服务端 nextWave 权威排程，本机按 tick 确定性开波）——
 let pvpMatchStartMs = 0;                        // 开局纪元（服务端 startAtServerMs）：波次纪元→tick 的零点
 const pvpWaveStartTicks = new Map<number, number>(); // 波号→该波本地开波 tick（缓存：两端各按自己 wave+1 查表）
-let pvpPendingWaveClear: { wave: number; t: number } | null = null; // 待上报的清波（本方 waveActive 下降沿，交给下次 tick 上报）
-let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波）
+let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波，立即经 WS 上报）
 // —— Task 10：PvP 终局（认输 / 服务端 result 权威结算 / 断线提示）——
-let pvpSurrendered = false;                     // 本方已点「认输」：tick status 改报 surrender，等服务端 result 驱动终局
+let pvpSurrendered = false;                     // 本方已点「认输」：经 WS 上报 surrender，等服务端 result 驱动终局
 let pvpOpponent: import('./api/pvp-client').OpponentProfile | null = null; // 当前对手档案（结算屏展示头像/昵称）
 let pvpSettleResult: PvpSettleResult | null = null; // PvP 结算屏 payload（服务端 result 一到即构造，null=未结算）
 let pvpSettleStart = 0;                         // 打开 PvP 结算屏的时间戳（虽无加减星动画，保留供可能的淡入/时间线复用）
@@ -486,9 +454,9 @@ const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
  * PvP 到点开波：某实例 b 的 wave+1 已被服务端排程且其时钟已达 startTick、且当前无活动波 → 开波（step 之前调）。
  *
- * 两实例各按自己 wave+1 查同一份「波号→startTick」缓存，在各自时钟（battle 用 localSimTick、oppBattle 用
- * pvpOppSimTick）到点开波。因 startTick 由绝对服务端纪元算得（跨机同值），两端在同一 tick 索引开波；
- * 每 tick 的「输入→开波→step」顺序两端一致 → startNextWave 消费 this.rng 的骑兵/小Boss roll 序一致（确定性）。
+ * 本方 battle 按自己 wave+1 查同一份「波号→startTick」缓存，在 localSimTick 时钟到点开波。
+ * 因 startTick 由绝对服务端纪元算得（跨机同值），两端在同一 tick 索引开波；
+ * 每 tick 的「开波→step」顺序两端一致 → startNextWave 消费 this.rng 的骑兵/小Boss roll 序一致（确定性）。
  * tick<st 早退 + startNextWave 内 waveActive 幂等 → 即使某帧追多 tick，也必恰在 tick===startTick 那一步开波。
  */
 function maybeOpenPvpWave(b: Battle, tick: number): void {
@@ -498,22 +466,6 @@ function maybeOpenPvpWave(b: Battle, tick: number): void {
   b.startNextWave();
 }
 
-/** 每个 PvP 固定子步后回调：把 oppBattle 追到延迟目标 tick，施加对手转发来的动作（延迟重放）。
- *  由 frame() 固定步长循环每子步调用（Task 4 已接）。每帧把 oppBattle 追到 `localSimTick - DELAY_TICKS`
- *  （与本方同一累加器时钟，恒落后 DELAY_TICKS），实现对手半场的延迟重放；开局前 DELAY_TICKS 步
- *  target<0，oppBattle 不步进（对手侧稍后出现，正常 warmup）。
- *  注：不再用纪元 aiSimTick()——纪元时钟在未校准两端设备钟差时会误触，累加器更稳健。 */
-function onPvpSimTick(): void {
-  if (!pvpSync || !oppBattle) return;
-  const target = localSimTick - DELAY_TICKS; // 与本方同一累加器时钟，恒落后 DELAY_TICKS；开局前 DELAY_TICKS 步 target<0，oppBattle 不步进（正常 warmup）
-  let guard = 0;
-  while (pvpOppSimTick < target && guard++ < 240) { // guard 防极端追帧卡死（240 步 = 8s @ 30Hz）
-    for (const a of pvpSync.takeReady(pvpOppSimTick)) oppBattle.applyPvpInput(a); // 到点施加对手动作（缓冲已按 t 升序）
-    maybeOpenPvpWave(oppBattle, pvpOppSimTick); // 到点开波（step 前、对手输入之后；与本方同序=输入→开波→step，保确定性）
-    oppBattle.step(PVP_SIM_DT);
-    pvpOppSimTick++;
-  }
-}
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
@@ -1004,7 +956,7 @@ function newGame() {
 }
 
 function abortBattleToMenu(): void {
-  endPvpSession(); // Task 10：统一清理 PvP 对局态（停心跳、清 pvpSync/oppBattle/pvpSettleResult 等），单人调用无副作用（幂等）
+  endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
   ui.paused = false;
   pausePhase = 'main';
   ui.passivePopup = null;
@@ -1363,7 +1315,6 @@ function visibleWeaponPickups(): string[] {
 function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
-  if (pvpSync) pvpSync.record(toPvpAction('claimDrop', { id }), localSimTick); // 成功拾取后记命令（仅命令，不记碎片结果）
   battle.pendingWeaponPickups.splice(idx, 1);
   playSfx('click');
   const r = addWeaponFragment(bag, id);
@@ -1511,13 +1462,13 @@ function handleButton(x: number, y: number): boolean {
       }
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
-        if (battle.summon()) { pendingFirstSummonTutorial = true; if (pvpSync) pvpSync.record(toPvpAction('summon', {}), localSimTick); }
-      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); if (pvpSync) pvpSync.record(toPvpAction('autoplace', {}), localSimTick); }
+        if (battle.summon()) { pendingFirstSummonTutorial = true; }
+      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); }
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
         if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
-        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: i, id: battle.activeSlots[i]?.id }), localSimTick); }
+        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); }
         else {
           ui.activePopup = i;
           ui.activePopupUntil = performance.now() + 2500;
@@ -1657,7 +1608,7 @@ function onPointerDown(e: PointerEvent) {
       ? isSettleAnimDone(performance.now() - pvpSettleStart)
       : (endlessResult || isSettleAnimDone(performance.now() - settleStart));
     if (animDone) {
-      // leaveSettleToMenu 开头会调 endPvpSession()：PvP 下清 pvpSync/pvpSettleResult 等全部对局态。
+      // leaveSettleToMenu 开头会调 endPvpSession()：PvP 下清 pvpSock/pvpSettleResult 等全部对局态。
       leaveSettleToMenu();
     } else if (!pvpSettleResult) {
       // 单人结算才允许「点击跳到终态」；PvP 无加减星动画，保持计时不动。
@@ -1667,15 +1618,16 @@ function onPointerDown(e: PointerEvent) {
   }
   // —— 局内暂停：弹窗内继续 / 终止（二次确认） / 认输（PvP 一步到位） —— //
   if (ui.paused) {
-    const hit = pausePopupHitAt(x, y, pausePhase, pvpSync ? 'match' : 'battle');
+    const hit = pausePopupHitAt(x, y, pausePhase, pvpSock ? 'match' : 'battle');
     if (hit === null) return;
     playSfx('click');
     if (hit.kind === 'continue') {
       ui.paused = false;
       pausePhase = 'main';
     } else if (hit.kind === 'surrender') {
-      // PvP 认输：标记 surrendered，关暂停，走服务端 result→结算（不直接 abortBattleToMenu，否则泄漏对局且无结算）。
+      // PvP 认输：经 WS 上报 surrender（一次性），等服务端 result 驱动结算（不直接 abortBattleToMenu，否则泄漏对局且无结算）。
       pvpSurrendered = true;
+      if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('surrender'); pvpStatusReported = true; }
       ui.paused = false;
       pausePhase = 'main';
       battle.message = '已认输，等待结算…';
@@ -1957,8 +1909,8 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       if (target) {
         const slotDef = activeById(battle.activeSlots[ui.dragActiveSlot]?.id ?? '');
         const actId = battle.activeSlots[ui.dragActiveSlot]?.id;
-        if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) }), localSimTick); }
-        else { battle.applyPillActive(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) }), localSimTick); }
+        if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); }
+        else { battle.applyPillActive(ui.dragActiveSlot, target); }
       }
     }
   } else if (ui.dragPos) {
@@ -1975,17 +1927,15 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       } else if (target) {
         // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
         battle.placeFromTray(ui.dragTrayIndex, target);
-        if (pvpSync) pvpSync.record(toPvpAction('place', { index: ui.dragTrayIndex, cell: cs(target) }), localSimTick);
         ui.selectedTrayIndex = null;
       } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
-        if (pvpSync) pvpSync.record(toPvpAction('merge', { from: ui.dragTrayIndex, to: trayTarget }), localSimTick);
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
       // 棋盘→候选区：空槽放入；槽内有武器/字牌则交换（见 Battle.recallToTray）
       if (trayTarget !== null) {
-        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); if (pvpSync) pvpSync.record(toPvpAction('recall', { from: cs(ui.dragFrom), slot: trayTarget }), localSimTick); }
+        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); }
       } else if (target) {
         if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
           // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
@@ -1995,7 +1945,6 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
           else selectBoardCell(target);
         } else {
           battle.dragBoard(ui.dragFrom, target);
-          if (pvpSync) pvpSync.record(toPvpAction('move', { from: cs(ui.dragFrom), to: cs(target) }), localSimTick);
           clearBoardSelect();
         }
       }
@@ -2140,21 +2089,25 @@ function frame(now: number): void {
     // 结算弹层 / 暂停 / 引导时冻结战斗（不 step），仍连续重绘以播动画
     if (!ui.paused && !tutorialOverlay && !isSettleOpen()) {
       try {
-        if (pvpSync && !pvpResult) {
-          // PvP：累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
+        if (pvpSock && !pvpResult) {
+          // PvP（Model C）：本方半场本地权威。累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
+          // 对手半场不在此步进——由 WS 快照每帧镜像渲染（见下方渲染桥）。
           // Task 10：服务端 result 一到即冻结本方半场（`&& !pvpResult`）——胜可能来自对手唐僧死而本方仍 playing，
           // 继续 step 会让本方唐僧也死，破坏「冻结定格」语义，所以终局后不再步进。
-          // 断线提示（UI-only）：>6s 未收到服务端确认即提示；真正判负由服务端 DisconnectTimeout→result 驱动（上方 pumpPvpTick 消费）。
-          if (performance.now() - pvpLastServerOkMs > 6000) battle.message = '网络中断，可能判负…';
           const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 8);
           pvpAcc = rest;
           for (let i = 0; i < steps; i++) {
             maybeOpenPvpWave(battle, localSimTick);              // 到点开波（step 前；本方输入即时施加在 handler，step 前已就绪）
             battle.step(PVP_SIM_DT);
-            if (pvpPrevWaveActive && !battle.waveActive) pvpPendingWaveClear = { wave: battle.wave, t: localSimTick }; // 清波下降沿：本波刚清空，记入待上报（交给下次 tick）
+            // 清波下降沿：waveActive true→false = 本波刚清空，立即经 WS 上报（fire-and-forget，无需待确认缓冲）。
+            if (pvpPrevWaveActive && !battle.waveActive) pvpSock.sendWaveCleared(battle.wave);
             pvpPrevWaveActive = battle.waveActive;
-            localSimTick++; // 完成一步，步数 +1 = 下一步 tick 索引（本方权威时钟；record 打点与对手延迟都以此为基准）
-            onPvpSimTick();
+            localSimTick++; // 完成一步，步数 +1 = 下一步 tick 索引（本方权威时钟；maybeOpenPvpWave 基准）
+            // 终局 status 上报（一次性）：本方唐僧一死立即经 WS 报 tangsengDead，等服务端 result 结算。
+            if (battle.status === 'lost' && !pvpStatusReported) {
+              pvpSock.sendStatus('tangsengDead');
+              pvpStatusReported = true;
+            }
             if (battle.status === 'won' || battle.status === 'lost') break;
           }
         } else {
@@ -2173,8 +2126,8 @@ function frame(now: number): void {
       battle.sfxEvents.length = 0;
     }
     // 胜负结算入境界 + 功德（仅一次），随后在战斗页弹出结算层。
-    // Task 10：PvP 由「服务端 result 权威」终局（下方块），单人不吃 pvpSync 分支——故这里加 `&& !pvpSync` 分流。
-    if (!endHandled && (battle.status === 'won' || battle.status === 'lost') && !pvpSync) {
+    // Task 10：PvP 由「服务端 result 权威」终局（下方块），单人不吃 pvpSock 分支——故这里加 `&& !pvpSock` 分流。
+    if (!endHandled && (battle.status === 'won' || battle.status === 'lost') && !pvpSock) {
       endHandled = true;
       pendingMerchant = true;
       recordHeroMatchGame(battle.heroMatchedIdsThisGame());
@@ -2228,10 +2181,9 @@ function frame(now: number): void {
       }
     }
     // —— Task 10：PvP 终局由「服务端 result」权威驱动 ——
-    // 与单人块互斥（单人块已加 && !pvpSync）。result 一到：停心跳（保留 pvpSync/pvpSettleResult 供冻结渲染+结算）、
-    // 构造结算 payload、不记境界/功德/商人（PvP 与境界解耦）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
-    if (pvpSync && pvpResult && !pvpSettleResult) {
-      stopPvpTickLoop();                        // 终局停心跳（保留 pvpSync/pvpSettleResult 供冻结渲染+结算，点击返回时 endPvpSession 才清）
+    // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里只构造结算 payload、
+    // 不记境界/功德/商人（PvP 与境界解耦）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
+    if (pvpSock && pvpResult && !pvpSettleResult) {
       pvpSettleResult = {
         outcome: pvpResult.outcome,
         reason: pvpResult.reason,
@@ -2243,14 +2195,20 @@ function frame(now: number): void {
       // 注：PvP 终局遥测未接 track（TelemetryType 联合未含 pvp_end，避免扩 schema）；后续如需统计再加。
     }
     setHudRank(rankName(rank.level));
-    // PvP 渲染桥（Task 8）：每帧渲染前把 oppBattle 本方侧镜像进 battle.ai*，复用 drawAiSide 画对手半场。
-    // 仅 pvpSync 非空（在线对局中）时桥一次；单人路径完全不碰，零影响。
-    if (pvpSync && oppBattle) {
-      battle.bridgeOpponentFrom(oppBattle);
-      // 权威纠正：服务端每 tick 回传对手真实 digest/status，用它兜底本地重放的发散假象
-      // （否则残余丢命令会让 oppBattle 误把对手唐僧打死→假「被吃」）。对手怪/单位仍走 oppBattle 忠实重放。
-      const rec = reconcileOppAlive(pvpSync.oppDigest, pvpSync.oppStatus);
-      battle.applyOppAuthority(rec.tangsengHP, rec.defeated);
+    // PvP 渲染桥（Model C）：每帧渲染前把对手 WS 快照（经 PvpOppView 插值）镜像进 battle.ai*，复用 drawAiSide 画对手半场。
+    // 仅 pvpSock 非空（在线对局中）且 oppView 已有至少一份快照时桥一次；单人路径完全不碰，零影响。
+    // 注：对手唐僧血/存活直接来自其快照（发送端权威，snap.status==='lost'→aiDefeated），无需旧权威纠正。
+    if (pvpSock && oppView && oppView.hasSnap) {
+      battle.bridgeOpponentFromSnap(oppView.interpAt(Date.now()));
+    }
+    // 本方快照 100ms 节流上报（每渲染帧检查、墙钟节流）：只要对局未终局（!pvpResult）就持续发，
+    // 对手端据此双缓冲插值渲染本方半场。终局(pvpResult)一到即停发（本方冻结定格）。
+    if (pvpSock && !pvpResult) {
+      const nowMs = Date.now();
+      if (nowMs - pvpLastSnapMs >= 100) {
+        pvpSock.sendSnap(battle.pvpOwnSnapshot(nowMs));
+        pvpLastSnapMs = nowMs;
+      }
     }
     draw(ctx, battle, ui);
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
@@ -2258,7 +2216,7 @@ function frame(now: number): void {
     else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
-    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase, pvpSync ? 'match' : 'battle');
+    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase, pvpSock ? 'match' : 'battle');
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
@@ -2316,18 +2274,24 @@ interface GameHook {
   buildDefense: (peach?: number) => void;
   snapshot: () => ReturnType<Battle['snapshot']>;
   curScreen: () => string;
-  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
-  // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
+  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 渲染桥。
+  // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
+  // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
   enterPvp: (seed: number) => void;
-  // 自测探针：PvP 波驱动内部状态（只读，供 headless 冒烟验证 nextWave 缓存/两实例开波确定性）。
+  // 自测探针：PvP 对局内部状态（只读，供 headless 冒烟验证快照收发/插值视图/波驱动/终局）。
   pvpProbe: () => {
-    battleWave: number; oppWave: number; battleWaveActive: boolean;
-    localSimTick: number; pvpOppSimTick: number; matchStartMs: number;
-    waveCache: [number, number][]; pendingClear: boolean;
+    active: boolean;             // pvpSock 非空=对局进行中
+    sockState: string;           // PvpSocket.state（connecting/open/reconnecting/closed）
+    snapCount: number;           // oppView 已 ingest 的快照份数（>0 表示在收对手快照）
+    oppSnapT: number | null;     // oppView 最新快照归一化时刻 t（本机时基）
+    localSimTick: number;        // 本方权威步数
+    matchStartMs: number;        // 开局纪元
+    waveStartTicks: [number, number][]; // 波号→本地开波 tick 缓存
+    result: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null; // 服务端终局
   } | null;
   // Task 10 自测探针：PvP 终局态（冒烟验证 result 驱动结算 + endPvpSession 清理）。
   pvpEndProbe: () => {
-    pvpSync: boolean;               // 非空=对局未清（心跳在跑）
+    pvpSync: boolean;               // 非空(pvpSock)=对局未清（心跳已由 WS 推送取代，字段名保留供旧探针兼容）
     pvpSettleResult: PvpSettleResult | null; // 非空=已进 PvP 结算
     pvpSurrendered: boolean;
     curScreen: string;
@@ -2378,7 +2342,7 @@ const hook: GameHook = {
     void import('./devtools').then(({ openDevTools }) => openDevTools({ onUserApplied: applyDevUserResult }));
   },
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => {
-    endPvpSession(); // Task 10：DevTools 重开前先清上一局 PvP 对局态（防泄漏 1s 心跳 + oppBattle 残留）；单人调用幂等无副作用
+    endPvpSession(); // Task 10：DevTools 重开前先清上一局 PvP 对局态（关 WS、清 pvpSock/oppView 残留），单人调用幂等无副作用
     battle = new Battle(s ?? seed, diff ?? 1, mapId ? mapById(mapId) : currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endless ?? false, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
     bindBattleWeaponPickup();
     endHandled = false;
@@ -2415,9 +2379,9 @@ const hook: GameHook = {
   },
   snapshot: () => battle.snapshot(),
   curScreen: () => screen,
-  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
-  // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
-  // 可选 opponentLoadout：冒烟验证「oppBattle 用对手真实 loadout」时传入与本方不同的 passives。
+  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 对手快照渲染桥。
+  // 注（Task 5）：对手半场现由 WS 快照重建，不在本机确定性重放；fabricated matchId 连不上真实服务端时
+  // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。opponentLoadout 参数保留但已无重放消费方（Task 6 退役）。
   enterPvp: (seed, opponentLoadout?: import('./api/pvp-client').PvpLoadout | null) => {
     const ms = {
       matchId: 'smoke-t8', seed, map: currentMap.id, startAtServerMs: Date.now() - 1000,
@@ -2427,34 +2391,21 @@ const hook: GameHook = {
     onPvpMatched(ms);
   },
   pvpProbe: () => {
-    if (!pvpSync) return null;
+    if (!pvpSock) return null;
     return {
-      battleWave: battle.wave,
-      oppWave: oppBattle?.wave ?? -1,
-      battleWaveActive: battle.waveActive,
+      active: true,
+      sockState: pvpSock.state,
+      snapCount: oppView?.count ?? 0,
+      oppSnapT: oppView?.latestT ?? null,
       localSimTick,
-      pvpOppSimTick,
       matchStartMs: pvpMatchStartMs,
-      waveCache: [...pvpWaveStartTicks.entries()],
-      pendingClear: pvpPendingWaveClear !== null,
-      // 对手 loadout 接线验证：oppBattle 的 mods 应反映对手真实被动（如 zhaoxian→wordRateBonus=0.1），
-      // 而本方 battle.mods 反映本方被动；两者不同即证明 oppBattle 用了对手 loadout 而非对称占位。
-      battleWordRateBonus: battle.mods.wordRateBonus,
-      battleSummonCostDelta: battle.mods.summonCostDelta,
-      oppWordRateBonus: oppBattle?.mods.wordRateBonus ?? null,
-      oppSummonCostDelta: oppBattle?.mods.summonCostDelta ?? null,
-      oppPassiveCount: oppBattle ? oppBattle.activeSlots.length : -1,
-      // 对手侧重放后是否真正长出东西（喂对手 summon/autoplace 后 tray 清空、units 上场）——供冒烟验证对手侧可见。
-      oppTray: oppBattle?.tray.length ?? -1,
-      oppUnits: oppBattle?.units.size ?? -1,
-      oppMonsters: oppBattle?.monsters.length ?? -1,
-      // 对手征兵是否真被重放（applyPvpInput(summon) 扣桃）：开局桃 20，喂一次对手 summon 后应下降。
-      oppPeach: oppBattle?.peach ?? null,
+      waveStartTicks: [...pvpWaveStartTicks.entries()],
+      result: pvpResult,
     };
   },
   // Task 10：PvP 终局态探针（冒烟验证 result 驱动结算 + endPvpSession 清理）。
   pvpEndProbe: () => ({
-    pvpSync: pvpSync !== null,
+    pvpSync: pvpSock !== null,
     pvpSettleResult,
     pvpSurrendered,
     curScreen: screen,
