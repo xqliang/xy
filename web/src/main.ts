@@ -2281,6 +2281,8 @@ interface GameHook {
     localSimTick: number;        // 本方权威步数
     matchStartMs: number;        // 开局纪元
     waveStartTicks: [number, number][]; // 波号→本地开波 tick 缓存
+    ownMonsters: number;         // 本方场上怪物数（>0 表示出怪口已吐怪=波次模型生效）
+    oppUnits: number;            // oppView 最新快照携带的对手场上单位数（>0 表示对手放了单位，且快照可观测）
     result: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null; // 服务端终局
   } | null;
   // Task 10 自测探针：PvP 终局态（冒烟验证 result 驱动结算 + endPvpSession 清理）。
@@ -2290,8 +2292,12 @@ interface GameHook {
     pvpSurrendered: boolean;
     curScreen: string;
   };
-  // Task 10 自测钩子：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，走服务端 result→结算）。
+  // 真服务器双端冒烟探针（Task 7）：匹配态只读快照（房号/阶段）供桥接两侧成局。
+  pvpMatchProbe: () => { code: string | null; phase: string | null } | null;
+  // Task 10 自测钩子：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，并直接经 WS 上报 surrender）。
   pvpSurrender: () => void;
+  // Task 7 自测钩子：镜像结算屏「返回」点击（anim 已毕点屏→leaveSettleToMenu），返回是否执行离场。
+  pvpLeaveSettle: () => { left: boolean; reason?: string };
   // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
   rankMerit: () => { rankLevel: number; merit: number };
 }
@@ -2394,6 +2400,8 @@ const hook: GameHook = {
       localSimTick,
       matchStartMs: pvpMatchStartMs,
       waveStartTicks: [...pvpWaveStartTicks.entries()],
+      ownMonsters: battle.monsters.length, // 真服务器冒烟：>0 证实「nextWave 宣告→本方开波出怪」链路生效（曾因首波不宣告而永不出怪）
+      oppUnits: oppView?.latestUnits ?? 0, // 真服务器冒烟：>0 证实对手放了单位且快照中继可观测
       result: pvpResult,
     };
   },
@@ -2404,14 +2412,32 @@ const hook: GameHook = {
     pvpSurrendered,
     curScreen: screen,
   }),
-  // Task 10：触发认输（镜像 pause→认输命中处理，保持与真实 UI 路径同源）。
+  // Task 7：匹配态只读快照——建房后房号存在 controller.state.code，桥接 page2 深链加入。
+  pvpMatchProbe: () => (pvpController
+    ? { code: pvpController.state.code, phase: pvpController.state.phase }
+    : null),
+  // Task 10：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，并**直接经 WS 上报 surrender**）。
+  // 注（bug 修复）：此前只置 pvpSurrendered 标志、无一处在 frame 内据此发送→经由本钩子的认输永不生效（死代码）。
+  // 现与暂停弹窗「认输」路径同源：直接 sendStatus('surrender')；sendStatus 在 socket 未开时静默丢弃，调用安全。
   pvpSurrender: () => {
     pvpSurrendered = true;
     ui.paused = false;
     pausePhase = 'main';
     battle.message = '已认输，等待结算…';
+    if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('surrender'); pvpStatusReported = true; }
   },
   // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
   rankMerit: () => ({ rankLevel: rank.level, merit: merit.merit }),
+  // Task 7 自测钩子：镜像结算屏「返回」点击（结算动画已毕时点屏→leaveSettleToMenu）。
+  // 与 main.ts 指针路径同源：isSettleOpen 且 animDone 时才生效；返回是否真的执行了离场。
+  pvpLeaveSettle: () => {
+    if (!isSettleOpen()) return { left: false, reason: 'no-settle' };
+    const animDone = pvpSettleResult
+      ? isSettleAnimDone(performance.now() - pvpSettleStart)
+      : (!!endlessResult || isSettleAnimDone(performance.now() - settleStart));
+    if (!animDone) return { left: false, reason: 'anim-not-done' };
+    leaveSettleToMenu();
+    return { left: true };
+  },
 };
 (window as unknown as { __game: GameHook }).__game = hook;

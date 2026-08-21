@@ -221,6 +221,11 @@ export class PvpOppView {
     return this.cur ? this.cur.t : null;
   }
 
+  /** 当前快照(cur)携带的本方场上单位数；无快照返回 0。供探针观测「对手是否放了单位」。 */
+  get latestUnits(): number {
+    return this.cur ? this.cur.units.length : 0;
+  }
+
   /** 吃入一份快照：prev=cur, cur=s。忽略乱序/重复（t 不新于 cur.t 的快照丢弃）。 */
   ingest(s: PvpSnap): void {
     // 乱序或重复：发送端时刻不比当前新 → 丢弃，避免破坏 prev/cur 的时序不变量。
