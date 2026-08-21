@@ -53,7 +53,7 @@
 
 **Files:** Create `web/src/pvp-record.ts`；Modify `web/src/main.ts`（输入点：summon `:1356`/autoPlaceTray `:1357`/placeFromTray `:1804`/dragBoard `:1822`/recallToTray `:1813`/mergeTrayTokens `:1807`/triggerActive `:1362`/applyPillActive+placeBomb `:1787-1788`/startNextWave `:2103`/claimWeaponPickup `:1207`）；Test `web/tests/pvp-record.test.ts`
 
-`toPvpAction(kind, payload, result?)` 纯映射（不含 t，t 由 `PvpSync.record` 补）。各输入点**操作成功后**（返回 true/确有变更）`pvpSync?.record(toPvpAction(...))`。`summon`/`autoPlaceTray` 带**结果**（抽到的字 / 落格清单）——虽双 Battle 同 seed 理论上可省，但带上更稳且供反作弊。
+`toPvpAction(kind, payload)` 纯映射（不含 t，t 由 `PvpSync.record` 补）。各输入点**操作成功后**（返回 true/确有变更）`pvpSync?.record(toPvpAction(...))`。**只记命令（op + 位置），不记结果**：`summon`→`{op:'summon'}`、`autoplace`→`{op:'autoplace'}`、`place`→`{op:'place',index,cell}` 等——因 oppBattle 同 seed 重放命令即忠实复现（依赖 T7 把 pvp autoplace 的 `performance.now` deadline 去掉、使其确定）。`PvpAction.autoplace.cells` 与 `summon.tray` 改为可选（本期不填；留作 Plan D 反作弊/健壮性）。
 
 - [ ] Step1 失败测试（映射 place/autoplace/summon）；Step2 FAIL；Step3 实现 pvp-record.ts + main.ts 各点接入；Step4 `npx vitest run tests/pvp-record.test.ts` PASS + typecheck 无新错；Step5 全量回归；Step6 commit `feat(pvp-web): 本方输入点打点为 PvpAction`。
 - 注：此时 `pvpSync` 仍为 null（T6 才赋值），故 `pvpSync?.record` 休眠，不影响单人。
@@ -82,6 +82,7 @@
   1. `updateAi(dt)` 首行加 `if (this.pvp) return;`——pvp 时整段跳过（本方 `ai*` 由渲染桥从 oppBattle 覆盖；oppBattle 的 `ai*` 不用）。同时避免本地 AI 规划器的 `performance.now()` deadline（:5346，非确定源）进入。
   2. `spawnMonster` 的对手侧 push（`this.aiMonsters.push(...)`，约 :5192/:5210）门控为 `if (!this.endless && !this.pvp)`——pvp 不往不用的 `ai*` 侧出怪（对手怪来自 oppBattle 自己的 `this.monsters`）。
   3. `checkOpponentDefeated()` 首行加 `if (this.pvp) return false;`——pvp 终局由**服务端 result** 裁决（本方 `status='lost'` 唐僧死仍本地触发并上报，但「胜」不由本地 `aiDefeated` 决定）。
+  4. `autoPlaceTray` 的 `deadlineMs`（:7088）改 `this.pvp ? undefined : performance.now() + (...)`——pvp 去掉时间预算（`performance.now` 非确定源），靠 `maxSteps`/`maxGuard`（确定性步数上界）终止 → 规划器结果确定，oppBattle 重放 `autoPlaceTray()` 精确复现（且同样消费 `this.rng`，保持与对手机 rng 同步）。
 - **`battle.ts applyPvpInput(a)`**：把 `PvpAction` 映射到**本实例本方侧**的既有输入方法：`summon→this.summon()`、`place→this.placeFromTray(index,cell)`、`move→this.dragBoard(from,to)`、`merge→this.mergeTrayTokens`、`recall→this.recallToTray`、`shovel→this.useShovelOn`、`active→this.triggerActive/applyPillActive/placeBomb`、`autoplace→this.autoPlaceTray()`（或逐格 place 落格清单）、`startWave→this.startNextWave()`、`claimDrop→this.claimWeaponPickup`。用于把对手动作施加到 `oppBattle`（其本方侧=对手）。**严格按 t 升序调用**。
 - **main.ts `onPvpSimTick`**（每本方固定子步后）：推进 oppBattle 的延迟时钟——当 `battle` 已步进到 simTick T，oppBattle 应步进到 `T-DELAY_TICKS`；即维护 `oppBattle` 的步数落后 DELAY_TICKS。用 `pvpSync.aiSimTick()` 作目标：`while (oppSimTick < pvpSync.aiSimTick()) { for (const a of pvpSync.takeReady(oppSimTick)) oppBattle.applyPvpInput(a); oppBattle.step(PVP_SIM_DT); oppSimTick++; }`。（takeReady 已按 t 升序。）
 
