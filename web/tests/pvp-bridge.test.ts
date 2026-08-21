@@ -99,4 +99,67 @@ describe('bridgeOpponentFrom：oppBattle 本方侧 → battle.ai* 镜像（Plan 
     expect(b.aiWords.size).toBe(0);
     expect(b.aiMonsters.length).toBe(0);
   });
+
+  it('generalStates 键镜像必须重排（防朴素字符串替换的字典序翻转回归）', () => {
+    // 选一对「镜像后两格字典序会翻转」的格子：
+    //   本方 a={c:1,r:5}、b={c:6,r:8} → 原键 heroPairKey(a,b) = "1,5|6,8"（1,5 < 6,8）
+    //   mirrorCell 后 ma={c:6,r:4}、mb={c:1,r:1}
+    //   朴素字符串替换会把每格就地镜像 → 错键 "6,4|1,1"（未重排）
+    //   正确重排 heroPairKey(ma,mb) = "1,1|6,4"（1,1 < 6,4）
+    const battle = mkPvp();
+    const opp = mkPvp();
+    const a = { c: 1, r: 5 };
+    const b = { c: 6, r: 8 };
+    const SRC_KEY = '1,5|6,8'; // heroPairKey(a,b) 的手写等价（a,b 已有序）
+    const RIGHT_KEY = '1,1|6,4'; // mirrorCell 后重排的正确键
+    const WRONG_KEY = '6,4|1,1'; // 朴素逐格镜像、不重排的错键
+
+    // 直接往 opp 的 private 字段塞可辨识状态（as any；仅测试用）
+    const srcState = { level: 3, exp: 42, cooldown: 1.5, skillCd: 0, firePulse: 0.2, skillFlash: 0 };
+    (opp as any).generalStates.set(SRC_KEY, srcState);
+    (opp as any).lastActivePairKeys.add(SRC_KEY);
+
+    battle.bridgeOpponentFrom(opp);
+
+    const aiStates = (battle as any).aiGeneralStates as Map<string, { level: number; exp: number }>;
+    const aiPairs = (battle as any).lastAiActivePairKeys as Set<string>;
+
+    // ① 正确重排键存在、朴素替换的错键不存在（这就是要锁死的核心）
+    expect(aiStates.has(RIGHT_KEY)).toBe(true);
+    expect(aiStates.has(WRONG_KEY)).toBe(false);
+    // ② 值是浅拷贝迁移（可辨识字段不丢），证明不是丢了而是正确搬过来
+    expect(aiStates.get(RIGHT_KEY)?.level).toBe(3);
+    expect(aiStates.get(RIGHT_KEY)?.exp).toBe(42);
+    // ③ 「上一帧激活集」也被镜像到正确重排键（避免桥接首帧误判新激活、重置大招 CD 为满）
+    expect(aiPairs.has(RIGHT_KEY)).toBe(true);
+    expect(aiPairs.has(WRONG_KEY)).toBe(false);
+  });
+
+  // 顺手轻断言：aiUnlocked 对会翻转的解锁格镜像正确（元音逗号 cellKey 解析→镜像→重建）
+  it('aiUnlocked 逐元素镜像（翻转格也不丢）', () => {
+    const battle = mkPvp();
+    const opp = mkPvp();
+    // opp 解锁一个镜像后会翻转字典序的格无关（单格无翻转），这里只证"解析逗号 cellKey→镜像→重建"链路
+    (opp as any).unlocked.add('2,7'); // cellKey → mirrorCell({c:2,r:7}) = {c:5,r:2} → "5,2"
+    battle.bridgeOpponentFrom(opp);
+    const aiUnlocked = (battle as any).aiUnlocked as Set<string>;
+    expect(aiUnlocked.has('5,2')).toBe(true);
+    expect(aiUnlocked.has('2,7')).toBe(false); // 未误留原键
+  });
+
+  // 顺手轻断言：aiUnits.fireDir 有值 = 源+π、源 undefined 保留 undefined（对手半场整体 180°）
+  it('aiUnits.fireDir 有值 +π、undefined 保留', () => {
+    const battle = mkPvp();
+    const opp = mkPvp();
+    const cell = { c: 2, r: 6 };
+    const uWith = { type: 'archer', tier: 1, cell, cooldown: 0, firePulse: 0, combo: 0, stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0, knockdownT: 0, stunImmuneT: 0, slowImmuneT: 0, weakenImmuneT: 0, rangeCutImmuneT: 0, knockdownImmuneT: 0, fireDir: 0.3 };
+    const uWithout = { ...uWith, fireDir: undefined, cell: { c: 3, r: 6 } };
+    (opp as any).units.set('2,6', uWith);
+    (opp as any).units.set('3,6', uWithout);
+    battle.bridgeOpponentFrom(opp);
+    const withDir = battle.aiUnits.find((u) => u.cell.c === mirrorCell(cell).c)!;
+    const withoutDir = battle.aiUnits.find((u) => u.cell.c === mirrorCell({ c: 3, r: 6 }).c)!;
+    expect(withDir.fireDir).toBeCloseTo(0.3 + Math.PI, 10);
+    expect(withoutDir.fireDir).toBeUndefined();
+  });
 });
