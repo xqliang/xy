@@ -1685,6 +1685,91 @@ export class Battle {
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
+  // —— 在线 PvP 渲染桥（Plan C Task 8）——
+  // 背景：在线 PvP 本机跑两个确定性 Battle——battle（本方实时权威）+ oppBattle（对手，同 seed、落后
+  // DELAY_TICKS 重放）。pvp 下两实例都不用自身的 ai* 侧（T7 已门控：updateAi 整段 return、spawnMonster
+  // 的 aiMonsters.push 关闭），对手半场靠把 oppBattle 的「本方侧」每帧镜像进 battle.ai*，
+  // 复用现成 drawAiSide / drawAiItemsHud 渲染到上半场。本方法就是这座桥，每帧（渲染前）由 main.ts 调用一次。
+  //
+  // 为何是 Battle 的方法：ai* 字段是 private，只有 Battle 自身方法能写自身 private；且 TS 的 private 是
+  // 「类级别」而非「实例级别」，故本方法可读参数 opp（另一 Battle 实例）的 private 本方侧字段，无需新增 getter。
+  //
+  // 映射分四类（勘定见任务书）：
+  //   A. 直引同源：同类型、无需镜像（dist/坐标无关或自动镜像）。
+  //   B. 镜像 cell：units/words/bombs/digFx 含坐标，绕棋盘中心 180°（mirrorCell）重建新容器；
+  //      drawAiSide 直接用 u.cell 不再二次镜像，故必须写镜像后的 cell；fireDir 对手帧=本方帧+π（有值才 +π）。
+  //   C. readonly Set：aiUnlocked 不能整体赋值，须 clear 后逐元素（cellKey="c,r"）解析→镜像→重建。
+  //   D. 武将激活组：aiActiveGenerals() 派生自 aiWords(已镜像)+aiMods(已桥)+aiGeneralStates；
+  //      generalStates 的键是 heroPairKey（两格的 cellKey 经排序拼接 "c,r|c,r"），按镜像后的两格重建键，
+  //      值浅拷贝；lastAiActivePairKeys（帧间"新激活检测"用）同步镜像，避免桥接首帧误判"全新激活"重置大招 CD。
+  //
+  // 直引别名安全：pvp 下没有 sim 逻辑写 battle.ai*，故与 opp 共享引用不会被 sim 改脏；每帧重桥保证最新。
+  // 本任务不做插值（lerpPos 是可选增强，后续按需）。
+  bridgeOpponentFrom(opp: Battle): void {
+    // —— A. 直接引用赋值（同类型、无需镜像）——
+    this.aiMonsters = opp.monsters; // 怪 dist 沿 aiPath 由 aiMonsterPos() 自动镜像到上半场，勿改 cell/dist
+    this.aiSkillFx = opp.playerSkillFx;
+    this.aiPalmPushFx = opp.palmPushFx;
+    this.aiPassiveFlash = opp.passiveFlash;
+    this.aiPickedItems = opp.pickedItems;
+    this.aiActiveSlots = opp.activeSlots;
+    this.aiSpawnGateT = opp.spawnGateT;
+    this.aiTangsengHP = opp.tangsengHP;
+    this.aiDefeated = opp.status === 'lost'; // 本方侧无 defeated 字段，用 status 判
+    this.aiMods = opp.mods; // 供 aiActiveGenerals 的 generalTierDelta
+
+    // —— B. 需要镜像 cell（重建新容器；drawAiSide 直接用 cell 不再二次镜像）——
+    // units: Map<string,PlacedUnit> → PlacedUnit[]；cell 镜像，fireDir 有值才 +π（对手半场整体 180°）
+    this.aiUnits = [...opp.units.values()].map((u) => ({
+      ...u,
+      cell: mirrorCell(u.cell),
+      fireDir: u.fireDir != null ? u.fireDir + Math.PI : undefined,
+    }));
+    // words: 逐条镜像 cell 与 Map 键（键不镜像会让 aiActiveGenerals 左右邻接配对失准）
+    const wm = new Map<string, PlacedWord>();
+    for (const w of opp.words.values()) {
+      const c = mirrorCell(w.cell);
+      wm.set(cellKey(c.c, c.r), { ...w, cell: c });
+    }
+    this.aiWords = wm;
+    // bombs / digFx：元素 {c,r,t}，镜像 c/r 保留 t
+    this.aiBombs = opp.bombs.map((b) => ({ ...b, ...mirrorCell({ c: b.c, r: b.r }) }));
+    this.aiDigFx = opp.digFx.map((d) => ({ ...d, ...mirrorCell({ c: d.c, r: d.r }) }));
+
+    // —— C. readonly Set：aiUnlocked 不能整体赋值，clear 后逐元素重建 ——
+    // 元素是内部 cellKey="c,r"（逗号、c,r 顺序；注意别与协议 r{r}c{c} 混）
+    this.aiUnlocked.clear();
+    for (const s of opp.unlocked) {
+      const [a, b] = s.split(',');
+      const mc = mirrorCell({ c: +a!, r: +b! });
+      this.aiUnlocked.add(cellKey(mc.c, mc.r));
+    }
+
+    // —— D. 武将激活组：aiGeneralStates（键 heroPairKey 按镜像两格重建）+ lastAiActivePairKeys（同步镜像）——
+    // generalStates 键格式：heroPairKey = 两格 cellKey 按字典序拼接 "c1,r1|c2,r2"。把每格坐标镜像后重算键。
+    const gm = new Map<string, GeneralState>();
+    for (const [key, state] of opp.generalStates) {
+      const [k1, k2] = key.split('|');
+      const [c1, r1] = k1!.split(',');
+      const [c2, r2] = k2!.split(',');
+      const m1 = mirrorCell({ c: +c1!, r: +r1! });
+      const m2 = mirrorCell({ c: +c2!, r: +r2! });
+      gm.set(Battle.heroPairKey(m1, m2), { ...state });
+    }
+    this.aiGeneralStates = gm;
+    // 帧间"新激活检测"集合：同步镜像，避免桥接首帧把既有对误判为新激活、重置大招 CD 为满
+    const lp = new Set<string>();
+    for (const key of opp.lastActivePairKeys) {
+      const [k1, k2] = key.split('|');
+      const [c1, r1] = k1!.split(',');
+      const [c2, r2] = k2!.split(',');
+      const m1 = mirrorCell({ c: +c1!, r: +r1! });
+      const m2 = mirrorCell({ c: +c2!, r: +r2! });
+      lp.add(Battle.heroPairKey(m1, m2));
+    }
+    this.lastAiActivePairKeys = lp;
+  }
+
   // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
   devForceWave: number = 0; // 0 = 关闭；非 0 = 该波征兵必出
   devForceHeroId: string = ''; // 武将 id（如 'erlang'），空 = 关闭

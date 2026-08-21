@@ -2129,6 +2129,9 @@ function frame(now: number): void {
       }
     }
     setHudRank(rankName(rank.level));
+    // PvP 渲染桥（Task 8）：每帧渲染前把 oppBattle 本方侧镜像进 battle.ai*，复用 drawAiSide 画对手半场。
+    // 仅 pvpSync 非空（在线对局中）时桥一次；单人路径完全不碰，零影响。
+    if (pvpSync && oppBattle) battle.bridgeOpponentFrom(oppBattle);
     draw(ctx, battle, ui);
     if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
     else if (settleChange) drawSettle(ctx, settleChange, now - settleStart);
@@ -2191,6 +2194,9 @@ interface GameHook {
   buildDefense: (peach?: number) => void;
   snapshot: () => ReturnType<Battle['snapshot']>;
   curScreen: () => string;
+  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
+  // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
+  enterPvp: (seed: number) => void;
 }
 const hook: GameHook = {
   get battle() {
@@ -2269,5 +2275,14 @@ const hook: GameHook = {
   },
   snapshot: () => battle.snapshot(),
   curScreen: () => screen,
+  // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
+  // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
+  enterPvp: (seed) => {
+    const ms = {
+      matchId: 'smoke-t8', seed, map: currentMap.id, startAtServerMs: Date.now() - 1000,
+      opponent: { uid: 'opp-smoke', nickname: '烟雾对手', avatarId: 'hero-wukong', rankLevel: 1 },
+    } as import('./api/pvp-client').MatchStart;
+    onPvpMatched(ms);
+  },
 };
 (window as unknown as { __game: GameHook }).__game = hook;
