@@ -105,7 +105,7 @@ export function exportChangedConfig(): Record<string, Record<string, { from: unk
 /** 出怪：血量 / 波次数量 / 移速危险 */
 export const TUNING_MONSTER_WAVE_KEYS = new Set([
   'monsterSpd', 'dangerRemaining',
-  'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMul',
+  'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMulByCycle',
   'lateWaveFrom', 'lateWaveExtraPerWave', 'earlyWaveTo', 'earlyWaveReduce',
   'wave1Bonus', 'minWaveMonsters', 'spawnInterval', 'spawnIntervalMin',
   'endlessWavesPerCycle', 'endlessCycleStep',

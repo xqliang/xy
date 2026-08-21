@@ -110,8 +110,9 @@ export const TUNING = {
   monsterHpNoDiffTo: 3, // 波 1–3 用 monsterHpEarlyFixed；其后朝目标血量爬坡
   /** 前 monsterHpNoDiffTo 波绝对血量（不含境界）；爬坡起点取最后一档 */
   monsterHpEarlyFixed: [20, 40, 65],
-  // 爬坡每波上限 = monsterHpStep × monsterHpRampMul + (wave − rampFrom)；rampFrom = NoDiffTo+1
-  monsterHpRampMul: 2,
+  // 爬坡每波上限 = monsterHpStep × rampMulByCycle[cycle] + (wave − rampFrom)
+  // cycle = floor((wave−1)/10)；按圈递增，抵消每圈 DPS ×1.2 增长
+  monsterHpRampMulByCycle: [2, 4, 7, 10, 14],
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
   bossFirstSegLo: 5, // 首段候选波下界
   bossFirstSegHi: 10, // 首段候选波上界（亦为段长锚点）
@@ -4927,9 +4928,11 @@ export class Battle {
     return TUNING.monsterHpNoDiffTo + 1;
   }
 
-  /** 第 wave 波爬坡上限增量：monsterHpStep×mul + (wave − 起始波) */
+  /** 第 wave 波爬坡上限增量：monsterHpStep×rampMul(cycle) + (wave − 起始波) */
   private monsterHpRampMaxStep(wave: number): number {
-    return TUNING.monsterHpStep * TUNING.monsterHpRampMul + (wave - this.monsterHpRampFromWave());
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const mul = TUNING.monsterHpRampMulByCycle[Math.min(cycle, TUNING.monsterHpRampMulByCycle.length - 1)]!;
+    return TUNING.monsterHpStep * mul + (wave - this.monsterHpRampFromWave());
   }
 
   /**

@@ -64,7 +64,7 @@ export const PARAM_ZH: Record<string, string> = {
   monsterHpStep: '怪物血量每波递增',
   monsterHpEarlyFixed: '前几波固定血量表',
   monsterHpNoDiffTo: '小怪HP固定公式截止波',
-  monsterHpRampMul: '小怪HP爬坡step倍数',
+  monsterHpRampMulByCycle: '小怪HP爬坡倍数(按圈递增)',
   bossFirstSegLo: '首段妖王波下界',
   bossFirstSegHi: '首段妖王波上界',
   bossFirstSegMin: '首段妖王波最少',
