@@ -238,6 +238,8 @@ const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
 const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
+import type { PvpSync } from './pvp-battle';                 // PvP 对局同步记账类型（Task 10 的 onPvpMatched 实例化）
+import { drainFixedSteps, PVP_SIM_DT } from './pvp-fixedstep'; // PvP 固定步长累加器（对局期 frame() 用）
 
 function enterCodex(tab?: CodexTab): void {
   codexLazy.ensure((m) => {
@@ -360,6 +362,11 @@ let menuToast = '';
 let pvpController: import('./pvp-match').PvpMatchController | null = null;
 let pvpMode: 'random' | 'invite' | 'join' = 'random';
 let pvpCopied = false;
+// —— PvP 对局期状态（battle 阶段，区别于匹配期 pvpController）——
+let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（Task 10 的 onPvpMatched 赋值）
+let pvpAcc = 0;                        // 固定步长累加器余量
+/** 每个 PvP 固定子步后回调：施加对手动作 / 触发 tick 上报节流。Task 10 填实现。 */
+function onPvpSimTick(): void { /* Plan C Task 10 填：takeReady 应用对手动作 + tick 节流 */ }
 // 首页按钮按下态：down 时显示压下视觉，up 且仍在同一按钮上才触发点击
 let menuDownId: string | null = null;
 let menuPressedId: string | null = null; // 手指仍压在原按钮上时 = menuDownId，滑出则 null
@@ -1964,7 +1971,18 @@ function frame(now: number): void {
     // 结算弹层 / 暂停 / 引导时冻结战斗（不 step），仍连续重绘以播动画
     if (!ui.paused && !tutorialOverlay && !isSettleOpen()) {
       try {
-        battle.step(dt);
+        if (pvpSync) {
+          // PvP：累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）
+          const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 8);
+          pvpAcc = rest;
+          for (let i = 0; i < steps; i++) {
+            battle.step(PVP_SIM_DT);
+            onPvpSimTick();
+            if (battle.status === 'won' || battle.status === 'lost') break;
+          }
+        } else {
+          battle.step(dt);
+        }
       } catch (err) {
         console.error('[battle.step]', err);
         battle.message = '战斗逻辑异常，已跳过本帧（请刷新页面）';
