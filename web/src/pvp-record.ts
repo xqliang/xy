@@ -2,7 +2,7 @@
 // 对手同 seed 重放命令即忠实复现，故不记结果（具体伤害/击杀等由各自 Battle 决定）。
 import type { PvpAction } from './api/pvp-client';
 
-type Kind = PvpAction['op'];
+type Kind = Exclude<PvpAction['op'], 'shovel'>; // 排除 shovel：洛阳铲拖拽在 main.ts 记为 place{index,cell}，从不产生 shovel 命令（M3 死代码清理）
 type Cmd = Omit<PvpAction, 't'>;
 
 /**
@@ -23,7 +23,7 @@ export function toPvpAction(kind: Kind, p: Record<string, unknown>): Cmd {
     case 'move': return { op: 'move', from: p.from as string, to: p.to as string } as Cmd;
     case 'merge': return { op: 'merge', from: p.from as number, to: p.to as number } as Cmd;
     case 'recall': return { op: 'recall', from: p.from as string, slot: p.slot as number } as Cmd;
-    case 'shovel': return { op: 'shovel', cell: p.cell as string } as Cmd;
+    // shovel：洛阳铲拖拽在 main.ts 记为 place{index,cell}（带真实 index），从不产生 shovel 命令——映射已删（M3 死代码清理）
     case 'active': return { op: 'active', slot: p.slot as number, id: p.id as string, ...(p.cell ? { cell: p.cell as string } : {}) } as Cmd;
     case 'claimDrop': return { op: 'claimDrop', id: p.id as string } as Cmd;
   }

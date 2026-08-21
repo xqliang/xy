@@ -293,12 +293,12 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
   // 对手 loadout 暂用对称占位（MatchStart 未下发对手配装，DONE_WITH_CONCERNS）——aiWeaponBonuses 亦对称占位。
   // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
-  const mk = () => new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true, delayTicks: DELAY_TICKS });
+  const mk = () => new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
   battle = mk();
   oppBattle = mk(); // 对手侧确定性重放实例（Task 7 喂对手动作、Task 8 渲染到对手半场）
   bindBattleWeaponPickup();
-  pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => performance.now() });
-  pvpAcc = 0; pvpOppSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
+  pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => Date.now() });
+  pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
   const sp = spendStamina(stamina);
   if (sp.ok) stamina = sp.state;
@@ -418,6 +418,7 @@ let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（T
 let pvpAcc = 0;                        // 固定步长累加器余量
 let oppBattle: Battle | null = null;   // 对手侧确定性重放实例（Task 7 喂动作、Task 8 渲染）
 let pvpOppSimTick = 0;                  // oppBattle 已步进到的延迟 simTick（每对局 reset；Task 7 延迟重放节拍）
+let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引；record 打点与对手延迟的统一时钟基准（每对局 reset）
 let pvpTickTimer: ReturnType<typeof setTimeout> | null = null; // 1s tick 心跳定时器
 let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 存服务端下一波（Task 9 用）
 let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 存服务端终局（Task 10 用）
@@ -425,11 +426,13 @@ let pvpLastServerOkMs = 0;             // 最近一次 tick 成功时刻（断�
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /** 每个 PvP 固定子步后回调：把 oppBattle 追到延迟目标 tick，施加对手转发来的动作（延迟重放）。
- *  由 frame() 固定步长循环每子步调用（Task 4 已接）。每帧把 oppBattle 追到 aiSimTick（落后本方 DELAY_TICKS），
- *  实现对手半场的延迟重放；开局前 DELAY_TICKS 帧 aiSimTick=0，oppBattle 不步进（对手侧稍后出现，正常）。 */
+ *  由 frame() 固定步长循环每子步调用（Task 4 已接）。每帧把 oppBattle 追到 `localSimTick - DELAY_TICKS`
+ *  （与本方同一累加器时钟，恒落后 DELAY_TICKS），实现对手半场的延迟重放；开局前 DELAY_TICKS 步
+ *  target<0，oppBattle 不步进（对手侧稍后出现，正常 warmup）。
+ *  注：不再用纪元 aiSimTick()——纪元时钟在未校准两端设备钟差时会误触，累加器更稳健。 */
 function onPvpSimTick(): void {
   if (!pvpSync || !oppBattle) return;
-  const target = pvpSync.aiSimTick();          // = simTick - DELAY_TICKS（对手侧延迟目标 tick）
+  const target = localSimTick - DELAY_TICKS; // 与本方同一累加器时钟，恒落后 DELAY_TICKS；开局前 DELAY_TICKS 步 target<0，oppBattle 不步进（正常 warmup）
   let guard = 0;
   while (pvpOppSimTick < target && guard++ < 240) { // guard 防极端追帧卡死（240 步 = 8s @ 30Hz）
     for (const a of pvpSync.takeReady(pvpOppSimTick)) oppBattle.applyPvpInput(a); // 到点施加对手动作（缓冲已按 t 升序）
@@ -1284,7 +1287,7 @@ function visibleWeaponPickups(): string[] {
 function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
-  if (pvpSync) pvpSync.record(toPvpAction('claimDrop', { id })); // 成功拾取后记命令（仅命令，不记碎片结果）
+  if (pvpSync) pvpSync.record(toPvpAction('claimDrop', { id }), localSimTick); // 成功拾取后记命令（仅命令，不记碎片结果）
   battle.pendingWeaponPickups.splice(idx, 1);
   playSfx('click');
   const r = addWeaponFragment(bag, id);
@@ -1431,13 +1434,13 @@ function handleButton(x: number, y: number): boolean {
       }
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
-        if (battle.summon()) { pendingFirstSummonTutorial = true; if (pvpSync) pvpSync.record(toPvpAction('summon', {})); }
-      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); if (pvpSync) pvpSync.record(toPvpAction('autoplace', {})); }
+        if (battle.summon()) { pendingFirstSummonTutorial = true; if (pvpSync) pvpSync.record(toPvpAction('summon', {}), localSimTick); }
+      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); if (pvpSync) pvpSync.record(toPvpAction('autoplace', {}), localSimTick); }
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
         if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
-        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: i, id: battle.activeSlots[i]?.id })); }
+        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: i, id: battle.activeSlots[i]?.id }), localSimTick); }
         else {
           ui.activePopup = i;
           ui.activePopupUntil = performance.now() + 2500;
@@ -1863,8 +1866,8 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       if (target) {
         const slotDef = activeById(battle.activeSlots[ui.dragActiveSlot]?.id ?? '');
         const actId = battle.activeSlots[ui.dragActiveSlot]?.id;
-        if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) })); }
-        else { battle.applyPillActive(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) })); }
+        if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) }), localSimTick); }
+        else { battle.applyPillActive(ui.dragActiveSlot, target); if (pvpSync) pvpSync.record(toPvpAction('active', { slot: ui.dragActiveSlot, id: actId, cell: cs(target) }), localSimTick); }
       }
     }
   } else if (ui.dragPos) {
@@ -1881,17 +1884,17 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       } else if (target) {
         // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
         battle.placeFromTray(ui.dragTrayIndex, target);
-        if (pvpSync) pvpSync.record(toPvpAction('place', { index: ui.dragTrayIndex, cell: cs(target) }));
+        if (pvpSync) pvpSync.record(toPvpAction('place', { index: ui.dragTrayIndex, cell: cs(target) }), localSimTick);
         ui.selectedTrayIndex = null;
       } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
-        if (pvpSync) pvpSync.record(toPvpAction('merge', { from: ui.dragTrayIndex, to: trayTarget }));
+        if (pvpSync) pvpSync.record(toPvpAction('merge', { from: ui.dragTrayIndex, to: trayTarget }), localSimTick);
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
       // 棋盘→候选区：空槽放入；槽内有武器/字牌则交换（见 Battle.recallToTray）
       if (trayTarget !== null) {
-        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); if (pvpSync) pvpSync.record(toPvpAction('recall', { from: cs(ui.dragFrom), slot: trayTarget })); }
+        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); if (pvpSync) pvpSync.record(toPvpAction('recall', { from: cs(ui.dragFrom), slot: trayTarget }), localSimTick); }
       } else if (target) {
         if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
           // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
@@ -1901,7 +1904,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
           else selectBoardCell(target);
         } else {
           battle.dragBoard(ui.dragFrom, target);
-          if (pvpSync) pvpSync.record(toPvpAction('move', { from: cs(ui.dragFrom), to: cs(target) }));
+          if (pvpSync) pvpSync.record(toPvpAction('move', { from: cs(ui.dragFrom), to: cs(target) }), localSimTick);
           clearBoardSelect();
         }
       }
@@ -2052,6 +2055,7 @@ function frame(now: number): void {
           pvpAcc = rest;
           for (let i = 0; i < steps; i++) {
             battle.step(PVP_SIM_DT);
+            localSimTick++; // 完成一步，步数 +1 = 下一步 tick 索引（本方权威时钟；record 打点与对手延迟都以此为基准）
             onPvpSimTick();
             if (battle.status === 'won' || battle.status === 'lost') break;
           }

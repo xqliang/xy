@@ -28,10 +28,20 @@ export class PvpSync {
   private serverNow(): number { return this.now() + this.offset; }
   /** 本地权威半场当前 simTick（乘 TICKS_PER_SEC 取整，边界处精确为 30 而非浮点少 1） */
   simTick(): number { return Math.max(0, Math.floor((this.serverNow() - this.startAt) * TICKS_PER_SEC / 1000)); }
-  /** 对手侧延迟重放 tick（落后 delayTicks） */
+  /** 对手侧延迟重放 tick（落后 delayTicks）。
+   *  注：对手侧延迟重放的实时钟现由 main.ts 的 `localSimTick - DELAY_TICKS` 累加器驱动（纪元 aiSimTick
+   *  在未校准两端设备钟差时会误触，累加器更稳健）。本方法作为纪元时钟助手保留，留待 Task 9 服务端波次时间对齐。 */
   aiSimTick(): number { return Math.max(0, this.simTick() - this.delayTicks); }
-  /** 本方打点：补 t=当前 simTick，入出站缓冲 */
-  record(a: Omit<PvpAction, 't'>): void { this.outbound.push({ ...(a as object), t: this.simTick() } as PvpAction); }
+  /**
+   * 本方打点：把一条命令盖时间戳 t 后入出站缓冲。
+   * @param a 命令体（不含 t）
+   * @param t 命令生效 tick。**由调用方显式传入 = 本方已完成的固定步数 localSimTick**（= 下一步要跑的 tick 索引），
+   *   不再用墙钟 simTick()。原因：JS 单线程下事件处理器绝不打断 frame() 的同步 step 循环，玩家按键总是发生在
+   *   两帧之间（= 上一步之后、下一步之前），故「即时施加」本就等价于「在下一步之前施加」；盖 localSimTick 后，
+   *   本方「即时施加 + 盖 localSimTick」精确等价于对手「takeReady 在 step_localSimTick 之前施加」——保证跨机 rng
+   *   消费相对 step 的顺序一致，避免逐 tick 发散（I1）。
+   */
+  record(a: Omit<PvpAction, 't'>, t: number): void { this.outbound.push({ ...(a as object), t } as PvpAction); }
   /** 取走并清空出站缓冲（组 tick 用） */
   drainOutbound(): PvpAction[] { const o = this.outbound; this.outbound = []; return o; }
   /** 收入对手动作，按 t 稳定归并有序 */

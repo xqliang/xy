@@ -9,11 +9,13 @@ describe('PvpSync', () => {
   });
   it('本方打点 → drainOutbound 有序清空', () => {
     let t = 1000; const s = new PvpSync({ matchId: 'm', seed: 1, startAtServerMs: 1000, serverOffsetMs: 0, delayTicks: 15, now: () => t });
-    t = 1066; s.record({ op: 'summon' });
-    t = 1132; s.record({ op: 'startWave' });
+    t = 1066; s.record({ op: 'summon' }, 30);
+    t = 1132; s.record({ op: 'startWave' }, 60);
     const out = s.drainOutbound();
     expect(out.map((a) => a.op)).toEqual(['summon', 'startWave']);
-    expect(out[0].t).toBeLessThan(out[1].t);
+    expect(out[0].t).toBe(30);            // record 把调用方传入的 t 原样盖到命令上（= localSimTick 固定步数）
+    expect(out[1].t).toBe(60);
+    expect(out[0].t).toBeLessThan(out[1].t); // 出站保持施加顺序
     expect(s.drainOutbound()).toEqual([]);
   });
   it('入站对手动作按 t 归并有序，takeReady 只取 t<=给定值', () => {

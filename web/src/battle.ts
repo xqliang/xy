@@ -844,8 +844,9 @@ export interface MetaBonuses {
 }
 export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, atkPct: 0, frqPct: 0 };
 
-/** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充 */
-export interface PvpInit { enabled: boolean; delayTicks?: number }
+/** 在线 PvP 构造选项。enabled=true 时关掉本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充。
+ *  对手侧延迟重放 tick 数（DELAY_TICKS）完全由 main.ts 承担，Battle 本身不再持有 delayTicks（M2 清理死字段）。 */
+export interface PvpInit { enabled: boolean }
 
 /** PvP 对手动作重放的窄结构类型（applyPvpInput 入参）。
  *  仅含各 op 实际用到的字段，是 api 层 PvpAction 的子集；在此定义以避免 battle.ts → api 层的依赖与潜在循环。 */
@@ -862,6 +863,17 @@ export type PvpInputCmd =
   | { op: 'claimDrop'; id: string };
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
+
+/**
+ * 解析 PvP 协议 cell 串 `r{r}c{c}` → 内部 Cell（注意内部 cellKey 是 c,r 顺序，协议是 r,c，勿混用）。
+ * 提为模块级私有函数：原内联在 applyPvpInput 每次调用都重建闭包，无必要（M4 安全清理）。
+ * 非法串记 warn 并回退 {0,0}（与既有 inline 行为逐字一致，保向前兼容、不中断重放）。
+ */
+function parsePvpCell(s: string): Cell {
+  const m = /^r(\d+)c(\d+)$/.exec(s);
+  if (!m) { console.warn('[pvp] 非法 cell 串', s); return { c: 0, r: 0 }; }
+  return { c: +m[2]!, r: +m[1]! };
+}
 
 export class Battle {
   peach = ECONOMY.INITIAL_PEACH;
@@ -1783,7 +1795,6 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   private pvp = false; // 在线 PvP：关本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充
-  private pvpDelayTicks = 15; // PvP 对手侧首次征兵延迟（与单人 AI 对称的节流）
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
   private bossWaves = new Set<number>(); // 分段预排的妖王波（对战/无尽共用）
@@ -1824,7 +1835,6 @@ export class Battle {
     pvpInit?: PvpInit,
   ) {
     this.pvp = pvpInit?.enabled ?? false;
-    this.pvpDelayTicks = pvpInit?.delayTicks ?? 15;
     this.aiAdjustIntervalScale = aiAdjustIntervalScale;
     this.forceMatchThisGame = !!heroMatch?.forceMatchThisGame;
     this.aiForceMatchThisGame = !!heroMatch?.forceMatchThisGame;
@@ -6533,12 +6543,7 @@ export class Battle {
   // 类型：在 battle.ts 内定义窄结构类型 PvpInputCmd（仅含各 op 实际用到的字段），不依赖 api 层，
   // 避免 battle.ts → api/pvp-client 的层间耦合与潜在循环依赖。api 层的 PvpAction 是其超集，结构兼容。
   applyPvpInput(a: PvpInputCmd): void {
-    // 协议 cell 串格式 r{r}c{c}（与 main.ts 的 cs() 一致；注意内部 cellKey 是 c,r 顺序，勿混用）
-    const parseCell = (s: string): Cell => {
-      const m = /^r(\d+)c(\d+)$/.exec(s);
-      if (!m) { console.warn('[pvp] 非法 cell 串', s); return { c: 0, r: 0 }; }
-      return { c: +m[2]!, r: +m[1]! };
-    };
+    // 协议 cell 串解析见模块级 parsePvpCell（M4 提取；不再每次调用重建闭包）
     switch (a.op) {
       case 'summon':
         this.summon();
@@ -6547,20 +6552,16 @@ export class Battle {
         this.autoPlaceTray(); // pvp 下已确定化（deadlineMs=undefined），见 autoPlaceTray
         break;
       case 'place':
-        this.placeFromTray(a.index ?? 0, parseCell(a.cell));
+        this.placeFromTray(a.index ?? 0, parsePvpCell(a.cell));
         break;
       case 'move':
-        this.dragBoard(parseCell(a.from), parseCell(a.to));
+        this.dragBoard(parsePvpCell(a.from), parsePvpCell(a.to));
         break;
       case 'merge':
         this.mergeTrayTokens(a.from, a.to);
         break;
       case 'recall':
-        this.recallToTray(parseCell(a.from), a.slot);
-        break;
-      case 'shovel':
-        // 洛阳铲实际走 place 路径（placeFromTray 内分派铲子）；通常不单独出现，防御性走 place
-        if (a.cell != null) this.placeFromTray(a.index ?? 0, parseCell(a.cell));
+        this.recallToTray(parsePvpCell(a.from), a.slot);
         break;
       case 'active': {
         const slot = a.slot ?? 0;
@@ -6568,8 +6569,8 @@ export class Battle {
           this.triggerActive(slot); // 即时全场技（掌/陨/冰/咒）
         } else {
           const def = activeById(a.id);
-          if (def && isBombActiveEffect(def.effect)) this.placeBomb(slot, parseCell(a.cell)); // 炸药：埋雷到路径格
-          else this.applyPillActive(slot, parseCell(a.cell)); // 仙丹/风火轮：拖到单体兵器/武将
+          if (def && isBombActiveEffect(def.effect)) this.placeBomb(slot, parsePvpCell(a.cell)); // 炸药：埋雷到路径格
+          else this.applyPillActive(slot, parsePvpCell(a.cell)); // 仙丹/风火轮：拖到单体兵器/武将
         }
         break;
       }
