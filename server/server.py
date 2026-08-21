@@ -32,6 +32,7 @@ from api_versus import (  # noqa: E402
     handle_versus_room_create,
     handle_versus_room_join,
     handle_versus_tick,
+    handle_versus_ws,
 )
 from config import load_config  # noqa: E402
 from db import DB  # noqa: E402
@@ -68,6 +69,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        # —— WebSocket 升级（Task 2）：/api/versus/ws 必须在 /api 通用路由**之前**拦截，
+        # 因为它要把连接升级成 WS 并长期占用本线程读帧，绝不能走普通 JSON handler。——
+        if path == "/api/versus/ws":
+            handle_versus_ws(self, self.versus)
+            return
         if path.startswith("/admin"):
             handle_admin(self, self.db, self.cfg, "GET")
             return

@@ -1,15 +1,22 @@
 from __future__ import annotations
+
 # PvP 在线对战：进程内匹配/房间/对局状态机 + 转发 + 反作弊。
 # 单进程 ThreadingHTTPServer 下用一把大锁保护；重启即丢活跃对局（临时对局可接受）。
+import contextlib
 import json
 import logging
 import secrets
+import socket
 import threading
 import time
 from typing import Any, Callable, Optional
 
 from db import DB
 from httputil import read_json, require_uid, send_json
+from ws import (  # RFC6455 握手/帧编解码纯函数（Task 1），被 WebSocket 连接层复用
+    OP_CLOSE, OP_PING, OP_PONG, OP_TEXT,
+    decode_frame, encode_frame, encode_text, handshake_response,
+)
 
 # —— 可调常量 ——
 STAMINA_COST = 5                 # 仅供客户端参考；体力为客户端权威，服务端不校验
@@ -108,7 +115,14 @@ class VersusHub:
         # 供 _match_start_payload 下发给对方作 opponentLoadout，使对手侧 oppBattle 用真实配装忠实重放。
         return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
                 "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False,
-                "status": "playing", "loadout": loadout, "sent_seqs": set()}
+                "status": "playing", "loadout": loadout, "sent_seqs": set(),
+                # —— WebSocket 会话态（Task 2）——
+                # ws_send：该侧 WS 连接的「发送闭包」Callable[[str], bool]，把 JSON 文本帧写回其 socket；
+                #          返回 False 表示发送失败（socket 已坏），hub 据此把该侧判为断线。
+                #          None 表示当前无 WS 连接（尚未握手 / 已断开 / 未走 WS 的纯 HTTP tick 客户端）。
+                # gone_ms：0 表示在线；非 0 为该侧 WS 断开的服务器时刻(ms)。宽限 DISCONNECT_GRACE_MS 内
+                #          同 uid 重连 hello 会清零恢复；超时则惰性判定为 DisconnectTimeout 终局。
+                "ws_send": None, "gone_ms": 0}
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 组装 Match、建 ticket->match 索引，返回 match_id
@@ -463,6 +477,169 @@ class VersusHub:
         side = "a" if m["a"]["uid"] == uid else "b"
         return m["result"][side]
 
+    # ========================================================================
+    # WebSocket 会话（Task 2）：连接层把帧解析成消息后调这些方法。
+    # 全部在 self.lock 内操作 match 态；发送失败一律走 _ws_push_locked →
+    # _ws_side_gone_locked，与该侧真正 ws_gone 同一条路径。
+    #
+    # 锁的可重入性：self.lock 是普通 threading.Lock（不可重入）。因此凡「发送失败→
+    # 判该侧断线」这种需要再次进入判断的路径，**绝不**回调公开的 ws_gone（会二次取锁死锁），
+    # 而是调用内部 _ws_*_locked 系列（调用方已持锁）。公开 ws_* 方法只取一次锁。
+    # ========================================================================
+
+    def _ws_push_locked(self, target: dict, other: dict, m: dict, msg: dict,
+                        cascade: bool = True) -> bool:
+        """给 target 侧 WS 推一条 JSON 消息（持锁调用）。
+
+        成功返回 True；发送异常/返回 False 且 cascade=True 时，视该侧断线，走
+        _ws_side_gone_locked 判负并通知对手 other。cascade=False 用于「通知对手它对手断了」
+        这类 Secondary 推送——避免对手也恰好发送失败时再次级联判负造成递归。"""
+        send = target.get("ws_send")
+        if not send:
+            return False
+        try:
+            ok = bool(send(json.dumps(msg, separators=(",", ":"), ensure_ascii=False)))
+        except Exception:
+            ok = False
+        if not ok and cascade:
+            self._ws_side_gone_locked(m, target, other, send)
+        return ok
+
+    def _ws_side_gone_locked(self, m: dict, side: dict, other: dict, send) -> None:
+        """把 side 侧判为断线（持锁）：清 ws_send、记 gone_ms、通知对手 oppGone。
+
+        **陈旧连接保护**：若 side 当前 ws_send 已不是本连接持有的 send（说明期间已被
+        新连接覆盖=重连），则静默返回——绝不用一条迟到的旧连接清理顶掉重连后的新连接。"""
+        if send is not None and side.get("ws_send") is not send:
+            return                      # 已被重连覆盖：本连接已陈旧，忽略
+        if side.get("ws_send") is not None:
+            side["ws_send"] = None
+        side["gone_ms"] = self._now()
+        if other.get("ws_send"):
+            # 通知对手「你的对手断了」（cascade=False：对手若也坏不再级联）
+            self._ws_push_locked(other, side, m, {"type": "oppGone"}, cascade=False)
+
+    def _ws_check_gone_locked(self, m: dict, now: int) -> None:
+        """惰性宽限超时判定（持锁）：任一侧 gone_ms 已设且越过宽限、对局未终局 →
+        该侧判负(DisconnectTimeout)，把 result 推给存活侧。
+
+        挂在每个 ws_* 入口顶部，避免额外后台线程；对手/自身下一次任意消息即触发。"""
+        if m.get("ended"):
+            return
+        for key, other_key in (("a", "b"), ("b", "a")):
+            side = m[key]
+            if side.get("gone_ms") and now - side["gone_ms"] > DISCONNECT_GRACE_MS:
+                self._set_result(m, key, "DisconnectTimeout", now)
+                other = m[other_key]
+                if other.get("ws_send"):
+                    self._ws_push_locked(other, side, m,
+                                         {"type": "result", **m["result"][other_key]})
+                return
+
+    def _ws_push_result_locked(self, m: dict) -> None:
+        """把权威 result 推给两侧 WS（持锁）；每侧各带自己的 outcome/reason。"""
+        if not m.get("result"):
+            return
+        for key in ("a", "b"):
+            side = m[key]
+            other = m["b"] if key == "a" else m["a"]
+            if side.get("ws_send"):
+                self._ws_push_locked(side, other, m, {"type": "result", **m["result"][key]})
+
+    def ws_hello(self, uid: str, match_id: str, send: Callable[[str], bool]) -> dict:
+        """WS 首条 hello：校验 match 存在 + uid 属于该局；登记 ws_send、清 gone_ms、刷 liveness。
+
+        重连场景：同 uid 新连接覆盖旧 ws_send、清零 gone_ms，即刻恢复。返回 {serverMs} 供连接层回 welcome；
+        校验失败返回 {"error": ...}，连接层据此关闭连接。"""
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(match_id)
+            if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+                return {"error": "bad_hello"}
+            me, opp = self._sides(m, uid)
+            self._ws_check_gone_locked(m, now)      # 顺便惰性检查对手宽限超时
+            me["ws_send"] = send
+            me["gone_ms"] = 0                        # 重连清零，恢复在线
+            me["last_tick_ms"] = now                 # 刷 liveness，防 IDLE_REAP 中途回收
+            return {"serverMs": now}
+
+    def ws_snap(self, uid: str, match_id: str, msg: dict) -> None:
+        """收到本方 snap：派生小 digest 存 last_digest/wave（供 _anticheat 与终局），
+        把快照**原样**转发给对手的 ws_send。服务端不解析大字段，只取四个小字段。"""
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(match_id)
+            if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+                return
+            self._ws_check_gone_locked(m, now)
+            me, opp = self._sides(m, uid)
+            me["last_tick_ms"] = now
+            s = msg.get("s") if isinstance(msg, dict) else None
+            if not isinstance(s, dict):
+                return                              # 缺 s 的快照忽略（容错）
+            units = s.get("units")
+            # 只派生四个小字段做 digest；客户端无需再自报 digest（Model C 与 HTTP tick 的 digest 同源）。
+            digest = {
+                "wave": int(s.get("wave", me.get("wave", 1)) or 1),
+                "tangsengHP": s.get("tangsengHP", 0),
+                "kills": s.get("kills", 0),
+                "units": len(units) if isinstance(units, list) else 0,
+            }
+            me["last_digest"] = digest
+            me["wave"] = digest["wave"]
+            if opp.get("ws_send"):
+                self._ws_push_locked(opp, me, m, {"type": "oppSnap", "s": s})
+
+    def ws_wave_cleared(self, uid: str, match_id: str, wave) -> None:
+        """本方清波：沿用 HTTP tick 的「先清者定下一波」排程，再给**两侧**各推 nextWave
+        （每侧按自己当前波次视角算下一波开始时刻）。"""
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(match_id)
+            if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+                return
+            self._ws_check_gone_locked(m, now)
+            me, opp = self._sides(m, uid)
+            me["last_tick_ms"] = now
+            w = int(wave or 0)
+            if w and (w + 1) not in m["wave_schedule"]:
+                m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
+                m["first_clear"][w] = uid
+            # 两侧各自按自己的当前波次视角下发 nextWave（沿用 _next_wave_for）
+            nxt_me = self._next_wave_for(m, me)
+            nxt_opp = self._next_wave_for(m, opp)
+            if nxt_me:
+                self._ws_push_locked(me, opp, m, {"type": "nextWave", **nxt_me})
+            if nxt_opp:
+                self._ws_push_locked(opp, me, m, {"type": "nextWave", **nxt_opp})
+
+    def ws_status(self, uid: str, match_id: str, v: str) -> None:
+        """本方上报终局态（surrender/tangsengDead）：走既有 _resolve_terminal，再给两侧推 result。"""
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(match_id)
+            if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+                return
+            self._ws_check_gone_locked(m, now)
+            me, opp = self._sides(m, uid)
+            me["last_tick_ms"] = now
+            self._resolve_terminal(m, me, opp, v, now)   # 只对 surrender/tangsengDead 生效
+            self._ws_push_result_locked(m)
+
+    def ws_gone(self, uid: str, match_id: str, send=None) -> None:
+        """公开入口：连接层在读循环退出后调用，标记该侧 WS 断开并通知对手。"""
+        with self.lock:
+            self._ws_gone_locked(uid, match_id, send)
+
+    def _ws_gone_locked(self, uid: str, match_id: str, send) -> None:
+        """持锁版 ws_gone：定位 (me, opp) 后交给 _ws_side_gone_locked 处理（含陈旧保护）。"""
+        now = self._now()
+        m = self.matches.get(match_id)
+        if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+            return
+        me, opp = self._sides(m, uid)
+        self._ws_side_gone_locked(m, me, opp, send)
+
     def _anticheat(self, m, me, opp, inputs, digest, now):
         # 从每秒摘要 digest 做启发式异常检测；终局或无摘要时跳过。
         # 注意：本方法在 tick 的大锁内调用，命中异常才写库（低频），可接受；
@@ -590,3 +767,144 @@ def handle_versus_tick(handler, db: DB) -> None:
     send_json(handler, 200, _hub(handler).tick(
         uid, str(body.get("matchId") or ""), body.get("inputs") or [],
         body.get("digest") or {}, body.get("waveClearedAt"), str(body.get("status") or "playing")))
+
+
+# ============================================================================
+# WebSocket 连接层（Task 2）：把 GET /api/versus/ws 升级为 WS，循环读帧并分发到
+# VersusHub 的 ws_* 方法。占用 ThreadingHTTPServer 分配给本连接的那个线程（每条 WS 一线程）。
+#
+# 读：用 handler.rfile（BufferedReader）——它已持有握手后可能随请求一并到达的字节，
+#     且严格比裸 socket.recv 更安全（绝不漏掉 rfile 内部缓冲里的帧）。
+# 写：握手响应 + 所有帧都直接写 handler.connection（裸 socket），**不经过 wfile**
+#     （wfile 会缓冲且由 http.server 管理，握手后再用它写会与它的缓冲/生命周期打架）。
+# 超时：handler.timeout=5 经 StreamRequestHandler.setup() 设到连接 socket，rfile.read1
+#     在空闲 5s 抛 socket.timeout → 发保活 ping；连续两轮无入站流量 → 判死退出。
+# ============================================================================
+def handle_versus_ws(handler, hub) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    # 1) 解析 query：matchId / uid（与 spec §3 一致，query 参数认证）。
+    qs = parse_qs(urlparse(handler.path).query)
+    match_id = (qs.get("matchId") or [""])[0]
+    uid = (qs.get("uid") or [""])[0]
+
+    # 2) 校验升级头：必须 Upgrade: websocket + Sec-WebSocket-Key，否则 400 不升级。
+    upgrade = (handler.headers.get("Upgrade") or "").lower()
+    key = handler.headers.get("Sec-WebSocket-Key") or ""
+    if "websocket" not in upgrade or not key:
+        send_json(handler, 400, {"error": {"code": "bad_ws",
+                                           "msg": "need Upgrade: websocket + Sec-WebSocket-Key"}})
+        return
+
+    # 3) 101 握手：裸字节一次性写出 socket（HTTP 部分到此结束）。
+    try:
+        handler.connection.sendall(handshake_response(key).encode("ascii"))
+    except OSError:
+        return
+    # 关键：握手后 http.server 不应再在同一连接上读下一个 HTTP 请求——我们已占用该连接做 WS。
+    handler.close_connection = True
+
+    hello_ok = False          # 首条必须是 hello；之前一律忽略其他消息
+    buf = b""                 # 帧缓冲（应对 TCP 分片/粘包）
+    idle_timeouts = 0         # 连续读超时计数
+    send_lock = threading.Lock()   # 每连接一把发送锁：hub 回调线程与读循环线程都经此写 socket
+
+    def ws_send(text: str) -> bool:
+        """该连接的发送闭包（交给 hub 存进 side['ws_send']）：带锁写一个 TEXT 帧。
+        返回 False 表示 socket 已坏，hub 会据此把该侧判为断线。"""
+        frame = encode_text(text)
+        with send_lock:
+            try:
+                handler.connection.sendall(frame)
+                return True
+            except OSError:
+                return False
+
+    def _handle_text(payload: bytes) -> None:
+        """解析一条 TEXT 帧的 JSON 并分发；畸形 JSON 静默忽略（连接保持）。"""
+        nonlocal hello_ok
+        try:
+            msg = json.loads(payload.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return                      # 畸形 JSON → 忽略，不杀连接
+        if not isinstance(msg, dict):
+            return
+        mtype = msg.get("type")
+        if not hello_ok:
+            # hello 之前：只有 hello 能放行，且 matchId/uid 必须与 query 一致
+            if mtype == "hello" and str(msg.get("matchId") or "") == match_id \
+                    and str(msg.get("uid") or "") == uid:
+                res = hub.ws_hello(uid, match_id, ws_send)
+                if res and not res.get("error"):
+                    hello_ok = True
+                    ws_send(json.dumps({"type": "welcome", "serverMs": res["serverMs"]},
+                                       separators=(",", ":")))
+            return                      # hello 前忽略一切（含非法 hello）
+        # hello 后：分发业务消息
+        if mtype == "snap":
+            hub.ws_snap(uid, match_id, msg)
+        elif mtype == "waveCleared":
+            hub.ws_wave_cleared(uid, match_id, msg.get("wave"))
+        elif mtype == "status":
+            hub.ws_status(uid, match_id, msg.get("v"))
+        # 未知 type → 忽略
+
+    def _mark_gone() -> None:
+        """读循环退出后，把本侧标记为断线（传本连接 send 供陈旧保护比对）。"""
+        if hello_ok:
+            hub.ws_gone(uid, match_id, send=ws_send)
+
+    # 4) 帧循环：读 → 解帧 → 分发；超时发 ping 保活，两轮无流量判死。
+    while True:
+        try:
+            chunk = handler.rfile.read1(65536)
+        except socket.timeout:
+            chunk = b""                   # 5s 无数据 = 本轮超时
+        except OSError:
+            _mark_gone()
+            return                        # socket 错误/EOF → 退出
+        if not chunk:
+            # 无数据：超时或 EOF。累计超时；连续两轮无入站 → 判死。
+            idle_timeouts += 1
+            if idle_timeouts >= 2:
+                break
+            # 单轮超时：发保活 ping（防中间层因空闲掐长连接）
+            with send_lock:
+                try:
+                    handler.connection.sendall(encode_frame(OP_PING, b""))
+                except OSError:
+                    _mark_gone()
+                    return
+            continue
+        # 有数据：重置超时计数，并入缓冲
+        idle_timeouts = 0
+        buf += chunk
+        # 反复从缓冲解帧，直到凑不齐一整帧（consumed=0）
+        while buf:
+            fr = decode_frame(buf)
+            consumed = fr["consumed"]
+            if consumed == 0:
+                break                       # 半截帧：留着等下一次读补齐
+            buf = buf[consumed:]
+            op = fr["opcode"]
+            payload = fr["payload"]
+            if op == OP_TEXT:
+                _handle_text(payload)
+            elif op == OP_PING:
+                # 客户端 ping → 回 pong（同 payload）
+                with send_lock:
+                    try:
+                        handler.connection.sendall(encode_frame(OP_PONG, payload))
+                    except OSError:
+                        _mark_gone()
+                        return
+            elif op == OP_CLOSE:
+                # 对端关闭：回一个 close 帧，标记断线并退出
+                with send_lock:
+                    with contextlib.suppress(OSError):
+                        handler.connection.sendall(encode_frame(OP_CLOSE, b""))
+                _mark_gone()
+                return
+            # OP_PONG / OP_BINARY 等：忽略
+    # 连续超时判死退出
+    _mark_gone()
