@@ -118,6 +118,9 @@ class VersusHub:
         return {"uid": uid, "rank": rank, "last_tick_ms": now,
                 "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False,
                 "status": "playing",
+                # last_next_wave：本侧最近一次被告知的「下一波」波次号（快照路径的 nextWave 去重标记）。
+                # 防止 10Hz 快照每帧都重复推同一 nextWave；hello 时清零以便重连带新重新宣告。
+                "last_next_wave": None,
                 # —— WebSocket 会话态（Task 2）——
                 # ws_send：该侧 WS 连接的「发送闭包」Callable[[str], bool]，把 JSON 文本帧写回其 socket；
                 #          返回 False 表示发送失败（socket 已坏），hub 据此把该侧判为断线。
@@ -481,7 +484,10 @@ class VersusHub:
         """WS 首条 hello：校验 match 存在 + uid 属于该局；登记 ws_send、清 gone_ms、刷 liveness。
 
         重连场景：同 uid 新连接覆盖旧 ws_send、清零 gone_ms，即刻恢复。返回 {serverMs} 供连接层回 welcome；
-        校验失败返回 {"error": ...}，连接层据此关闭连接。"""
+        校验失败返回 {"error": ...}，连接层据此关闭连接。
+
+        波次重宣告（Task 6 修）：清零 last_next_wave，使重连后首条快照重新推一次 nextWave，
+        保证客户端（其波次态跨重连保留）能重新同步当前「下一波」开始时刻。"""
         with self.lock:
             now = self._now()
             m = self.matches.get(match_id)
@@ -492,6 +498,7 @@ class VersusHub:
             me["ws_send"] = send
             me["gone_ms"] = 0                        # 重连清零，恢复在线
             me["last_tick_ms"] = now                 # 刷 liveness，防 IDLE_REAP 中途回收
+            me["last_next_wave"] = None              # 清零去重标记，重连后首快照重新宣告 nextWave
             return {"serverMs": now}
 
     def ws_snap(self, uid: str, match_id: str, msg: dict) -> None:
@@ -516,8 +523,16 @@ class VersusHub:
                 return                              # 缺 s 的快照忽略（容错）
             units = s.get("units")
             # 只派生四个小字段做 digest；客户端无需再自报 digest（HTTP tick 已在 Task 6 退役）。
+            # wave 必须保留 0（开局第一波前的真实值：客户端 battle.wave=0）。原先的
+            # `int(...) or 1` 会把 0 吞成 1 → _next_wave_for 永远算出未排程的波 2 →
+            # 首波 nextWave 永不宣告 → 客户端永不开波（实测「连接正常但不出怪」的第二层根因）。
+            # 缺省/非法值回退本侧已记录的 wave（容错，不因坏快照抛错杀连接）。
+            try:
+                wave_val = int(s["wave"]) if s.get("wave") is not None else int(me.get("wave", 1))
+            except (TypeError, ValueError):
+                wave_val = int(me.get("wave", 1))
             digest = {
-                "wave": int(s.get("wave", me.get("wave", 1)) or 1),
+                "wave": wave_val,
                 "tangsengHP": s.get("tangsengHP", 0),
                 "kills": s.get("kills", 0),
                 "units": len(units) if isinstance(units, list) else 0,
@@ -527,6 +542,14 @@ class VersusHub:
             # Task 6：反作弊接线——退役 HTTP tick 后迁到此处。快照模型无动作概念，传空 inputs=[]。
             # _anticheat 用 digest 的 delta（唐僧血单调不增/击杀上界/波次不超前）做启发式，空 inputs 不影响。
             self._anticheat(m, me, opp, [], digest, now)
+            # 波次排程宣告（Task 6 修 bug）：沿用 HTTP tick「每响应都带 nextWave」语义——按本侧 wave
+            # 算下一波，变化时才推（last_next_wave 防 10Hz 快照刷屏）。开局首波靠此触达客户端：
+            # 客户端首快照 wave=0 → 宣告 nextWave{wave:1}，否则客户端永不被告知波 1 开始时刻、
+            # maybeOpenPvpWave 永不开波（实测「连接正常但不出怪」即此因）。
+            nxt = self._next_wave_for(m, me)
+            if nxt and nxt.get("wave") != me.get("last_next_wave"):
+                me["last_next_wave"] = nxt["wave"]
+                self._ws_push_locked(me, opp, m, {"type": "nextWave", **nxt})
             if opp.get("ws_send"):
                 self._ws_push_locked(opp, me, m, {"type": "oppSnap", "s": s})
 
@@ -545,12 +568,19 @@ class VersusHub:
             if w and (w + 1) not in m["wave_schedule"]:
                 m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
                 m["first_clear"][w] = uid
-            # 两侧各自按自己的当前波次视角下发 nextWave（沿用 _next_wave_for）
+            # 清波者的 wave 视图提升到至少已清波号：清波上报可能先于「wave 已推进」的快照到达
+            #（me["wave"] 取自最近快照，100ms 节流下有滞后）。不提升的话 _next_wave_for 会按旧
+            # wave 算出更早的波 → 给清波者重推已宣告过的旧波，而真正刚排程的 w+1 反而不推。
+            me["wave"] = max(int(me.get("wave", 0) or 0), w)
+            # 两侧各自按自己的当前波次视角下发 nextWave（沿用 _next_wave_for）。
+            # 同时把该侧 last_next_wave 记到宣告的波次，避免 ws_snap 路径因去重标记未同步而重复宣告同一 nextWave。
             nxt_me = self._next_wave_for(m, me)
             nxt_opp = self._next_wave_for(m, opp)
             if nxt_me:
+                me["last_next_wave"] = nxt_me["wave"]
                 self._ws_push_locked(me, opp, m, {"type": "nextWave", **nxt_me})
             if nxt_opp:
+                opp["last_next_wave"] = nxt_opp["wave"]
                 self._ws_push_locked(opp, me, m, {"type": "nextWave", **nxt_opp})
 
     def ws_status(self, uid: str, match_id: str, v: str) -> None:

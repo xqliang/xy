@@ -688,3 +688,83 @@ def test_non_simultaneous_death_stays_win_lose():
     assert res["a"]["outcome"] == "lose"
     assert res["b"]["outcome"] == "win"
 
+
+# ============================================================================
+#  波次排程宣告（修「连接正常但永不出怪」）：ws_snap 必须按本侧 wave 推送 nextWave。
+#  HTTP tick 时代「每响应都带 nextWave」使开局首波（客户端 wave=0 → 服务器算出 wave 1 排程）
+#  得以触达客户端；WS 模型若漏掉，客户端 pvpWaveStartTicks 永远为空 → 永不开波 → 不出怪。
+#  首波宣告/去重/清波双路径防重由 test_snap_announces_wave1_and_dedups_nextwave（socket 级）覆盖；
+#  这里补 hub 直调的「hello 重置去重标记（重连重新宣告）」。
+# ============================================================================
+def _sent(sends: list) -> list:
+    """把 ws_send 闭包捕获的推送解析成 (type, wave) 列表，便于断言。"""
+    return [(json.loads(t).get("type"), json.loads(t).get("wave")) for t in sends]
+
+
+def test_hello_resets_next_wave_marker_for_reannounce():
+    # hello 清零 last_next_wave：重连后首快照重新宣告当前 nextWave（客户端波次态跨重连保留，
+    # 但重新宣告是廉价且安全的再同步——快照模型无历史回放，重新宣告保证客户端时钟/排程一致）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    sends_a: list = []
+    hub.ws_hello("A1", mid, lambda t: (sends_a.append(t), True)[1])
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": base})
+    hub.ws_hello("A1", mid, lambda t: (sends_a.append(t), True)[1])   # 模拟重连（新连接覆盖 ws_send）
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 2, "s": base})
+    nxt = [x for x in _sent(sends_a) if x[0] == "nextWave"]
+    assert nxt == [("nextWave", 1), ("nextWave", 1)]  # 重连后重新宣告一次
+
+
+def test_wave_cleared_then_snap_no_double_announce():
+    # 清波排程 wave 2（ws_wave_cleared 已直推两侧并同步 last_next_wave）→ 后续快照
+    # 不因去重标记未同步而重复宣告同一 nextWave（两条推送路径共享一个标记防双推）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    sends_a: list = []
+    hub.ws_hello("A1", mid, lambda t: (sends_a.append(t), True)[1])
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": base})       # 宣告波 1
+    hub.ws_wave_cleared("A1", mid, 1)                                 # 排程波 2 + 直推两侧
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 2, "s": {**base, "wave": 1}})
+    nxt = [x for x in _sent(sends_a) if x[0] == "nextWave"]
+    assert nxt == [("nextWave", 1), ("nextWave", 2)]                  # 无重复
+
+
+# ============================================================================
+#  Task 6 修 bug：WS 快照路径须宣告首波 nextWave（否则客户端永不开波、不出怪）。
+#  旧 HTTP tick 每响应都带 nextWave（开局 me.wave=0 → 宣告 wave:1）；ws_snap 原只在 waveCleared 推，
+#  漏了首波。现 ws_snap 按本侧 wave 推 nextWave，变化时才推（last_next_wave 去重防 10Hz 刷屏），
+#  且 ws_wave_cleared 同步记 last_next_wave，避免两条推送路径重复宣告同一波。
+# ============================================================================
+def test_snap_announces_wave1_and_dedups_nextwave():
+    # A 首快照 wave=0（波 1 未开）→ A 收到 nextWave{wave:1}（首波宣告，客户端据此开波）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    with _ws_server(hub) as port:
+        a = WsClient(port, mid, "A1")
+        b = WsClient(port, mid, "B1")
+        _hello(a); _hello(b)
+        assert a.recv()["type"] == "welcome"
+        assert b.recv()["type"] == "welcome"
+
+        a.send({"type": "snap", "t": 1, "s": _snap(wave=0)})
+        nw = a.recv()
+        assert nw["type"] == "nextWave" and nw["wave"] == 1
+        assert nw["startAtServerMs"] == hub.matches[mid]["wave_schedule"][1]
+
+        # A 再快照 wave 仍 0 → 不重复宣告（last_next_wave 去重）；A 不该再收到 nextWave。
+        a.send({"type": "snap", "t": 2, "s": _snap(wave=0)})
+        assert a.recv(timeout=0.5) is None
+
+        # A 清波 1 → 排程波 2，A 收到 nextWave{wave:2}（ws_wave_cleared 直推，并记 last_next_wave=2）。
+        a.send({"type": "waveCleared", "wave": 1})
+        nw2 = a.recv()
+        assert nw2["type"] == "nextWave" and nw2["wave"] == 2
+
+        # A 再快照（wave 仍 1）→ 即使 _next_wave_for 仍算出 wave:2，last_next_wave 已=2，
+        # 快照路径不得重复宣告（防与 waveCleared 直推双重宣告）。
+        a.send({"type": "snap", "t": 3, "s": _snap(wave=1)})
+        assert a.recv(timeout=0.5) is None
+        a.close(); b.close()
+
