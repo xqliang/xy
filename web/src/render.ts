@@ -3975,7 +3975,8 @@ function drawErlangDog(
 
   const size = CELL * (0.42 + tier * 0.035) * 1.5; // 放大 1.5×，让哮天犬更清晰
   const spr = sprite('hero-ttg');
-  ctx.globalAlpha = vis * (tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
+  // latched 模式 tp=1，不应触发冲锋末段淡出；非 latched 时 tp>0.94 渐隐
+  ctx.globalAlpha = vis * (!latched && tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
   if (spr) {
     ctx.save();
     ctx.translate(rx, ry);
