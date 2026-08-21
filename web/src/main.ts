@@ -238,9 +238,9 @@ const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
 const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
-import type { PvpSync } from './pvp-battle';                 // PvP 对局同步记账类型（Task 10 的 onPvpMatched 实例化）
+import { PvpSync } from './pvp-battle';                   // PvP 对局同步记账（Task 6 的 onPvpMatched 实例化）
 import { toPvpAction } from './pvp-record';                  // 玩家输入 → PvpAction 命令映射（本方打点，Task 5）
-import { drainFixedSteps, PVP_SIM_DT } from './pvp-fixedstep'; // PvP 固定步长累加器（对局期 frame() 用）
+import { drainFixedSteps, PVP_SIM_DT, DELAY_TICKS } from './pvp-fixedstep'; // PvP 固定步长累加器 + 延迟重放 tick 数
 
 function enterCodex(tab?: CodexTab): void {
   codexLazy.ensure((m) => {
@@ -283,12 +283,62 @@ function pvpNet() {
     roomCreate: pvpClient.versusRoomCreate, roomJoin: pvpClient.versusRoomJoin,
   };
 }
-// 集成缝：匹配成功。Plan B 先回首页提示；Plan C 覆盖为进入 PvP 对局。
+// 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 6）。
+// 建两个确定性 Battle 实例（本方 battle + 对手 oppBattle，同 MatchStart.seed）、建 PvpSync、
+// 扣体力、切战斗屏、起 1s tick 轮询（上报本方摘要、收对手动作/下一波/终局）。
 function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpController = null;
-  screen = 'menu';
-  menuToast = `已匹配到 ${ms.opponent.nickname ?? '对手'}（对战功能开发中）`;
+  const map = mapById(ms.map) ?? currentMap;
+  const meta = metaBonuses(merit), wb = weaponBonuses(bag);
+  // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
+  // 对手 loadout 暂用对称占位（MatchStart 未下发对手配装，DONE_WITH_CONCERNS）——aiWeaponBonuses 亦对称占位。
+  // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
+  const mk = () => new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true, delayTicks: DELAY_TICKS });
+  battle = mk();
+  oppBattle = mk(); // 对手侧确定性重放实例（Task 7 喂对手动作、Task 8 渲染到对手半场）
+  bindBattleWeaponPickup();
+  pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => performance.now() });
+  pvpAcc = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
+  // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
+  const sp = spendStamina(stamina);
+  if (sp.ok) stamina = sp.state;
+  // reset 战斗标志（镜像 newGame）
+  endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pausePhase = 'main';
+  ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null; pendingFirstSummonTutorial = false;
+  screen = 'battle';
+  startPvpTickLoop();
   scheduleFrame();
+}
+
+// PvP 1s tick 心跳：上报本方摘要（含 kills）、收对手动作/下一波/终局。pvpSync 门控，离局即停。
+function startPvpTickLoop(): void {
+  if (pvpTickTimer) { clearTimeout(pvpTickTimer); pvpTickTimer = null; }
+  const loop = () => {
+    if (!pvpSync) return;               // 已离开 PvP（结算/退出）→ 停
+    void pumpPvpTick();
+    pvpTickTimer = setTimeout(loop, 1000); // 1s 心跳（放置动作即时补发的 ~300ms 去抖留后续优化）
+  };
+  pvpTickTimer = setTimeout(loop, 1000);
+}
+function stopPvpTickLoop(): void { if (pvpTickTimer) { clearTimeout(pvpTickTimer); pvpTickTimer = null; } }
+
+// 单次 tick：组摘要+请求→发服务端→应用响应（对手动作入库、记联络时刻、存下一波/终局）。
+async function pumpPvpTick(): Promise<void> {
+  if (!pvpSync) return;
+  const s = battle.snapshot();
+  const digest = { wave: s.wave, power: s.towerPow, kills: s.kills, tangsengHP: s.tangsengHP, peach: s.peach, units: s.units };
+  const status: 'playing' | 'tangsengDead' | 'surrender' = battle.status === 'lost' ? 'tangsengDead' : 'playing';
+  const req = pvpSync.buildTick(digest, /*waveClearedAt*/ null, status); // waveClearedAt 留 Task 9
+  const r = await pvpClient.versusTick(req);
+  if (!pvpSync) return;                 // await 期间可能已离局
+  if (r.ok) {
+    pvpSync.applyResponse(r.data);
+    pvpLastServerOkMs = performance.now();
+    if (r.data.nextWave) pvpNextWave = r.data.nextWave;      // Task 9 消费
+    if (r.data.result) pvpResult = r.data.result;            // Task 10 消费
+    // opponentStatus / cheatNotice：Task 10 处理；本任务先不动 UI
+  }
+  // 失败(r.ok===false)：Task 10 做断线判定；本任务先忽略（下次心跳重试）
 }
 function onPvpFailed(_reason: string): void {
   // 失败态由匹配屏「确认」按钮回首页；这里仅确保重绘（needsContinuousLoop 已保持帧）
@@ -366,6 +416,11 @@ let pvpCopied = false;
 // —— PvP 对局期状态（battle 阶段，区别于匹配期 pvpController）——
 let pvpSync: PvpSync | null = null;   // 非空表示当前处于 PvP 对局（Task 10 的 onPvpMatched 赋值）
 let pvpAcc = 0;                        // 固定步长累加器余量
+let oppBattle: Battle | null = null;   // 对手侧确定性重放实例（Task 7 喂动作、Task 8 渲染）
+let pvpTickTimer: ReturnType<typeof setTimeout> | null = null; // 1s tick 心跳定时器
+let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 存服务端下一波（Task 9 用）
+let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 存服务端终局（Task 10 用）
+let pvpLastServerOkMs = 0;             // 最近一次 tick 成功时刻（断线检测，Task 10）
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /** 每个 PvP 固定子步后回调：施加对手动作 / 触发 tick 上报节流。Task 10 填实现。 */

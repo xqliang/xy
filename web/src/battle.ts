@@ -853,6 +853,7 @@ export class Battle {
   peach = ECONOMY.INITIAL_PEACH;
   tangsengHP = ECONOMY.TANGSENG_INITIAL_HP;
   wave = 0;
+  kills = 0; // 本局本方累计击杀（供 PvP 摘要/反作弊上报；只在本方击杀分支自增）
   status: Status = 'ready';
   summonCost = TUNING.summonCostStart;
   summonCount = 0;
@@ -6549,6 +6550,7 @@ export class Battle {
               : ECONOMY.PEACH_PER_KILL;
         const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英4 / 小Boss6 / 大Boss10，+道具）
         this.peach += amount;
+        this.kills++; // 本方累计击杀（PvP 摘要/反作弊用；仅本方击杀分支，不含 creditAiKill）
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({
           kind: 'death',
@@ -7153,6 +7155,7 @@ export class Battle {
       peach: this.peach,
       tangsengHP: this.tangsengHP,
       wave: this.wave,
+      kills: this.kills,
       status: this.status,
       summonCost: this.effectiveSummonCost(),
       unlocked: this.unlocked.size,
