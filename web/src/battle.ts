@@ -1651,7 +1651,7 @@ export class Battle {
   /** 二郎神大招「哮天犬」本帧咬击目标格（触发时写入、pushHeroUltFx 消费后清空） */
   biteTarget: { c: number; r: number; mid: number } | null = null;
   /** 二郎哮天犬咬住怪物后的持续跟随特效（3s 内狗停在怪物位置，怪死亡则消失） */
-  erlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number }[] = [];
+  erlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number; fromC: number; fromR: number }[] = [];
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
@@ -5920,7 +5920,7 @@ export class Battle {
             // 光束角度：从施法者中心→咬点（让狗朝向光束冲锋方向）
             const beamAng = Math.atan2(pick.p.r - gAy, pick.p.c - gAx);
             // 哮天犬咬住后持续跟随 3s（怪死亡则消失）
-            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng });
+            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng, fromC: gAx, fromR: gAy });
           }
         }
         break;

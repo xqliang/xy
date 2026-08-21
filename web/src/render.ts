@@ -3391,12 +3391,16 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.restore();
   }
 
-  // 二郎哮天犬跟随特效：咬住怪物后持续 3s（狗停在怪物位置，怪死亡则消失）
+  // 二郎哮天犬跟随特效：冲锋 0.5s → 咬住 2.5s（怪死亡则消失）
   for (const d of b.erlangDogFx) {
+    const elapsed = d.maxTtl - d.ttl; // 已持续时间
+    const chargeDur = 0.5; // 冲锋阶段时长
     const prog = 1 - d.ttl / d.maxTtl;
-    const fade = Math.max(0.35, 1 - prog * 0.65); // 前段保持，末段淡出
+    const fade = Math.max(0.35, 1 - prog * 0.65); // 末段淡出
     const bx = BOARD_X + d.c * CELL + CELL / 2;
     const by = BOARD_Y + d.r * CELL + CELL / 2;
+    const eyeX = BOARD_X + d.fromC * CELL + CELL / 2;
+    const eyeY = BOARD_Y + d.fromR * CELL + CELL / 2;
     ctx.save();
     // 定身环（提示怪物被咬定住）
     const ringR = CELL * (0.35 + d.tier * 0.03);
@@ -3408,7 +3412,13 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.arc(bx, by, ringR, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-    drawErlangDog(ctx, bx, by, bx, by, d.ang, 1, d.tier, fade, d.c, d.r, true);
+    // 冲锋阶段 drawErlangDog 播放奔跑+咬；之后切 latched 停在怪物位置
+    if (elapsed < chargeDur) {
+      const p = elapsed / chargeDur; // 0→1
+      drawErlangDog(ctx, eyeX, eyeY, bx, by, d.ang, p, d.tier, fade, d.c, d.r, false);
+    } else {
+      drawErlangDog(ctx, bx, by, bx, by, d.ang, 1, d.tier, fade, d.c, d.r, true);
+    }
     ctx.restore();
   }
 }
@@ -3889,8 +3899,7 @@ function drawUltErlang(
   }
   ctx.restore();
 
-  // 哮天犬：沿光束冲锋撕咬（中段叠加，不挡光束）
-  drawErlangDog(ctx, eyeX, eyeY, tipX, tipY, ang, p, tier, vis, biteC, biteR);
+  // 冲锋撕咬由 erlangDogFx 跟随特效负责（drawHeroUlt），这里只画光束+天眼
 
   // 诛邪爆点 + 放射符纹（比普攻的柔光爆点更大更华丽）
   if (beamReach > 0.6) {
@@ -3973,7 +3982,7 @@ function drawErlangDog(
     ctx.stroke();
   }
 
-  const size = CELL * (0.42 + tier * 0.035) * 1.5; // 放大 1.5×，让哮天犬更清晰
+  const size = CELL * (0.42 + tier * 0.035) * 1.2; // 哮天犬显示大小
   const spr = sprite('hero-ttg');
   // latched 模式 tp=1，不应触发冲锋末段淡出；非 latched 时 tp>0.94 渐隐
   ctx.globalAlpha = vis * (!latched && tp > 0.94 ? Math.max(0, 1 - (tp - 0.94) / 0.06) : 1);
