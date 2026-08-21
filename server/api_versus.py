@@ -32,6 +32,7 @@ MATCH_REAP_MS = 120_000                   # 终局后多久回收该 match（给
 IDLE_REAP_MS = 300_000                    # 建局后双方都久未心跳(废弃局)多久回收
 ROOM_TTL_MS = MATCH_TIMEOUT_MS            # 孤儿私房存活上限（与匹配总超时一致）
 QUEUE_TTL_MS = MATCH_TIMEOUT_MS + 30_000  # 孤儿等待者存活上限（略长于匹配总超时）
+RELAY_RETAIN_MS = 4000                    # 对手动作在 relay 里保留并每 tick 重发的时长，覆盖响应丢包；客户端按 seq 去重幂等施加
 
 
 def _adaptive_window_ms(n: int) -> int:
@@ -107,7 +108,7 @@ class VersusHub:
         # 供 _match_start_payload 下发给对方作 opponentLoadout，使对手侧 oppBattle 用真实配装忠实重放。
         return {"uid": uid, "rank": rank, "last_tick_ms": now, "relay_buffer": [],
                 "last_digest": None, "wave": 1, "prev_digest": None, "anomaly_recorded": False,
-                "status": "playing", "loadout": loadout}
+                "status": "playing", "loadout": loadout, "sent_seqs": set()}
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 组装 Match、建 ticket->match 索引，返回 match_id
@@ -310,10 +311,22 @@ class VersusHub:
             if digest:
                 me["last_digest"] = digest
                 me["wave"] = int(digest.get("wave", me["wave"]))
-            self._anticheat(m, me, opp, inputs, digest, now)
-            # 把我的动作放进对手的转发缓冲；终局后不再累积（对手已无需重放，防泄漏）
-            if inputs and not m.get("ended"):
-                opp["relay_buffer"].extend(inputs)
+            # 按 seq 去重：客户端重传窗口会重复上报同一动作，只保留 me 首次上报的 seq
+            # （幂等——防重复施加到对手 oppBattle 破坏确定性，也防反作弊按重复计数误判）。
+            # seq 缺失（旧客户端）：不去重（向后兼容，退化=现网行为）。
+            deduped = []
+            for a in (inputs or []):
+                sq = a.get("seq")
+                if sq is None:
+                    deduped.append(a)                    # 旧客户端无 seq：不去重（向后兼容）
+                elif sq not in me["sent_seqs"]:
+                    me["sent_seqs"].add(sq)
+                    deduped.append(a)
+            self._anticheat(m, me, opp, deduped, digest, now)
+            # 把我的新动作放进对手的转发缓冲（带服务端接收时刻，供保留窗口重发）；终局后不再累积
+            if deduped and not m.get("ended"):
+                for a in deduped:
+                    opp["relay_buffer"].append((now, a))
             # 先清者定下一波
             if wave_cleared_at:
                 w = int(wave_cleared_at.get("wave", 0))
@@ -321,8 +334,10 @@ class VersusHub:
                     m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
                     m["first_clear"][w] = uid
             self._resolve_terminal(m, me, opp, status, now)
-            # 取走给「我」的对手动作
-            out = me["relay_buffer"]; me["relay_buffer"] = []
+            # 取给「我」的对手动作：不再 pop-before-ack，改为保留 RELAY_RETAIN_MS 窗口内的动作每 tick 重发
+            # （客户端按 seq 去重），覆盖「服务端已处理但响应丢包」→ 下 tick 补齐，杜绝永久丢失；剔除过窗口的防泄漏。
+            me["relay_buffer"] = [(ts, a) for (ts, a) in me["relay_buffer"] if now - ts <= RELAY_RETAIN_MS]
+            out = [a for (ts, a) in me["relay_buffer"]]
             next_wave = self._next_wave_for(m, me)
             opp_status = self._opp_status(m, opp, now)
             # 落库兜底重试：已判终局但上次落库失败（DB 抖动）→ 幂等重试，避免永久丢战绩

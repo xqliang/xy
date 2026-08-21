@@ -70,18 +70,20 @@ export function versusRoomJoin(code: string, loadout?: PvpLoadout): Promise<ApiR
 // —— 对局期 tick（Plan C）：每秒双向心跳 ——
 // 上报本方放置动作/摘要，收对手动作 + 下一波 + 终局。
 // 类型与 server/api_versus.py 的 tick()/_opp_status()/_result_for() 逐字段对齐。
-/** 放置/操作动作（带 simTick=t），供对手回放 + 反作弊 */
+/** 放置/操作动作（带 simTick=t），供对手回放 + 反作弊。
+ *  seq?: 发送方单调序号，供中继去重幂等施加（网络可靠性；oppBattle 重放要求每命令恰好施加一次）。
+ *        可选——旧客户端/旧单测省略时退化为不去重（= 现网行为），保持向后兼容。 */
 export type PvpAction =
-  | { t: number; op: 'summon'; tray?: string[] }
-  | { t: number; op: 'place'; token: string; cell: string; index?: number }
-  | { t: number; op: 'move'; from: string; to: string }
-  | { t: number; op: 'merge'; from: number; to: number }
-  | { t: number; op: 'recall'; from: string; slot: number }
-  | { t: number; op: 'shovel'; cell: string }
-  | { t: number; op: 'active'; id: string; cell?: string; slot?: number }
-  | { t: number; op: 'autoplace'; cells?: Array<{ token: string; cell: string }> }
-  | { t: number; op: 'startWave' }
-  | { t: number; op: 'claimDrop'; id: string };
+  | { t: number; seq?: number; op: 'summon'; tray?: string[] }
+  | { t: number; seq?: number; op: 'place'; token: string; cell: string; index?: number }
+  | { t: number; seq?: number; op: 'move'; from: string; to: string }
+  | { t: number; seq?: number; op: 'merge'; from: number; to: number }
+  | { t: number; seq?: number; op: 'recall'; from: string; slot: number }
+  | { t: number; seq?: number; op: 'shovel'; cell: string }
+  | { t: number; seq?: number; op: 'active'; id: string; cell?: string; slot?: number }
+  | { t: number; seq?: number; op: 'autoplace'; cells?: Array<{ token: string; cell: string }> }
+  | { t: number; seq?: number; op: 'startWave' }
+  | { t: number; seq?: number; op: 'claimDrop'; id: string };
 /** 每秒摘要（digest）：服务端据此做反作弊启发式（唐僧血单调不增/击杀上界/波次不超前） */
 export interface PvpDigest { wave: number; power: number; kills: number; tangsengHP: number; peach: number; units: number }
 export interface TickRequest {

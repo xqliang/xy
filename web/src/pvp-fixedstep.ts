@@ -1,6 +1,7 @@
 // PvP 固定步长：把可变 dt 累计后按 fixed 切片。PVP_SIM_DT/DELAY_TICKS 供主循环与对手侧延迟重放用。
 export const PVP_SIM_DT = 1 / 30;      // PvP 物理固定子步（30Hz），与 versus-user-agent 一致
 export const DELAY_TICKS = 15;         // 对手侧延迟重放 tick 数（0.5s @30Hz），覆盖网络抖动
+export const RETRANSMIT_WINDOW_MS = 4000; // 出站动作在本地缓冲里保留并每 tick 重发的时长；1s 轮询下每条约发 4 次，覆盖最多 ~3 个连续丢包 tick
 /** 累加器：a=acc+dt，按 fixed 切出整步数与余量；maxSteps 防卡顿后一次跑太多帧（雪崩时丢弃积压）。 */
 export function drainFixedSteps(acc: number, dt: number, fixed: number, maxSteps: number): { steps: number; rest: number } {
   let a = acc + dt; let steps = 0;

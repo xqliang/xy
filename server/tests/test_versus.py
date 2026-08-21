@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from api_versus import (MATCH_TIMEOUT_MS, DISCONNECT_GRACE_MS, SIMULTANEOUS_EPS_MS,
-                        MATCH_REAP_MS, REAP_INTERVAL_MS, ROOM_TTL_MS, QUEUE_TTL_MS)
+                        MATCH_REAP_MS, REAP_INTERVAL_MS, ROOM_TTL_MS, QUEUE_TTL_MS,
+                        RELAY_RETAIN_MS)
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -189,15 +190,90 @@ def _match_two(hub, db, ua="10000201", ub="10000202", rank=3):
     mid = hub.poll(r1["ticket"])["matchStart"]["matchId"]
     return mid
 
+
+class _FakeDB:
+    """内存 DB 桩：relay/保留窗口测试完全不触库，但 tick() 收尾无条件走 is_banned（try 内），
+    故只需 today()/cursor() 不抛并返回 c=0。无需迁移、无需真实库（3308 不在线时这些用例照跑）。"""
+    def today(self):
+        return "2026-01-01"
+    def now(self):
+        return 1_000_000
+    @contextmanager
+    def cursor(self):
+        class _Cur:
+            def execute(self, *a, **k):
+                pass
+            def fetchone(self):
+                return {"c": 0}
+        yield _Cur()
+
+
+def _fake_hub():
+    # 构造一个不依赖真实 DB 的 VersusHub：时钟可控（hub._clock["ms"]），seed/code/map 固定。
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01", pick_map=lambda: "huoyanshan")
+    h._clock = clock
+    return h
+
+
+def _fake_match(hub, ua="A1", ub="B1", rank=3):
+    # 直接用 _make_match 成局（跳过 enqueue/poll 的 DB 读 player profile），返回 match_id。
+    e1 = {"uid": ua, "rank": rank, "ticket": "tA"}
+    e2 = {"uid": ub, "rank": rank, "ticket": "tB"}
+    return hub._make_match(e1, e2, hub._now())
+
+
 def test_tick_relays_inputs(hub, db):
     hub.reset()
     mid = _match_two(hub, db)
     d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+    # A 上报一个动作
     hub.tick("10000201", mid, [{"t": 5, "op": "place", "cell": "r1c1"}], d, None, "playing")
+    # B 首次 tick 收到（保留窗口内）
     resp = hub.tick("10000202", mid, [], d, None, "playing")
     assert resp["opponentInputs"] == [{"t": 5, "op": "place", "cell": "r1c1"}]
+    # 新语义：不再 pop-before-ack，改为保留窗口重发。B 再 tick（此响应假设丢失）→ 窗口内仍重发补齐。
     resp2 = hub.tick("10000202", mid, [], d, None, "playing")
-    assert resp2["opponentInputs"] == []
+    assert resp2["opponentInputs"] == [{"t": 5, "op": "place", "cell": "r1c1"}]
+    # 超过保留窗口 → 不再重发
+    hub._clock["ms"] += RELAY_RETAIN_MS + 1
+    resp3 = hub.tick("10000202", mid, [], d, None, "playing")
+    assert resp3["opponentInputs"] == []
+
+
+def test_resend_deduped_to_opponent_once():
+    # cause-2：A 重发同 seq + 新 seq，服务端按 seq 去重 → B 每个 seq 恰好收到一次（幂等）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"}], d, None, "playing")
+    # A 再 tick：整窗重发 seq:0（客户端重传）+ 新 seq:1
+    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"},
+                         {"t": 6, "seq": 1, "op": "summon"}], d, None, "playing")
+    resp = hub.tick("B1", mid, [], d, None, "playing")
+    assert sorted(a["seq"] for a in resp["opponentInputs"]) == [0, 1]  # 每个 seq 恰好一次
+    # B 再 tick（响应假设丢失，服务端重发）→ 仍各一次（sent_seqs 幂等，绝不重复施加）
+    resp2 = hub.tick("B1", mid, [], d, None, "playing")
+    assert sorted(a["seq"] for a in resp2["opponentInputs"]) == [0, 1]
+
+
+def test_retain_resend_recovers_lost_response():
+    # cause-2：A 上报一次；B 首次收到；B 再 tick（A 未新增、B 响应假设丢）→ 保留窗口内仍重发补齐。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    d = {"wave": 1, "power": 10, "kills": 0, "tangsengHP": 3, "peach": 20, "units": 1}
+    t0 = hub._now()
+    hub.tick("A1", mid, [{"t": 5, "seq": 0, "op": "place", "cell": "r1c1"}], d, None, "playing")
+    resp = hub.tick("B1", mid, [], d, None, "playing")
+    assert [a["seq"] for a in resp["opponentInputs"]] == [0]          # 首次收到
+    resp2 = hub.tick("B1", mid, [], d, None, "playing")
+    assert [a["seq"] for a in resp2["opponentInputs"]] == [0]         # 窗口内重发补齐（覆盖响应丢包）
+    hub._clock["ms"] = t0 + RELAY_RETAIN_MS + 1                        # 超过保留窗口
+    resp3 = hub.tick("B1", mid, [], d, None, "playing")
+    assert resp3["opponentInputs"] == []                               # 超窗不再重发
 
 def test_first_clear_schedules_next_wave(hub, db):
     hub.reset()
