@@ -8,3 +8,15 @@ export function drainFixedSteps(acc: number, dt: number, fixed: number, maxSteps
   if (steps >= maxSteps) a = 0; // 雪崩：丢弃积压，避免螺旋
   return { steps, rest: a };
 }
+
+/**
+ * 波起始纪元 → 本地 simTick（相对开局纪元，30Hz）。
+ *
+ * 服务端「先清者定波次」给每波一个绝对纪元 startAtServerMs（match 级共享，两端同值）。
+ * 本机按 PVP_SIM_DT=1/30 固定步长推进，故 (波起始纪元 - 开局纪元) * 30 / 1000 即为该波应在哪一步开波。
+ * 两端同 server 纪元 → 同 tick，与本地墙钟无关 → 两端在同一 tick 索引开波（rng 消费序一致，确定性开波基准）。
+ * round 抗浮点累计误差。
+ */
+export function pvpWaveStartTick(waveStartAtServerMs: number, matchStartAtServerMs: number): number {
+  return Math.round((waveStartAtServerMs - matchStartAtServerMs) * 30 / 1000);
+}

@@ -240,7 +240,7 @@ const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 import { PvpSync } from './pvp-battle';                   // PvP 对局同步记账（Task 6 的 onPvpMatched 实例化）
 import { toPvpAction } from './pvp-record';                  // 玩家输入 → PvpAction 命令映射（本方打点，Task 5）
-import { drainFixedSteps, PVP_SIM_DT, DELAY_TICKS } from './pvp-fixedstep'; // PvP 固定步长累加器 + 延迟重放 tick 数
+import { drainFixedSteps, PVP_SIM_DT, DELAY_TICKS, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 延迟重放 tick 数 + 波起始纪元→tick（Task 9）
 
 function enterCodex(tab?: CodexTab): void {
   codexLazy.ensure((m) => {
@@ -299,6 +299,8 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   bindBattleWeaponPickup();
   pvpSync = new PvpSync({ matchId: ms.matchId, seed: ms.seed, startAtServerMs: ms.startAtServerMs, serverOffsetMs: 0, delayTicks: DELAY_TICKS, now: () => Date.now() });
   pvpAcc = 0; pvpOppSimTick = 0; localSimTick = 0; pvpNextWave = null; pvpResult = null; pvpLastServerOkMs = performance.now();
+  // Task 9 波驱动状态 reset：开局纪元 + 波号→startTick 缓存清空 + 清波上报/下降沿归零。
+  pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPendingWaveClear = null; pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
   const sp = spendStamina(stamina);
   if (sp.ok) stamina = sp.state;
@@ -328,14 +330,23 @@ async function pumpPvpTick(): Promise<void> {
   const s = battle.snapshot();
   const digest = { wave: s.wave, power: s.towerPow, kills: s.kills, tangsengHP: s.tangsengHP, peach: s.peach, units: s.units };
   const status: 'playing' | 'tangsengDead' | 'surrender' = battle.status === 'lost' ? 'tangsengDead' : 'playing';
-  const req = pvpSync.buildTick(digest, /*waveClearedAt*/ null, status); // waveClearedAt 留 Task 9
+  // 清波上报：捕获待上报快照（防 await 期间被新一轮下降沿覆盖；成功后再按同一引用清除）。
+  const wc = pvpPendingWaveClear;
+  const req = pvpSync.buildTick(digest, wc, status);
   const r = await pvpClient.versusTick(req);
   if (!pvpSync) return;                 // await 期间可能已离局
   if (r.ok) {
     pvpSync.applyResponse(r.data);
     pvpLastServerOkMs = performance.now();
-    if (r.data.nextWave) pvpNextWave = r.data.nextWave;      // Task 9 消费
+    if (r.data.nextWave) {
+      pvpNextWave = r.data.nextWave;
+      // 缓存 波号→本地开波 tick：两端同 server 纪元→同 tick；各实例按自己 wave+1 查表在各自时钟到点开波。
+      const st = pvpWaveStartTick(r.data.nextWave.startAtServerMs, pvpMatchStartMs);
+      pvpWaveStartTicks.set(r.data.nextWave.wave, st);
+    }
     if (r.data.result) pvpResult = r.data.result;            // Task 10 消费
+    // 仅当上报的是我们刚捕获的那份（未被新一轮清波替换）才清除，避免 await 期间新值被误清。
+    if (pvpPendingWaveClear === wc) pvpPendingWaveClear = null;
     // opponentStatus / cheatNotice：Task 10 处理；本任务先不动 UI
   }
   // 失败(r.ok===false)：Task 10 做断线判定；本任务先忽略（下次心跳重试）
@@ -423,8 +434,28 @@ let pvpTickTimer: ReturnType<typeof setTimeout> | null = null; // 1s tick 心跳
 let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 存服务端下一波（Task 9 用）
 let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 存服务端终局（Task 10 用）
 let pvpLastServerOkMs = 0;             // 最近一次 tick 成功时刻（断线检测，Task 10）
+// —— Task 9：先清者定波次（服务端 nextWave 权威排程，本机按 tick 确定性开波）——
+let pvpMatchStartMs = 0;                        // 开局纪元（服务端 startAtServerMs）：波次纪元→tick 的零点
+const pvpWaveStartTicks = new Map<number, number>(); // 波号→该波本地开波 tick（缓存：两端各按自己 wave+1 查表）
+let pvpPendingWaveClear: { wave: number; t: number } | null = null; // 待上报的清波（本方 waveActive 下降沿，交给下次 tick 上报）
+let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波）
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
+/**
+ * PvP 到点开波：某实例 b 的 wave+1 已被服务端排程且其时钟已达 startTick、且当前无活动波 → 开波（step 之前调）。
+ *
+ * 两实例各按自己 wave+1 查同一份「波号→startTick」缓存，在各自时钟（battle 用 localSimTick、oppBattle 用
+ * pvpOppSimTick）到点开波。因 startTick 由绝对服务端纪元算得（跨机同值），两端在同一 tick 索引开波；
+ * 每 tick 的「输入→开波→step」顺序两端一致 → startNextWave 消费 this.rng 的骑兵/小Boss roll 序一致（确定性）。
+ * tick<st 早退 + startNextWave 内 waveActive 幂等 → 即使某帧追多 tick，也必恰在 tick===startTick 那一步开波。
+ */
+function maybeOpenPvpWave(b: Battle, tick: number): void {
+  if (b.waveActive || b.status === 'won' || b.status === 'lost') return;
+  const st = pvpWaveStartTicks.get(b.wave + 1);
+  if (st === undefined || tick < st) return;
+  b.startNextWave();
+}
+
 /** 每个 PvP 固定子步后回调：把 oppBattle 追到延迟目标 tick，施加对手转发来的动作（延迟重放）。
  *  由 frame() 固定步长循环每子步调用（Task 4 已接）。每帧把 oppBattle 追到 `localSimTick - DELAY_TICKS`
  *  （与本方同一累加器时钟，恒落后 DELAY_TICKS），实现对手半场的延迟重放；开局前 DELAY_TICKS 步
@@ -436,6 +467,7 @@ function onPvpSimTick(): void {
   let guard = 0;
   while (pvpOppSimTick < target && guard++ < 240) { // guard 防极端追帧卡死（240 步 = 8s @ 30Hz）
     for (const a of pvpSync.takeReady(pvpOppSimTick)) oppBattle.applyPvpInput(a); // 到点施加对手动作（缓冲已按 t 升序）
+    maybeOpenPvpWave(oppBattle, pvpOppSimTick); // 到点开波（step 前、对手输入之后；与本方同序=输入→开波→step，保确定性）
     oppBattle.step(PVP_SIM_DT);
     pvpOppSimTick++;
   }
@@ -2054,7 +2086,10 @@ function frame(now: number): void {
           const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 8);
           pvpAcc = rest;
           for (let i = 0; i < steps; i++) {
+            maybeOpenPvpWave(battle, localSimTick);              // 到点开波（step 前；本方输入即时施加在 handler，step 前已就绪）
             battle.step(PVP_SIM_DT);
+            if (pvpPrevWaveActive && !battle.waveActive) pvpPendingWaveClear = { wave: battle.wave, t: localSimTick }; // 清波下降沿：本波刚清空，记入待上报（交给下次 tick）
+            pvpPrevWaveActive = battle.waveActive;
             localSimTick++; // 完成一步，步数 +1 = 下一步 tick 索引（本方权威时钟；record 打点与对手延迟都以此为基准）
             onPvpSimTick();
             if (battle.status === 'won' || battle.status === 'lost') break;
@@ -2197,6 +2232,12 @@ interface GameHook {
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证双 Battle + 渲染桥。
   // 对手动作由调用方经 mock 的 /api/versus/tick 下发，进 pvpSync 缓冲后正常落后 DELAY_TICKS 重放。
   enterPvp: (seed: number) => void;
+  // 自测探针：PvP 波驱动内部状态（只读，供 headless 冒烟验证 nextWave 缓存/两实例开波确定性）。
+  pvpProbe: () => {
+    battleWave: number; oppWave: number; battleWaveActive: boolean;
+    localSimTick: number; pvpOppSimTick: number; matchStartMs: number;
+    waveCache: [number, number][]; pendingClear: boolean;
+  } | null;
 }
 const hook: GameHook = {
   get battle() {
@@ -2283,6 +2324,19 @@ const hook: GameHook = {
       opponent: { uid: 'opp-smoke', nickname: '烟雾对手', avatarId: 'hero-wukong', rankLevel: 1 },
     } as import('./api/pvp-client').MatchStart;
     onPvpMatched(ms);
+  },
+  pvpProbe: () => {
+    if (!pvpSync) return null;
+    return {
+      battleWave: battle.wave,
+      oppWave: oppBattle?.wave ?? -1,
+      battleWaveActive: battle.waveActive,
+      localSimTick,
+      pvpOppSimTick,
+      matchStartMs: pvpMatchStartMs,
+      waveCache: [...pvpWaveStartTicks.entries()],
+      pendingClear: pvpPendingWaveClear !== null,
+    };
   },
 };
 (window as unknown as { __game: GameHook }).__game = hook;

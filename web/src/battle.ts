@@ -1876,7 +1876,9 @@ export class Battle {
   /** 本波已通过双雄机制额外刷出的大 Boss 数 */
   private heroBossSpawnsThisWave = 0;
   private nextMonsterId = 1;
-  private waveActive = false;
+  // 本波是否仍有怪未清（波驱动/清波判定用）。PvP 下 main.ts 只读它做「清波下降沿」检测、驱动服务端清波上报；
+  // 保留 public（非 private）以兼容既有单测对该字段的直接读写（若干测试直接赋值驱动清波语义），改动最小。
+  waveActive = false;
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   private pvp = false; // 在线 PvP：关本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充
@@ -6906,7 +6908,8 @@ export class Battle {
     if (!this.introDone && this.status === 'ready' && this.wave === 0) {
       this.introT += dt;
       this.message = '唐僧归位中…抓紧征兵布阵！';
-      if (this.introT >= Battle.INTRO_DUR) {
+      // PvP：首波由服务端权威排程驱动（main.ts 到点 startNextWave），本地不开波；但 intro 视觉仍推进。
+      if (!this.pvp && this.introT >= Battle.INTRO_DUR) {
         this.startNextWave();
       }
       this.updateAi(dt); // 入场阶段：AI 与玩家同步征兵布阵
@@ -6914,7 +6917,8 @@ export class Battle {
       return;
     }
     // 波间自动切换：清波后倒计时自动开下一波（期间玩家仍可征兵布阵）
-    if (this.introDone && this.status === 'ready' && this.wave > 0) {
+    // PvP：波次由服务端 nextWave 排程驱动（main.ts 按波号缓存到点开波），本地不倒计时开波，避免抢跑破坏确定性。
+    if (!this.pvp && this.introDone && this.status === 'ready' && this.wave > 0) {
       this.nextWaveTimer -= dt;
       this.message = `第 ${this.wave + 1} 波准备中…${Math.max(0, Math.ceil(this.nextWaveTimer))}s（可继续布阵）`;
       this.updateAi(dt); // AI 侧继续清理残余怪
