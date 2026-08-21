@@ -19,6 +19,11 @@ export class PvpSync {
   private outbound: PvpAction[] = [];
   private inbound: PvpAction[] = []; // 对手动作，按 t 升序
   lastServerContactMs = 0;
+  // 服务端权威信号（每 tick 更新，供渲染层纠正本地重放发散）：
+  //   oppDigest = 对手自报摘要（含权威 tangsengHP，唐僧血单调不增）；oppStatus = 对手对局状态。
+  // 用途见 reconcileOppAlive：防本地 oppBattle 因残余丢命令/RNG 边界误把对手唐僧打死→假「被吃」。
+  oppDigest: PvpDigest | null = null;
+  oppStatus: TickResponse['opponentStatus'] = 'playing';
 
   constructor(o: PvpSyncOpts) {
     this.matchId = o.matchId; this.seed = o.seed;
@@ -52,6 +57,29 @@ export class PvpSync {
   buildTick(digest: PvpDigest, waveClearedAt: TickRequest['waveClearedAt'], status: TickRequest['status']): TickRequest {
     return { matchId: this.matchId, clientMs: this.now(), inputs: this.drainOutbound(), digest, waveClearedAt, status };
   }
-  /** 处理 tick 响应：收对手动作、记服务端联络时刻（时钟微调可后续加） */
-  applyResponse(r: TickResponse): void { this.ingestOpponent(r.opponentInputs); this.lastServerContactMs = this.now(); }
+  /** 处理 tick 响应：收对手动作、存服务端权威 digest/status、记服务端联络时刻（时钟微调可后续加） */
+  applyResponse(r: TickResponse): void {
+    this.ingestOpponent(r.opponentInputs);
+    this.oppDigest = r.opponentDigest;   // 存权威 digest（含真实 tangsengHP）
+    this.oppStatus = r.opponentStatus;   // 存对手权威状态
+    this.lastServerContactMs = this.now();
+  }
+}
+
+/**
+ * 用服务端权威信号纠正「对手半场」的唐僧存活显示，兜底本地 oppBattle 重放的发散假象
+ *（残余丢命令/RNG 边界可能让本地重放误把对手唐僧打死）。返回 null 字段表示「无权威，保留本地重放值」。
+ *   - opponentStatus==='tangsengDead'（对手自报唐僧被吃，服务端确认）→ 判死（血归零）。
+ *   - 有 digest → 以权威 tangsengHP 为准（>0 存活；<=0 判死）。唐僧血单调不增，digest 虽略延迟仍是真相。
+ *   - 尚无 digest（开局首 tick 前）→ 两字段返回 null，调用方保留桥接写入的本地重放值。
+ * 注：对手的怪物/单位仍来自 oppBattle 忠实重放；此处只纠正决定性的「唐僧血/存活」这一权威状态，
+ *     避免延迟/发散造成的假「被吃」直接呈现给用户（对手断线/认输也不在此判死，判负走服务端 result）。
+ */
+export function reconcileOppAlive(
+  oppDigest: PvpDigest | null,
+  oppStatus: TickResponse['opponentStatus'],
+): { tangsengHP: number | null; defeated: boolean | null } {
+  if (oppStatus === 'tangsengDead') return { tangsengHP: 0, defeated: true };
+  if (oppDigest) return { tangsengHP: oppDigest.tangsengHP, defeated: oppDigest.tangsengHP <= 0 };
+  return { tangsengHP: null, defeated: null };
 }

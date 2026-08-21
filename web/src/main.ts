@@ -238,7 +238,7 @@ const menuPopupsLazy = lazyModule(() => import('./menu-popups'));
 const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
-import { PvpSync } from './pvp-battle';                   // PvP 对局同步记账（Task 6 的 onPvpMatched 实例化）
+import { PvpSync, reconcileOppAlive } from './pvp-battle';                   // PvP 对局同步记账（Task 6 的 onPvpMatched 实例化）+ 权威纠正
 import { toPvpAction } from './pvp-record';                  // 玩家输入 → PvpAction 命令映射（本方打点，Task 5）
 import { drainFixedSteps, PVP_SIM_DT, DELAY_TICKS, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 延迟重放 tick 数 + 波起始纪元→tick（Task 9）
 
@@ -2243,7 +2243,13 @@ function frame(now: number): void {
     setHudRank(rankName(rank.level));
     // PvP 渲染桥（Task 8）：每帧渲染前把 oppBattle 本方侧镜像进 battle.ai*，复用 drawAiSide 画对手半场。
     // 仅 pvpSync 非空（在线对局中）时桥一次；单人路径完全不碰，零影响。
-    if (pvpSync && oppBattle) battle.bridgeOpponentFrom(oppBattle);
+    if (pvpSync && oppBattle) {
+      battle.bridgeOpponentFrom(oppBattle);
+      // 权威纠正：服务端每 tick 回传对手真实 digest/status，用它兜底本地重放的发散假象
+      // （否则残余丢命令会让 oppBattle 误把对手唐僧打死→假「被吃」）。对手怪/单位仍走 oppBattle 忠实重放。
+      const rec = reconcileOppAlive(pvpSync.oppDigest, pvpSync.oppStatus);
+      battle.applyOppAuthority(rec.tangsengHP, rec.defeated);
+    }
     draw(ctx, battle, ui);
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);

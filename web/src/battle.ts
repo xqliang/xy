@@ -1770,6 +1770,16 @@ export class Battle {
     this.lastAiActivePairKeys = lp;
   }
 
+  /**
+   * PvP：桥接后用服务端权威信号覆盖「对手半场」的唐僧血/存活显示。
+   * 传入 null 表示「无权威、保留 bridgeOpponentFrom 写入的本地重放值」（判定见 pvp-battle.ts reconcileOppAlive）。
+   * 只在 pvp 桥接后调用（单人无 oppBattle/权威 digest，不会触及）。
+   */
+  applyOppAuthority(tangsengHP: number | null, defeated: boolean | null): void {
+    if (tangsengHP != null) this.aiTangsengHP = tangsengHP;
+    if (defeated != null) this.aiDefeated = defeated;
+  }
+
   // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
   devForceWave: number = 0; // 0 = 关闭；非 0 = 该波征兵必出
   devForceHeroId: string = ''; // 武将 id（如 'erlang'），空 = 关闭
