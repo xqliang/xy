@@ -98,9 +98,9 @@ import {
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 
-// DevTools 模块级配置：第 N 波征兵必出指定英雄两字（跨 restart 持久）
+// DevTools 模块级配置：第 N 次征兵必出指定英雄两字（跨 restart 持久）
 // null = 关闭；非 null = 新 Battle 构造时自动读取
-let DEV_FORCE_WAVE_HERO: { heroId: string; wave: number } | null = null;
+let DEV_FORCE_SUMMON_HERO: { heroId: string; summonN: number } | null = null;
 
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
@@ -1655,10 +1655,10 @@ export class Battle {
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
-  // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
-  devForceWave: number = 0; // 0 = 关闭；非 0 = 该波征兵必出
+  // —— DevTools：第 N 次征兵必出指定英雄两字（测试用）——
+  devForceSummonN: number = 0; // 0 = 关闭；非 0 = 第 N 次征兵必出（1-indexed）
   devForceHeroId: string = ''; // 武将 id（如 'erlang'），空 = 关闭
-  private devForceWaveCharsDrawn: Set<string> = new Set(); // 已强制出的字（防重复）
+  private devForceSummonCharsDrawn: Set<string> = new Set(); // 已强制出的字（防重复）
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -1890,9 +1890,9 @@ export class Battle {
     }
     this.warmPathDistCaches();
     // DevTools：读取模块级强制出英雄配置（跨 restart 持久）
-    if (DEV_FORCE_WAVE_HERO) {
-      this.devForceHeroId = DEV_FORCE_WAVE_HERO.heroId;
-      this.devForceWave = DEV_FORCE_WAVE_HERO.wave;
+    if (DEV_FORCE_SUMMON_HERO) {
+      this.devForceHeroId = DEV_FORCE_SUMMON_HERO.heroId;
+      this.devForceSummonN = DEV_FORCE_SUMMON_HERO.summonN;
     }
   }
 
@@ -2132,17 +2132,17 @@ export class Battle {
       if (trayWordsSoFar.length >= wordSlotsCap) {
         return null;
       }
-      // DevTools：第 N 波必出指定英雄的两字（测试用）
-      if (this.devForceHeroId && this.wave === this.devForceWave) {
+      // DevTools：第 N 次征兵必出指定英雄的两字（测试用，1-indexed）
+      if (this.devForceHeroId && this.summonCount === this.devForceSummonN) {
         const def = generalById(this.devForceHeroId);
         if (def) {
           for (const ch of def.chars) {
-            if (this.devForceWaveCharsDrawn.has(ch)) continue;
+            if (this.devForceSummonCharsDrawn.has(ch)) continue;
             // 跳过已在 tray 或棋盘上的字
             const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
             const onBoard = [...this.words.values()].some((w) => w.char === ch);
-            if (inTray || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
-            this.devForceWaveCharsDrawn.add(ch);
+            if (inTray || onBoard) { this.devForceSummonCharsDrawn.add(ch); continue; }
+            this.devForceSummonCharsDrawn.add(ch);
             trayWordsSoFar.push(ch);
             this.bumpWordCharCount(ch);
             return { kind: 'word' as const, char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
@@ -2178,23 +2178,24 @@ export class Battle {
       }
       return tok;
     });
-    // DevTools：第 N 波必出指定英雄两字——若 tray 里还没有，强制替换 unit 槽
-    if (this.devForceHeroId && this.wave === this.devForceWave) {
+
+    // DevTools：第 N 次征兵必出指定英雄两字——若 tray 里还没有，强制替换 unit 槽
+    if (this.devForceHeroId && this.summonCount === this.devForceSummonN) {
       const def = generalById(this.devForceHeroId);
       if (def) {
         for (const ch of def.chars) {
-          if (this.devForceWaveCharsDrawn.has(ch)) continue;
+          if (this.devForceSummonCharsDrawn.has(ch)) continue;
           const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
           const inDraws = draws.some((t) => t.kind === 'word' && t.char === ch);
           const onBoard = [...this.words.values()].some((w) => w.char === ch);
-          if (inTray || inDraws || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
+          if (inTray || inDraws || onBoard) { this.devForceSummonCharsDrawn.add(ch); continue; }
           // 找一个 unit 槽替换
           const idx = draws.findIndex((t) => t.kind === 'unit');
           if (idx >= 0) {
             draws[idx] = { kind: 'word', char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
             trayWordsSoFar.push(ch);
             this.bumpWordCharCount(ch);
-            this.devForceWaveCharsDrawn.add(ch);
+            this.devForceSummonCharsDrawn.add(ch);
           }
         }
       }
@@ -2617,25 +2618,24 @@ export class Battle {
   forcePairPityForTest(): void { this.summonsSincePair = TUNING.pairPityAfter; }
   setWaveForTest(wave: number): void { this.wave = Math.max(0, wave); }
 
-  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。 */
-  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。跨 restart 持久。 */
-  setDevForceWave2Hero(heroId: string, wave = 2): void {
-    DEV_FORCE_WAVE_HERO = { heroId, wave };
+  /** DevTools：配置第 N 次征兵必出指定英雄的两字（测试用）。summonN=0 关闭。跨 restart 持久。 */
+  setDevForceWave2Hero(heroId: string, summonN = 1): void {
+    DEV_FORCE_SUMMON_HERO = { heroId, summonN };
     this.devForceHeroId = heroId;
-    this.devForceWave = wave;
-    this.devForceWaveCharsDrawn.clear();
+    this.devForceSummonN = summonN;
+    this.devForceSummonCharsDrawn.clear();
   }
   /** DevTools：关闭强制出英雄 */
   clearDevForceWave2Hero(): void {
-    DEV_FORCE_WAVE_HERO = null;
+    DEV_FORCE_SUMMON_HERO = null;
     this.devForceHeroId = '';
-    this.devForceWave = 0;
-    this.devForceWaveCharsDrawn.clear();
+    this.devForceSummonN = 0;
+    this.devForceSummonCharsDrawn.clear();
   }
   /** DevTools：获取当前强制配置（供 UI 显示）。优先读模块级配置（跨 restart）。 */
-  devForceWave2HeroStatus(): { wave: number; heroId: string } {
-    if (DEV_FORCE_WAVE_HERO) return { wave: DEV_FORCE_WAVE_HERO.wave, heroId: DEV_FORCE_WAVE_HERO.heroId };
-    return { wave: this.devForceWave, heroId: this.devForceHeroId };
+  devForceWave2HeroStatus(): { summonN: number; heroId: string } {
+    if (DEV_FORCE_SUMMON_HERO) return { summonN: DEV_FORCE_SUMMON_HERO.summonN, heroId: DEV_FORCE_SUMMON_HERO.heroId };
+    return { summonN: this.devForceSummonN, heroId: this.devForceHeroId };
   }
 
   earlySummonStatsForTest(): {

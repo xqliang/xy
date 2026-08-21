@@ -1993,7 +1993,7 @@ interface GameHook {
   // DevTools：第 N 波征兵必出指定英雄两字（测试用）
   forceWaveHero: (heroId: string, wave?: number) => void;
   clearForceWaveHero: () => void;
-  forceWaveHeroStatus: () => { wave: number; heroId: string };
+  forceWaveHeroStatus: () => { summonN: number; heroId: string };
   ult: () => boolean; // 兼容垫片：绝招已移除，恒返回 false（旧工具不报错）
   triggerActive: (i: number) => boolean;
   equipActives: (ids: string[]) => void;
