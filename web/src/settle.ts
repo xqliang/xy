@@ -165,10 +165,51 @@ function drawSettleHint(ctx: CanvasRenderingContext2D, text: string, y: number):
   ctx.fillText(text, VIEW_W / 2, y);
 }
 
+// 段位名 + 加/减星动画 + 晋级/降档提示。单人结算(drawSettle)与 PvP 结算(drawPvpSettle)共用，
+// 保证「星级变化」观感一致。cx=水平中心；rankNameY=段位名基线 y；starsY=星排中心 y；progress=0..1。
+function drawRankChangeStars(
+  ctx: CanvasRenderingContext2D,
+  c: RankChange,
+  progress: number,
+  cx: number,
+  rankNameY: number,
+  starsY: number,
+  starOpts?: { gap?: number; size?: number },
+): void {
+  const { tier, fills } = computeStars(c, progress);
+  const animDone = progress >= 1;
+  // 晋级/降档在动画收尾时切到新档名字，否则一直显示「展示档」名
+  const showTier = c.won && c.promoted && animDone ? c.state.level
+    : (!c.won && c.demoted ? c.state.level : tier);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
+  ctx.fillStyle = '#5a3a12';
+  ctx.fillText(`境界 · ${rankName(showTier)}`, cx, rankNameY);
+
+  // 水墨星星排（透明底立绘，fills 驱动空↔满叠化）；晋级收尾时清零，让新档从 0 星起
+  const drawFills = c.won && c.promoted && animDone ? new Array<number>(STARS_PER_TIER).fill(0) : fills;
+  ctx.save();
+  const glow = ctx.createRadialGradient(cx, starsY, 10, cx, starsY, 140);
+  glow.addColorStop(0, 'rgba(210,160,60,0.18)');
+  glow.addColorStop(1, 'rgba(210,160,60,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(cx - 160, starsY - 50, 320, 100);
+  ctx.restore();
+  drawRankStarsAnimated(ctx, cx, starsY, drawFills, { gap: starOpts?.gap ?? 58, size: starOpts?.size ?? 46 });
+
+  // 晋级 / 降档提示（动画收尾时飘出）
+  if (animDone && (c.promoted || c.demoted)) {
+    ctx.font = 'bold 22px "PingFang SC", serif';
+    ctx.fillStyle = c.promoted ? '#b87818' : '#a04828';
+    ctx.fillText(c.promoted ? '★ 晋级！ ★' : '段位下降', cx, starsY + 58);
+  }
+}
+
 // 结算页主绘制。tMs = 进入结算页后的毫秒数。
 export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: number) {
   const progress = Math.max(0, Math.min(1, (tMs - HOLD_MS) / ANIM_MS));
-  const eased = progress; // computeStars 内部对加星用了 easeOutBack，减星用线性
 
   ctx.save();
   drawSettleAtmosphere(ctx, c.won ? 'win' : 'lose');
@@ -180,40 +221,10 @@ export function drawSettle(ctx: CanvasRenderingContext2D, c: RankChange, tMs: nu
   const contentTop = drawSettlePanel(ctx, panelX, panelY, PANEL_W, panelH, c.won ? 'win' : 'lose', title);
 
   const cx = VIEW_W / 2;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
+  // 段位名 + 加/减星动画 + 晋级/降档提示（与 PvP 结算共用同一套绘制）
+  drawRankChangeStars(ctx, c, progress, cx, contentTop + 18, contentTop + 88);
 
-  // 段位名（晋级/降档在动画收尾时切到新名字，否则一直显示展示档名）
-  const { tier, fills } = computeStars(c, eased);
-  const animDone = progress >= 1;
-  const showTier = c.won && c.promoted && animDone ? c.state.level
-    : (!c.won && c.demoted ? c.state.level : tier);
-
-  ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
-  ctx.fillStyle = '#5a3a12';
-  ctx.fillText(`境界 · ${rankName(showTier)}`, cx, contentTop + 18);
-
-  // 水墨星星排（透明底立绘，fills 驱动空↔满叠化）
-  const sy = contentTop + 88;
-  const drawFills = c.won && c.promoted && animDone ? new Array<number>(STARS_PER_TIER).fill(0) : fills;
-  // 星下淡金光晕，衬托无底板的星星
-  ctx.save();
-  const glow = ctx.createRadialGradient(cx, sy, 10, cx, sy, 140);
-  glow.addColorStop(0, 'rgba(210,160,60,0.18)');
-  glow.addColorStop(1, 'rgba(210,160,60,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(cx - 160, sy - 50, 320, 100);
-  ctx.restore();
-  drawRankStarsAnimated(ctx, cx, sy, drawFills, { gap: 58, size: 46 });
-
-  // 晋级 / 降档提示（动画收尾时飘出）
-  if (animDone && (c.promoted || c.demoted)) {
-    ctx.font = 'bold 22px "PingFang SC", serif';
-    ctx.fillStyle = c.promoted ? '#b87818' : '#a04828';
-    ctx.fillText(c.promoted ? '★ 晋级！ ★' : '段位下降', cx, sy + 58);
-  }
-
-  const hint = animDone ? '点击任意处继续' : '点击跳过';
+  const hint = progress >= 1 ? '点击任意处继续' : '点击跳过';
   drawSettleHint(ctx, hint, panelY + panelH - 28);
 
   ctx.restore();
@@ -270,9 +281,13 @@ export interface PvpSettleResult {
   outcome: 'win' | 'lose' | 'draw';
   reason: string;
   opponent: { nickname: string | null; avatarId: string };
+  // PvP 现也结算段位/功德（与单人一致的观感）：胜/负带 rankChange（复用加减星动画），平局为 null（不动段位）；
+  // merit=本局获得功德，用于结算屏「功德+N」展示。实际写入/持久化/弹商人由 main.ts 落地。
+  rankChange: RankChange | null;
+  merit: number;
 }
 
-// reason 契约串 → 中文文案（纯函数，可单测）。PvP 不动境界/功德/商人，所以这里只解释「为什么结束」。
+// reason 契约串 → 中文文案（纯函数，可单测）。解释「为什么结束」，与结算屏的段位/功德展示并列。
 export function pvpReasonText(reason: string): string {
   switch (reason) {
     case 'opponentTangsengDead': return '对手唐僧被消灭';
@@ -293,17 +308,20 @@ function pvpSettleTitle(outcome: PvpSettleResult['outcome']): string {
   return '平局';
 }
 
-// PvP 结算屏：只展示结果与对手信息，**不画星、不动段位**（PvP 与境界解耦）。
-// 标题条色调沿用单人（win 绿 / lose 赭红 / draw 黄），复用 drawSettlePanel 的水墨卷轴骨架。
-// 点击返回由 main.ts 在「动画完成」后处理（这里只负责绘制）。
-export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult, _tMs: number): void {
+// PvP 结算屏：结果 + 对手信息 + 段位星级变化 + 功德+N（段位/功德已由 main.ts 结算落地）。
+// 标题条色调沿用单人（win 绿 / lose 赭红 / draw 黄），复用卷轴骨架与单人同款加减星动画。
+// 平局不动段位（rankChange=null）→ 只展示对手信息 + 参与功德，用矮面板。点击返回由 main.ts 在动画完成后处理。
+export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult, tMs: number): void {
   const tone: 'win' | 'lose' | 'endless' = r.outcome === 'win' ? 'win' : r.outcome === 'lose' ? 'lose' : 'endless';
+  const rc = r.rankChange;
+  const tierShift = !!rc && (rc.promoted || rc.demoted); // 晋级/降档要多留一行提示位
   ctx.save();
   drawSettleAtmosphere(ctx, tone);
 
-  const panelH = 360;
+  // 有段位变化时面板更高（容纳星排 + 功德）；平局/无变化用矮面板并下移居中
+  const panelH = rc ? (tierShift ? 456 : 424) : 320;
   const panelX = (VIEW_W - PANEL_W) / 2;
-  const panelY = VIEW_H * 0.22;
+  const panelY = VIEW_H * (rc ? 0.15 : 0.24);
   const title = pvpSettleTitle(r.outcome);
   const contentTop = drawSettlePanel(ctx, panelX, panelY, PANEL_W, panelH, tone, title);
 
@@ -311,11 +329,11 @@ export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult,
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // 对手头像（与 profile-popup 一致的圆形裁剪 + 底部对齐画法）
+  // —— 对手头像（圆形裁剪 + 底部对齐，与 profile-popup 一致）——
   const a = avatarById(r.opponent.avatarId);
   const spr = a ? sprite(a.art) : undefined;
-  const AV = 120; // 头像框边长
-  const avY = contentTop + 12;
+  const AV = 92; // 头像框边长（比旧版略小，给下方段位/功德让位）
+  const avY = contentTop;
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
@@ -325,34 +343,43 @@ export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult,
   ctx.clip();
   if (spr) {
     const sc = Math.min(AV / spr.width, AV / spr.height);
-    const dw = spr.width * sc;
-    const dh = spr.height * sc;
-    ctx.drawImage(spr, cx - dw / 2, avY + AV - dh, dw, dh);
+    ctx.drawImage(spr, cx - (spr.width * sc) / 2, avY + AV - spr.height * sc, spr.width * sc, spr.height * sc);
   } else {
-    // 资源缺失时的占位字
     ctx.fillStyle = '#a07018';
-    ctx.font = 'bold 40px serif';
+    ctx.font = 'bold 36px serif';
     ctx.fillText('?', cx, avY + AV / 2);
   }
   ctx.restore();
-  // 头像描边
   ctx.strokeStyle = 'rgba(120,90,40,0.6)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
   ctx.stroke();
 
-  // 对手昵称
+  // 对手昵称 + 终局原因
   ctx.fillStyle = '#5a3a12';
-  ctx.font = 'bold 22px "PingFang SC", "STKaiti", serif';
-  ctx.fillText(`对手：${r.opponent.nickname ?? '对手'}`, cx, avY + AV + 32);
-
-  // 终局原因（副文）
+  ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
+  ctx.fillText(`对手：${r.opponent.nickname ?? '对手'}`, cx, avY + AV + 20);
   ctx.fillStyle = '#7a5230';
-  ctx.font = '20px "PingFang SC", serif';
-  ctx.fillText(pvpReasonText(r.reason), cx, avY + AV + 64);
+  ctx.font = '16px "PingFang SC", serif';
+  ctx.fillText(pvpReasonText(r.reason), cx, avY + AV + 44);
 
-  drawSettleHint(ctx, '点击返回', panelY + panelH - 28);
+  // —— 段位星级变化（平局不动段位→跳过星排）+ 功德+N ——
+  let meritY = avY + AV + 84;
+  if (rc) {
+    const progress = Math.max(0, Math.min(1, (tMs - HOLD_MS) / ANIM_MS));
+    const rankNameY = avY + AV + 78;
+    const starsY = rankNameY + 46;
+    drawRankChangeStars(ctx, rc, progress, cx, rankNameY, starsY, { gap: 50, size: 40 });
+    meritY = starsY + (tierShift ? 86 : 54);
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#a07018';
+  ctx.font = 'bold 22px "PingFang SC", serif';
+  ctx.fillText(`功德 +${r.merit}`, cx, meritY);
+
+  drawSettleHint(ctx, isSettleAnimDone(tMs) ? '点击返回' : '点击跳过', panelY + panelH - 26);
 
   ctx.restore();
 }

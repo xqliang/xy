@@ -64,3 +64,30 @@ describe('rank star progression', () => {
     expect(c.state.difficulty).toBeGreaterThanOrEqual(0.6);
   });
 });
+
+describe('rank freezeDifficulty（PvP 用：动星级但不动单人 AI 难度系数）', () => {
+  it('胜·冻结难度：difficulty 保持原值，星级/段位/动画字段与不冻结完全一致', () => {
+    const s: RankState = { level: 1, stars: 2, difficulty: 1.3 };
+    const frozen = recordWin(s, { freezeDifficulty: true });
+    const normal = recordWin(s); // 对照组：不传参 → 正常上调难度
+    expect(frozen.state.difficulty).toBe(1.3);            // 冻结：原值不动
+    expect(normal.state.difficulty).toBeGreaterThan(1.3); // 对照：×1.06 上调
+    // 除 difficulty 外，星级推进逻辑必须与单人一致
+    expect(frozen.state.level).toBe(normal.state.level);
+    expect(frozen.state.stars).toBe(normal.state.stars);
+    expect(frozen.starDelta).toBe(normal.starDelta);
+    expect(frozen.promoted).toBe(normal.promoted);
+  });
+
+  it('负·冻结难度：difficulty 保持原值，星级/段位/动画字段与不冻结完全一致', () => {
+    const s: RankState = { level: 2, stars: 0, difficulty: 1.5 };
+    const frozen = recordLose(s, { freezeDifficulty: true });
+    const normal = recordLose(s); // 对照组：不传参 → 正常下调难度
+    expect(frozen.state.difficulty).toBe(1.5);            // 冻结：原值不动
+    expect(normal.state.difficulty).toBeLessThan(1.5);    // 对照：×0.88 下调
+    expect(frozen.state.level).toBe(normal.state.level);
+    expect(frozen.state.stars).toBe(normal.state.stars);
+    expect(frozen.starDelta).toBe(normal.starDelta);
+    expect(frozen.demoted).toBe(normal.demoted);
+  });
+});

@@ -58,6 +58,7 @@ import { isPausePopupOpen as isPausePopupOpenPure, shouldStepSim, pausePopupCont
 import { drawInkPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
+import { pvpSettle } from './pvp-settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, STAMINA_COST, type Stamina } from './stamina';
 import { drawMenu, menuButtonAt, menuVersionHitAt, STAMINA_PLUS_BTN } from './menu';
@@ -2420,18 +2421,27 @@ function frame(now: number): void {
       }
     }
     // —— Task 10：PvP 终局由「服务端 result」权威驱动 ——
-    // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里只构造结算 payload、
-    // 不记境界/功德/商人（PvP 与境界解耦）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
+    // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里结算段位/功德/商人
+    // （与单人一致，差别：段位冻结单人 AI 难度、平局不动段位，见 pvp-settle.ts）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
     if (pvpSock && pvpResult && !pvpSettleResult) {
+      const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave);
+      if (rankChange) rank = rankChange.state; // 胜/负动段位（recordWin/Lose 内部已持久化）；平局 rankChange=null 不动
+      merit = addMerit(merit, meritGain);      // 累加并持久化功德（封顶 300，同单人）
+      pendingMerchant = true;                  // 回首页弹神秘商人（同单人）
       pvpSettleResult = {
         outcome: pvpResult.outcome,
         reason: pvpResult.reason,
         opponent: { nickname: pvpOpponent?.nickname ?? null, avatarId: pvpOpponent?.avatarId ?? '' },
+        rankChange,
+        merit: meritGain,
       };
       pvpSettleStart = performance.now();
-      battle.message = pvpResult.outcome === 'win' ? '对局胜利' : pvpResult.outcome === 'lose' ? '对局失败' : '平局';
-      // 故意不做：recordWin/recordLose、meritReward/addMerit、pendingMerchant（PvP 不动境界/功德/商人）
-      // 注：PvP 终局遥测未接 track（TelemetryType 联合未含 pvp_end，避免扩 schema）；后续如需统计再加。
+      const outLabel = pvpResult.outcome === 'win' ? '对局胜利' : pvpResult.outcome === 'lose' ? '对局失败' : '平局';
+      battle.message = `${outLabel}（功德 +${meritGain}）`;
+      void syncAvatarUnlocks(); // 段位/功德变化可能触发头像解锁
+      scheduleCloudSync(1000);  // 持久化段位/功德到云端
+      // 不接入（单人专属，PvP 不该污染）：recordVersusOutcome（单人 AI 加压连胜）、submitLeaderboard（波数榜）、
+      // markGameFinished、bumpClearCount；遥测未接 track（TelemetryType 无 pvp_end，避免扩 schema）。
     }
     setHudRank(rankName(rank.level));
     // PvP 渲染桥（Model C）：每帧渲染前把对手 WS 快照（经 PvpOppView 插值）镜像进 battle.ai*，复用 drawAiSide 画对手半场。
@@ -2583,7 +2593,7 @@ interface GameHook {
   pvpSurrender: () => void;
   // Task 7 自测钩子：镜像结算屏「返回」点击（anim 已毕点屏→leaveSettleToMenu），返回是否执行离场。
   pvpLeaveSettle: () => { left: boolean; reason?: string };
-  // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
+  // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => { rankLevel: number; merit: number };
 }
 const hook: GameHook = {
@@ -2730,7 +2740,7 @@ const hook: GameHook = {
     battle.message = '已认输，等待结算…';
     if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('surrender'); pvpStatusReported = true; }
   },
-  // 自测探针：境界/功德（冒烟验证 PvP 终局不动 rank/merit）。
+  // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => ({ rankLevel: rank.level, merit: merit.merit }),
   // Task 7 自测钩子：镜像结算屏「返回」点击（结算动画已毕时点屏→leaveSettleToMenu）。
   // 与 main.ts 指针路径同源：isSettleOpen 且 animDone 时才生效；返回是否真的执行了离场。

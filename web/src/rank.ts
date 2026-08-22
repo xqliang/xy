@@ -65,9 +65,15 @@ export function saveRank(s: RankState): void {
 const bumpUp = (d: number) => Math.round(d * 1.06 * 1000) / 1000;
 const bumpDown = (d: number) => Math.max(0.6, Math.round(d * 0.88 * 1000) / 1000);
 
-export function recordWin(s: RankState): RankChange {
+// 结算选项：freezeDifficulty=true 时只推进星级/段位、**不改单人 AI 难度系数**。
+// PvP 结算用（PvP 胜负不应污染单人对战的难度自适应，见 pvp-settle.ts）；单人不传 → 行为不变。
+export interface RankRecordOpts {
+  freezeDifficulty?: boolean;
+}
+
+export function recordWin(s: RankState, opts?: RankRecordOpts): RankChange {
   const before = { level: s.level, stars: s.stars };
-  const difficulty = bumpUp(s.difficulty);
+  const difficulty = opts?.freezeDifficulty ? s.difficulty : bumpUp(s.difficulty);
   const atTop = s.level >= LADDER_LEN - 1 && s.stars >= STARS_PER_TIER;
   let next: RankState;
   let promoted = false;
@@ -87,9 +93,9 @@ export function recordWin(s: RankState): RankChange {
   return { state: next, before, won: true, promoted, demoted: false, starDelta };
 }
 
-export function recordLose(s: RankState): RankChange {
+export function recordLose(s: RankState, opts?: RankRecordOpts): RankChange {
   const before = { level: s.level, stars: s.stars };
-  const difficulty = bumpDown(s.difficulty);
+  const difficulty = opts?.freezeDifficulty ? s.difficulty : bumpDown(s.difficulty);
   const atFloor = s.level <= 0 && s.stars <= 0;
   let next: RankState;
   let demoted = false;
