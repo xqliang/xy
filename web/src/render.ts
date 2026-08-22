@@ -10562,21 +10562,28 @@ function drawPillDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState
   const slot = b.activeSlots[ui.dragActiveSlot];
   const def = slot ? activeById(slot.id) : undefined;
   if (!def) return;
-  // 炸药：高亮鼠标所在格——路径合法且未埋=绿，否则=红
+  // 炸药：参考兵器布置——先用黄色四角框标出所有「可埋」的路径格，再高亮鼠标所在格
   if (isBombActiveEffect(def.effect)) {
+    // 所有可埋路径格打黄色四角框（唐僧格 / 已埋格与 placeBomb 同口径自动排除）
+    for (const pc of b.map.path) {
+      if (!b.canPlaceBomb(pc)) continue;
+      drawAimReticle(ctx, BOARD_X + pc.c * CELL, BOARD_Y + pc.r * CELL, CELL, CELL, { plus: false, fill: false });
+    }
+    // 鼠标所在格：路径合法且未埋=橙，否则=红（精确落点反馈）
     const cell = pxToCell(ui.dragPos.x, ui.dragPos.y);
-    if (!cell) return;
-    const ok = b.canPlaceBomb(cell);
-    const x = BOARD_X + cell.c * CELL;
-    const y = BOARD_Y + cell.r * CELL;
-    ctx.save();
-    roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 8);
-    ctx.fillStyle = ok ? 'rgba(255,150,40,0.24)' : 'rgba(200,60,50,0.20)';
-    ctx.fill();
-    ctx.strokeStyle = ok ? '#ff9a30' : '#c8433a';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
+    if (cell) {
+      const ok = b.canPlaceBomb(cell);
+      const x = BOARD_X + cell.c * CELL;
+      const y = BOARD_Y + cell.r * CELL;
+      ctx.save();
+      roundRect(ctx, x + 2, y + 2, CELL - 4, CELL - 4, 8);
+      ctx.fillStyle = ok ? 'rgba(255,150,40,0.24)' : 'rgba(200,60,50,0.20)';
+      ctx.fill();
+      ctx.strokeStyle = ok ? '#ff9a30' : '#c8433a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
     return;
   }
   if (!isPillActiveEffect(def.effect)) return;
