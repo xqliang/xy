@@ -4457,7 +4457,10 @@ export class Battle {
 
   // 开始下一波
   startNextWave(): boolean {
-    if (this.waveActive) return false;
+    // 单人：无活动波才允许开下一波（沿用「清完再开」节奏）。
+    // PvP：硬同步——服务端到点即开下一波，哪怕上一波还没清（旧怪继续走/被打，不能删）。
+    // 旧怪存活依赖本方法体全程不触碰 this.monsters（怪的死活由 updateMonsters/伤害流程单独处理）。
+    if (this.waveActive && !this.pvp) return false;
     if (this.status === 'won' || this.status === 'lost') return false;
     // 首波给全体已装备被动闪一次斜光，作为「这些被动已生效」的确认反馈（静态 buff 无离散触发点）。
     if (!this.passivesFlashedAtStart) {
@@ -6907,8 +6910,12 @@ export class Battle {
     if (!this.introDone && this.status === 'ready' && this.wave === 0) {
       this.introT += dt;
       this.message = '唐僧归位中…抓紧征兵布阵！';
-      // PvP：首波由服务端权威排程驱动（main.ts 到点 startNextWave），本地不开波；但 intro 视觉仍推进。
-      if (!this.pvp && this.introT >= Battle.INTRO_DUR) {
+      if (this.pvp) {
+        // PvP：首波由服务端权威排程驱动（main.ts 到点 startNextWave），本地不在这里开波。
+        // 但唐僧归位完成后必须置 introDone——否则 maybeOpenPvpWave 的「等归位再开第 1 波」闸门永远不放行。
+        // 视觉上 introT 仍继续累加（tangsengRenderPos 用 min(1, introT/INTRO_DUR)  clamp 到终点）。
+        if (this.introT >= Battle.INTRO_DUR) this.introDone = true;
+      } else if (this.introT >= Battle.INTRO_DUR) {
         this.startNextWave();
       }
       this.updateAi(dt); // 入场阶段：AI 与玩家同步征兵布阵

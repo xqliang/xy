@@ -513,15 +513,25 @@ let pvpNetDead = false;                         // 本局已判网络断开（>6
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
- * PvP 到点开波：某实例 b 的 wave+1 已被服务端排程且其时钟已达 startTick、且当前无活动波 → 开波（step 之前调）。
+ * PvP 到点开波（硬同步）：某实例 b 的 wave+1 已被服务端排程、其时钟已达 startTick → 开波（step 之前调）。
  *
- * 本方 battle 按自己 wave+1 查同一份「波号→startTick」缓存，在 localSimTick 时钟到点开波。
- * 因 startTick 由绝对服务端纪元算得（跨机同值），两端在同一 tick 索引开波；
- * 每 tick 的「开波→step」顺序两端一致 → startNextWave 消费 this.rng 的骑兵/小Boss roll 序一致（确定性）。
- * tick<st 早退 + startNextWave 内 waveActive 幂等 → 即使某帧追多 tick，也必恰在 tick===startTick 那一步开波。
+ * 与单人「清完再开」不同，PvP 波次由服务端绝对纪元权威排程（startAtServerMs，跨机同值），两端在同一
+ * tick 索引开波——哪怕本方上一波还没清，也**强制切到下一波**，旧怪继续走/被打（startNextWave 在 pvp
+ * 下放行且不触碰 this.monsters，旧怪因此存活）；本波骑兵/小Boss 等技能照常 roll。这正是「对方已清波、
+ * 倒计时到下一波、我方还在打上一波时我方也切到下一波」的硬同步语义。
+ *
+ * 两道闸门：
+ *  1. `!b.introDone` 早退——第 1 波必须等唐僧归位（intro 视觉走完 ~6s）后才发，给玩家布阵时间；
+ *     归位完成由 battle.step 的 PvP intro 分支置 introDone。wave1 的 startTick 由 start_at_ms
+ *     = now+START_DELAY_MS 算得，相对 matchStart 为 0 → 到 tick 0 即可尝试开波，实际由本闸门拖到
+ *     intro 结束（~tick 180 @30Hz）。两端 intro 都始于 match start，加载微偏差可接受。
+ *  2. `st === undefined || tick < st` 早退——未排程或时钟未到则等。tick===startTick 恰开一次（wave 自增
+ *     后下一波查自己的 st，无重复开波）。
+ * 每 tick 「开波→step」顺序两端一致 → startNextWave 消费 this.rng 的骑兵/小Boss roll 序一致（确定性）。
  */
 function maybeOpenPvpWave(b: Battle, tick: number): void {
-  if (b.waveActive || b.status === 'won' || b.status === 'lost') return;
+  if (b.status === 'won' || b.status === 'lost') return;
+  if (!b.introDone) return; // 等唐僧归位后才发第 1 波（布阵时间）
   const st = pvpWaveStartTicks.get(b.wave + 1);
   if (st === undefined || tick < st) return;
   b.startNextWave();

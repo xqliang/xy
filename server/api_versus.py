@@ -26,7 +26,8 @@ DISCONNECT_GRACE_MS = 6_000      # 断线宽限：对手 tick 缺失超过即可
 RECENT_WINDOW_MS = 300_000       # 自适应窗口统计的近 5 分钟
 W_MIN_MS, W_MAX_MS = 3_000, 15_000   # 同级保持窗口范围
 INTER_WAVE_DELAY_MS = 3_000      # 先清者触发后到下一波开始的间隔（须与前端一致）
-START_DELAY_MS = 1_500           # match-start 到第 1 波开始的缓冲（两端加载）
+START_DELAY_MS = 7_500           # match-start 到第 1 波开始的缓冲。需覆盖唐僧归位入场(intro 6s)+两端加载余量，
+                                 # 否则玩家武器还没布好就出怪。前端到点仍由 introDone 闸门二次把关（确保归位完才开波）。
 SIMULTANEOUS_EPS_MS = 200        # 双方阵亡视为同刻→平局的阈值
 KILLS_PER_POWER_PER_SEC = 0.5   # 每点战力每秒可击杀数上界（留大余量，可调）
 KILLS_ABS_FLOOR = 30            # 低战力区的击杀绝对下限余量（避免早期误报）
