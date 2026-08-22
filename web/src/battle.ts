@@ -675,6 +675,7 @@ export interface Monster {
   healFlash: number; // 刚被血泉治疗的闪光(1→0)，用于 UI
   burnT: number; // 灼烧剩余(秒)：>0 时每秒按 burnDps 掉血（红孩/红袍大招）
   burnDps: number; // 灼烧每秒伤害（施法时写入，刷新取更高值）
+  miniBossCasted: boolean; // 黄狮精「卷走」一次性开关：偷到一次后置 true，本局不再施法
 }
 
 /** 弹道/命中特效种类：四兵种 + 英雄悟空金箍棒（原棍兵特效迁至此） */
@@ -5138,7 +5139,11 @@ export class Battle {
           ? TUNING.cavalrySpdMul
           : 1;
 
-    const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
+    const skillCd = isMiniBoss
+      ? (miniKind === 'lion'
+        ? TUNING.miniBossStealDelayMin + this.rng.next() * (TUNING.miniBossStealDelayMax - TUNING.miniBossStealDelayMin)
+        : TUNING.miniBossFirstDelay)
+      : TUNING.skillFirstDelay;
     type MonsterSpec = {
       hp: number;
       isBoss: boolean;
@@ -5169,6 +5174,7 @@ export class Battle {
       healFlash: 0,
       burnT: 0,
       burnDps: 0,
+      miniBossCasted: false,
     });
     const bossSpec: MonsterSpec = {
       hp,
@@ -6061,6 +6067,7 @@ export class Battle {
       m.castFlash = Math.max(0, m.castFlash - dt * 4);
       // 小 Boss 光环
       if (m.isMiniBoss && m.miniBossKind) {
+        if (m.miniBossCasted) continue; // 黄狮精：卷走只触发一次，偷到后本局跳过
         m.skillCd -= dt;
         if (m.skillCd > 0) continue;
         m.skillCd = TUNING.miniBossInterval;
