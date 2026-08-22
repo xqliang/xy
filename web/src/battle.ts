@@ -50,7 +50,10 @@ import {
 } from './weapons';
 import { applyForceShovel, drawSummonTray } from './summon-draw';
 import { earlySummonGates } from './summon-early';
-import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_PLACE_DEADLINE_PREP_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_PLACE_DEADLINE_PREP_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, scoreDiggableCells, pickBestDigCell, DIG_EXIT_WEIGHT, DIG_EXIT_WEIGHT_AI_MIN, DIG_EXIT_WEIGHT_AI_MAX, type AutoPlaceView, type BattleRepositionView } from './autoplace';
+
+// 洛阳铲被动自动挖间隔（秒）：cd 到期后自动挖一个高评分槽位
+export const AUTO_SHOVEL_INTERVAL_S = 45;
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -831,7 +834,7 @@ interface Modifiers {
   summonCostDelta: number;
   wordRateBonus: number; // 招贤榜：字牌掉率加成
   shovelPeach: number; // 摸金校尉：每次开挖额外蟠桃
-  autoShovel: boolean; // 洛阳铲：定期产铲
+  autoShovel: boolean; // 洛阳铲：定期自动挖一个高评分槽位（无可挖则跳过）
   meteor: boolean; // 陨石：每波待最前活怪走过 ≥ 半径后再砸（便于砸中一波）
   mud: boolean; // 淤泥：出怪口附近减速
   generalTierDelta: number; // 法宝符：武将首次激活时双字品质阶 +N
@@ -1851,7 +1854,7 @@ export class Battle {
   aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[] = [];
   /** 攻击型主动技能(陨石/紧箍咒)：距离条件达成后的随机延迟倒计时（秒）；undefined=未解锁 */
   private aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu' | 'bomb', number>> = {};
-  private aiShovelTimer = 0;
+  private aiShovelTimer = 0; // 洛阳铲自动挖计时（AI 侧）
   private aiMeteorPending = false;
   aiPickedItems: string[] = []; // HUD 右上角展示
   aiMonsters: Monster[] = [];
@@ -2795,6 +2798,10 @@ export class Battle {
   /** 测试钩子：将半对保底计数设为阈值 */
   forcePairPityForTest(): void { this.summonsSincePair = TUNING.pairPityAfter; }
   setWaveForTest(wave: number): void { this.wave = Math.max(0, wave); }
+  /** 测试钩子：设定洛阳铲自动挖计时（秒），便于单测直接驱动到期。ai=true 设 AI 侧计时。 */
+  setAutoShovelTimerForTest(s: number, ai = false): void {
+    if (ai) this.aiShovelTimer = s; else this.shovelTimer = s;
+  }
 
   /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。 */
   /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。跨 restart 持久。 */
@@ -4635,7 +4642,7 @@ export class Battle {
 
   // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
   passiveProgress(id: string): { ratio: number; text: string } | null {
-    if (id === 'luoyangchan') return { ratio: this.shovelTimer / 45, text: `产铲 ${this.shovelTimer.toFixed(0)}/45s` };
+    if (id === 'luoyangchan') return { ratio: this.shovelTimer / AUTO_SHOVEL_INTERVAL_S, text: `自动挖 ${this.shovelTimer.toFixed(0)}/${AUTO_SHOVEL_INTERVAL_S}s` };
     return null;
   }
 
@@ -4683,16 +4690,80 @@ export class Battle {
     }
   }
 
-  // 被动道具的持续效果：洛阳铲产铲
+  // 被动道具的持续效果：洛阳铲到期自动挖一个高评分槽位（无可挖则跳过，计时器重置后下个周期再试）
   private updateItemEffects(dt: number): void {
     if (this.mods.autoShovel) {
       this.shovelTimer += dt;
-      if (this.shovelTimer >= 45) { this.shovelTimer = 0; this.shovels += 1; this.flashPassive('luoyangchan'); }
+      if (this.shovelTimer >= AUTO_SHOVEL_INTERVAL_S) {
+        this.shovelTimer = 0;
+        this.tryAutoDigShovel(false); // 玩家侧：到期自动挖最高评分槽位
+      }
     }
     if (this.aiMods.autoShovel) {
       this.aiShovelTimer += dt;
-      if (this.aiShovelTimer >= 45) { this.aiShovelTimer = 0; this.aiShovels += 1; this.flashPassive('luoyangchan', 0.45, true); }
+      if (this.aiShovelTimer >= AUTO_SHOVEL_INTERVAL_S) {
+        this.aiShovelTimer = 0;
+        this.tryAutoDigShovel(true); // AI 侧：镜像自动挖（用 ai* 字段）
+      }
     }
+  }
+
+  /**
+   * 洛阳铲自动挖：cd 到期后自动挖一个最高评分的可开挖槽位（与玩家手铲/拖铲同效）。
+   * - 评分复用共享 scoreDiggableCells（分越低越优先）：tray 字可拼将的相邻格最优先，
+   *   否则贴路 ~1 格 + 贴边 + 近出口。玩家侧确定性取最优格；AI 侧用 aiRng 做与自动布阵
+   *   一致的轻度随机（避免每局挖到同一格），保持离线确定性。
+   * - 候选来源用各自视图的 diggableCells：玩家侧已排除桃树（与 useShovelOn「不能开垦桃树」一致），
+   *   AI 侧沿用其既有口径（含桃树格，与 aiPlaceFromTray 一致）——保持单机 AI 行为不变。
+   * - 无候选（全挖完 / 玩家侧全被桃树占 / 无可摆放格）→ 不挖、不闪，计时器已重置，45s 后再试。
+   * - 仅在对局进行中（playing/ready）开挖，避免终局后还在刷 digFx；计时器仍在所有状态推进（与原产铲同）。
+   */
+  private tryAutoDigShovel(ai: boolean): void {
+    if (this.status !== 'playing' && this.status !== 'ready') return; // 终局后不挖
+    const view = ai ? this.buildAiAutoView() : this.buildPlayerAutoView();
+    // 出口权重：AI 侧与自动布阵一致（危险时 0 偏唐僧，否则随机[AI_MIN,AI_MAX]增多样性）；玩家侧用默认
+    const exitWeight = ai
+      ? (view.dangerNear()
+        ? 0
+        : DIG_EXIT_WEIGHT_AI_MIN + this.aiRng.next() * (DIG_EXIT_WEIGHT_AI_MAX - DIG_EXIT_WEIGHT_AI_MIN))
+      : DIG_EXIT_WEIGHT;
+    const scored = scoreDiggableCells(view, exitWeight);
+    if (scored.length === 0) return; // 无候选：跳过（计时器已重置，下个 45s 再试）
+    // 玩家确定性取最优；AI 轻度随机（注入 aiRng 保持确定性）
+    const target = ai ? pickBestDigCell(scored, true, () => this.aiRng.next()) : scored[0]!.cell;
+    if (ai ? this.aiAutoDigCell(target) : this.playerAutoDigCell(target)) {
+      this.flashPassive('luoyangchan', 0.45, ai); // 洛阳铲生效斜光反馈
+    }
+  }
+
+  /**
+   * 玩家侧洛阳铲自动挖指定格：与 useShovelOn 的开垦判定逐条一致，但不消耗铲子道具。
+   * 评分阶段 diggableCells 已排除桃树，这里再校验 isPlaceable/桃树做兜底（极端情况下评分格不可摆放则放弃）。
+   */
+  private playerAutoDigCell(to: Cell): boolean {
+    if (this.isUnlocked(to.c, to.r) || !this.isPlaceable(to.c, to.r)) return false;
+    if (this.trees.has(cellKey(to.c, to.r))) return false; // 桃树格不可开垦
+    this.unlocked.add(cellKey(to.c, to.r));
+    this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画（进 pvpOwnSnapshot，对手可见）
+    this.emit('shovel'); // 第一铲；半程再铲一声
+    this.peach += this.mods.shovelPeach; // 摸金校尉加成
+    this.message = '洛阳铲自动挖开新阵位';
+    return true;
+  }
+
+  /**
+   * AI 侧洛阳铲自动挖指定格：与 aiPlaceFromTray 铲子分支逐条一致，但不消耗 aiShovels 道具。
+   * 评分来源 diggableCells 沿用 AI 既有口径（含桃树格），故此处只校验「未解锁 + 属 AI 可摆放格」。
+   */
+  private aiAutoDigCell(to: Cell): boolean {
+    const k = cellKey(to.c, to.r);
+    if (this.aiUnlocked.has(k)) return false;
+    if (!this.aiCells.some((c) => c.c === to.c && c.r === to.r)) return false; // 只挖 AI 可摆放格
+    this.aiUnlocked.add(k);
+    this.aiDigFx.push({ c: to.c, r: to.r, t: 0 }); // 开格动画（对称展示）
+    this.emit('shovel');
+    if (this.aiMods.shovelPeach > 0) this.aiPeach += this.aiMods.shovelPeach;
+    return true;
   }
 
   // 蟠桃园：每 40s 在未开垦空地自动种 1 棵 1 级桃树；满格则尝试往已有桃树合并升级。
@@ -5820,7 +5891,7 @@ export class Battle {
     }
   }
 
-  /** 库存铲子：tray 无铲且仍有锁定格时自动开挖（洛阳铲产出等） */
+  /** 库存铲子：tray 无铲且仍有锁定格时自动开挖（征兵抽到的铲子等；洛阳铲已改为直接自动挖，不再入库） */
   private aiUseShovelOn(to: Cell): boolean {
     if (this.aiShovels <= 0) return false;
     const k = cellKey(to.c, to.r);
