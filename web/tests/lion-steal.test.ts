@@ -129,3 +129,22 @@ describe('黄狮精 卷走目标', () => {
     expect(b.trees.has(`${tcell.c},${tcell.r}`)).toBe(false);
   });
 });
+
+describe('黄狮精 特效与提示', () => {
+  it('偷到后弹出金色 death 粒子 + 底部提示带目标名', () => {
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
+    const target = { c: 3, r: 5 };
+    const { b, lion } = lionOnPath(map, { c: 4, r: 6 }, 0);
+    b.units.set(`${target.c},${target.r}`, makePlacedUnit('dao', 1, target));
+    (b as unknown as { status: string }).status = 'playing';
+    b.step(0.05);
+    // 被偷格有金色 death 粒子
+    const burst = b.bursts.find((x) => x.c === target.c && x.r === target.r && x.kind === 'death');
+    expect(burst).toBeTruthy();
+    expect(burst!.color).toBe(MINI_BOSS_META.lion.color);
+    // 底部提示包含怪物名 + 目标名
+    expect(b.message).toContain('黄狮精');
+    expect(b.message).toContain('刀兵');
+    expect(lion.castFlash).toBeGreaterThan(0);
+  });
+});

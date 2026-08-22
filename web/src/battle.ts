@@ -6189,6 +6189,11 @@ export class Battle {
         this.clearAutoPlaceLayoutMemory(); // 与 recallToTray 一致：移除后清自动布阵记忆，避免 AI 引用失效格
         affected = 1;
         m.miniBossCasted = true; // 偷到一次，本局不再触发
+        m.castFlash = 1; // 施法闪光（与其它小 Boss 一致，供渲染）
+        // 消失特效：在被偷格子爆开金色 death 粒子环（复用 drawBursts，无需新增 SkillFxKind）
+        this.bursts.push({ kind: 'death', c: pick.c, r: pick.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
+        // 底部提示：点明被卷走的具体目标
+        this.message = `⚠ ${meta.name}卷走了「${pick.name}」！`;
         break;
       }
       default: {
@@ -6199,8 +6204,11 @@ export class Battle {
     }
     if (affected > 0) {
       m.castFlash = 1;
-      this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
-      this.message = `${meta.name}施展「${meta.skillName}」`;
+      // lion 已在分支内自设 message 与金色 death 粒子，这里只处理其它小 Boss 的通用光环提示
+      if (kind !== 'lion') {
+        this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
+        this.message = `${meta.name}施展「${meta.skillName}」`;
+      }
     }
   }
 
