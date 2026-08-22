@@ -123,22 +123,35 @@ async function main() {
   }
 
   const { baseDir, files } = parseArgs(process.argv.slice(2));
-  const names = (files.length > 0 ? files : fs.readdirSync(baseDir))
+  // manifest 的条目 = baseDir 下全部白名单资源（哈希是内容函数：未指定上传的文件内容没变，
+  // 其 URL 与 CDN 上已有对象一致，无需重传也能安全写入表）。分文件参数只控制「上传哪些」，
+  // 绝不影响 manifest 覆盖范围——否则分文件上传会把表改写成只剩几条、其余素材丢 hashed URL
+  // （2026-08-22 实际踩过：`tos-upload.mjs loading-tangseng.png` 后全表只剩 1 条）。
+  const allNames = fs.readdirSync(baseDir)
     .filter((f) => ALLOWED_EXTS.has(path.extname(f).toLowerCase()))
     .filter((f) => f !== 'manifest-generated.ts' && f !== '.DS_Store')
     .filter((f) => fs.statSync(path.join(baseDir, f)).isFile())
     .sort();
+  const uploadNames = files.length > 0
+    ? allNames.filter((f) => files.includes(f))
+    : allNames;
+  if (files.length > 0 && uploadNames.length === 0) {
+    console.error('错误: 指定的文件都不在白名单/目录内'); process.exit(1);
+  }
 
   const client = new TosClient({ accessKeyId, accessKeySecret, region: REGION, endpoint: ENDPOINT });
 
   const result = {};
   const hashed = {};
-  for (const name of names) {
+  for (const name of allNames) {
     const filePath = path.join(baseDir, name);
     const ext = path.extname(name);
     const base = path.basename(name, ext);
     const hash = contentHash(filePath);
     const key = `${KEY_PREFIX}${base}-${hash}${ext}`;
+    const url = URL_PREFIX + key;
+    hashed[name] = url;                    // 全量入表（含本次未上传的——内容未变 URL 未变）
+    if (!uploadNames.includes(name)) continue;
     const contentType = contentTypeOf(name);
     await client.putObjectFromFile({
       bucket: BUCKET,
@@ -148,9 +161,7 @@ async function main() {
       contentType,
       cacheControl: CACHE_CONTROL,
     });
-    const url = URL_PREFIX + key;
     result[name] = url;
-    hashed[name] = url;
     console.error(`  上传 ${name} → ${url}`);
   }
 
