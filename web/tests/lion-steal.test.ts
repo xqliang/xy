@@ -59,7 +59,7 @@ function lionOnPath(map: GameMap, pathCell: { c: number; r: number }, skillCd: n
 
 describe('黄狮精 一次性触发', () => {
   it('半径内无目标时不消耗机会、会重试', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const { b, lion } = lionOnPath(map, { c: 4, r: 6 }, 0);
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
@@ -68,7 +68,7 @@ describe('黄狮精 一次性触发', () => {
   });
 
   it('偷到一次后 miniBossCasted=true、后续再不偷（依赖 Task 4 的 lion 施法效果）', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const target = { c: 3, r: 5 };
     const { b, lion } = lionOnPath(map, { c: 4, r: 6 }, 0);
     b.units.set(`${target.c},${target.r}`, makePlacedUnit('dao', 1, target));
@@ -81,7 +81,7 @@ describe('黄狮精 一次性触发', () => {
 
 describe('黄狮精 卷走目标', () => {
   it('卷走兵器：永久删除、不入 tray、不给蟠桃', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const target = { c: 3, r: 5 };
     const { b } = lionOnPath(map, { c: 4, r: 6 }, 0);
     b.units.set(`${target.c},${target.r}`, makePlacedUnit('dao', 1, target));
@@ -94,7 +94,7 @@ describe('黄狮精 卷走目标', () => {
   });
 
   it('卷走英雄字块：孤儿字直接删除', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const wcell = { c: 2, r: 5 };
     const { b } = lionOnPath(map, { c: 3, r: 6 }, 0);
     b.words.set(`${wcell.c},${wcell.r}`, { char: '大', general: 'dasheng', tier: 1, cell: wcell });
@@ -104,7 +104,7 @@ describe('黄狮精 卷走目标', () => {
   });
 
   it('配对英雄只拆一字：成对时随机拆一字，另一字保留、配对解散', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     // '大'=2,5 与 '圣'=3,5 左右紧邻成「大圣」对，距狮子(4,6) 分别 √5≈2.24、√2≈1.41，都在半径 3 内
     const aChar = { c: 2, r: 5 };
     const bChar = { c: 3, r: 5 };
@@ -120,7 +120,7 @@ describe('黄狮精 卷走目标', () => {
   });
 
   it('卷走桃树：永久删除', () => {
-    const map = MAPS[0]!;
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const tcell = { c: 3, r: 5 };
     const { b } = lionOnPath(map, { c: 4, r: 6 }, 0);
     b.trees.set(`${tcell.c},${tcell.r}`, { level: 3, cell: tcell, growT: 0 });
