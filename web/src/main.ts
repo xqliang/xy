@@ -473,7 +473,7 @@ function battleIntroSequence(): TutorialSequence {
     {
       id: 'spawnGate',
       title: '怪物出口',
-      text: '敌人会从这里的出怪口不断冒出，沿路线冲向你的唐僧。',
+      text: '怪物从这里出来，沿路线走向我方守护的唐僧，需要征兵部署抵挡怪物。',
       getAnchor: () => {
         const gate = pathEntranceCell(battle.map.path);
         return cellRect(gate.c, gate.r);
@@ -481,8 +481,8 @@ function battleIntroSequence(): TutorialSequence {
     },
     {
       id: 'tangseng',
-      title: '防守目标',
-      text: '这是唐僧，血量归零就会失败，务必守住他。',
+      title: '我方唐僧',
+      text: '这是我方要守护的唐僧，怪物吃到唐僧扣一滴血，唐僧血量归零时游戏失败。',
       getAnchor: () => cellRect(battle.map.tangseng.c, battle.map.tangseng.r),
     },
   ];
@@ -490,8 +490,8 @@ function battleIntroSequence(): TutorialSequence {
   if (!battle.endless) {
     steps.push({
       id: 'aiOpponent',
-      title: 'AI 对手',
-      text: '对角是 AI 对手的唐僧，双方同时应战——谁的唐僧先被妖怪吃掉，谁就算输！',
+      title: '对手唐僧',
+      text: '这是对手守护的唐僧，双方同时守护各自的唐僧——谁的唐僧先被妖怪吃掉，谁就算输！',
       getAnchor: () => cellRect(battle.aiTangseng.c, battle.aiTangseng.r),
     });
   }
@@ -505,13 +505,13 @@ function battleIntroSequence(): TutorialSequence {
     {
       id: 'peach',
       title: '蟠桃',
-      text: '这里显示你当前拥有的蟠桃数量，击杀妖怪也会掉落。点击桃子可查看获取途径。蟠桃是征兵的唯一资源，攒够后就能召募士兵和武将。',
+      text: '这是我方当前拥有的蟠桃数量，击杀妖怪会掉落蟠桃。每次征兵需要一定数量的蟠桃。',
       getAnchor: () => peachHudRect(),
     },
     {
       id: 'goSummon',
-      title: '赶紧去征兵',
-      text: '唐僧还在赶来的路上——趁这段时间点【征兵】招募，再把士兵拖到地图上布阵，等他归位、怪物来袭时才有防线可用！',
+      title: '征兵布阵',
+      text: '唐僧还在赶来的路上——趁这段时间点【征兵】招募，将士兵部署地图空白位置上，怪物来袭时才能抵挡怪物！',
       getAnchor: () => buttonRect('summon'),
     },
   );
@@ -525,13 +525,13 @@ function firstSummonSequence(): TutorialSequence {
       {
         id: 'unitTypes',
         title: '兵种介绍',
-        text: '刀兵近战均衡、枪兵可穿透打多个目标、骑兵机动灵活、弓兵射程最远，合理搭配更抗打。',
+        text: '刀兵近战重击单体、骑兵近战攻击多目标、枪兵中距攻击多目标、弓兵远程攻击单体，合理搭配更抗打。',
         getAnchor: () => trayRowRect(),
       },
       {
         id: 'dragToBoard',
         title: '部署到地图',
-        text: '把候选区里的令牌拖到下方绿色格子上即可放置。',
+        text: '按住候选区的士兵，拖到上方地图的白色空格，让它的攻击范围覆盖怪物路径。',
         getAnchor: () => {
           const i = findTrayIndex(battle.tray, (t) => t.kind === 'unit' || t.kind === 'word');
           return i >= 0 ? trayTokenRect(i) : trayRowRect();
@@ -562,7 +562,7 @@ function firstPlacementSequence(): TutorialSequence {
       {
         id: 'attackRange',
         title: '查看攻击范围',
-        text: '点击场上的兵可以查看它的攻击范围（圆环内能打到怪），再点一次取消选中。',
+        text: '点击阵上的士兵可查看攻击范围，只要攻击范围圈和怪物路径有相交，就能打到该格子的怪物。',
         getAnchor: firstPlacementAnchor,
       },
     ],
@@ -581,7 +581,7 @@ function firstHeroWordSequence(): TutorialSequence {
       {
         id: 'heroWord',
         title: '什么是英雄',
-        text: '这是武将（英雄）字牌，代表一位有专属技能的英雄，比普通兵种更强。',
+        text: '这是英雄字牌，未激活的英雄字没有攻击力，需要部两个左右连着的字才能激活英雄（比如"大圣"）。英雄比普通兵攻击高，有各自的大招。',
         getAnchor: firstHeroWordAnchor,
       },
     ],
@@ -613,14 +613,14 @@ function firstShovelSequence(): TutorialSequence {
     steps: [
       {
         id: 'shovelUse',
-        title: '洛阳铲怎么用',
-        text: '这是洛阳铲，把它拖到锁定的灰格上即可挖开，解锁新的部署位置。',
+        title: '洛阳铲',
+        text: '这是洛阳铲，把它按住拖到地图锁定的灰格上即可挖开，解锁新的部署位置。',
         getAnchor: firstShovelAnchor,
       },
       {
         id: 'shovelWhere',
         title: '挖哪里最好',
-        text: '推荐优先挖靠近怪物出口、摆放武器后攻击范围能覆盖更长路线的区域，防守效率更高；也可以直接点【布阵】自动挖最优位置。',
+        text: '推荐优先挖靠近怪物出口，尽早防守，效率更高。',
         getAnchor: firstShovelDigSpotAnchor,
       },
     ],
@@ -644,8 +644,8 @@ function firstHeroComboSequence(): TutorialSequence {
     steps: [
       {
         id: 'heroCombo',
-        title: '怎么合并英雄',
-        text: '把同一位武将的两张字牌拼到左右相邻，就能激活武将并获得强力效果。',
+        title: '怎么激活英雄',
+        text: '把同一位英雄的两张字牌拼到左右相邻，就能激活英雄并获得强力效果。',
         getAnchor: firstHeroComboAnchor,
       },
     ],
@@ -682,8 +682,8 @@ function firstMergeableSequence(): TutorialSequence {
     steps: [
       {
         id: 'mergeUpgrade',
-        title: '合并升级武器',
-        text: '同兵种同等级的两个单位拖到一起即可合并升阶，也可以直接点【布阵】自动帮你合并。',
+        title: '升级武器',
+        text: '同兵种同等级的两个单位拖到一起即可合并升级，最高升级到5级。',
         getAnchor: firstMergeableAnchor,
       },
     ],
@@ -697,7 +697,7 @@ function firstFragmentDropSequence(): TutorialSequence {
       {
         id: 'fragmentInfo',
         title: '武器碎片是什么',
-        text: '击杀怪物时有机会掉落神兵碎片，点这张卡片即可领取。',
+        text: '击杀怪物时有机会掉落神兵碎片，武器碎片可以兑换武器，加强对应英雄的攻击，点这张卡片即可领取。',
         getAnchor: () => weaponPickupRect(0),
       },
       {
@@ -717,13 +717,13 @@ function merchantFirstOpenSequence(): TutorialSequence {
       {
         id: 'activeSkill',
         title: '主动技能是什么',
-        text: '主动技能需要在局内手动点击释放，有冷却时间，能造成爆发效果。',
+        text: '主动技能需要在局内手动点击释放，有冷却时间，能造成爆发效果或增加攻击属性。',
         getAnchor: () => merchantLazy.get()!.merchantActiveRowRect(),
       },
       {
         id: 'passiveSkill',
         title: '被动技能是什么',
-        text: '被动技能装备后全程自动生效，无需手动操作。',
+        text: '被动技能装备后全程自动生效，无需手动操作，能造成爆发效果或增加攻击属性。',
         getAnchor: () => merchantLazy.get()!.merchantPassiveRowRect(),
       },
     ],
