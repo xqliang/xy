@@ -2254,7 +2254,10 @@ function drawMonsterAt(
     const scale = Math.min(box / spr.width, box / spr.height);
     const dw = spr.width * scale;
     const dh = spr.height * scale;
-    // 骑兵有明确行进方向：朝左走(trailDir<0)时水平翻转立绘，使其面朝移动方向。
+    // 骑兵立绘约定：默认面朝右。trailDir 由实际屏幕位移得出（玩家侧取原路径、AI 镜像侧取
+    // aiMonsterPos 镜像位移，两侧均正确），故只需在向左行(trailDir<0)时水平翻转折面。
+    // ⚠️ 各图骑兵立绘(monster-cavalry-<mapId>)必须统一面朝右：若某张朝左，本翻转会让它在
+    // 左右两半场都反向（白骨岭曾因此「方向反了」——修法是校正该立绘朝向，而非改此处逻辑）。
     // 仅翻转骑兵本体（speed 拖尾在上方已按 trailDir 单独画，不受影响）。
     if (m.isCavalry && trailDir < 0) {
       ctx.save();
