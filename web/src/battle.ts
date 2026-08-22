@@ -104,9 +104,9 @@ import { fxAlive, type PvpSnap, type PvpSnapView } from './pvp-snap';
 // —— 本切片的战场调参（非原作数值：原作只给出 POW 框架与怪物数，未给绝对 HP）——
 // 保留 POW 关系：POW怪 = HP×SPD，POW塔 = ATK×FRQ×RGE；这里选可玩的绝对值，可再调。
 
-// DevTools 模块级配置：第 N 波征兵必出指定英雄两字（跨 restart 持久）
+// DevTools 模块级配置：第 N 次征兵必出指定英雄两字（跨 restart 持久）
 // null = 关闭；非 null = 新 Battle 构造时自动读取
-let DEV_FORCE_WAVE_HERO: { heroId: string; wave: number } | null = null;
+let DEV_FORCE_SUMMON_HERO: { heroId: string; summonN: number } | null = null;
 
 export const TUNING = {
   monsterSpd: 0.6, // 格/秒
@@ -116,8 +116,9 @@ export const TUNING = {
   monsterHpNoDiffTo: 3, // 波 1–3 用 monsterHpEarlyFixed；其后朝目标血量爬坡
   /** 前 monsterHpNoDiffTo 波绝对血量（不含境界）；爬坡起点取最后一档 */
   monsterHpEarlyFixed: [20, 40, 65],
-  // 爬坡每波上限 = monsterHpStep × monsterHpRampMul + (wave − rampFrom)；rampFrom = NoDiffTo+1
-  monsterHpRampMul: 2,
+  // 爬坡每波上限 = monsterHpStep × rampMulByCycle[cycle] + (wave − rampFrom)
+  // cycle = floor((wave−1)/10)；按圈递增，抵消每圈 DPS ×1.2 增长
+  monsterHpRampMulByCycle: [2, 4, 7, 10, 14],
   // —— 妖王波预排（对战/无尽共用）：5–10 出 1–2 个；之后每 10 波出 2–3 个；无「每 5 波固定」——
   bossFirstSegLo: 5, // 首段候选波下界
   bossFirstSegHi: 10, // 首段候选波上界（亦为段长锚点）
@@ -186,7 +187,7 @@ export const TUNING = {
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 2, // 控制技能作用半径（格）
   skillTargetMin: 1, // 单次施法最少命中兵器数
-  skillTargetMax: 3, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
+  skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 4.0, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
@@ -207,6 +208,9 @@ export const TUNING = {
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 4.0, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
+  miniBossStealRadius: 3, // 黄狮精「卷走」作用半径（格）
+  miniBossStealDelayMin: 1, // 出场后首次触发最短延时（秒）
+  miniBossStealDelayMax: 20, // 出场后首次触发最长延时（秒）
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
   knockdownDur: 4.0, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
   hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
@@ -371,8 +375,8 @@ export const SKILL_META: Record<MonsterSkill, { name: string; color: string; ico
 };
 
 // 小 Boss 种类（跨地图通用，与地图专属精英/妖王技能独立）
-export type MiniBossKind = 'frost' | 'blight' | 'quake' | 'gale' | 'blood';
-export const MINI_BOSS_KINDS: MiniBossKind[] = ['frost', 'blight', 'quake', 'gale', 'blood'];
+export type MiniBossKind = 'frost' | 'blight' | 'quake' | 'gale' | 'blood' | 'lion';
+export const MINI_BOSS_KINDS: MiniBossKind[] = ['frost', 'blight', 'quake', 'gale', 'blood', 'lion'];
 export const MINI_BOSS_META: Record<
   MiniBossKind,
   { name: string; skillName: string; color: string; icon: string; desc: string }
@@ -382,6 +386,7 @@ export const MINI_BOSS_META: Record<
   quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '震', desc: '范围内兵器倒下' },
   gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '风', desc: '周围妖怪加速' },
   blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '血', desc: '周围妖怪少量回血' },
+  lion: { name: '黄狮精', skillName: '卷走', color: '#e8c24a', icon: '偷', desc: '随机卷走3格内一件兵器/英雄/桃树' },
 };
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
@@ -676,6 +681,7 @@ export interface Monster {
   healFlash: number; // 刚被血泉治疗的闪光(1→0)，用于 UI
   burnT: number; // 灼烧剩余(秒)：>0 时每秒按 burnDps 掉血（红孩/红袍大招）
   burnDps: number; // 灼烧每秒伤害（施法时写入，刷新取更高值）
+  miniBossCasted: boolean; // 黄狮精「卷走」一次性开关：偷到一次后置 true，本局不再施法
 }
 
 /** 弹道/命中特效种类：四兵种 + 英雄悟空金箍棒（原棍兵特效迁至此） */
@@ -730,6 +736,8 @@ export interface ErlangDogFx {
   maxTtl: number;    // 总时长(3s)
   tier: number;      // 品质阶（狗规模）
   ang: number;       // 光束角（AI 侧已 +π）
+  fromC: number;     // 冲锋起点列（二郎格；render 据此画冲锋轨迹眼睛）
+  fromR: number;     // 冲锋起点行
 }
 
 // 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
@@ -900,7 +908,7 @@ export class Battle {
   // 对手侧武将大招 / 二郎 lingering 狗：由 bridgeOpponentFromSnap 从 WS 快照重建（PvP 专用），
   // 单机永为空。格坐标在桥内已镜像到 AI 半场，渲染与玩家侧同函数。
   aiHeroUltFx: HeroUltFx[] = []; // 对手侧武将大招专属特效（由快照重建）
-  aiErlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number }[] = []; // 对手侧二郎 lingering 狗（由快照重建）
+  aiErlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number; fromC: number; fromR: number }[] = []; // 对手侧二郎 lingering 狗（由快照重建）
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD 为满
   monsters: Monster[] = [];
@@ -1754,7 +1762,7 @@ export class Battle {
     }
     // 二郎哮天犬 lingering 跟随：固定咬点格 + 3s，独立于大招光束时长；带 biteMid 供桥内判怪物存活。
     for (const d of this.erlangDogFx) {
-      out.push({ kind: 'dog', t: t - (d.maxTtl - d.ttl) * 1000, mid: d.mid, dur: d.maxTtl, c: d.c, r: d.r, tier: d.tier, ang: d.ang });
+      out.push({ kind: 'dog', t: t - (d.maxTtl - d.ttl) * 1000, mid: d.mid, dur: d.maxTtl, c: d.c, r: d.r, tier: d.tier, ang: d.ang, fromC: d.fromC, fromR: d.fromR });
     }
     return out;
   }
@@ -1820,10 +1828,12 @@ export class Battle {
         }
       } else if (fx.kind === 'dog') {
         // 二郎 lingering 狗：固定咬点格（镜像），3s 递减；被咬怪物（mid）在对手怪中已死则狗消失。
+        // fromC/fromR（冲锋起点=二郎格）同样镜像——render 据此画冲锋轨迹，不镜像会画到下半场。
         const m = monsters.find((mm) => mm.id === fx.mid);
         if (m && m.hp > 0 && age < fx.dur) {
           const mc = mirrorCell({ c: fx.c, r: fx.r });
-          this.aiErlangDogFx.push({ mid: fx.mid, c: mc.c, r: mc.r, ttl: fx.dur - age, maxTtl: fx.dur, tier: fx.tier, ang: fx.ang + Math.PI });
+          const mfrom = mirrorCell({ c: fx.fromC, r: fx.fromR });
+          this.aiErlangDogFx.push({ mid: fx.mid, c: mc.c, r: mc.r, ttl: fx.dur - age, maxTtl: fx.dur, tier: fx.tier, ang: fx.ang + Math.PI, fromC: mfrom.c, fromR: mfrom.r });
         }
       }
     }
@@ -1880,10 +1890,10 @@ export class Battle {
     this.lastAiActivePairKeys = lp;
   }
 
-  // —— DevTools：第 N 波征兵必出指定英雄两字（测试用）——
-  devForceWave: number = 0; // 0 = 关闭；非 0 = 该波征兵必出
+  // —— DevTools：第 N 次征兵必出指定英雄两字（测试用）——
+  devForceSummonN: number = 0; // 0 = 关闭；非 0 = 第 N 次征兵必出（1-indexed）
   devForceHeroId: string = ''; // 武将 id（如 'erlang'），空 = 关闭
-  private devForceWaveCharsDrawn: Set<string> = new Set(); // 已强制出的字（防重复）
+  private devForceSummonCharsDrawn: Set<string> = new Set(); // 已强制出的字（防重复）
 
   // 开局入场：唐僧沿路走到归位，这段时间玩家可征兵布阵；归位后自动开打第一波
   introT = 0;
@@ -2139,9 +2149,9 @@ export class Battle {
     }
     this.warmPathDistCaches();
     // DevTools：读取模块级强制出英雄配置（跨 restart 持久）；PvP 关掉（否则破坏两端 tray 对称）
-    if (DEV_FORCE_WAVE_HERO && !this.pvp) {
-      this.devForceHeroId = DEV_FORCE_WAVE_HERO.heroId;
-      this.devForceWave = DEV_FORCE_WAVE_HERO.wave;
+    if (DEV_FORCE_SUMMON_HERO && !this.pvp) {
+      this.devForceHeroId = DEV_FORCE_SUMMON_HERO.heroId;
+      this.devForceSummonN = DEV_FORCE_SUMMON_HERO.summonN;
     }
   }
 
@@ -2381,17 +2391,17 @@ export class Battle {
       if (trayWordsSoFar.length >= wordSlotsCap) {
         return null;
       }
-      // DevTools：第 N 波必出指定英雄的两字（测试用）
-      if (this.devForceHeroId && this.wave === this.devForceWave) {
+      // DevTools：第 N 次征兵必出指定英雄的两字（测试用，1-indexed）
+      if (this.devForceHeroId && this.summonCount === this.devForceSummonN) {
         const def = generalById(this.devForceHeroId);
         if (def) {
           for (const ch of def.chars) {
-            if (this.devForceWaveCharsDrawn.has(ch)) continue;
+            if (this.devForceSummonCharsDrawn.has(ch)) continue;
             // 跳过已在 tray 或棋盘上的字
             const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
             const onBoard = [...this.words.values()].some((w) => w.char === ch);
-            if (inTray || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
-            this.devForceWaveCharsDrawn.add(ch);
+            if (inTray || onBoard) { this.devForceSummonCharsDrawn.add(ch); continue; }
+            this.devForceSummonCharsDrawn.add(ch);
             trayWordsSoFar.push(ch);
             this.bumpWordCharCount(ch);
             return { kind: 'word' as const, char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
@@ -2427,23 +2437,24 @@ export class Battle {
       }
       return tok;
     });
-    // DevTools：第 N 波必出指定英雄两字——若 tray 里还没有，强制替换 unit 槽
-    if (this.devForceHeroId && this.wave === this.devForceWave) {
+
+    // DevTools：第 N 次征兵必出指定英雄两字——若 tray 里还没有，强制替换 unit 槽
+    if (this.devForceHeroId && this.summonCount === this.devForceSummonN) {
       const def = generalById(this.devForceHeroId);
       if (def) {
         for (const ch of def.chars) {
-          if (this.devForceWaveCharsDrawn.has(ch)) continue;
+          if (this.devForceSummonCharsDrawn.has(ch)) continue;
           const inTray = trayWordsSoFar.includes(ch) || this.tray.some((t) => t?.kind === 'word' && t.char === ch);
           const inDraws = draws.some((t) => t.kind === 'word' && t.char === ch);
           const onBoard = [...this.words.values()].some((w) => w.char === ch);
-          if (inTray || inDraws || onBoard) { this.devForceWaveCharsDrawn.add(ch); continue; }
+          if (inTray || inDraws || onBoard) { this.devForceSummonCharsDrawn.add(ch); continue; }
           // 找一个 unit 槽替换
           const idx = draws.findIndex((t) => t.kind === 'unit');
           if (idx >= 0) {
             draws[idx] = { kind: 'word', char: ch, general: this.devForceHeroId, tier: wordPolicy.wordTier };
             trayWordsSoFar.push(ch);
             this.bumpWordCharCount(ch);
-            this.devForceWaveCharsDrawn.add(ch);
+            this.devForceSummonCharsDrawn.add(ch);
           }
         }
       }
@@ -2885,25 +2896,24 @@ export class Battle {
     if (ai) this.aiShovelTimer = s; else this.shovelTimer = s;
   }
 
-  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。 */
-  /** DevTools：配置第 N 波征兵必出指定英雄的两字（测试用）。wave=0 关闭。跨 restart 持久。 */
-  setDevForceWave2Hero(heroId: string, wave = 2): void {
-    DEV_FORCE_WAVE_HERO = { heroId, wave };
+  /** DevTools：配置第 N 次征兵必出指定英雄的两字（测试用）。summonN=0 关闭。跨 restart 持久。 */
+  setDevForceWave2Hero(heroId: string, summonN = 1): void {
+    DEV_FORCE_SUMMON_HERO = { heroId, summonN };
     this.devForceHeroId = heroId;
-    this.devForceWave = wave;
-    this.devForceWaveCharsDrawn.clear();
+    this.devForceSummonN = summonN;
+    this.devForceSummonCharsDrawn.clear();
   }
   /** DevTools：关闭强制出英雄 */
   clearDevForceWave2Hero(): void {
-    DEV_FORCE_WAVE_HERO = null;
+    DEV_FORCE_SUMMON_HERO = null;
     this.devForceHeroId = '';
-    this.devForceWave = 0;
-    this.devForceWaveCharsDrawn.clear();
+    this.devForceSummonN = 0;
+    this.devForceSummonCharsDrawn.clear();
   }
   /** DevTools：获取当前强制配置（供 UI 显示）。优先读模块级配置（跨 restart）。 */
-  devForceWave2HeroStatus(): { wave: number; heroId: string } {
-    if (DEV_FORCE_WAVE_HERO) return { wave: DEV_FORCE_WAVE_HERO.wave, heroId: DEV_FORCE_WAVE_HERO.heroId };
-    return { wave: this.devForceWave, heroId: this.devForceHeroId };
+  devForceWave2HeroStatus(): { summonN: number; heroId: string } {
+    if (DEV_FORCE_SUMMON_HERO) return { summonN: DEV_FORCE_SUMMON_HERO.summonN, heroId: DEV_FORCE_SUMMON_HERO.heroId };
+    return { summonN: this.devForceSummonN, heroId: this.devForceHeroId };
   }
 
   earlySummonStatsForTest(): {
@@ -5262,9 +5272,11 @@ export class Battle {
     return TUNING.monsterHpNoDiffTo + 1;
   }
 
-  /** 第 wave 波爬坡上限增量：monsterHpStep×mul + (wave − 起始波) */
+  /** 第 wave 波爬坡上限增量：monsterHpStep×rampMul(cycle) + (wave − 起始波) */
   private monsterHpRampMaxStep(wave: number): number {
-    return TUNING.monsterHpStep * TUNING.monsterHpRampMul + (wave - this.monsterHpRampFromWave());
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const mul = TUNING.monsterHpRampMulByCycle[Math.min(cycle, TUNING.monsterHpRampMulByCycle.length - 1)]!;
+    return TUNING.monsterHpStep * mul + (wave - this.monsterHpRampFromWave());
   }
 
   /**
@@ -5466,7 +5478,11 @@ export class Battle {
           ? TUNING.cavalrySpdMul
           : 1;
 
-    const skillCd = isMiniBoss ? TUNING.miniBossFirstDelay : TUNING.skillFirstDelay;
+    const skillCd = isMiniBoss
+      ? (miniKind === 'lion'
+        ? TUNING.miniBossStealDelayMin + this.rng.next() * (TUNING.miniBossStealDelayMax - TUNING.miniBossStealDelayMin)
+        : TUNING.miniBossFirstDelay)
+      : TUNING.skillFirstDelay;
     type MonsterSpec = {
       hp: number;
       isBoss: boolean;
@@ -5497,6 +5513,7 @@ export class Battle {
       healFlash: 0,
       burnT: 0,
       burnDps: 0,
+      miniBossCasted: false,
     });
     const bossSpec: MonsterSpec = {
       hp,
@@ -6244,7 +6261,7 @@ export class Battle {
         for (const t of line) hurt(t.m, dmg, t.p, 0.2, true);
         // 光束延伸到最远命中目标，凸显「贯穿一整条线」
         center = line[line.length - 1]?.p ?? primary.p;
-        // 哮天犬：咬住「最前怪 3 格内血量最高者」定身 3s（无伤害，纯控制）；视觉咬点同步到该怪
+        // 哮天犬：定身被咬怪 3s + 推送跟随特效
         if (g.def.id === 'erlang' && line.length > 0) {
           const front = line[0]!;
           let pick: { m: Monster; p: { c: number; r: number } } | null = null;
@@ -6259,7 +6276,7 @@ export class Battle {
             // 光束角度：从施法者中心→咬点（让狗朝向光束冲锋方向）
             const beamAng = Math.atan2(pick.p.r - gAy, pick.p.c - gAx);
             // 哮天犬咬住后持续跟随 3s（怪死亡则消失）
-            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng });
+            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng, fromC: gAx, fromR: gAy });
           }
         }
         break;
@@ -6393,6 +6410,7 @@ export class Battle {
       m.castFlash = Math.max(0, m.castFlash - dt * 4);
       // 小 Boss 光环
       if (m.isMiniBoss && m.miniBossKind) {
+        if (m.miniBossCasted) continue; // 黄狮精：卷走只触发一次，偷到后本局跳过
         m.skillCd -= dt;
         if (m.skillCd > 0) continue;
         m.skillCd = TUNING.miniBossInterval;
@@ -6484,6 +6502,43 @@ export class Battle {
         }
         break;
       }
+      case 'lion': {
+        // 黄狮精「卷走」：半径内随机取 1 件（兵器/英雄字块/桃树），永久删除。
+        // 配对英雄只拆一格：words.delete 只删这一格，activeGenerals 下帧自动解散该对、
+        // pruneHeroStates 清掉对应武将状态。无目标时不置位，由上层按 miniBossInterval 重试。
+        const R = TUNING.miniBossStealRadius;
+        type Cand = { kind: 'unit' | 'word' | 'tree'; key: string; c: number; r: number; name: string };
+        const cands: Cand[] = [];
+        for (const u of this.units.values()) {
+          if (Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r) <= R) {
+            cands.push({ kind: 'unit', key: cellKey(u.cell.c, u.cell.r), c: u.cell.c, r: u.cell.r, name: UNITS[u.type].name });
+          }
+        }
+        for (const w of this.words.values()) {
+          if (Math.hypot(mp.c - w.cell.c, mp.r - w.cell.r) <= R) {
+            cands.push({ kind: 'word', key: cellKey(w.cell.c, w.cell.r), c: w.cell.c, r: w.cell.r, name: w.char });
+          }
+        }
+        for (const t of this.trees.values()) {
+          if (Math.hypot(mp.c - t.cell.c, mp.r - t.cell.r) <= R) {
+            cands.push({ kind: 'tree', key: cellKey(t.cell.c, t.cell.r), c: t.cell.c, r: t.cell.r, name: '蟠桃树' });
+          }
+        }
+        if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
+        const pick = cands[this.rng.int(cands.length)]!;
+        if (pick.kind === 'unit') this.units.delete(pick.key);
+        else if (pick.kind === 'word') this.words.delete(pick.key);
+        else this.trees.delete(pick.key);
+        this.clearAutoPlaceLayoutMemory(); // 与 recallToTray 一致：移除后清自动布阵记忆，避免 AI 引用失效格
+        affected = 1;
+        m.miniBossCasted = true; // 偷到一次，本局不再触发
+        m.castFlash = 1; // 施法闪光（与其它小 Boss 一致，供渲染）
+        // 消失特效：在被偷格子爆开金色 death 粒子环（复用 drawBursts，无需新增 SkillFxKind）
+        this.bursts.push({ kind: 'death', c: pick.c, r: pick.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
+        // 底部提示：点明被卷走的具体目标
+        this.message = `⚠ ${meta.name}卷走了「${pick.name}」！`;
+        break;
+      }
       default: {
         const _exhaustive: never = kind;
         void _exhaustive;
@@ -6492,8 +6547,11 @@ export class Battle {
     }
     if (affected > 0) {
       m.castFlash = 1;
-      this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
-      this.message = `${meta.name}施展「${meta.skillName}」`;
+      // lion 已在分支内自设 message 与金色 death 粒子，这里只处理其它小 Boss 的通用光环提示
+      if (kind !== 'lion') {
+        this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
+        this.message = `${meta.name}施展「${meta.skillName}」`;
+      }
     }
   }
 

@@ -31,6 +31,7 @@ export type AssetKey =
   | 'monster-miniboss-quake'
   | 'monster-miniboss-gale'
   | 'monster-miniboss-blood'
+  | 'monster-miniboss-lion'
   | 'item-shovel'
   | 'hero-wukong'
   | 'hero-bajie'

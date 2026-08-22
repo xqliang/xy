@@ -353,8 +353,11 @@ describe('Battle 接入压力规划', () => {
     return base * b.wavePostMul(w);
   };
   const rampFrom = () => TUNING.monsterHpNoDiffTo + 1;
-  const maxRamp = (wave: number) =>
-    TUNING.monsterHpStep * TUNING.monsterHpRampMul + (wave - rampFrom());
+  const maxRamp = (wave: number) => {
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const mul = TUNING.monsterHpRampMulByCycle[Math.min(cycle, TUNING.monsterHpRampMulByCycle.length - 1)]!;
+    return TUNING.monsterHpStep * mul + (wave - rampFrom());
+  };
   const targetHp = (b: Battle, wave: number, optimalDps = 0) => {
     const diff = b.effectiveDifficulty(wave);
     const staticHp =

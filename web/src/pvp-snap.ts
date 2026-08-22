@@ -191,6 +191,7 @@ export interface PvpSnapFxDog {
   c: number; r: number;   // 咬点格（待镜像）
   tier: number;
   ang: number;      // 光束角（待桥内 +π）
+  fromC: number; fromR: number; // 冲锋起点格（二郎格；render 据此画冲锋轨迹，待镜像）
 }
 export type PvpSnapFx = PvpSnapFxSkill | PvpSnapFxPalm | PvpSnapFxFlash | PvpSnapFxUlt | PvpSnapFxDog;
 
