@@ -181,7 +181,7 @@ export const TUNING = {
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 2, // 控制技能作用半径（格）
   skillTargetMin: 1, // 单次施法最少命中兵器数
-  skillTargetMax: 3, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
+  skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 4.0, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
