@@ -202,6 +202,9 @@ export const TUNING = {
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 4.0, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
+  miniBossStealRadius: 3, // 黄狮精「卷走」作用半径（格）
+  miniBossStealDelayMin: 1, // 出场后首次触发最短延时（秒）
+  miniBossStealDelayMax: 20, // 出场后首次触发最长延时（秒）
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
   knockdownDur: 4.0, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
   hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
@@ -366,8 +369,8 @@ export const SKILL_META: Record<MonsterSkill, { name: string; color: string; ico
 };
 
 // 小 Boss 种类（跨地图通用，与地图专属精英/妖王技能独立）
-export type MiniBossKind = 'frost' | 'blight' | 'quake' | 'gale' | 'blood';
-export const MINI_BOSS_KINDS: MiniBossKind[] = ['frost', 'blight', 'quake', 'gale', 'blood'];
+export type MiniBossKind = 'frost' | 'blight' | 'quake' | 'gale' | 'blood' | 'lion';
+export const MINI_BOSS_KINDS: MiniBossKind[] = ['frost', 'blight', 'quake', 'gale', 'blood', 'lion'];
 export const MINI_BOSS_META: Record<
   MiniBossKind,
   { name: string; skillName: string; color: string; icon: string; desc: string }
@@ -377,6 +380,7 @@ export const MINI_BOSS_META: Record<
   quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '震', desc: '范围内兵器倒下' },
   gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '风', desc: '周围妖怪加速' },
   blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '血', desc: '周围妖怪少量回血' },
+  lion: { name: '黄狮精', skillName: '卷走', color: '#e8c24a', icon: '偷', desc: '随机卷走3格内一件兵器/英雄/桃树' },
 };
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
