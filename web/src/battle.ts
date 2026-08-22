@@ -1889,6 +1889,18 @@ export class Battle {
   // 新手引导展示期间强制渲染我方/AI 唐僧于归位点（不影响 introT/introDone 计时，仅用于展示）
   tangsengRenderOverride = false;
 
+  // —— Task 10 首局体验：第 1 波押后（给首次玩家留足征兵布阵时间）——
+  // main.ts 在首局单人 newGame 时置 true；PvP / 非首局恒 false（零影响）。
+  // 押后期间 intro 结束后不自动开波，直到「玩家至少征兵过一次 且 tray 可部署令牌清空」，
+  // 或玩家点引导「跳过」（main.ts 置 false），或超时兜底（见 shouldHoldFirstWave）。
+  holdFirstWaveForSetup = false;
+  /**
+   * 押后最长额外秒数（在 INTRO_DUR 之外继续等的最长时间）。
+   * 安全兜底：防止首次玩家既不征兵、也不点「跳过」时第 1 波永远不开（永久卡死）。
+   * 超过此上限则强制放行第 1 波。平时由「征兵+tray 清空」或「跳过」提前放行，本兜底极少触发。
+   */
+  static readonly FIRST_WAVE_HOLD_MAX_EXTRA = 180; // 3 分钟
+
   // —— 伪竞技 AI 对手（上半场，对角唐僧）——
   readonly aiPath: Cell[];
   readonly aiTangseng: Cell;
@@ -2618,6 +2630,21 @@ export class Battle {
       if (!this.tray[i]) return i;
     }
     return null;
+  }
+
+  /**
+   * 候选区是否仍有「可部署」令牌：兵种(unit) / 武将字牌(word)。
+   * 用途——Task 10 首局第 1 波押后：首局时第 1 波要等玩家把这些兵/字牌都拖上场后才放行，
+   * 避免首次玩家懵圈错过布阵时间。
+   * 注：铲子(shovel) 与 桃树(tree) 不参与「布阵」——它们是工具/资源，不阻塞第 1 波放行
+   * （玩家完全可以选择不种树、不用铲）。tray 用 delete 留空洞，遍历须跳过空槽。
+   */
+  trayHasDeployables(): boolean {
+    for (const t of this.tray) {
+      if (!t) continue;
+      if (t.kind === 'unit' || t.kind === 'word') return true;
+    }
+    return false;
   }
 
   private clearTraySlot(index: number): void {
@@ -7027,19 +7054,39 @@ export class Battle {
     if (this.status === 'playing' || this.status === 'ready') this.updatePeachTrees(dt); // 蟠桃园：对局进行中种树/产桃
   }
 
+  /**
+   * Task 10 首局体验：首局第 1 波是否仍应「押后」（不自动开波）。
+   * 设计要点——彻底杜绝「永远不开波」死锁：
+   *   - 非首局（holdFirstWaveForSetup=false）→ 不押后，照旧 intro 完即开波（零回归）。
+   *   - 已征兵过一次(summonCount>0) 且 tray 已无兵/字牌 → 玩家布阵完成，放行开波。
+   *   - 入场超 FIRST_WAVE_HOLD_MAX_EXTRA 秒仍未放行 → 超时兜底强制放行
+   *     （防首次玩家既不征兵、又不点引导「跳过」时永久卡死）。
+   *   - 其余（未征兵，或征兵了但 tray 还有兵/字牌）→ 继续押后，等玩家操作。
+   * 纯查询（无副作用）；放行的实际执行在 step() 的 intro 分支里。
+   */
+  private shouldHoldFirstWave(): boolean {
+    if (!this.holdFirstWaveForSetup) return false;
+    if (this.summonCount > 0 && !this.trayHasDeployables()) return false; // 征兵过 + tray 清空 → 放行
+    if (this.introT >= Battle.INTRO_DUR + Battle.FIRST_WAVE_HOLD_MAX_EXTRA) return false; // 超时兜底 → 放行
+    return true; // 继续押后
+  }
+
   // 推进 dt 秒
   step(dt: number): void {
     // 开局入场：唐僧归位前的备战窗口（玩家可征兵布阵），归位后自动开打第一波
     if (!this.introDone && this.status === 'ready' && this.wave === 0) {
       this.introT += dt;
-      this.message = '唐僧归位中…抓紧征兵布阵！';
+      // 首局押后期间（intro 已过但仍等玩家布阵）换一句更贴切的提示，其余保持原样。
+      const held = !this.pvp && this.shouldHoldFirstWave();
+      this.message = held ? '先布阵再开战！把兵器拖到战场，或点「跳过」直接开始' : '唐僧归位中…抓紧征兵布阵！';
       if (this.pvp) {
         // PvP：首波由服务端权威排程驱动（main.ts 到点 startNextWave），本地不在这里开波。
         // 但唐僧归位完成后必须置 introDone——否则 maybeOpenPvpWave 的「等归位再开第 1 波」闸门永远不放行。
         // 视觉上 introT 仍继续累加（tangsengRenderPos 用 min(1, introT/INTRO_DUR)  clamp 到终点）。
         if (this.introT >= Battle.INTRO_DUR) this.introDone = true;
       } else if (this.introT >= Battle.INTRO_DUR) {
-        this.startNextWave();
+        // 首局押后：满足放行条件才开第 1 波，否则继续等玩家征兵布阵（箭头引导见 main.ts）。
+        if (!held) this.startNextWave();
       }
       this.updateAi(dt); // 入场阶段：AI 与玩家同步征兵布阵
       this.updateFx(dt);

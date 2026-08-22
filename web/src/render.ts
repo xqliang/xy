@@ -26,6 +26,7 @@ import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
 import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
+import { showAutoplaceBtn } from './dev-flags';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
 export const PEACH_UI_ICON_SIZE = Math.round(26 * 1.5 * 0.7);
@@ -89,14 +90,17 @@ export function getButtons(b: Battle): Button[] {
   const canSummon = peachOk && summonAnimDone(b);
   // 备战(ready)与对战(playing)共用同一套底部布局：中央「征兵」，两翼已购主动技能图标(带CD)，候选区右端「布阵」，
   // 下方一排已购被动技能图标。主动/被动都仅在购买后显示；如来神掌等主动技能需在商店购买才出现。
+  // 布阵：默认隐藏（DevTools 可开）——首局体验让「征兵→拖到战场」的部署流作为唯一布阵入口，
+  // 避免布阵按钮与首局动态引导抢戏；隐藏时 draw/hit 共享同一列表一起消失。
+  // trayRightX 供「布阵」按钮定位：该按钮右缘 VIEW_W-10、宽度 VIEW_W-trayRightX-10，故始终靠在 tray 右侧、紧贴右边界。
   const trayRightX = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 8; // 候选槽右侧
   const summonLabel = peachOk && !summonAnimDone(b) ? '征兵中' : `征兵${b.effectiveSummonCost()}`;
-  const btns: Button[] = [
-    // 布阵：常亮；候选区有牌则落子/合成，无牌也可依当前怪群动态调整已上场武器
-    { id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: true },
-    // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免从「营」拖令牌部署时误点
-    { id: 'summon', label: summonLabel, x: 180, y, w: 200, h: 78, enabled: canSummon },
-  ];
+  const btns: Button[] = [];
+  if (showAutoplaceBtn()) {
+    btns.push({ id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: true });
+  }
+  // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免从「营」拖令牌部署时误点
+  btns.push({ id: 'summon', label: summonLabel, x: 180, y, w: 200, h: 78, enabled: canSummon });
   // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
   const ACT_D = 60; // 圆直径
   const ACT_GAP = 20; // 与「征兵」按钮的间隙（左右各留 20px）
@@ -923,6 +927,137 @@ export function trayTokenRect(i: number): { x: number; y: number; w: number; h: 
 export function trayRowRect(): { x: number; y: number; w: number; h: number } {
   return { x: TRAY_LEFT, y: TRAY_Y, w: TUNING.traySize * TRAY_SLOT, h: TRAY_H };
 }
+
+// —— Task 10 首局动态引导：非模态脉冲箭头 + 提示胶囊 —— //
+// 与 tutorial.ts 的「modal 高亮卡片」不同，这是**非模态**覆盖层：玩家仍可自由点征兵/拖拽/跳过，
+// 只在箭头指向处给一个脉冲视觉提示。状态机（征兵→部署两阶段）在 main.ts 驱动，这里只负责
+// 「给定目标矩形 + 提示文字 → 算出箭头几何并绘制」。箭头几何抽出成纯函数 guideArrowLayout
+// 便于单测（canvas 视觉本身不测）。
+const GUIDE_PILL_H = 32;          // 提示胶囊高
+const GUIDE_GAP = 10;             // 胶囊底 → 目标顶 的间距
+const GUIDE_PAD_X = 14;           // 胶囊左右内边距
+const GUIDE_FONT = 'bold 15px "PingFang SC", "STKaiti", serif';
+
+export interface GuideArrowGeom {
+  pill: { x: number; y: number; w: number; h: number }; // 提示胶囊
+  from: { x: number; y: number };                        // 箭头起点（胶囊底中）
+  to: { x: number; y: number };                          // 箭头终点（目标顶中，含 bobbing）
+  bob: number;                                           // 当前帧的上下抖动量（与绘制动画同步）
+}
+
+/**
+ * 纯函数：给定目标矩形 + 提示文字测量宽度，算出箭头几何。
+ * 胶囊默认置于目标上方（target.y 之上）；若上方放不下（<8px）则翻到目标下方、箭头反向朝上。
+ * 水平居中于目标，clamp 到视口内 [8, VIEW_W-8]。返回供 drawGuideArrow 使用。
+ * @param now performance.now() 毫秒，驱动 bobbing（与绘制动画周期一致）
+ */
+export function guideArrowLayout(
+  target: { x: number; y: number; w: number; h: number },
+  labelW: number,
+  now: number,
+  VIEW_W: number,
+): GuideArrowGeom {
+  const bob = Math.sin(now / 260) * 4; // 与 drawGuideArrow 的脉冲同周期（260ms）
+  const pillW = Math.max(40, Math.min(labelW + GUIDE_PAD_X * 2, VIEW_W - 16));
+  const tcx = target.x + target.w / 2;
+  let pillX = Math.max(8, Math.min(VIEW_W - pillW - 8, tcx - pillW / 2));
+  let above = true;
+  let pillY = target.y - GUIDE_GAP - GUIDE_PILL_H;
+  if (pillY < 8) { // 上方放不下 → 翻到下方
+    above = false;
+    pillY = target.y + target.h + GUIDE_GAP;
+  }
+  const from = { x: tcx, y: above ? pillY + GUIDE_PILL_H : pillY };
+  const to = { x: tcx, y: (above ? target.y - 2 : target.y + target.h + 2) + bob };
+  return { pill: { x: pillX, y: pillY, w: pillW, h: GUIDE_PILL_H }, from, to, bob };
+}
+
+/** 绘制首局引导箭头：脉冲胶囊（提示文字）+ 跳动金色箭头指向目标。纯 canvas，无内部状态。 */
+export function drawGuideArrow(
+  ctx: CanvasRenderingContext2D,
+  target: { x: number; y: number; w: number; h: number },
+  label: string,
+  now: number,
+): void {
+  ctx.save();
+  ctx.font = GUIDE_FONT;
+  const labelW = ctx.measureText(label).width;
+  const g = guideArrowLayout(target, labelW, now, VIEW_W);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 260);
+  // 提示胶囊：暖白渐变 + 金边，脉冲透明度
+  roundRect(ctx, g.pill.x, g.pill.y, g.pill.w, g.pill.h, g.pill.h / 2);
+  const grad = ctx.createLinearGradient(g.pill.x, g.pill.y, g.pill.x, g.pill.y + g.pill.h);
+  grad.addColorStop(0, '#fff6e6');
+  grad.addColorStop(1, '#f0dfb8');
+  ctx.fillStyle = grad;
+  ctx.globalAlpha = 0.96;
+  ctx.fill();
+  ctx.globalAlpha = 0.55 + pulse * 0.4;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#c8902c';
+  ctx.stroke();
+  // 胶囊文字
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#5a2810';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, g.pill.x + g.pill.w / 2, g.pill.y + g.pill.h / 2);
+  // 跳动箭头：金色，带阴影，端点随 bobbing 起伏
+  ctx.strokeStyle = '#ffd76a';
+  ctx.fillStyle = '#ffd76a';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(20,14,4,0.5)';
+  ctx.shadowBlur = 5;
+  ctx.beginPath();
+  ctx.moveTo(g.from.x, g.from.y);
+  ctx.lineTo(g.to.x, g.to.y);
+  ctx.stroke();
+  const ang = Math.atan2(g.to.y - g.from.y, g.to.x - g.from.x);
+  const head = 11;
+  ctx.beginPath();
+  ctx.moveTo(g.to.x, g.to.y);
+  ctx.lineTo(g.to.x - head * Math.cos(ang - Math.PI / 6), g.to.y - head * Math.sin(ang - Math.PI / 6));
+  ctx.lineTo(g.to.x - head * Math.cos(ang + Math.PI / 6), g.to.y - head * Math.sin(ang + Math.PI / 6));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/** 征兵按钮矩形（与 getButtons 的 summon 项一致：x=180, y=CTRL_Y, w=200, h=78） */
+export function summonButtonRect(): { x: number; y: number; w: number; h: number } {
+  return { x: 180, y: CTRL_Y, w: 200, h: 78 };
+}
+
+// —— 首局引导「跳过」小按钮（与箭头配套，非模态，玩家可随时点）——
+const GUIDE_SKIP_W = 92;
+const GUIDE_SKIP_Y = HUD_H + 10; // 紧贴 HUD 下方、棋盘顶部居中
+
+/** 「跳过」按钮矩形（draw 与 hit 共用，保证命中与绘制一致） */
+export function guideSkipRect(): { x: number; y: number; w: number; h: number } {
+  return { x: (VIEW_W - GUIDE_SKIP_W) / 2, y: GUIDE_SKIP_Y, w: GUIDE_SKIP_W, h: GUIDE_PILL_H };
+}
+
+/** 绘制「跳过」胶囊（半透明深底 + 浅字，区别于主线箭头的暖白高亮，表明它是次要操作） */
+export function drawGuideSkip(ctx: CanvasRenderingContext2D): void {
+  const r = guideSkipRect();
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  roundRect(ctx, r.x, r.y, r.w, r.h, r.h / 2);
+  ctx.fillStyle = 'rgba(28,20,14,0.6)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,0.4)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ffe8c0';
+  ctx.font = GUIDE_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('跳过引导', r.x + r.w / 2, r.y + r.h / 2);
+  ctx.restore();
+}
+
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
 }

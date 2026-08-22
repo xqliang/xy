@@ -50,6 +50,7 @@ import { LADDER_LEN, STARS_PER_TIER } from '../rank';
 import { STAMINA_MAX } from '../stamina';
 import { MERIT_MAX } from '../merit';
 import { playDevFxPreview, type DevFxPreviewSpec } from '../render';
+import { showAutoplaceBtn, setShowAutoplaceBtn } from '../dev-flags';
 import {
   AI_TARGET_WINRATE,
   DEFAULT_AI_SKILL,
@@ -524,6 +525,27 @@ export class DevToolsPanel {
     body.appendChild(fieldRow('难度 difficulty', numInput(snap.difficulty, (n) => {
       this.host.onUserApplied(applyUserSnapshot({ difficulty: Math.max(0.6, n) }));
     })));
+
+    // —— Task 10：首局体验相关测试开关 ——
+    body.appendChild(section('首局体验（测试）'));
+    const autoLabel = document.createElement('label');
+    autoLabel.className = 'xy-dt-check';
+    const autoCb = document.createElement('input');
+    autoCb.type = 'checkbox';
+    autoCb.checked = showAutoplaceBtn();
+    autoCb.addEventListener('change', () => {
+      setShowAutoplaceBtn(autoCb.checked);
+      // 即时生效：render.ts getButtons 每帧读 flag，下帧 draw/hit 即反映；
+      // 这里顺手重同步一次主内存态并排一帧，保证即便对局暂停也能立刻重绘。
+      this.host.onUserApplied(applyUserSnapshot({}));
+    });
+    autoLabel.appendChild(autoCb);
+    autoLabel.appendChild(document.createTextNode('显示「布阵」按钮'));
+    body.appendChild(autoLabel);
+    const autoHint = document.createElement('p');
+    autoHint.className = 'xy-dt-hint';
+    autoHint.textContent = '默认关闭——首局只保留「征兵→拖到战场」的部署流，隐藏一键布阵入口；勾选后对局底部重新出现「布阵」按钮（仅测试/演示用，玩家流程不变）。';
+    body.appendChild(autoHint);
 
     body.appendChild(section('引导'));
     const seenKeys = Object.keys(snap.tutorialSeen);
