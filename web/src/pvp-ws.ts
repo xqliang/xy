@@ -5,7 +5,8 @@
 // 并在非手动断开时按指数退避自动重连。本类不碰确定性 sim——网络层允许用 Date.now()（见下方注释）。
 //
 // 上层接线见 main.ts（Task 5）：onOppSnap→对手插值视图 ingest、nextWave→开波排程、result→结算、oppGone→提示；
-// 每 100ms 由主循环 sendSnap(battle.pvpOwnSnapshot())，清波下降沿 sendWaveCleared，终局 sendStatus。
+// 每 100ms 由主循环 sendSnap(battle.pvpOwnSnapshot(nowMs, pvpSock.rttMs))——rtt 随快照透传给对手供其 HUD 显示；
+// 清波下降沿 sendWaveCleared，终局 sendStatus。
 //
 // 依赖注入：wsFactory / scheduler 均可在单测替换（默认全局 WebSocket / setTimeout），
 // 重连延时走注入的 scheduler，单测用可控假计时器逐帧推进，不用真实定时器抖动。

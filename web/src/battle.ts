@@ -1686,9 +1686,12 @@ export class Battle {
   // 纯 JSON（PvpSnap），字段面 = bridgeOpponentFromSnap 的消费面（镜像/老化留给桥做）。
   // 为何是 Battle 的方法：本方侧字段（monsters/units/words/…）多为 private，只有类内方法能读；
   // TS 的 private 是「类级别」，故本方法可读本实例 private。t 由调用方（main.ts 帧循环）以墙钟 ms 戳传入。
-  pvpOwnSnapshot(t: number): PvpSnap {
+  // rtt（T9.4）：本侧 pvpSock.rttMs（应用层 EWMA 延迟 ms，首 pong 前为 null），随快照透传给对手，
+  //   对手端据此在 HUD 境界右侧显示「本侧延迟」。可选——单人/测试手搓快照可不传（字段省略，桥不消费）。
+  pvpOwnSnapshot(t: number, rtt?: number | null): PvpSnap {
     return {
       t,
+      rtt,
       wave: this.wave,
       waveActive: this.waveActive,
       spawnRemaining: this.spawnRemaining,

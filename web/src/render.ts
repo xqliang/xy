@@ -181,6 +181,18 @@ export function setHudRank(label: string): void {
   hudRankLabel = label;
 }
 
+// —— Task 9.4：PvP 双方延迟 HUD 态 ——
+// 背景：对局顶部中块画「波次 / 境界」，现要求把双方延迟分列其左右两侧（左=本侧「我」、右=对手「对」）。
+// drawHud 本身不拿得到两侧 rtt（它在 render 渲染链路里，签名只有 ctx/b/ui），故采用与 hudRankLabel 同款
+// 「main 每帧写入模块态、drawHud 读取」的倒置注入：main.ts 每帧 setPvpNetLatency，drawHud 据态画两侧。
+// 单人（无对局）main 传 null → drawHud 不画，零影响（与旧 drawNetLatencyHud 的 pvpSock 门控等价）。
+/** PvP 双方延迟 HUD 态：myRtt=本侧 pvpSock.rttMs；oppRtt=对手最新快照 rtt。null=非对局（不画）。 */
+let pvpNetLat: { myRtt: number | null; oppRtt: number | null } | null = null;
+/** 写入 PvP 双方延迟 HUD 态（每帧由 main.ts 调用）；传 null 表示非对局，drawHud 跳过两侧标注。 */
+export function setPvpNetLatency(state: { myRtt: number | null; oppRtt: number | null } | null): void {
+  pvpNetLat = state;
+}
+
 // 背景整屏渐变缓存：全屏渐变每帧重建开销大，而一局内地图主题色固定，按颜色键复用同一对象。
 // 坐标固定在逻辑空间(0..VIEW_H)，不随 DPR 变换失效，可跨帧安全复用。
 let bgGradCache: { key: string; grad: CanvasGradient } | null = null;
@@ -9418,25 +9430,78 @@ type AiItemChip = {
 };
 
 /** HUD 右上角 AI 道具：上行最多 2 个主动（大），下行最多 6 个被动（小） */
+/** 两侧延迟标注与中块的安全间距(px)：两侧标签内缘到「中块半宽」的距离。 */
+const NET_LAT_FLANK_GAP = 16;
+
 /**
- * 网络延迟 HUD 的锚点（PvP 顶部）：与对手主动技能图标同一行（HUD_H/2-16，比旧位置上移）。
- * 对手装备了主动技能时，技能图标优先占据右上，「延迟 Nms」排到最左一枚图标的左侧；
- * 没有主动技能时延迟贴右上原位。返回 { rightX: 文本右缘, y: 垂直中心 }。
+ * 对局 HUD「境界两侧延迟」的 x 锚点（T9.4）。纯函数、无 ctx 依赖，便于单测钉死布局公式。
+ *
+ * 中块两行（波次 bold24 / 境界 14px）均以 VIEW_W/2 居中，两侧标签必须避开中块最宽的一半，
+ * 否则会盖住居中文字。取调用方测出的中块两行【最大半宽】centerHalf（保证任一行都不被侧标压到），
+ * 再留 NET_LAT_FLANK_GAP 间距：
+ *   leftX  = VIEW_W/2 - centerHalf - gap  → 左侧「我 Nms」用 textAlign='right'、右缘对齐此点；
+ *   rightX = VIEW_W/2 + centerHalf + gap  → 右侧「对 Nms」用 textAlign='left'、左缘对齐此点。
+ *
+ * 为何取两行最大半宽而非仅一行：波次行（含地图名）通常更宽，境界行更窄；若只按窄行算半宽，
+ * 宽行右半就会被左侧标签盖住——取 max 从根上杜绝任一行被压。
  */
-export function netLatencyHudPos(b: Battle): { rightX: number; y: number } {
-  const actR = 13;
-  let leftmostActiveX: number | null = null;
-  for (const chip of aiItemChipLayout(b)) {
-    // actives 从右往左排；取「主动技能」里最小的 x（最左一枚）。
-    if (chip.kind === 'active' && (leftmostActiveX === null || chip.x < leftmostActiveX)) {
-      leftmostActiveX = chip.x;
-    }
+export function netLatencyFlankXs(centerHalf: number, gap = NET_LAT_FLANK_GAP): { leftX: number; rightX: number } {
+  return {
+    leftX: VIEW_W / 2 - centerHalf - gap,
+    rightX: VIEW_W / 2 + centerHalf + gap,
+  };
+}
+
+/**
+ * 延迟标注配色：与旧 drawNetLatencyHud 完全一致——无样本(null)→淡墨；>150ms→橙色警示；其余墨绿。
+ * 复用给两侧（本侧/对手）延迟，阈值与色值逐字对齐旧实现，视觉零跳变。
+ */
+function latColor(rtt: number | null): string {
+  if (rtt === null) return 'rgba(90,60,30,0.5)';
+  if (rtt > 150) return '#d04520';
+  return '#4a6a3a';
+}
+
+/**
+ * 画对局 HUD 两侧延迟（T9.4）：左侧本侧「我 Nms」、右侧对手「对 Nms」。
+ * 垂直对齐中块两行的视觉中心（HUD_H/2）；水平锚点由 netLatencyFlankXs 据中块两行最大半宽算出，
+ * 保证两侧标签绝不盖住居中波次/境界文字。两侧各自按阈值/latColor 着色。
+ *
+ * 为何现场量中块半宽而非用常量：波次行含地图名（长度不定）、境界行可能缺失，宽窄随局变化；
+ * 在 drawHud 内用同一 ctx（已设对应字体）measureText 即得精确半宽，是最稳的防重叠手段。
+ */
+function drawNetLatencyFlanks(
+  ctx: CanvasRenderingContext2D,
+  myRtt: number | null,
+  oppRtt: number | null,
+  waveStr: string,
+  rankStr: string | null,
+): void {
+  // ctx 现处于 drawHud 中块状态，save/restore 包住，避免现场改的字体/对齐/填色泄漏给后续 drawAiItemsHud 等。
+  ctx.save();
+  // 量中块两行半宽，取最大值作 centerHalf（任一行都不被侧标盖住）。字体须与 drawHud 中块逐字一致。
+  ctx.font = 'bold 24px "PingFang SC", sans-serif';
+  let centerHalf = ctx.measureText(waveStr).width / 2;
+  if (rankStr) {
+    ctx.font = '14px "PingFang SC", sans-serif';
+    centerHalf = Math.max(centerHalf, ctx.measureText(rankStr).width / 2);
   }
-  const y = HUD_H / 2 - 16; // 与对手主动技能图标同一行（用户要求：延迟上移 + 主动技能优先、延迟在其左侧）
-  if (leftmostActiveX !== null) {
-    return { rightX: leftmostActiveX - actR - 8, y }; // 图标半径 13 + 8px 间距
-  }
-  return { rightX: VIEW_W - 12, y };
+  const { leftX, rightX } = netLatencyFlankXs(centerHalf);
+  const y = HUD_H / 2; // 中块两行（HUD_H/2-12 / +14）的视觉中心，两侧标签对齐此处
+
+  ctx.textBaseline = 'middle';
+  ctx.font = '13px "PingFang SC", sans-serif';
+
+  // 左侧：本侧延迟（我）。textAlign=right，右缘贴 leftX。
+  ctx.textAlign = 'right';
+  ctx.fillStyle = latColor(myRtt);
+  ctx.fillText(myRtt === null ? '我 --' : `我 ${Math.round(myRtt)}ms`, leftX, y);
+
+  // 右侧：对手延迟（对）。textAlign=left，左缘贴 rightX。
+  ctx.textAlign = 'left';
+  ctx.fillStyle = latColor(oppRtt);
+  ctx.fillText(oppRtt === null ? '对 --' : `对 ${Math.round(oppRtt)}ms`, rightX, y);
+  ctx.restore();
 }
 
 function aiItemChipLayout(b: Battle): AiItemChip[] {
@@ -9587,11 +9652,18 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 中间两行：波次 + 境界
   ctx.textAlign = 'center';
   ctx.fillStyle = '#4a3a1a';
-  ctx.fillText(`${b.map.name} · 第 ${b.wave} 波`, VIEW_W / 2, HUD_H / 2 - 12);
-  if (hudRankLabel) {
+  const waveStr = `${b.map.name} · 第 ${b.wave} 波`; // 复用：下方两侧延迟布局要据此量中块半宽
+  ctx.fillText(waveStr, VIEW_W / 2, HUD_H / 2 - 12);
+  const rankStr = hudRankLabel ? `境界·${hudRankLabel}` : null; // 复用：同上（无境界则 null）
+  if (rankStr) {
     ctx.font = '14px "PingFang SC", sans-serif';
     ctx.fillStyle = '#8a5a2b';
-    ctx.fillText(`境界·${hudRankLabel}`, VIEW_W / 2, HUD_H / 2 + 14);
+    ctx.fillText(rankStr, VIEW_W / 2, HUD_H / 2 + 14);
+  }
+  // Task 9.4：PvP 双方延迟——画到中块左右两侧（左=本侧「我」、右=对手「对」）。
+  // 态由 main.ts 每帧 setPvpNetLatency 写入；非对局(null)不画。水平锚点据中块两行最大半宽算，绝不压住居中文字。
+  if (pvpNetLat) {
+    drawNetLatencyFlanks(ctx, pvpNetLat.myRtt, pvpNetLat.oppRtt, waveStr, rankStr);
   }
   drawAiItemsHud(ctx, b, ui);
   drawBondHudChip(ctx, b);

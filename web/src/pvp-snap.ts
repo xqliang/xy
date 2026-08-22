@@ -197,6 +197,12 @@ export type PvpSnapFx = PvpSnapFxSkill | PvpSnapFxPalm | PvpSnapFxFlash | PvpSna
 /** 本方半场渲染态快照（纯 JSON，字段面 = bridgeOpponentFrom 消费面）。 */
 export interface PvpSnap {
   t: number; // 发送端序列化时刻(ms)：插值时基 + 特效老化时基
+  /**
+   * 发送端本机测得的应用层 RTT(ms)（T9.4）：由发送端 pvpSock.rttMs 写入，随快照透传给接收端。
+   * 接收端据此在 HUD 境界右侧显示「对手延迟」。首个 pong 前发送端 rttMs=null → 透传 null，
+   * 接收端读到 null 显示 "--"。非连接态字段，故 optional（旧快照/测试手搓快照可省，桥不消费它）。
+   */
+  rtt?: number | null;
   wave: number;
   waveActive: boolean;
   spawnRemaining: number;
@@ -329,6 +335,15 @@ export class PvpOppView {
   /** 当前快照(cur)携带的本方场上单位数；无快照返回 0。供探针观测「对手是否放了单位」。 */
   get latestUnits(): number {
     return this.cur ? this.cur.units.length : 0;
+  }
+
+  /**
+   * 当前快照(cur)携带的发送端 RTT(ms)（T9.4）：对手本机测得的延迟，随快照透传过来。
+   * 无快照或对手首个 pong 前（快照里 rtt 为 null/缺失）→ 返回 null，HUD 显示 "--"。
+   * 供 drawHud 在境界右侧画「对 Nms」。注意：这是【对手】的延迟，不是本侧 pvpSock.rttMs。
+   */
+  get latestRtt(): number | null {
+    return this.cur ? (this.cur.rtt ?? null) : null;
   }
 
   /** 自适应缓冲(ms)：当前插值滞后窗口，随到达抖动在 [INTERP_DELAY_MS, ADAPTIVE_DELAY_MAX] 间自适应。 */
