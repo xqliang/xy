@@ -467,6 +467,14 @@ describe('fxAlive：瞬态特效老化', () => {
     const flash = { kind: 'flash', t: 1000, id: 'pas_x', value: 0.5 } as const;
     expect(fxAlive(flash, 1000 + 699)).toBe(true);
     expect(fxAlive(flash, 1000 + 700)).toBe(false);
+    // 大招光束 dur≈0.9s → 寿命 1.5s
+    const ult = { kind: 'ult', t: 1000, heroId: 'dasheng', c: 1, r: 1, dur: 0.9, tier: 1, rge: 2, crit: false } as const;
+    expect(fxAlive(ult, 1000 + 1499)).toBe(true);
+    expect(fxAlive(ult, 1000 + 1500)).toBe(false);
+    // 二郎 lingering 狗 3s → 寿命 3.2s
+    const dog = { kind: 'dog', t: 1000, mid: 1, dur: 3.0, c: 1, r: 1, tier: 1, ang: 0 } as const;
+    expect(fxAlive(dog, 1000 + 3199)).toBe(true);
+    expect(fxAlive(dog, 1000 + 3200)).toBe(false);
   });
 });
 
@@ -500,6 +508,134 @@ describe('normalizeSnapClock：把收到的发送端时钟快照归一化到本�
     const d1220 = view.interpAt(1220).monsters[0]!.dist;
     expect(d1220).toBeGreaterThanOrEqual(1.0 - 0.02);
     expect(d1220).toBeLessThanOrEqual(1.1 + 0.02);
+  });
+});
+
+// —— 瞬态特效 round-trip（T9.2）——
+// 背景：本方瞬态特效（skill/palm/ult/dog）带钉死的「出生时刻」fx.t 上链；接收端按 (nowMs - fx.t)
+// 重建播放头、同基老化。若误钉「序列化时刻」，则每 100ms 重打 → 播放头被冻结在 ≈0（技能
+// fade≈0 看不见、神掌波纹卡在 frontStartDist 不扫）。本组锁：存活期内非空且播放头随真实年龄推进、
+// 超寿命变空、各 kind 字段保留。
+/** 把一组瞬态特效走完整链路：mkSnap(tSend, monsters, {fx}) → 时钟归一(recvMs) → ingest → interpAt → 桥。
+ *  delay/nowExtra 控制传输延迟(默认 50ms)与桥滞后(默认 20ms)；monsters 供 dog 判被咬怪存活。 */
+function fxBridge(
+  fx: PvpSnapFx[], tSend: number, delay = 50, nowExtra = 20, monsters: PvpSnapMonster[] = [],
+): Battle {
+  const s = mkSnap(tSend, monsters, { fx });
+  normalizeSnapClock(s, tSend + delay);
+  const view = new PvpOppView();
+  view.ingest(s);
+  const B2 = mkPvp();
+  B2.bridgeOpponentFromSnap(view.interpAt(tSend + delay + nowExtra));
+  return B2;
+}
+
+describe('瞬态特效 round-trip：发送端 FX → 快照 → 对手侧重建（T9.2）', () => {
+  it('skill fx：aiSkillFx 非空、播放头随真实年龄推进（非冻结 0）', () => {
+    // 出生 = tSend − ageSec·1000；接收端 age=(nowMs−fx.t)/1000 = ageSec + (delay+nowExtra)/1000
+    const ageSec = 0.3;
+    const fx = { kind: 'skill', t: 1000 - ageSec * 1000, skillKind: 'meteor', dur: 0.8, c: 3, r: 8 } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000);
+    expect(B2.aiSkillFx).not.toBeNull();
+    expect(B2.aiSkillFx!.kind).toBe('meteor');
+    // 播放头 ≈ 0.32（0.3 年龄 + 0.07 传输延迟），远高于旧 bug 的冻结 0.02
+    expect(B2.aiSkillFx!.t).toBeGreaterThan(0.25);
+    expect(B2.aiSkillFx!.t).toBeLessThan(0.8);
+  });
+
+  it('skill fx 播放头跨快照推进：同一特效连续两快照（年龄递增）→ 播放头递增（锁「不冻结」）', () => {
+    // 真实场景：同一技能持续 0.8s，每 100ms 推一份，年龄随 tSend 同步增长 → 出生恒定。
+    const view = new PvpOppView();
+    const push = (tSend: number, ageSec: number) => {
+      const fx = { kind: 'skill', t: tSend - ageSec * 1000, skillKind: 'freeze', dur: 0.8, c: 3, r: 8 } as PvpSnapFx;
+      const s = mkSnap(tSend, [], { fx: [fx] });
+      normalizeSnapClock(s, tSend + 50);
+      view.ingest(s);
+    };
+    push(1000, 0.1); // 出生 = 900
+    push(1200, 0.3); // 出生 = 900（同一技能，年龄递增）
+    const B2 = mkPvp();
+    B2.bridgeOpponentFromSnap(view.interpAt(1200 + 50 + 20)); // nowMs=1270
+    expect(B2.aiSkillFx).not.toBeNull();
+    // age=(1270 − (900+50))/1000 = 0.32；旧 bug（钉序列化时刻）会冻结在 ≈0.02
+    expect(B2.aiSkillFx!.t).toBeGreaterThan(0.25);
+  });
+
+  it('skill fx 超过寿命 → aiSkillFx 为 null（老化丢弃）', () => {
+    const fx = { kind: 'skill', t: 1000, skillKind: 'meteor', dur: 0.8, c: 3, r: 8 } as PvpSnapFx; // 出生=1000
+    const B2 = fxBridge([fx], 1000, 50, 1600); // nowMs=2650 → age=1.6s > 1.5s 寿命
+    expect(B2.aiSkillFx).toBeNull();
+  });
+
+  it('palm fx：aiPalmPushFx 非空、frontStartDist/cells 保留、播放头推进（波纹确实在扫，非卡死）', () => {
+    // 出生在 tSend 之前 0.4s → 接收端播放头≈0.4s（中段），证明波纹沿 aiPath 向出口回推（非冻结在 0）。
+    const ageSec = 0.4;
+    const fx = { kind: 'palm', t: 1000 - ageSec * 1000, dur: 0.8, fadeT: 0, cells: 3, frontStartDist: 9.2 } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000);
+    expect(B2.aiPalmPushFx).not.toBeNull();
+    expect(B2.aiPalmPushFx!.frontStartDist).toBe(9.2);
+    expect(B2.aiPalmPushFx!.cells).toBe(3);
+    expect(B2.aiPalmPushFx!.t).toBeGreaterThan(0.3); // 播放头随真实年龄推进（旧 bug 冻结≈0.02）
+  });
+
+  it('ult fx：aiHeroUltFx 非空、字段保留、ttl 在 (0,dur] 递减', () => {
+    const ageSec = 0.4;
+    const fx = {
+      kind: 'ult', t: 1000 - ageSec * 1000, heroId: 'dasheng', c: 3, r: 8, dur: 0.9, tier: 5, rge: 2.5, crit: false,
+    } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000);
+    expect(B2.aiHeroUltFx).toHaveLength(1);
+    const u = B2.aiHeroUltFx[0]!;
+    expect(u.heroId).toBe('dasheng');
+    expect(u.tier).toBe(5);
+    expect(u.rge).toBe(2.5);
+    expect(u.crit).toBe(false);
+    expect(u.maxTtl).toBe(0.9);
+    expect(u.ttl).toBeGreaterThan(0);
+    expect(u.ttl).toBeLessThanOrEqual(0.9);
+  });
+
+  it('ult fx：可选字段（fromC/fromR/biteC/biteR/biteMid）透传', () => {
+    const fx = {
+      kind: 'ult', t: 1000, heroId: 'erlang', c: 3, r: 8, dur: 0.9, tier: 3, rge: 3, crit: true,
+      fromC: 1, fromR: 8, biteC: 4, biteR: 8, biteMid: 7,
+    } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000);
+    expect(B2.aiHeroUltFx).toHaveLength(1);
+    const u = B2.aiHeroUltFx[0]!;
+    expect(u.fromC).toBeDefined();
+    expect(u.biteMid).toBe(7);
+  });
+
+  it('dog fx：对手怪活着 → aiErlangDogFx 非空、字段保留', () => {
+    const mon = mkMonster(5.0, { id: 42 });
+    const fx = { kind: 'dog', t: 1000, mid: 42, dur: 3.0, c: 3, r: 8, tier: 3, ang: 0.5 } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000, 50, 20, [mon]);
+    expect(B2.aiErlangDogFx).toHaveLength(1);
+    expect(B2.aiErlangDogFx[0]!.mid).toBe(42);
+    expect(B2.aiErlangDogFx[0]!.tier).toBe(3);
+    expect(B2.aiErlangDogFx[0]!.ttl).toBeGreaterThan(0);
+  });
+
+  it('dog fx：被咬对手怪不在场（已死）→ aiErlangDogFx 为空', () => {
+    const fx = { kind: 'dog', t: 1000, mid: 42, dur: 3.0, c: 3, r: 8, tier: 3, ang: 0.5 } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000, 50, 20, []); // 无怪 → mid 42 不存在
+    expect(B2.aiErlangDogFx).toHaveLength(0);
+  });
+
+  it('dog fx 超过 3s 寿命 → aiErlangDogFx 为空', () => {
+    const mon = mkMonster(5.0, { id: 42 });
+    const fx = { kind: 'dog', t: 1000, mid: 42, dur: 3.0, c: 3, r: 8, tier: 3, ang: 0.5 } as PvpSnapFx;
+    const B2 = fxBridge([fx], 1000, 50, 3300, [mon]); // age=3.3s > 3.2s 寿命
+    expect(B2.aiErlangDogFx).toHaveLength(0);
+  });
+
+  it('多个 ult 同时存在 → aiHeroUltFx 逐个重建（不全覆盖）', () => {
+    const fx1 = { kind: 'ult', t: 1000, heroId: 'nezha', c: 3, r: 8, dur: 0.9, tier: 5, rge: 2, crit: true } as PvpSnapFx;
+    const fx2 = { kind: 'ult', t: 1000, heroId: 'dasheng', c: 2, r: 8, dur: 0.9, tier: 5, rge: 3, crit: false } as PvpSnapFx;
+    const B2 = fxBridge([fx1, fx2], 1000);
+    expect(B2.aiHeroUltFx).toHaveLength(2);
+    expect(B2.aiHeroUltFx.map((u) => u.heroId).sort()).toEqual(['dasheng', 'nezha']);
   });
 });
 
