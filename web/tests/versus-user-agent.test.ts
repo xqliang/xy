@@ -24,7 +24,7 @@ beforeEach(() => {
 describe('versus-user-agent', () => {
   it('userAgentTick：够桃则征兵并布阵', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], false, 1);
-    b.grantPeach(999);
+    b.grantPeach(999, true);
     b.startNextWave();
     const peachBefore = b.peach;
     userAgentTick(b);

@@ -178,7 +178,7 @@ describe('半对保底 N=6', () => {
   it('有孤儿且连续未补满 pairPityAfter 次后强制出配对字', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(7);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.wave = 3;
     const cell = b.unlockedCells()[0]!;
     b.words.set(`${cell.c},${cell.r}`, {
@@ -358,7 +358,7 @@ describe('征兵匹配保底', () => {
     const b = new Battle(11, 1, undefined, undefined, {}, [], [], false, undefined, 1, {
       forceMatchThisGame: true,
     });
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.wave = 5;
     b.status = 'ready';
     expect(b.summon()).toBe(true); // 首次不转字
@@ -371,7 +371,7 @@ describe('征兵匹配保底', () => {
   it('波20窗口无匹配时强制补对', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.setWaveForTest(19);
     b.status = 'ready'; // 即将进入第 20 波
     expect(b.summon()).toBe(true);
@@ -383,7 +383,7 @@ describe('征兵匹配保底', () => {
   it('波20保底：早年已匹配大圣时不反复刷圣', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
-    b.grantPeach(100_000);
+    b.grantPeach(100_000, true);
     // 早年曾凑齐大圣（已计入匹配）；场上不留「大」孤儿，避免半对保底合法补「圣」
     b.seedHeroMatchForTest('dasheng', 5);
     b.setWaveForTest(19);

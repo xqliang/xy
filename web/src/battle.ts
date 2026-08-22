@@ -1245,7 +1245,7 @@ export class Battle {
         }
         this.unlocked.add(k);
         this.digFx.push({ c: cell.c, r: cell.r, t: 0 });
-        this.peach += this.mods.shovelPeach;
+        this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + this.mods.shovelPeach);
         this.message = this.mods.shovelPeach > 0
           ? `挖开新阵位（摸金 +${this.mods.shovelPeach}桃）`
           : '铲子挖开了新阵位';
@@ -1672,7 +1672,7 @@ export class Battle {
     }
   }
 
-  tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升）
+  tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升，但封顶 TANGSENG_MAX_HP）
   healUsedThisWave = false; // 观音甘露每波限回一次
   aiHealUsedThisWave = false; // AI 侧观音甘露每波限回一次
   tangsengHurtImmuneT = 0; // 漏怪扣血后短暂免疫剩余（秒）
@@ -2093,11 +2093,11 @@ export class Battle {
     this.aiEntranceDist = entranceDistance(this.aiPath);
     this.aiTangseng = mirrorCell(map.tangseng);
     this.aiCells = placeableByProximity(map).map(mirrorCell); // 按贴路远近排序，AI 优先占贴路格
-    // 局外功德加成注入
-    this.peach += meta.bonusPeach;
-    this.tangsengHP += meta.bonusHp;
-    this.tangsengMaxHP += meta.bonusHp;
-    this.aiTangsengHP += meta.bonusHp; // 对手同享，维持对称
+    // 局外功德加成注入（桃子封顶 MAX_PEACH，血量封顶 TANGSENG_MAX_HP）
+    this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + meta.bonusPeach);
+    this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + meta.bonusHp);
+    this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + meta.bonusHp);
+    this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + meta.bonusHp); // 对手同享，维持对称（封顶）
     this.mods.atkMul += meta.atkPct;
     this.mods.frqMul += meta.frqPct;
     this.aiMods.atkMul += meta.atkPct;
@@ -4226,7 +4226,7 @@ export class Battle {
       this.unlocked.add(cellKey(to.c, to.r));
       this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
       this.clearTraySlot(index);
-      this.peach += this.mods.shovelPeach; // 摸金校尉
+      this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + this.mods.shovelPeach); // 摸金校尉
       this.emit('shovel');
       this.message = this.mods.shovelPeach > 0 ? `挖开新阵位（摸金 +${this.mods.shovelPeach}桃）` : '铲子挖开了新阵位';
       return true;
@@ -4407,7 +4407,7 @@ export class Battle {
     this.unlocked.add(cellKey(to.c, to.r));
     this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画
     this.emit('shovel'); // 第一铲；半程再铲一声
-    this.peach += this.mods.shovelPeach; // 摸金校尉
+    this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + this.mods.shovelPeach); // 摸金校尉
     this.message = '铲子挖开了新阵位';
     return true;
   }
@@ -4748,9 +4748,9 @@ export class Battle {
       case 'yuni': this.mods.mud = true; break;
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
-      case 'hushen': this.tangsengMaxHP += 1; this.tangsengHP += 1; break;
+      case 'hushen': this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 1); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 1); break;
       // 非对称正向：我方收益优于 AI 对手
-      case 'tongxin': this.tangsengMaxHP += 3; this.tangsengHP += 3; this.aiTangsengHP += 2; break;
+      case 'tongxin': this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 3); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 3); this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 2); break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.10); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
@@ -4769,8 +4769,8 @@ export class Battle {
       case 'yuni': this.aiMods.mud = true; break;
       case 'xianyuan': this.aiMods.summonCostDelta -= 1; break;
       case 'jubaopen': this.aiMods.killBonus += 1; break;
-      case 'hushen': this.aiTangsengHP += 1; break;
-      case 'tongxin': this.aiTangsengHP += 3; this.tangsengMaxHP += 2; this.tangsengHP += 2; break;
+      case 'hushen': this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 1); break;
+      case 'tongxin': this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 3); this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 2); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 2); break;
       case 'zhuwang': this.aiMods.monsterSpdMul = Math.max(0.4, this.aiMods.monsterSpdMul - 0.10); break;
       case 'dinghai': {
         const lc = this.aiCells.find((c) => !this.aiUnlocked.has(cellKey(c.c, c.r)));
@@ -4836,7 +4836,7 @@ export class Battle {
     this.unlocked.add(cellKey(to.c, to.r));
     this.digFx.push({ c: to.c, r: to.r, t: 0 }); // 挖坑动画（进 pvpOwnSnapshot，对手可见）
     this.emit('shovel'); // 第一铲；半程再铲一声
-    this.peach += this.mods.shovelPeach; // 摸金校尉加成
+    this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + this.mods.shovelPeach); // 摸金校尉加成
     this.message = '洛阳铲自动挖开新阵位';
     return true;
   }
@@ -4878,7 +4878,7 @@ export class Battle {
       const iv = PEACH_TREE.intervals[Math.min(t.level, PEACH_TREE.maxLevel) - 1]!;
       if (t.growT >= iv) {
         t.growT -= iv;
-        this.peach += 1;
+        this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + 1);
         // 桃树旁「+1」飘字（复用击杀蟠桃飘字）
         this.peachFloats.push({ c: t.cell.c, r: t.cell.r, amount: 1, y: PEACH_FLOAT_HEAD_Y, vy: peachFloatInitialVy(), peakY: PEACH_FLOAT_HEAD_Y });
       }
@@ -6930,7 +6930,7 @@ export class Battle {
               ? ECONOMY.PEACH_PER_ELITE
               : ECONOMY.PEACH_PER_KILL;
         const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英4 / 小Boss6 / 大Boss10，+道具）
-        this.peach += amount;
+        this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + amount);
         this.kills++; // 本方累计击杀（PvP 摘要/反作弊用；仅本方击杀分支，不含 creditAiKill）
         const dp = posAtDistance(this.map, m.dist);
         this.bursts.push({
@@ -6970,7 +6970,7 @@ export class Battle {
         // 撞到唐僧：扣血 + 舍身饲魔；扣血后短暂免疫，避免同帧连扣
         if (this.tangsengHurtImmuneT > 0) continue;
         this.tangsengHP -= 1;
-        this.peach += ECONOMY.PEACH_PER_BLEED;
+        this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + ECONOMY.PEACH_PER_BLEED);
         this.tangsengHurtImmuneT = TUNING.tangsengHurtImmuneDur;
         this.emit('hurt');
         if (this.tangsengHP <= 0) {
@@ -7229,9 +7229,9 @@ export class Battle {
     }
   }
 
-  // 调试/自测用：直接增蟠桃（正式玩法不暴露）
-  grantPeach(n: number): void {
-    this.peach += n;
+  // 调试/自测用：直接增蟠桃。bypassCap=true 时突破 MAX_PEACH（仅测试用）。
+  grantPeach(n: number, bypassCap = false): void {
+    this.peach = bypassCap ? this.peach + n : Math.min(ECONOMY.MAX_PEACH, this.peach + n);
   }
 
   // 测试辅助：立即清空当前波（清怪 + 触发清波判定）。仅供单测确定性驱动。

@@ -134,7 +134,7 @@ describe('桃树候选区暂停/恢复产桃', () => {
 describe('征兵清空候选区', () => {
   it('征兵时收回的桃树/兵器一并清除', () => {
     const b = freshWithGarden();
-    b.grantPeach(1000);
+    b.grantPeach(1000, true);
     const cell = b.lockedCells()[0]!;
     b.trees.set(`${cell.c},${cell.r}`, { level: 2, cell, growT: 3 });
     b.recallToTray(cell, 2);

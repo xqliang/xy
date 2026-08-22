@@ -185,13 +185,15 @@ export const TUNING_SYSTEM_KEYS = new Set([
   ...TUNING_AI_KEYS,
 ]);
 
-/** 实战会读的掉桃键（击杀 / 漏怪补偿） */
+/** 实战会读的掉桃键（击杀 / 漏怪补偿）+ 上限 cap */
 export const ECONOMY_LIVE_PEACH_KEYS = new Set([
   'PEACH_PER_KILL',
   'PEACH_PER_ELITE',
   'PEACH_PER_MINI_BOSS',
   'PEACH_PER_BOSS',
   'PEACH_PER_BLEED',
+  'TANGSENG_MAX_HP',
+  'MAX_PEACH',
 ]);
 
 /** 开局经济（征兵 Tab） */

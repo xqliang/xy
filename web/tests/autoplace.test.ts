@@ -1967,7 +1967,7 @@ it('entrancePathSeatBonus：同覆盖时更早接到出怪口分更高', () => {
 it('火焰山：无怪时弓优先落更早接到出怪口的格', () => {
   const b = new Battle(20260809, 1, mapById('huoyanshan'));
   const rge = getUnitStat('archer', 1).rge;
-  b.grantPeach(999);
+  b.grantPeach(999, true);
   b.tray.push({ kind: 'unit', type: 'archer', tier: 1 });
   b.autoPlaceTray();
   b.flushAutoPlacePlaybackForTest();

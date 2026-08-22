@@ -2167,6 +2167,7 @@ function drawTangsengHearts(
   headTop: number,
   hp: number,
   defeated = false,
+  feetY?: number, // 唐僧脚底位置（canvas 坐标），用于判断头顶空间是否够堆叠
 ) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -2184,12 +2185,22 @@ function drawTangsengHearts(
   const colGap = fontPx * 0.95;
   ctx.font = `${fontPx}px sans-serif`;
   ctx.fillStyle = '#e03030';
-  // 自头顶向上堆叠：先排最靠近头顶的一行（最多 3 心）；整体略下移贴近立绘
+  // 判断是向上还是向下堆叠：
+  // - 默认从头顶向上堆（头顶空间充裕时）
+  // - 当唐僧在棋盘顶部，向上空间不够放所有心时，改为从头顶向下堆（但不超过脚底）
+  const rows = Math.ceil(n / perRow);
+  const totalUpSpace = headTop; // headTop 到画面顶部(0)的距离
+  const needUpSpace = rows * rowGap;
+  const stackDown = needUpSpace > totalUpSpace && feetY != null;
   let remaining = n;
   let row = 0;
   while (remaining > 0) {
     const count = Math.min(perRow, remaining);
-    const rowY = headTop + 1 - row * rowGap;
+    const rowY = stackDown
+      ? headTop + 1 + row * rowGap // 向下堆，但要保证不超过脚底
+      : headTop + 1 - row * rowGap; // 向上堆
+    // 向下堆时限制不超过脚底上方一点
+    if (stackDown && feetY != null && rowY > feetY - fontPx * 0.5) break;
     const totalW = (count - 1) * colGap;
     const startX = cx - totalW / 2;
     for (let i = 0; i < count; i++) {
@@ -2213,6 +2224,7 @@ function drawTangsengFigure(
   drawGroundShadow(ctx, x, y + rad * 0.22, rad * 0.72, defeated ? 0.16 : 0.26);
   const spr = sprite('tangseng');
   let headTop = y - rad;
+  let feetY = y + rad * 0.8; // 脚底近似位置
   if (spr) {
     const box = rad * 2;
     const scale = Math.min(box / spr.width, box / spr.height);
@@ -2220,6 +2232,7 @@ function drawTangsengFigure(
     const dh = spr.height * scale;
     ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
     headTop = y - dh / 2;
+    feetY = y + dh / 2; // 脚底 = 立绘底部
   } else {
     ctx.fillStyle = '#5a3a08';
     ctx.font = 'bold 22px "PingFang SC", sans-serif';
@@ -2227,7 +2240,8 @@ function drawTangsengFigure(
     ctx.textBaseline = 'middle';
     ctx.fillText('唐', x, y);
   }
-  drawTangsengHearts(ctx, x, headTop, hp, defeated);
+  // 传入脚底位置，便于在头顶空间不够时改为向下堆叠
+  drawTangsengHearts(ctx, x, headTop, hp, defeated, feetY);
 }
 
 function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {

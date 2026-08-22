@@ -5,7 +5,7 @@ import { summonAnimDone, traySlotAnimDone } from '../src/render';
 describe('Battle.summon tray rules', () => {
   it('clears leftover tray tokens before writing the new hand', () => {
     const b = new Battle(42);
-    b.grantPeach(1000);
+    b.grantPeach(1000, true);
     expect(b.summon()).toBe(true);
     const first = b.tray.map((t) => JSON.stringify(t));
     expect(b.tray).toHaveLength(TUNING.summonDraws);
@@ -23,7 +23,7 @@ describe('Battle.summon tray rules', () => {
 
   it('first summon has >= 4 units', () => {
     const b = new Battle(7);
-    b.grantPeach(100);
+    b.grantPeach(100, true);
     b.summon();
     expect(b.tray.filter((t) => t.kind === 'unit').length).toBeGreaterThanOrEqual(4);
   });

@@ -13,7 +13,7 @@ describe('字牌征兵保底', () => {
     TUNING.wordDrawChance = 0;
     TUNING.wordPityAfter = 10;
     const b = new Battle(99);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     expect(b.summon()).toBe(true); // 首次：无字、不触发保底
     expect(b.tray.some((t) => t.kind === 'word')).toBe(false);
     for (let i = 0; i < 10; i++) {
@@ -28,7 +28,7 @@ describe('字牌征兵保底', () => {
     TUNING.wordDrawChance = 0;
     TUNING.wordPityAfter = 1; // 第二次非首次即可强制（先召唤一次垫高计数）
     const b = new Battle(3);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     // 耗尽首次
     b.summon();
     // 人为：已连续无字达到保底阈值

@@ -45,7 +45,7 @@ describe('征兵前期配额（Battle.summon）', () => {
     TUNING.wordDrawChance = 1; // 非首抽尽量转字
     TUNING.shovelDrawChance = 0;
     const b = new Battle(7);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.setWaveForTest(1);
     expect(b.summon()).toBe(true); // 首次不转字
     expect(b.tray.some((t) => t.kind === 'word')).toBe(false);
@@ -63,7 +63,7 @@ describe('征兵前期配额（Battle.summon）', () => {
     TUNING.wordDrawChance = 0;
     TUNING.shovelDrawChance = 0;
     const b = new Battle(11);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.setWaveForTest(1);
     expect(b.summon()).toBe(true); // 首次
     b.setWaveForTest(6);
@@ -76,7 +76,7 @@ describe('征兵前期配额（Battle.summon）', () => {
     TUNING.shovelDrawChance = 1;
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
-    b.grantPeach(10_000);
+    b.grantPeach(10_000, true);
     b.setWaveForTest(1);
     // 挖掉一部分格，避免中途 allOpen 导致不出铲
     for (let i = 0; i < 8; i++) {

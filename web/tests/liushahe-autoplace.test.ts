@@ -22,7 +22,7 @@ beforeEach(() => {
 describe('流沙河一键布阵', () => {
   it('征兵后布阵能落子', () => {
     const b = new Battle(1, 1, mapById('liushahe'));
-    b.grantPeach(9999);
+    b.grantPeach(9999, true);
     const before = b.units.size + b.words.size;
     b.summon();
     expect(b.tray.length).toBeGreaterThan(0);

@@ -20,7 +20,7 @@ function repeatedAutoplaceKeys(b: Battle, rounds: number): string[] {
 describe('无怪时重复布阵', () => {
   it('兵器布局不应在两套状态间来回切换', () => {
     const b = new Battle(42, 1, mapById('liushahe'));
-    b.grantPeach(9999);
+    b.grantPeach(9999, true);
     for (let i = 0; i < 8; i++) {
       b.summon();
       b.autoPlaceTray();
@@ -36,7 +36,7 @@ describe('无怪时重复布阵', () => {
 
   it('英雄字牌布局不应在两套状态间来回切换', () => {
     const b = new Battle(7, 1, mapById('liushahe'));
-    b.grantPeach(9999);
+    b.grantPeach(9999, true);
     for (let i = 0; i < 6; i++) {
       b.summon();
       b.autoPlaceTray();
@@ -53,7 +53,7 @@ describe('无怪时重复布阵', () => {
 
   it('手动拖字后应允许重新布阵', () => {
     const b = new Battle(42, 1, mapById('liushahe'));
-    b.grantPeach(9999);
+    b.grantPeach(9999, true);
     for (let i = 0; i < 8; i++) {
       b.summon();
       b.autoPlaceTray();
