@@ -9694,6 +9694,11 @@ function latColor(rtt: number | null): string {
  * 为何现场量中块半宽而非用常量：波次行含地图名（长度不定）、境界行可能缺失，宽窄随局变化；
  * 在 drawHud 内用同一 ctx（已设对应字体）measureText 即得精确半宽，是最稳的防重叠手段。
  */
+// 延迟文本：≥1000ms 显示为「x.ys」（秒，最多一位小数、去掉末尾 .0），否则整数毫秒。
+function formatRtt(ms: number): string {
+  return ms >= 1000 ? `${Math.round(ms / 100) / 10}s` : `${Math.round(ms)}ms`;
+}
+
 function drawNetLatencyFlanks(
   ctx: CanvasRenderingContext2D,
   myRtt: number | null,
@@ -9719,12 +9724,12 @@ function drawNetLatencyFlanks(
   // 左侧：本侧延迟（我）。textAlign=right，右缘贴 leftX。
   ctx.textAlign = 'right';
   ctx.fillStyle = latColor(myRtt);
-  ctx.fillText(myRtt === null ? '我 --' : `我 ${Math.round(myRtt)}ms`, leftX, y);
+  ctx.fillText(myRtt === null ? '我 --' : `我 ${formatRtt(myRtt)}`, leftX, y);
 
   // 右侧：对手延迟（对）。textAlign=left，左缘贴 rightX。
   ctx.textAlign = 'left';
   ctx.fillStyle = latColor(oppRtt);
-  ctx.fillText(oppRtt === null ? '对 --' : `对 ${Math.round(oppRtt)}ms`, rightX, y);
+  ctx.fillText(oppRtt === null ? '对 --' : `对 ${formatRtt(oppRtt)}`, rightX, y);
   ctx.restore();
 }
 
