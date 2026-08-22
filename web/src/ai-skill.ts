@@ -47,7 +47,7 @@ const NEUTRAL_BAND: VersusRubberBand = {
   aiDebuffPassiveBias: 1,
 };
 
-/** AI 不随机携带的被动（蟠桃园 / 洛阳铲 — 后者每 45s 自动挖高评分格，对 AI 是强经济增益，暂不随机投放） */
+/** AI 不随机携带的被动（蟠桃园 / 洛阳铲 — 后者每 60s 自动挖高评分格，对 AI 是强经济增益，暂不随机投放） */
 export const AI_EXCLUDED_PASSIVES = new Set(['pas_pantao', 'luoyangchan']);
 
 const DEBUFF_PASSIVES = new Set(['yuni', 'zhuwang']);
