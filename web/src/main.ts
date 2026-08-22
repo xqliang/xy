@@ -47,6 +47,8 @@ import {
   pausePopupHitAt,
   type PausePhase,
 } from './pause-popup';
+// Task 9.5：暂停改退出的纯决策（弹窗模态 vs 仿真暂停的拆分），抽到 pvp-pause.ts 以便单测。
+import { isPausePopupOpen as isPausePopupOpenPure, shouldStepSim, pausePopupContext } from './pvp-pause';
 import { drawInkPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
@@ -336,7 +338,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   const sp = spendStamina(stamina);
   if (sp.ok) stamina = sp.state;
   // reset 战斗标志（镜像 newGame）
-  endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pausePhase = 'main';
+  endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pvpExitPopup = false; pausePhase = 'main';
   ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null; pendingFirstSummonTutorial = false;
   screen = 'battle';
   scheduleFrame();
@@ -660,6 +662,16 @@ function openHelpLink(id: HelpLinkId): void {
   }
 }
 let pausePhase: PausePhase = 'main';
+// PvP 退出弹窗开启标志：真人对战时点「退出」按钮弹窗用。与单人 ui.paused 的关键区别——
+// 它只做**输入模态**（吞掉棋盘/布阵点击，让弹窗独占指针），但**不暂停仿真**：
+// 仿真步进门控仍只看 ui.paused，故 pvpExitPopup=true 时怪照走、WS 照发，弹窗只是浮在上层的「退出确认」。
+// 单人路径（ui.paused）完全不受影响。
+let pvpExitPopup = false;
+// 注：弹窗开启判定用导入的纯函数 isPausePopupOpenPure(ui.paused, pvpExitPopup)；
+// 仿真步进判定用 shouldStepSim({...})——两者都不把 pvpExitPopup 当作「暂停」，
+// 这是 T9.5 的核心：PvP 退出弹窗只做输入模态，不停仿真。
+/** 关闭弹窗（单人继续 / PvP 继续或认输后）：同时清两路标志 + 回到主阶段。 */
+function closePausePopup(): void { ui.paused = false; pvpExitPopup = false; pausePhase = 'main'; }
 const ui: UiState = {
   dragFrom: null,
   dragTrayIndex: null,
@@ -1016,6 +1028,7 @@ function newGame() {
   endlessResult = null;
   settleChange = null;
   ui.paused = false;
+  pvpExitPopup = false;
   pausePhase = 'main';
   ui.passivePopup = null;
   ui.passivePopupUntil = 0;
@@ -1029,6 +1042,7 @@ function newGame() {
 function abortBattleToMenu(): void {
   endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
   ui.paused = false;
+  pvpExitPopup = false;
   pausePhase = 'main';
   ui.passivePopup = null;
   ui.passivePopupUntil = 0;
@@ -1693,33 +1707,41 @@ function onPointerDown(e: PointerEvent) {
     }
     return;
   }
-  // —— 局内暂停：弹窗内继续 / 终止（二次确认） / 认输（PvP 一步到位） —— //
-  if (ui.paused) {
+  // —— 局内暂停/退出弹窗：继续 / 终止（二次确认·单人） / 认输（PvP 一步到位） —— //
+  // 用纯函数 isPausePopupOpenPure(ui.paused, pvpExitPopup) 同时覆盖单人暂停(ui.paused) 与 PvP 退出弹窗(pvpExitPopup)：
+  // 两者都把指针锁进弹窗（模态输入），差别只在仿真是否停（由下方步进门控的 ui.paused 决定）。
+  if (isPausePopupOpenPure(ui.paused, pvpExitPopup)) {
     const hit = pausePopupHitAt(x, y, pausePhase, pvpSock ? 'match' : 'battle');
     if (hit === null) return;
     playSfx('click');
     if (hit.kind === 'continue') {
-      ui.paused = false;
-      pausePhase = 'main';
+      closePausePopup();
     } else if (hit.kind === 'surrender') {
       // PvP 认输：经 WS 上报 surrender（一次性），等服务端 result 驱动结算（不直接 abortBattleToMenu，否则泄漏对局且无结算）。
       pvpSurrendered = true;
       if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('surrender'); pvpStatusReported = true; }
-      ui.paused = false;
-      pausePhase = 'main';
+      closePausePopup();
       battle.message = '已认输，等待结算…';
     } else if (hit.kind === 'quit') {
       pausePhase = 'confirmQuit';
     } else if (hit.kind === 'cancelQuit') {
       pausePhase = 'main';
     } else if (hit.kind === 'confirmQuit') {
+      pvpExitPopup = false; // 防御性清零（此分支本只属单人，但确认终止后不应残留 PvP 弹窗态）
       abortBattleToMenu();
     }
     return;
   }
   if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {
     playSfx('click');
-    ui.paused = true;
+    if (pvpSock) {
+      // PvP：右上角「退出」按钮——只开退出弹窗（模态拦截输入），**不**置 ui.paused，
+      // 仿真步进门控只看 ui.paused，故怪照走、WS 照发，弹窗只是浮在上层的退出确认。
+      pvpExitPopup = true;
+    } else {
+      // 单人：原暂停语义——仿真同步冻结。
+      ui.paused = true;
+    }
     pausePhase = 'main';
     clearBoardSelect();
     ui.dragFrom = null;
@@ -2170,7 +2192,10 @@ function frame(now: number): void {
       pvpNetDead = true;
     }
     // 结算弹层 / 暂停 / 引导 / 断线时冻结战斗（不 step），仍连续重绘以播动画（断线时定格画面 + 弹窗）。
-    if (!ui.paused && !tutorialOverlay && !isSettleOpen() && !pvpNetDead) {
+    // Task 9.5：步进门控用 shouldStepSim()——入参只有 paused/tutorial/settleOpen/netDead，
+    // **不含** pvpExitPopup。故 PvP 退出弹窗开着时(pvpExitPopup=true、ui.paused=false) 仿真照常步进，
+    // 实现「弹窗不暂停对局」。单人暂停(paused=true)则仍冻结。
+    if (shouldStepSim({ paused: ui.paused, tutorial: !!tutorialOverlay, settleOpen: isSettleOpen(), netDead: pvpNetDead })) {
       try {
         if (pvpSock && !pvpResult) {
           // PvP（Model C）：本方半场本地权威。累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
@@ -2304,7 +2329,8 @@ function frame(now: number): void {
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
     // Task 7.6：断线弹窗最顶层（盖住结算/暂停），只有判死后才画。
     if (pvpNetDead) drawNetDeadOverlay(ctx);
-    if (ui.paused && !isSettleOpen()) drawPausePopup(ctx, pausePhase, pvpSock ? 'match' : 'battle');
+    // 暂停/退出弹窗：与结算、断线互斥（ settle > net-dead > pause 的视觉优先级靠下面的 !isSettleOpen()/!pvpNetDead 保证）。
+    if (isPausePopupOpenPure(ui.paused, pvpExitPopup) && !isSettleOpen() && !pvpNetDead) drawPausePopup(ctx, pausePhase, pausePopupContext(!!pvpSock));
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
@@ -2388,6 +2414,8 @@ interface GameHook {
   };
   // 真服务器双端冒烟探针（Task 7）：匹配态只读快照（房号/阶段）供桥接两侧成局。
   pvpMatchProbe: () => { code: string | null; phase: string | null } | null;
+  // Task 9.5 自测探针：暂停/退出弹窗当前态（冒烟验证「PvP 退出弹窗不停仿真」）。
+  pauseState: () => { paused: boolean; pvpExitPopup: boolean; phase: string; tutorial: boolean };
   // Task 10 自测钩子：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，并直接经 WS 上报 surrender）。
   pvpSurrender: () => void;
   // Task 7 自测钩子：镜像结算屏「返回」点击（anim 已毕点屏→leaveSettleToMenu），返回是否执行离场。
@@ -2442,6 +2470,10 @@ const hook: GameHook = {
     endHandled = false;
     endlessResult = null;
     settleChange = null;
+    // Task 9.5：重开新局时一并清零暂停/退出弹窗态（与 newGame 对称），避免残留弹窗画到新局上。
+    ui.paused = false;
+    pvpExitPopup = false;
+    pausePhase = 'main';
     screen = 'battle';
     scheduleFrame();
   },
@@ -2510,12 +2542,16 @@ const hook: GameHook = {
   pvpMatchProbe: () => (pvpController
     ? { code: pvpController.state.code, phase: pvpController.state.phase }
     : null),
+  // Task 9.5：暂停/退出弹窗当前态探针（供 headless 冒烟验证「PvP 退出弹窗开着但仿真照跑」）。
+  pauseState: () => ({ paused: ui.paused, pvpExitPopup, phase: pausePhase, tutorial: !!tutorialOverlay }),
   // Task 10：触发认输（镜像 pause→认输命中处理：置 surrendered、关暂停，并**直接经 WS 上报 surrender**）。
   // 注（bug 修复）：此前只置 pvpSurrendered 标志、无一处在 frame 内据此发送→经由本钩子的认输永不生效（死代码）。
   // 现与暂停弹窗「认输」路径同源：直接 sendStatus('surrender')；sendStatus 在 socket 未开时静默丢弃，调用安全。
   pvpSurrender: () => {
     pvpSurrendered = true;
+    // 与暂停弹窗「认输」路径同源：单人暂停 / PvP 退出弹窗两路标志一并清零。
     ui.paused = false;
+    pvpExitPopup = false;
     pausePhase = 'main';
     battle.message = '已认输，等待结算…';
     if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('surrender'); pvpStatusReported = true; }

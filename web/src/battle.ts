@@ -1939,6 +1939,8 @@ export class Battle {
   readonly difficultyMul: number; // 由境界决定的怪物强度系数
   readonly endless: boolean; // 无尽模式：波数不限、关对手、只记录最高波数
   private pvp = false; // 在线 PvP：关本地 AI 养成/决策，对手侧由服务端权威 seed + 远端真人动作重放填充
+  /** 是否在线 PvP 对局。渲染侧（render.ts 暂停/退出按钮）据它切换表现，故暴露为只读 getter。 */
+  get isPvp(): boolean { return this.pvp; }
   message = '点「征兵」抽兵到候选区，拖到绿格布阵';
 
   private bossWaves = new Set<number>(); // 分段预排的妖王波（对战/无尽共用）

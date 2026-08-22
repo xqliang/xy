@@ -9598,17 +9598,44 @@ function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
   ctx.strokeStyle = 'rgba(90, 58, 28, 0.75)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  // ‖ 暂停图标
-  const barW = 4.5;
-  const barH = r.h * 0.42;
-  const gap = 5;
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;
-  ctx.fillStyle = '#fff6e6';
-  roundRect(ctx, cx - gap / 2 - barW, cy - barH / 2, barW, barH, 1.5);
-  ctx.fill();
-  roundRect(ctx, cx + gap / 2, cy - barH / 2, barW, barH, 1.5);
-  ctx.fill();
+  if (b.isPvp) {
+    // PvP：右上角按钮由「暂停」改为「退出」——出门框 + 向右箭头（通用离场图标），
+    // 点击弹出对局弹窗但**不暂停**仿真。单人图标（两条竖杠）见 else 分支，保持原样。
+    ctx.strokeStyle = '#fff6e6';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // 门框：左侧竖线，开口朝右（表示「离开」方向）
+    const frameX = cx - 6;
+    ctx.beginPath();
+    ctx.moveTo(frameX, cy - 8);
+    ctx.lineTo(frameX, cy + 8);
+    ctx.stroke();
+    // 箭头：水平轴 + 三角箭头头，指向右（出框）
+    const ax0 = cx - 2;
+    const ax1 = cx + 9;
+    ctx.beginPath();
+    ctx.moveTo(ax0, cy);
+    ctx.lineTo(ax1, cy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ax1 - 5.5, cy - 4.5);
+    ctx.lineTo(ax1, cy);
+    ctx.lineTo(ax1 - 5.5, cy + 4.5);
+    ctx.stroke();
+  } else {
+    // 单人：原暂停图标（两条竖杠）
+    const barW = 4.5;
+    const barH = r.h * 0.42;
+    const gap = 5;
+    ctx.fillStyle = '#fff6e6';
+    roundRect(ctx, cx - gap / 2 - barW, cy - barH / 2, barW, barH, 1.5);
+    ctx.fill();
+    roundRect(ctx, cx + gap / 2, cy - barH / 2, barW, barH, 1.5);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
