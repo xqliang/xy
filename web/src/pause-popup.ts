@@ -54,14 +54,16 @@ export function pausePopupHitAt(x: number, y: number, phase: PausePhase, context
 
 export function drawPausePopup(ctx: CanvasRenderingContext2D, phase: PausePhase, context: PauseContext = 'battle'): void {
   if (phase === 'main') {
-    const bodyTop = drawInkPopupFrame(ctx, PX, MAIN_PY, PW, MAIN_PH, '暂停', MAIN_CLOSE);
+    // 标题随 context 变化：单人=暂停（仿真已停）；PvP=退出对局（仿真仍继续，仅模态拦截输入）。
+    const title = context === 'match' ? '退出对局？' : '暂停';
+    const bodyTop = drawInkPopupFrame(ctx, PX, MAIN_PY, PW, MAIN_PH, title, MAIN_CLOSE);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#5a3a12';
     ctx.font = '15px "PingFang SC", serif';
-    // 单人提示「可随时继续」；PvP 提示认输后果（认输一步判负，之后等服务端 result 结算）
+    // 单人提示「可随时继续」；PvP 提示仿真未停 + 认输后果（认输一步判负，之后等服务端 result 结算）
     ctx.fillText(
-      context === 'match' ? '认输将直接判负' : '游戏已暂停，可随时继续',
+      context === 'match' ? '对局仍在进行，确认后将离开' : '游戏已暂停，可随时继续',
       PX + PW / 2,
       bodyTop + 28,
     );
