@@ -63,7 +63,7 @@ export const HASHED_URLS: Record<string, string> = {
   "monster-boss-liushahe.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-boss-liushahe-6e24761a.png",
   "monster-boss-pansidong.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-boss-pansidong-70f49f7e.png",
   "monster-boss.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-boss-3d1b43db.png",
-  "monster-cavalry-baiguling.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-cavalry-baiguling-7f4ee03c.png",
+  "monster-cavalry-baiguling.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-cavalry-baiguling-8562b47c.png",
   "monster-cavalry-huoyanshan.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-cavalry-huoyanshan-6cdf1d90.png",
   "monster-cavalry-liushahe.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-cavalry-liushahe-93e9b3fd.png",
   "monster-cavalry-pansidong.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/monster-cavalry-pansidong-ec45c0eb.png",
