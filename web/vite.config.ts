@@ -15,7 +15,8 @@ export default defineConfig({
     host: '127.0.0.1',
     // 本地开发把 /api、/admin 转到本机游戏服务（默认 8082；可用 XY_API_PROXY 覆盖）
     proxy: {
-      '/api': { target: process.env.XY_API_PROXY || 'http://127.0.0.1:8082', changeOrigin: true },
+      // ws:true：PvP 对局 WebSocket（/api/versus/ws）经 vite 代理升级转发（本地联调用）
+      '/api': { target: process.env.XY_API_PROXY || 'http://127.0.0.1:8082', changeOrigin: true, ws: true },
       '/admin': { target: process.env.XY_API_PROXY || 'http://127.0.0.1:8082', changeOrigin: true },
     },
   },
