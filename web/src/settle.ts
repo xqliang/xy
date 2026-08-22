@@ -303,8 +303,8 @@ export function pvpReasonText(reason: string): string {
 
 // 标题：win/lose/draw 三态。
 function pvpSettleTitle(outcome: PvpSettleResult['outcome']): string {
-  if (outcome === 'win') return '对局胜利';
-  if (outcome === 'lose') return '对局失败';
+  if (outcome === 'win') return '胜利';
+  if (outcome === 'lose') return '失败';
   return '平局';
 }
 

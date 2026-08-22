@@ -2436,7 +2436,7 @@ function frame(now: number): void {
         merit: meritGain,
       };
       pvpSettleStart = performance.now();
-      const outLabel = pvpResult.outcome === 'win' ? '对局胜利' : pvpResult.outcome === 'lose' ? '对局失败' : '平局';
+      const outLabel = pvpResult.outcome === 'win' ? '胜利' : pvpResult.outcome === 'lose' ? '失败' : '平局';
       battle.message = `${outLabel}（功德 +${meritGain}）`;
       void syncAvatarUnlocks(); // 段位/功德变化可能触发头像解锁
       scheduleCloudSync(1000);  // 持久化段位/功德到云端
