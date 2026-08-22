@@ -162,7 +162,37 @@ export interface PvpSnapFxFlash {
   id: string;
   value: number; // 剩余秒数
 }
-export type PvpSnapFx = PvpSnapFxSkill | PvpSnapFxPalm | PvpSnapFxFlash;
+/**
+ * 武将大招专属特效（render drawHeroUlt 读 heroId/c/r/dur/tier/rge/crit/fromC/fromR/biteC/biteR）。
+ * 格坐标在本方坐标系，桥内镜像到 AI 半场；ttl 由桥按出生至今递减（与玩家侧 maxTtl−age 同构）。
+ */
+export interface PvpSnapFxUlt {
+  kind: 'ult';
+  t: number; // 出生时刻(ms)
+  heroId: string;
+  c: number; r: number;        // 爆心（待桥内镜像）
+  dur: number;                 // 秒（= maxTtl，光束/爆发时长）
+  tier: number;
+  rge: number;
+  crit: boolean;
+  fromC?: number; fromR?: number;   // 施法起点（待镜像；大圣飞棒/二郎·牛郎射线）
+  biteC?: number; biteR?: number;   // 二郎咬点（待镜像）
+  biteMid?: number;                 // 被咬怪物 id（不镜像；桥内判存活）
+}
+/**
+ * 二郎神哮天犬 lingering 跟随特效：固定咬点格 + 3s（独立于大招光束时长）。
+ * render 读 mid/c/r/ttl/maxTtl/tier/ang；格坐标待桥内镜像，ang 待桥内 +π（180° 旋转翻转向量角）。
+ */
+export interface PvpSnapFxDog {
+  kind: 'dog';
+  t: number; // 出生时刻(ms)
+  mid: number;      // 被咬怪物 id（桥内查对手怪判存活）
+  dur: number;      // 秒（= maxTtl，3s）
+  c: number; r: number;   // 咬点格（待镜像）
+  tier: number;
+  ang: number;      // 光束角（待桥内 +π）
+}
+export type PvpSnapFx = PvpSnapFxSkill | PvpSnapFxPalm | PvpSnapFxFlash | PvpSnapFxUlt | PvpSnapFxDog;
 
 /** 本方半场渲染态快照（纯 JSON，字段面 = bridgeOpponentFrom 消费面）。 */
 export interface PvpSnap {
@@ -202,12 +232,15 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 /**
  * 各特效 kind 的存活寿命(ms)：超过则桥不再重建该特效（视为已播完）。
  * 取值依据：skill dur∈{0.8,1.25}s → 留余量到 1.5s；palm dur 0.8 + fade 0.2 = 1.0s → 1.3s；
- * flash 为被动短闪 → 0.7s。均为瞬态视觉，略宽松无害。
+ * flash 为被动短闪 → 0.7s；ult 为武将大招光束 dur∈{0.6..0.9}s → 1.5s；dog 为二郎 lingering 3s → 3.2s。
+ * 均为瞬态视觉，略宽松无害。
  */
 const FX_LIFE_MS: Record<PvpSnapFx['kind'], number> = {
   skill: 1500,
   palm: 1300,
   flash: 700,
+  ult: 1500,
+  dog: 3200,
 };
 
 /** 瞬态特效是否仍存活：按发送端时刻 t 老化（nowMs - t < 该 kind 寿命）。 */

@@ -14,7 +14,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
+import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
@@ -878,7 +878,8 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawBombFx(ctx, b); // 炸药引爆特效（冲击波+火球+碎片），画在爆点之上
   drawPeachFloats(ctx, b);
   drawDamageFloats(ctx, b);
-  drawHeroUlt(ctx, b);
+  drawHeroUltFxList(ctx, b.heroUltFx, b.erlangDogFx);      // 玩家半场大招
+  drawHeroUltFxList(ctx, b.aiHeroUltFx, b.aiErlangDogFx);  // 对手半场大招（PvP 桥重建；单机为空）
   drawAoeBurst(ctx, b);
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
@@ -3350,9 +3351,15 @@ function drawStaffBoomerang(
   ctx.restore();
 }
 
-// 武将大招专属动画：switch(heroId) 分派，风格对齐 drawFx
-function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
-  for (const f of b.heroUltFx) {
+// 武将大招专属动画：switch(heroId) 分派，风格对齐 drawFx。
+// 玩家/AI 两半场共用：分别传 heroUltFx / erlangDogFx 与桥重建的 aiHeroUltFx / aiErlangDogFx
+// （AI 侧格坐标已在桥内镜像，无需渲染侧再翻）。
+function drawHeroUltFxList(
+  ctx: CanvasRenderingContext2D,
+  ultList: HeroUltFx[],
+  dogList: ErlangDogFx[],
+): void {
+  for (const f of ultList) {
     const { x, y } = cellCenterPx(f.c, f.r);
     const prog = 1 - f.ttl / f.maxTtl; // 0→1
     const fade = 1 - prog;             // 1→0
@@ -3392,7 +3399,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
   }
 
   // 二郎哮天犬跟随特效：咬住怪物后持续 3s（狗停在怪物位置，怪死亡则消失）
-  for (const d of b.erlangDogFx) {
+  for (const d of dogList) {
     const prog = 1 - d.ttl / d.maxTtl;
     const fade = Math.max(0.35, 1 - prog * 0.65); // 前段保持，末段淡出
     const bx = BOARD_X + d.c * CELL + CELL / 2;
@@ -10497,6 +10504,7 @@ interface FxPreviewPalm {
 interface FxPreviewStub {
   fx: HitFx[];
   heroUltFx: HeroUltFx[];
+  erlangDogFx: ErlangDogFx[];
   playerSkillFx: SkillFx | null;
   bursts: Burst[];
   digFx: { c: number; r: number; t: number }[];
@@ -10518,6 +10526,7 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
   const stub: FxPreviewStub = {
     fx: [],
     heroUltFx: [],
+    erlangDogFx: [],
     playerSkillFx: null,
     bursts: [],
     digFx: [],
@@ -10745,7 +10754,7 @@ export function playDevFxPreview(canvas: HTMLCanvasElement, spec: DevFxPreviewSp
       ctx.scale(scale, scale);
       const fake = stub as unknown as Battle;
       drawFx(ctx, fake);
-      drawHeroUlt(ctx, fake);
+      drawHeroUltFxList(ctx, fake.heroUltFx, fake.erlangDogFx);
       drawSkillFx(ctx, stub.playerSkillFx);
       drawDigFx(ctx, stub.digFx);
       if (stub.palm) {

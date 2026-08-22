@@ -718,6 +718,17 @@ export interface HeroUltFx {
   biteMid?: number;
 }
 
+/** 二郎神哮天犬 lingering 跟随特效（玩家/AI 各一份；格坐标在各自半场，AI 侧由桥镜像） */
+export interface ErlangDogFx {
+  mid: number;       // 被咬怪物 id（怪死亡则狗消失）
+  c: number;         // 咬点列（AI 侧已镜像）
+  r: number;         // 咬点行
+  ttl: number;       // 剩余秒数
+  maxTtl: number;    // 总时长(3s)
+  tier: number;      // 品质阶（狗规模）
+  ang: number;       // 光束角（AI 侧已 +π）
+}
+
 // 击杀蟠桃飘字：头上弹出，上抛半格 + 重力，过顶后再下落 1/5 格消失
 export const PEACH_FLOAT_HEAD_Y = -0.55; // 相对格中心（格；负=向上）
 export const PEACH_FLOAT_RISE = 0.5;
@@ -883,6 +894,10 @@ export class Battle {
   aiPalmPushFx: PalmPushFx | null = null; // 如来神掌沿路回推（AI 半场）
   playerSkillFx: SkillFx | null = null; // 玩家半场主动技能爆发特效
   aiSkillFx: SkillFx | null = null; // AI 半场主动技能爆发特效
+  // 对手侧武将大招 / 二郎 lingering 狗：由 bridgeOpponentFromSnap 从 WS 快照重建（PvP 专用），
+  // 单机永为空。格坐标在桥内已镜像到 AI 半场，渲染与玩家侧同函数。
+  aiHeroUltFx: HeroUltFx[] = []; // 对手侧武将大招专属特效（由快照重建）
+  aiErlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number }[] = []; // 对手侧二郎 lingering 狗（由快照重建）
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD 为满
   monsters: Monster[] = [];
@@ -1659,7 +1674,7 @@ export class Battle {
   /** 二郎神大招「哮天犬」本帧咬击目标格（触发时写入、pushHeroUltFx 消费后清空） */
   biteTarget: { c: number; r: number; mid: number } | null = null;
   /** 二郎哮天犬咬住怪物后的持续跟随特效（3s 内狗停在怪物位置，怪死亡则消失） */
-  erlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number }[] = [];
+  erlangDogFx: ErlangDogFx[] = [];
   spawnGateT = 0; // 玩家出怪口开合动画计时(0.5→0)
   aiSpawnGateT = 0; // AI 出怪口开合动画计时
 
@@ -1706,14 +1721,34 @@ export class Battle {
     const out: PvpSnap['fx'] = [];
     if (this.playerSkillFx) {
       const f = this.playerSkillFx;
-      out.push({ kind: 'skill', t, skillKind: f.kind, dur: f.dur, c: f.c, r: f.r });
+      // fx.t 必须钉「出生时刻」（而非序列化时刻 t）：桥内据 (nowMs - fx.t) 重建播放头、并按同一
+      // 时基老化。若钉序列化时刻，则每 100ms 重打一次 → 接收端 playhead≈nowMs−到达≈0 被冻结
+      // （技能 prog≈0→fade≈0 看不见；神掌波纹卡在 frontStartDist 不扫、无残影=「特效反了/不显示」）。
+      // 出生 = 当前序列化时刻 − 本侧已播时长(f.t 秒)，同一特效跨快照恒定 → 播放头随真实年龄推进。
+      out.push({ kind: 'skill', t: t - f.t * 1000, skillKind: f.kind, dur: f.dur, c: f.c, r: f.r });
     }
     if (this.palmPushFx) {
       const f = this.palmPushFx;
-      out.push({ kind: 'palm', t, dur: f.dur, fadeT: f.fadeT, cells: f.cells, frontStartDist: f.frontStartDist });
+      out.push({ kind: 'palm', t: t - f.t * 1000, dur: f.dur, fadeT: f.fadeT, cells: f.cells, frontStartDist: f.frontStartDist });
     }
     for (const [id, value] of this.passiveFlash) {
+      // flash 不重建播放头：value 即「剩余秒数」原样当 alpha，故 fx.t 仅作老化时基，钉序列化时刻即可
+      // （活着就每快照重发最新剩余值，随真实时间淡出；无播放头冻结问题）。
       out.push({ kind: 'flash', t, id, value });
+    }
+    // 武将大招：每个活动实例各发一条（玩家侧 heroUltFx 可多个同时存在）。
+    for (const f of this.heroUltFx) {
+      // prog = 1 - ttl/maxTtl → 已播秒数 = (1 - ttl/maxTtl)*maxTtl = maxTtl - ttl；出生 = t − 该值*1000。
+      out.push({
+        kind: 'ult', t: t - (f.maxTtl - f.ttl) * 1000,
+        heroId: f.heroId, c: f.c, r: f.r, dur: f.maxTtl, tier: f.tier, rge: f.rge, crit: f.crit,
+        ...(f.fromC != null ? { fromC: f.fromC, fromR: f.fromR } : {}),
+        ...(f.biteC != null ? { biteC: f.biteC, biteR: f.biteR, biteMid: f.biteMid } : {}),
+      });
+    }
+    // 二郎哮天犬 lingering 跟随：固定咬点格 + 3s，独立于大招光束时长；带 biteMid 供桥内判怪物存活。
+    for (const d of this.erlangDogFx) {
+      out.push({ kind: 'dog', t: t - (d.maxTtl - d.ttl) * 1000, mid: d.mid, dur: d.maxTtl, c: d.c, r: d.r, tier: d.tier, ang: d.ang });
     }
     return out;
   }
@@ -1738,37 +1773,52 @@ export class Battle {
     this.aiActiveSlots = snap.activeSlots.map((s) => ({ ...s }));
 
     // —— A2. 瞬态特效：按 nowMs 老化后重建渲染对象 ——
-    // 每种特效至多一个活动实例（playerSkillFx/palmPushFx 本就是单例；passiveFlash 可多个）。
+    // skill/palm 单例；passiveFlash 多例；ult/dog 可多个（同时存在多个武将大招）。
+    // 播放头统一 = (nowMs - fx.t)/1000（fx.t 已是发送端钉死的「出生时刻」，故 = 真实已播时长）。
     this.aiSkillFx = null;
     this.aiPalmPushFx = null;
     this.aiPassiveFlash = new Map<string, number>();
+    this.aiHeroUltFx = [];
+    this.aiErlangDogFx = [];
     for (const fx of snap.fx) {
       if (!fxAlive(fx, nowMs)) continue; // 出生超过寿命 → 已播完，丢弃
+      const age = Math.max(0, (nowMs - fx.t) / 1000); // 真实已播秒数（桥每帧重建，故恒为最新）
       if (fx.kind === 'skill') {
-        // 重建 SkillFx：播放进度 = 出生至今的秒数（与老化同基，保证存活期内进度自洽）。
+        // 技能爆心在本方坐标系（对手半场=与我同区），渲染到 AI 半场须镜像格坐标（与单位/字牌同规则）。
         if (!this.aiSkillFx) {
-          this.aiSkillFx = {
-            kind: fx.skillKind,
-            t: Math.max(0, (nowMs - fx.t) / 1000),
-            dur: fx.dur,
-            c: fx.c,
-            r: fx.r,
-          };
+          const mc = mirrorCell({ c: fx.c, r: fx.r });
+          this.aiSkillFx = { kind: fx.skillKind, t: age, dur: fx.dur, c: mc.c, r: mc.r };
         }
       } else if (fx.kind === 'palm') {
         if (!this.aiPalmPushFx) {
           this.aiPalmPushFx = {
-            t: Math.max(0, (nowMs - fx.t) / 1000),
-            dur: fx.dur,
-            fadeT: fx.fadeT,
-            cells: fx.cells,
-            frontStartDist: fx.frontStartDist,
+            t: age, dur: fx.dur, fadeT: fx.fadeT, cells: fx.cells, frontStartDist: fx.frontStartDist,
             snapshots: [], // 接收端不驱动怪物回推，仅沿 aiPath 画掌印，故快照可空
           };
         }
-      } else {
+      } else if (fx.kind === 'flash') {
         // flash：剩余秒数原样进 Map（render 读作 alpha）；老化已由 fxAlive 保证只留活的。
         this.aiPassiveFlash.set(fx.id, fx.value);
+      } else if (fx.kind === 'ult') {
+        // 武将大招：mirror 爆心 + 施法起点 + 咬点格（180° 旋转等价点对称，方向量自动反转，光束角
+        // 由 drawUlt* 据镜像坐标重算，无需手翻）；ttl 由出生至今递减，与玩家侧 maxTtl- age 同构。
+        if (age < fx.dur) {
+          const mc = mirrorCell({ c: fx.c, r: fx.r });
+          const ult: HeroUltFx = {
+            heroId: fx.heroId, c: mc.c, r: mc.r, ttl: fx.dur - age, maxTtl: fx.dur,
+            tier: fx.tier, rge: fx.rge, crit: fx.crit,
+          };
+          if (fx.fromC != null) { const f = mirrorCell({ c: fx.fromC, r: fx.fromR! }); ult.fromC = f.c; ult.fromR = f.r; }
+          if (fx.biteC != null) { const b = mirrorCell({ c: fx.biteC, r: fx.biteR! }); ult.biteC = b.c; ult.biteR = b.r; ult.biteMid = fx.biteMid; }
+          this.aiHeroUltFx.push(ult);
+        }
+      } else if (fx.kind === 'dog') {
+        // 二郎 lingering 狗：固定咬点格（镜像），3s 递减；被咬怪物（mid）在对手怪中已死则狗消失。
+        const m = monsters.find((mm) => mm.id === fx.mid);
+        if (m && m.hp > 0 && age < fx.dur) {
+          const mc = mirrorCell({ c: fx.c, r: fx.r });
+          this.aiErlangDogFx.push({ mid: fx.mid, c: mc.c, r: mc.r, ttl: fx.dur - age, maxTtl: fx.dur, tier: fx.tier, ang: fx.ang + Math.PI });
+        }
       }
     }
 

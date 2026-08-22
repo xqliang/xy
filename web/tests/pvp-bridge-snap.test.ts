@@ -216,3 +216,77 @@ describe('bridgeOpponentFromSnap：heroPairKey 重排回归（快照路径）', 
     expect(aiPairs.has(WRONG_KEY)).toBe(false);
   });
 });
+
+// ============================================================================
+//  瞬态特效透传（T9.2）：skill/palm/ult/dog 经快照路径到对手侧，格坐标镜像、字段保留。
+//  背景：旧 serialize 把 fx.t 钉成「序列化时刻」→ 接收端播放头冻结在 0（技能 fade≈0 看不见、
+//  神掌波纹卡在 frontStartDist）。修为「出生时刻」后，下列 round-trip 与镜像契约才成立。
+// ============================================================================
+describe('bridgeOpponentFromSnap：瞬态特效透传 + 镜像（T9.2）', () => {
+  it('aiSkillFx：主动技能爆心格镜像到 AI 半场（玩家格→对手格）', () => {
+    const A = mkPvp();
+    (A as any).playerSkillFx = { kind: 'meteor', t: 0, dur: 0.8, c: 3, r: 8 };
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiSkillFx).not.toBeNull();
+    expect(B2.aiSkillFx!.kind).toBe('meteor');
+    // 爆心格镜像：c=3→4、r=8→1（COLS=8,ROWS=10 的中心对称）
+    expect(B2.aiSkillFx!.c).toBe(mirrorCell({ c: 3, r: 8 }).c);
+    expect(B2.aiSkillFx!.r).toBe(mirrorCell({ c: 3, r: 8 }).r);
+  });
+
+  it('aiHeroUltFx：爆心/施法起点格镜像、tier/rge/crit 保留、ttl=maxTtl−age', () => {
+    const A = mkPvp();
+    (A as any).heroUltFx = [{
+      heroId: 'dasheng', c: 3, r: 8, ttl: 0.9, maxTtl: 0.9, tier: 5, rge: 3, crit: false, fromC: 1, fromR: 8,
+    }];
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiHeroUltFx).toHaveLength(1);
+    const u = B2.aiHeroUltFx[0]!;
+    expect(u.heroId).toBe('dasheng');
+    expect(u.tier).toBe(5);
+    expect(u.rge).toBe(3);
+    expect(u.crit).toBe(false);
+    expect(u.c).toBe(mirrorCell({ c: 3, r: 8 }).c); // 爆心镜像
+    expect(u.fromC).toBe(mirrorCell({ c: 1, r: 8 }).c); // 施法起点镜像（飞棒射线方向由渲染重算）
+    expect(u.fromR).toBe(mirrorCell({ c: 1, r: 8 }).r);
+    expect(u.maxTtl).toBe(0.9);
+    expect(u.ttl).toBeGreaterThan(0);
+  });
+
+  it('aiHeroUltFx：二郎咬点格镜像、biteMid 透传', () => {
+    const A = mkPvp();
+    (A as any).heroUltFx = [{
+      heroId: 'erlang', c: 3, r: 8, ttl: 0.9, maxTtl: 0.9, tier: 3, rge: 3, crit: true,
+      fromC: 1, fromR: 8, biteC: 4, biteR: 8, biteMid: 7,
+    }];
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiHeroUltFx).toHaveLength(1);
+    const u = B2.aiHeroUltFx[0]!;
+    expect(u.biteMid).toBe(7);
+    expect(u.biteC).toBe(mirrorCell({ c: 4, r: 8 }).c); // 咬点镜像
+    expect(u.biteR).toBe(mirrorCell({ c: 4, r: 8 }).r);
+  });
+
+  it('aiErlangDogFx：咬点格镜像 + ang+π（被咬对手怪在场）', () => {
+    const A = mkPvp();
+    // 对手怪 mid=42 须在快照怪中（桥查 view.monsters 判存活）；as any 注入最小怪。
+    (A as any).monsters = [{ id: 42, hp: 10 }];
+    (A as any).erlangDogFx = [{ mid: 42, c: 3, r: 8, ttl: 3.0, maxTtl: 3.0, tier: 3, ang: 0.5 }];
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiErlangDogFx).toHaveLength(1);
+    const d = B2.aiErlangDogFx[0]!;
+    expect(d.mid).toBe(42);
+    expect(d.c).toBe(mirrorCell({ c: 3, r: 8 }).c); // 咬点格镜像
+    expect(d.r).toBe(mirrorCell({ c: 3, r: 8 }).r);
+    expect(d.ang).toBeCloseTo(0.5 + Math.PI, 10); // 180° 旋转翻转向量角
+  });
+
+  it('aiPalmPushFx：frontStartDist/cells 经桥保留（沿 aiPath 画掌印）', () => {
+    const A = mkPvp();
+    (A as any).palmPushFx = { t: 0, dur: 0.8, fadeT: 0, cells: 3, frontStartDist: 9.2, snapshots: [] };
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiPalmPushFx).not.toBeNull();
+    expect(B2.aiPalmPushFx!.frontStartDist).toBe(9.2);
+    expect(B2.aiPalmPushFx!.cells).toBe(3);
+  });
+});
