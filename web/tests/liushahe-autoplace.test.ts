@@ -1,7 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Battle } from '../src/battle';
 import { mapById } from '../src/board';
 import { getButtons } from '../src/render';
+import { setShowAutoplaceBtn } from '../src/dev-flags';
+
+// Task 10：布阵按钮默认隐藏（DevTools 可开）。本文件专门测「一键布阵」按钮的几何与行为，
+// 故 beforeEach 显式打开该开关，否则 getButtons 不会包含 autoplace 按钮、几何断言无从谈起。
+beforeEach(() => {
+  const mem = new Map<string, string>();
+  (globalThis as unknown as { localStorage: Storage }).localStorage = {
+    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
+    setItem: (k: string, v: string) => { mem.set(k, String(v)); },
+    removeItem: (k: string) => { mem.delete(k); },
+    clear: () => { mem.clear(); },
+    key: (i: number) => [...mem.keys()][i] ?? null,
+    get length() { return mem.size; },
+  } as Storage;
+  setShowAutoplaceBtn(true);
+});
 
 describe('流沙河一键布阵', () => {
   it('征兵后布阵能落子', () => {

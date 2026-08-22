@@ -26,6 +26,10 @@ import {
   summonAnimDone,
   setPvpNetLatency,
   traySlotAnimDone,
+  drawGuideArrow,
+  summonButtonRect,
+  guideSkipRect,
+  drawGuideSkip,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -33,6 +37,8 @@ import { pickDailyMap, mapById, MAPS, pathEntranceCell } from './board';
 import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } from './map-select';
 import { loadAssets, type AssetLoadProgress } from './assets';
 import { drawLoadingScreen } from './loading-screen';
+import { hasFinishedGame, markGameFinished, pvpUnlocked } from './play-history';
+import { showAutoplaceBtn } from './dev-flags';
 import {
   pushMenuFloatToast,
   updateMenuFloatToasts,
@@ -679,6 +685,28 @@ const ui: UiState = {
 let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
 let tutorialOverlay: TutorialOverlay | null = null;
 
+// —— Task 10 首局部署引导：非模态动态箭头（征兵→部署两阶段）——
+// 与 tutorialOverlay 的「modal 高亮卡片」共存但独立：modal 开着时箭头隐藏、关掉后恢复。
+// 仅在首局单人（newGame 时 isFirstGame=true）激活；PvP/非首局为 'done'（不画箭头）。
+//   summon    → 箭头指征兵按钮「点击征兵」
+//   deploy    → 玩家至少征兵过一次后，箭头指候选区「把兵器拖到战场部署」
+//   done      → tray 兵/字牌都上场（首波押后释放），箭头消失
+//   dismissed → 玩家点「跳过」，箭头消失 + 释放首波押后
+type GuidePhase = 'summon' | 'deploy' | 'done' | 'dismissed';
+let guidePhase: GuidePhase = 'done';
+let playerSummonedThisGame = false; // 本局玩家是否至少征兵过一次（summon→deploy 的前置条件）
+
+/** 首局引导是否处于活跃阶段（箭头可见）。modal 教程展示期间箭头另由绘制处隐藏。 */
+function isGuideActive(): boolean {
+  return guidePhase === 'summon' || guidePhase === 'deploy';
+}
+
+/** 新开局重置引导状态：首局从「征兵」阶段起，其余直接 'done'（无箭头）。 */
+function resetFirstGameGuide(isFirstGame: boolean): void {
+  playerSummonedThisGame = false;
+  guidePhase = isFirstGame ? 'summon' : 'done';
+}
+
 function buttonRect(id: string): { x: number; y: number; w: number; h: number } | null {
   const btn = getButtons(battle).find((b) => b.id === id);
   return btn ? { x: btn.x, y: btn.y, w: btn.w, h: btn.h } : null;
@@ -735,6 +763,9 @@ function battleIntroSequence(): TutorialSequence {
 }
 
 function firstSummonSequence(): TutorialSequence {
+  // 布阵按钮默认隐藏（DevTools 可开）→ 整段「征兵引导」不弹（steps 留空即被 maybeStartTutorial 跳过），
+  // 避免弹出一张指向不存在按钮的「一键布阵」卡片。首局部署流改由非模态箭头引导（guidePhase）承担。
+  if (!showAutoplaceBtn()) return { id: 'firstSummon', steps: [] };
   return {
     id: 'firstSummon',
     steps: [
@@ -836,7 +867,10 @@ function firstShovelSequence(): TutorialSequence {
       {
         id: 'shovelWhere',
         title: '挖哪里最好',
-        text: '推荐优先挖靠近怪物出口、摆放武器后攻击范围能覆盖更长路线的区域，防守效率更高；也可以直接点【布阵】自动挖最优位置。',
+        // 布阵按钮默认隐藏 → 文案去掉「也可以直接点【布阵】…」从句（避免指向不存在按钮），其余保留。
+        text: showAutoplaceBtn()
+          ? '推荐优先挖靠近怪物出口、摆放武器后攻击范围能覆盖更长路线的区域，防守效率更高；也可以直接点【布阵】自动挖最优位置。'
+          : '推荐优先挖靠近怪物出口、摆放武器后攻击范围能覆盖更长路线的区域，防守效率更高。',
         getAnchor: firstShovelDigSpotAnchor,
       },
     ],
@@ -899,7 +933,10 @@ function firstMergeableSequence(): TutorialSequence {
       {
         id: 'mergeUpgrade',
         title: '合并升级武器',
-        text: '同兵种同等级的两个单位拖到一起即可合并升阶，也可以直接点【布阵】自动帮你合并。',
+        // 布阵按钮默认隐藏 → 去掉「也可以直接点【布阵】…」从句，其余保留。
+        text: showAutoplaceBtn()
+          ? '同兵种同等级的两个单位拖到一起即可合并升阶，也可以直接点【布阵】自动帮你合并。'
+          : '同兵种同等级的两个单位拖到一起即可合并升阶。',
         getAnchor: firstMergeableAnchor,
       },
     ],
@@ -963,6 +1000,45 @@ function lowStaminaSequence(): TutorialSequence {
 // 首次征兵后：等候选令牌飞入动画结束、真正落位到 tray 后再弹引导，避免指向还在飞行中的令牌
 let pendingFirstSummonTutorial = false;
 
+// —— Task 10 首局动态引导：每帧推进阶段 + 「跳过」命中 —— //
+// 与 checkBattleTutorials（modal 教程）解耦：箭头是非模态，modal 开着时箭头另由绘制处隐藏，
+// 但阶段机照常推进（不会因为玩家在看 modal 就漏切阶段）。
+
+/** 首局引导「跳过」按钮命中：仅活跃阶段可点，消耗本次点击（main.ts 置顶调用处 return）。 */
+function firstGameGuideSkipHit(x: number, y: number): boolean {
+  if (!isGuideActive()) return false;
+  const r = guideSkipRect();
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+/** 玩家点「跳过」→ 隐藏箭头并释放首波押后（下个 intro-complete 检查即放行第 1 波）。 */
+function dismissFirstGameGuide(): void {
+  if (!isGuideActive()) return;
+  guidePhase = 'dismissed';
+  battle.holdFirstWaveForSetup = false; // 释放押后 latch
+}
+
+/**
+ * 每帧推进首局引导阶段机：
+ *   - modal 教程展示中（tutorialOverlay 非空）→ 不动（箭头本就隐藏，等 modal 关再继续）。
+ *   - summon 阶段 + 玩家已征兵过 → 切 deploy（箭头改指候选区「拖到战场」）。
+ *   - deploy 阶段 + tray 已无兵/字牌 → 切 done（布阵完成；押后随之释放，第 1 波开打）。
+ * 首波押后的「放行」由 battle.ts 的 shouldHoldFirstWave 独立判定（ tray 清空即放行），
+ * 这里只负责箭头阶段切换，两侧不互相依赖。
+ */
+function updateFirstGameGuide(): void {
+  if (guidePhase === 'done' || guidePhase === 'dismissed') return;
+  if (battle.status !== 'ready' && battle.status !== 'playing') return;
+  if (tutorialOverlay) return; // modal 开着：暂停推进，避免与 modal 抢戏
+  if (guidePhase === 'summon' && playerSummonedThisGame) {
+    guidePhase = 'deploy';
+    return;
+  }
+  if (guidePhase === 'deploy' && !battle.trayHasDeployables()) {
+    guidePhase = 'done'; // 兵/字牌都上场了 → 引导完成（押后同步释放）
+  }
+}
+
 /** 局内条件触发的引导：每帧检查一次，命中即弹（只弹未展示过的第一条）。 */
 function checkBattleTutorials(): void {
   if (tutorialOverlay) return;
@@ -1020,6 +1096,12 @@ function newGame() {
   ui.peachPopup = false;
   ui.bombPopup = null;
   pendingFirstSummonTutorial = false;
+  // Task 10 首局体验：首局单人开启「第 1 波押后 + 征兵/部署动态引导」。
+  // newGame 只服务单人（PvP 走 enterPvpMatching，不经过这里），故无需再判 pvp；
+  // 「是否首局」用对局历史判定（!hasFinishedGame）——既准又可被测试直控（resetFinishedGame）。
+  const firstGame = !hasFinishedGame();
+  battle.holdFirstWaveForSetup = firstGame;
+  resetFirstGameGuide(firstGame);
 }
 
 function abortBattleToMenu(): void {
@@ -1119,6 +1201,15 @@ function handleMenu(id: string) {
     screen = 'battle';
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
   } else if (id === 'pvpMatch' || id === 'pvpInvite') {
+    // PvP 入口门槛（Task 10）：需先玩过一局单人关卡才解锁真人对战。
+    // 未解锁时只飘字提示、不进入匹配；体力门槛在其后、彼此独立（先查解锁，再查体力）。
+    // 用 pvpUnlocked()（纯谓词，见 play-history.ts）而非直接读标记，便于单测门槛决策。
+    if (!pvpUnlocked()) {
+      menuToast = '先玩一局单人关卡熟悉玩法';
+      pushMenuFloatToast('先玩一局单人关卡熟悉玩法，再来真人对战', { replace: true });
+      scheduleFrame();
+      return;
+    }
     if (stamina.value < STAMINA_COST) {
       menuToast = '体力不足（需 5 点）！点 + 补充';
       pushMenuFloatToast('体力不足，无法进入匹配');
@@ -1530,7 +1621,11 @@ function handleButton(x: number, y: number): boolean {
       }
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
-        if (battle.summon()) { pendingFirstSummonTutorial = true; }
+        if (battle.summon()) {
+          pendingFirstSummonTutorial = true;
+          // 首局引导：玩家成功征兵 → 记录（供 updateFirstGameGuide 把箭头从「征兵」切到「部署」阶段）
+          if (guidePhase === 'summon') playerSummonedThisGame = true;
+        }
       } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); }
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
@@ -1567,6 +1662,15 @@ function onPointerDown(e: PointerEvent) {
     const res = hit.kind === 'skip' ? skipTutorial(tutorialOverlay, tutorial) : advanceTutorial(tutorialOverlay, tutorial);
     tutorialOverlay = res.overlay;
     tutorial = res.state;
+    return;
+  }
+  // Task 10 首局引导「跳过」按钮：非模态——玩家仍可自由操作（征兵/拖拽），
+  // 仅点中右上「跳过」胶囊才消耗点击：隐藏箭头 + 释放首波押后。
+  // 置于教程 gate 之后、各 screen 分支之前，确保 battle 屏内任何位置点跳过都生效。
+  if (screen === 'battle' && firstGameGuideSkipHit(x, y)) {
+    dismissFirstGameGuide();
+    playSfx('click');
+    scheduleFrame();
     return;
   }
   if (screen === 'menu') {
@@ -2209,6 +2313,7 @@ function frame(now: number): void {
         battle.message = '战斗逻辑异常，已跳过本帧（请刷新页面）';
       }
       checkBattleTutorials();
+      updateFirstGameGuide(); // Task 10：推进首局引导阶段（征兵→部署→done，modal 期间暂停）
     }
     startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
     // 播放引擎发出的音效事件
@@ -2222,6 +2327,9 @@ function frame(now: number): void {
       endHandled = true;
       pendingMerchant = true;
       recordHeroMatchGame(battle.heroMatchedIdsThisGame());
+      // Task 10：单人到达终局 → 标记「已玩过一局」，据此解锁 PvP 入口。
+      // 幂等（markGameFinished 内部只写一次）；本块已被 `&& !pvpSock` 排除 PvP，PvP 终局不会污染该标记。
+      markGameFinished();
 
       if (battle.endless) {
         // 无尽：不涨降境界，只记录最高波数；仍发放功德（软奖励，与星级解耦）
@@ -2317,6 +2425,15 @@ function frame(now: number): void {
     if (isPausePopupOpenPure(ui.paused, pvpExitPopup) && !isSettleOpen() && !pvpNetDead) drawPausePopup(ctx, pausePhase, pausePopupContext(!!pvpSock));
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
+  // Task 10 首局动态引导：非模态箭头 + 「跳过」。仅 battle 屏、引导活跃、且无 modal 教程时画
+  // （modal 教程开着时箭头让位，关掉后由 updateFirstGameGuide 恢复）。箭头与波次押后在
+  // battle.ts 的 holdFirstWaveForSetup 联动，这里只管绘制。
+  if (screen === 'battle' && isGuideActive() && !tutorialOverlay && battle.status !== 'won' && battle.status !== 'lost') {
+    const target = guidePhase === 'summon' ? summonButtonRect() : trayRowRect();
+    const label = guidePhase === 'summon' ? '点击征兵' : '把兵器拖到战场部署';
+    drawGuideArrow(ctx, target, label, now);
+    drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
+  }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();
 }
@@ -2366,6 +2483,9 @@ interface GameHook {
   tuning: typeof TUNING;
   openDevTools: () => void;
   restart: (s?: number, diff?: number, mapId?: string, endless?: boolean) => void;
+  // Task 10 自测钩子：把当前局标记为首局/非首局（冒烟验证用；real 路径由 newGame 自动判定）。
+  markFirstGame: () => void;
+  markNotFirstGame: () => void;
   step: (dt: number) => void;
   fastForward: (seconds: number, dt?: number) => void;
   grantPeach: (n: number) => void;
@@ -2460,6 +2580,17 @@ const hook: GameHook = {
     pausePhase = 'main';
     screen = 'battle';
     scheduleFrame();
+  },
+  // Task 10 自测钩子：把当前局标记为「首局」（开启首波押后 + 征兵引导），供 headless 冒烟验证
+  // 首局体验。real 路径由 newGame() 据 hasFinishedGame() 自动判定；这里只给冒烟一个显式开关，
+  // 不影响 restart() 的中立性（restart 不自动判首局，避免污染其它冒烟工具）。
+  markFirstGame: () => {
+    battle.holdFirstWaveForSetup = true;
+    resetFirstGameGuide(true);
+  },
+  markNotFirstGame: () => {
+    battle.holdFirstWaveForSetup = false;
+    resetFirstGameGuide(false);
   },
   step: (dt: number) => battle.step(dt),
   fastForward: (seconds: number, dt = 1 / 60) => {
