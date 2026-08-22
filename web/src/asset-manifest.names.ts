@@ -33,6 +33,7 @@ export const ASSET_FILENAMES: Record<string, string> = {
   'monster-miniboss-quake': 'monster-miniboss-quake.png',
   'monster-miniboss-gale': 'monster-miniboss-gale.png',
   'monster-miniboss-blood': 'monster-miniboss-blood.png',
+  'monster-miniboss-lion': 'monster-miniboss-lion.png',
   'item-shovel': 'item-shovel.png',
   'skill-act-bomb': 'skill-act-bomb.png',
   'hero-wukong': 'hero-wukong.png',
