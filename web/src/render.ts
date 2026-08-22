@@ -3293,8 +3293,10 @@ function drawArmedBomb(ctx: CanvasRenderingContext2D, bomb: { c: number; r: numb
     const w = h * (img.width / img.height);
     ctx.drawImage(img, x - w / 2, y - h * 0.62, w, h);
     const spark = 0.55 + 0.45 * Math.sin(performance.now() / 1000 * 12 + (bomb.c + bomb.r));
-    const sx = x + w * 0.16;
-    const sy = y - h * 0.52;
+    // 火花辉光的锚点：立绘（skill-act-bomb）里的引信火苗略偏中心右下，
+    // 故在原位基础上再往右下各微移 5px，让这层动态辉光正好压在立绘火苗上。
+    const sx = x + w * 0.16 + 5; // +5 → 往右
+    const sy = y - h * 0.52 + 5; // +5 → 往下（canvas 里 y 向下为正）
     const sr = r * 0.5 * spark + r * 0.25;
     const sg = ctx.createRadialGradient(sx, sy, 0.5, sx, sy, sr);
     sg.addColorStop(0, `rgba(255,250,210,${0.9 * spark})`);
