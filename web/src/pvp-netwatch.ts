@@ -7,7 +7,7 @@
 // lastInboundAt===0 表示连接尚未 open（无基线时间戳）：此时返回 false，避免刚建连被误判为断线。
 
 /** 断线看门狗阈值（ms）：超过该时长无任意入站消息即判网络断开。 */
-export const NET_DEAD_THRESHOLD_MS = 6_000;
+export const NET_DEAD_THRESHOLD_MS = 10_000;
 
 /**
  * 判定当前是否应触发断线弹窗。

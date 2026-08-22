@@ -9911,15 +9911,15 @@ function drawPauseBtn(ctx: CanvasRenderingContext2D, b: Battle) {
 function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button, phase: 'halo' | 'edge') {
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
   if (phase === 'halo') {
-    const expand = pulse * 3; // 外圈最大比旧版收小 3px（原 3+pulse*3）
+    const expand = pulse * 4; // 呼吸外圈最大扩张（略增，让「可征兵」提示更醒目）
     ctx.save();
-    ctx.globalAlpha = 0.32 + pulse * 0.28;
+    ctx.globalAlpha = 0.40 + pulse * 0.30; // 外圈描边稍提亮
     ctx.strokeStyle = '#ffe27a';
     ctx.lineWidth = 3;
     roundRect(ctx, btn.x - expand, btn.y - expand, btn.w + expand * 2, btn.h + expand * 2, 14);
     ctx.stroke();
-    ctx.globalAlpha = 0.14 + pulse * 0.1;
-    ctx.lineWidth = 7;
+    ctx.globalAlpha = 0.18 + pulse * 0.12; // 外圈柔光更明显
+    ctx.lineWidth = 8;
     roundRect(ctx, btn.x - expand - 2, btn.y - expand - 2, btn.w + (expand + 2) * 2, btn.h + (expand + 2) * 2, 16);
     ctx.stroke();
     ctx.restore();
@@ -9929,7 +9929,7 @@ function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button, pha
   ctx.beginPath();
   roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 12);
   ctx.clip();
-  ctx.globalAlpha = 0.2 + pulse * 0.14;
+  ctx.globalAlpha = 0.26 + pulse * 0.16; // 内高光略提亮
   const grad = ctx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h * 0.55);
   grad.addColorStop(0, '#fff6c8');
   grad.addColorStop(1, 'rgba(255,246,200,0)');
@@ -9937,9 +9937,9 @@ function drawSummonReadyReminder(ctx: CanvasRenderingContext2D, btn: Button, pha
   ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
   ctx.restore();
   ctx.save();
-  ctx.globalAlpha = 0.62 + pulse * 0.28;
+  ctx.globalAlpha = 0.72 + pulse * 0.26; // 内描边更醒目
   ctx.strokeStyle = '#fff0a8';
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 3;
   roundRect(ctx, btn.x + 1, btn.y + 1, btn.w - 2, btn.h - 2, 11);
   ctx.stroke();
   ctx.restore();
@@ -10138,21 +10138,13 @@ function drawPassiveRow(ctx: CanvasRenderingContext2D, b: Battle) {
     drawSkillGlyph(
       ctx,
       btn.x + btn.w / 2,
-      btn.y + btn.h / 2 - (b.passiveProgress(def.id) ? 2 : 0),
+      btn.y + btn.h / 2,
       Math.min(btn.w, btn.h) * 0.38,
       def.icon ?? def.name[0]!,
       '#6ab07a',
       true,
       def.id,
     );
-    const prog = b.passiveProgress(def.id);
-    if (prog) {
-      const by = btn.y + btn.h - 5;
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.fillRect(btn.x + 4, by, btn.w - 8, 3);
-      ctx.fillStyle = '#ffd24a';
-      ctx.fillRect(btn.x + 4, by, (btn.w - 8) * Math.max(0, Math.min(1, prog.ratio)), 3);
-    }
     // 被动生效斜光：flashPassive 设了剩余秒数时，一道斜光划过图标（斜光时长见 flashPassive dur，默认 0.45s）
     const flashT = b.passiveFlash.get(def.id) ?? 0;
     if (flashT > 0) drawPassiveSlash(ctx, btn.x + btn.w / 2, btn.y + btn.h / 2, btn.w, flashT / 0.45);
@@ -10305,11 +10297,10 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   const def = passiveById(b.pickedItems[ui.passivePopup] ?? '');
   if (!def) return;
   const w = 300, pad = 16, lineH = 18;
-  const prog = b.passiveProgress(def.id);
   ctx.save();
   ctx.font = '13px "PingFang SC", sans-serif';
   const descLines = wrapText(ctx, def.desc, w - pad * 2);
-  const h = 56 + descLines.length * lineH + (prog ? 36 : 18);
+  const h = 56 + descLines.length * lineH + 18;
   const x = (VIEW_W - w) / 2, y = BOARD_Y + 20;
   roundRect(ctx, x, y, w, h, 12);
   ctx.fillStyle = 'rgba(30,24,18,0.94)';
@@ -10328,16 +10319,6 @@ function drawPassivePopup(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState)
   for (const ln of descLines) {
     ctx.fillText(ln, x + pad, ty);
     ty += lineH;
-  }
-  if (prog) {
-    const by = y + h - 20, bw = w - pad * 2;
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(x + pad, by, bw, 8);
-    ctx.fillStyle = '#ffd24d';
-    ctx.fillRect(x + pad, by, bw * Math.max(0, Math.min(1, prog.ratio)), 8);
-    ctx.fillStyle = '#fff';
-    ctx.font = '11px "PingFang SC", sans-serif';
-    ctx.fillText(prog.text, x + pad, by - 13);
   }
   ctx.restore();
 }

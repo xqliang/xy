@@ -53,7 +53,7 @@ import { earlySummonGates } from './summon-early';
 import { planAutoPlaceSteps, planBattleReposition, runBattleReposition, aiHeroPartnerAdjustPending, rollAiAdjustInterval, autoPlaceBoardKey, PLAYER_PLACE_MAX_STEPS, PLAYER_PLACE_MAX_GUARD, PLAYER_PLACE_DEADLINE_MS, PLAYER_PLACE_DEADLINE_PREP_MS, PLAYER_REPOSITION_MAX_STEPS, AI_PLACE_MAX_STEPS, AI_PLACE_MAX_GUARD, AI_PLACE_DEADLINE_MS, AI_MAX_ORPHAN_WORDS, imminentPathScore, placeCellScore, engageThreatAt, scoreDiggableCells, pickBestDigCell, DIG_EXIT_WEIGHT, DIG_EXIT_WEIGHT_AI_MIN, DIG_EXIT_WEIGHT_AI_MAX, type AutoPlaceView, type BattleRepositionView } from './autoplace';
 
 // 洛阳铲被动自动挖间隔（秒）：cd 到期后自动挖一个高评分槽位
-export const AUTO_SHOVEL_INTERVAL_S = 45;
+export const AUTO_SHOVEL_INTERVAL_S = 60;
 import {
   estimateOptimalBoardPower,
   pathCoverageLen,
@@ -1785,6 +1785,13 @@ export class Battle {
     this.aiMods = snap.mods; // 供 aiActiveGenerals 的 generalTierDelta
     this.aiPickedItems = snap.pickedItems.slice();
     this.aiActiveSlots = snap.activeSlots.map((s) => ({ ...s }));
+    // PvP 右上角要显示对手的「主动技能」：发送端把主动技能放进 activeSlots（pickedItems 只收被动），
+    // 但 drawAiItemsHud 只遍历 aiPickedItems 决定画哪些图标（aiActiveSlots 只提供 CD/就绪态）。
+    // 故把主动技能 id 合并进 aiPickedItems，让右上角同时显示对手主动（蓝）+ 被动（绿）。
+    // 单机 AI 本就同时把主动推进 aiPickedItems（见开局 rollAiLoadout），这里让 PvP 对手与之一致。
+    for (const s of snap.activeSlots) {
+      if (!this.aiPickedItems.includes(s.id)) this.aiPickedItems.push(s.id);
+    }
 
     // —— A2. 瞬态特效：按 nowMs 老化后重建渲染对象 ——
     // skill/palm 单例；passiveFlash 多例；ult/dog 可多个（同时存在多个武将大招）。
@@ -4339,16 +4346,13 @@ export class Battle {
       return true;
     }
     if (token.kind !== 'unit') return false;
-    // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称
+    // 该格被字牌占用 → 兵与字牌交换（兵落格，字牌回候选槽），与「字牌落到兵格」对称。
+    // 一律交换：占格字牌必须换回 tray，绝不丢弃（旧版在武将全满时 clearTraySlot 会吞掉该字牌，导致单字丢失）。
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
       this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
-      if (this.isHeroRosterComplete()) {
-        this.clearTraySlot(index);
-      } else {
-        this.tray[index] = trayWordFromPlaced(wexist);
-      }
+      this.tray[index] = trayWordFromPlaced(wexist);
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
     }
@@ -4730,12 +4734,6 @@ export class Battle {
       if (t <= dt) this.aiPassiveFlash.delete(id);
       else this.aiPassiveFlash.set(id, t - dt);
     }
-  }
-
-  // 被动道具进度（供 HUD 点击查看）：返回 0..1 进度与说明文本；无进度类返回 null
-  passiveProgress(id: string): { ratio: number; text: string } | null {
-    if (id === 'luoyangchan') return { ratio: this.shovelTimer / AUTO_SHOVEL_INTERVAL_S, text: `自动挖 ${this.shovelTimer.toFixed(0)}/${AUTO_SHOVEL_INTERVAL_S}s` };
-    return null;
   }
 
   private applyItem(id: string): void {

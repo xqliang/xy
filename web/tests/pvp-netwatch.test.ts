@@ -11,16 +11,16 @@ describe('netDead 断线看门狗判定', () => {
 
   it('恰好在阈值边界不判死（严格大于才判死）', () => {
     const base = 10_000;
-    expect(netDead(base + NET_DEAD_THRESHOLD_MS, base)).toBe(false); // =6000 → 未超
-    expect(netDead(base + NET_DEAD_THRESHOLD_MS + 1, base)).toBe(true); // 6001 → 判死
+    expect(netDead(base + NET_DEAD_THRESHOLD_MS, base)).toBe(false); // =10000 → 未超
+    expect(netDead(base + NET_DEAD_THRESHOLD_MS + 1, base)).toBe(true); // 10001 → 判死
   });
 
   it('超过阈值判死', () => {
-    expect(netDead(20_000, 10_000)).toBe(true); // 10000 > 6000
+    expect(netDead(25_000, 10_000)).toBe(true); // 15000 > 10000
   });
 
   it('未超阈值不判死', () => {
-    expect(netDead(15_000, 10_000)).toBe(false); // 5000 < 6000
+    expect(netDead(15_000, 10_000)).toBe(false); // 5000 < 10000
   });
 
   it('自定义阈值生效', () => {

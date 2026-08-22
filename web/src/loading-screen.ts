@@ -169,16 +169,9 @@ function drawWalkingMonk(ctx: CanvasRenderingContext2D, now: number): void {
   ctx.fill();
   ctx.restore();
 
-  // 贴图（v2 版，090efd8 抠投影）马头朝左，而行进方向是从左到右——直接画会像倒着走，
-  // 故水平镜像（translate+scale(-1,1)）让马头朝右、与行进方向一致。
-  // 方向依据：b0c982c 记录初版素材即马头朝左（其镜像修复逻辑自洽）；v2 仅做抠投影处理未翻转。
-  // 注：2026-08-20 曾短暂换成 round2 版（36ae28a，马头朝右）并移除镜像（fcde1fe），
-  // 现应用户要求回退到 v2（马未抬前脚的姿态），镜像随之恢复。
-  ctx.save();
-  ctx.translate(x + drawW, topY);
-  ctx.scale(-1, 1);
-  ctx.drawImage(img, 0, 0, drawW, drawH);
-  ctx.restore();
+  // 当前素材（round2 版）马头朝右，行进方向也是从左到右（马头朝前），直接画即可；
+  // 曾对「马头朝左」的旧素材做水平镜像，现素材已朝右，镜像会把它翻成朝左（像倒着走），故移除。
+  ctx.drawImage(img, x, topY, drawW, drawH);
 }
 
 /** 延迟期内占位：纸底 + 静态山水（不画标题/进度），避免缓存命中时闪进度页。 */
