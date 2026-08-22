@@ -3360,7 +3360,7 @@ function drawHeroUlt(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.save();
     switch (f.heroId) {
       // —— 暴击 ——
-      case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier); break;
+      case 'nezha': drawUltNezha(ctx, x, y, prog, fade, f.tier, R); break;
       case 'erlang': drawUltErlang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR, f.biteC, f.biteR); break;
       case 'niulang': drawUltNiulang(ctx, x, y, prog, fade, f.tier, f.fromC, f.fromR); break;
       // —— 满5 群攻 ——
@@ -3567,25 +3567,30 @@ function drawHuojianSpearGlyph(
   ctx.restore();
 }
 
-// 哪吒 火尖枪·万火齐发：多枪自天错落倾泻聚点 + 落地万火爆点
-function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number) {
-  const n = 12 + tier * 2; // 更多枪，齐发气势更足
-  const fallEnd = 0.55;
-  // 全局可见度：中段最亮，避免后半 fade 线性掉光导致「万火」看不见
+// 哪吒 火尖枪·万火齐发：满屏枪林弹雨——多波次、宽散落、震撼爆发
+function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  // 全局可见度：中段最亮
   const life = Math.sin(Math.min(1, p / 0.92) * Math.PI);
-  const vis = Math.max(fade, life * 0.85);
+  const vis = Math.max(fade, life * 0.88);
 
-  // 齐发瞬间的英雄中心强光闪（枪从英雄处向上迸出）
-  if (p < 0.28) {
-    const fp = p / 0.28;
-    const peak = Math.sin(Math.min(1, fp / 0.4) * Math.PI);
-    const fr = CELL * (0.5 + tier * 0.08) * (0.5 + peak * 0.9);
+  // 枪数随阶数大幅增加：tier1=30, tier5=50
+  const n = 28 + tier * 5;
+  // 落点散布半径（px）：覆盖大半个棋盘，tier5 时超过视野
+  const spreadR = R * (2.8 + tier * 0.35);
+  const fallEnd = 0.7;
+
+  // —— 第一段：英雄中心迸发强光 ——
+  if (p < 0.2) {
+    const fp = p / 0.2;
+    const peak = Math.sin(Math.min(1, fp / 0.5) * Math.PI);
+    const fr = CELL * (1.2 + tier * 0.18) * (0.4 + peak * 1.2);
     ctx.save();
-    ctx.globalAlpha = vis * peak * 0.9;
+    ctx.globalAlpha = vis * peak * 0.95;
     const fg = ctx.createRadialGradient(x, y, 1, x, y, fr);
-    fg.addColorStop(0, 'rgba(255,255,240,0.95)');
-    fg.addColorStop(0.35, 'rgba(255,200,80,0.7)');
-    fg.addColorStop(1, 'rgba(255,90,20,0)');
+    fg.addColorStop(0, 'rgba(255,255,245,0.98)');
+    fg.addColorStop(0.25, 'rgba(255,210,100,0.8)');
+    fg.addColorStop(0.6, 'rgba(255,90,20,0.35)');
+    fg.addColorStop(1, 'rgba(255,40,10,0)');
     ctx.fillStyle = fg;
     ctx.beginPath();
     ctx.arc(x, y, fr, 0, Math.PI * 2);
@@ -3593,95 +3598,131 @@ function drawUltNezha(ctx: CanvasRenderingContext2D, x: number, y: number, p: nu
     ctx.restore();
   }
 
-  // 上空余烬雨
-  const emberN = 12 + tier * 3;
+  // —— 上空余烬云（满屏飘散） ——
+  const emberN = 24 + tier * 5;
   for (let i = 0; i < emberN; i++) {
     const seed = (i * 17 + tier * 3) % 97;
-    const t = Math.max(0, Math.min(1, (p - seed * 0.003) / 0.9));
+    const delay = (seed % 13) * 0.012;
+    const t = Math.max(0, Math.min(1, (p - delay) / 0.85));
     if (t <= 0) continue;
-    const ox = ((seed % 11) - 5) * CELL * 0.11;
+    const ox = ((seed % 23) - 11) * CELL * 0.18;
     const fall = easeIn(t);
-    const ex = x + ox * (1 - fall * 0.7) + Math.sin(p * 7 + i) * CELL * 0.03;
-    const ey = y - CELL * (2.8 - fall * 2.9) + (seed % 5) * 1.5;
-    ctx.globalAlpha = vis * (0.3 + (1 - fall) * 0.5) * Math.min(1, t * 4);
-    ctx.fillStyle = i % 3 === 0 ? '#fff3a0' : i % 3 === 1 ? '#ffcf5a' : '#ff7a2c';
+    const ex = x + ox * (1 - fall * 0.55) + Math.sin(p * 5 + i * 1.7) * CELL * 0.06;
+    const ey = y - CELL * (3.5 + (seed % 9) * 0.35) + fall * CELL * (3.8 + (seed % 5) * 0.4);
+    ctx.globalAlpha = vis * (0.25 + (1 - fall) * 0.6) * Math.min(1, t * 3);
+    ctx.fillStyle = i % 4 === 0 ? '#fff5b8' : i % 4 === 1 ? '#ffd060' : i % 4 === 2 ? '#ff8a30' : '#ff5010';
+    const r = 1.3 + (seed % 3) * 0.55 + tier * 0.06;
     ctx.beginPath();
-    ctx.arc(ex, ey, 1.1 + (seed % 3) * 0.45, 0, Math.PI * 2);
+    ctx.arc(ex, ey, r, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // 火尖枪错落俯冲：乱序错位 + 时差，自上而下汇向爆心（打散扇面）
+  // —— 枪林弹雨：多波次错落俯冲，散布满屏 ——
   for (let i = 0; i < n; i++) {
     const seed = (i * 37 + tier * 11) % 89;
-    const delay = ((seed % 17) / 17) * 0.3;
-    const local = Math.max(0, Math.min(1, (p - delay) / (fallEnd - delay * 0.2)));
+    // 多波次延迟：让枪分 3 波倾泻，更有层次
+    const wave = i % 3;
+    const delay = wave * 0.08 + ((seed % 17) / 17) * 0.22;
+    const local = Math.max(0, Math.min(1, (p - delay) / (fallEnd - delay * 0.15)));
     if (local <= 0) continue;
     const fall = easeIn(local);
-    // 非均匀横向偏移，避免整齐扇骨
-    const startOx = (((seed % 21) - 10) / 10) * CELL * (0.55 + tier * 0.04);
-    const startY = y - CELL * (2.7 + (seed % 7) * 0.22);
-    const sx = x + startOx * (1 - fall * 0.96);
-    // 抛物线弧：每枪从 hero 往落点移动时先向上扬起(arc=sin(π·fall)·crest)再落下，
-    // 形成「从英雄迸出→高抛→俯冲砸落」的轨迹，crest 较高时可越到 AI 地图区域
-    const crest = CELL * (1.4 + (seed % 5) * 0.35 + tier * 0.08);
+
+    // 落点：以爆心为中心均匀散布到 spreadR，外加抖动
+    const baseAng = (i / n) * Math.PI * 2 * 1.3 + seed * 0.21;
+    const distFactor = 0.2 + (seed % 7) / 7 * 0.8; // 0.2~1.0
+    const landDist = spreadR * distFactor * (0.7 + local * 0.3);
+    const landC = x + Math.cos(baseAng) * landDist;
+    const landR = y + Math.sin(baseAng) * landDist * 0.75; // 纵向略窄（棋盘纵横比）
+
+    // 起点：上空偏高位置，横向随机偏移
+    const startY = y - CELL * (3.2 + (seed % 9) * 0.3);
+    const startX = x + (((seed % 19) - 9) / 9) * spreadR * 1.1;
+
+    // 抛物线弧
+    const crest = CELL * (1.8 + (seed % 6) * 0.4 + tier * 0.1);
     const arc = Math.sin(Math.min(1, local) * Math.PI) * crest;
-    const sy = startY + (y - startY) * fall - arc;
-    const spearAng = Math.PI / 2 + (startOx / CELL) * 0.04 * (1 - fall) - arc * 0.004;
-    const trail = Math.sin(local * Math.PI) * 0.95;
-    const len = CELL * (0.46 + tier * 0.035 + (seed % 3) * 0.02);
-    const a = vis * (0.5 + local * 0.5) * (local < 0.9 ? 1 : Math.max(0, 1 - (local - 0.9) / 0.1));
+    const sx = startX + (landC - startX) * fall;
+    const sy = startY + (landR - startY) * fall - arc;
+
+    // 枪尖朝向落点方向
+    const dx = landC - sx, dy = landR - sy;
+    const spearAng = Math.atan2(dy, dx);
+    const trail = Math.sin(local * Math.PI) * 0.9;
+    const len = CELL * (0.42 + tier * 0.035 + (seed % 3) * 0.025);
+    const a = vis * (0.5 + local * 0.5) * (local < 0.92 ? 1 : Math.max(0, 1 - (local - 0.92) / 0.08));
     drawHuojianSpearGlyph(ctx, sx, sy, spearAng, len, tier, a, trail);
   }
 
-  // 落地万火爆点：多层焰环 + 火星外溅（中段峰值）
-  if (p > 0.35) {
-    const bp = Math.min(1, (p - 0.35) / 0.55);
+  // —— 落地爆点：多点爆发，形成「万火焚原」 ——
+  if (p > 0.3) {
+    const bp = Math.min(1, (p - 0.3) / 0.55);
     const bloom = easeOut(bp);
-    const peak = Math.sin(Math.min(1, bp / 0.7) * Math.PI); // 爆点中段最亮
-    const rad = CELL * (0.42 + tier * 0.11) * (0.5 + bloom * 1.05);
-    ctx.globalAlpha = vis * (0.55 + peak * 0.55);
-    const g0 = ctx.createRadialGradient(x, y, 1, x, y, rad);
+    const peak = Math.sin(Math.min(1, bp / 0.6) * Math.PI);
+
+    // 主爆心（原来的位置）
+    const mainRad = CELL * (0.5 + tier * 0.13) * (0.6 + bloom * 1.3);
+    ctx.globalAlpha = vis * (0.5 + peak * 0.6);
+    const g0 = ctx.createRadialGradient(x, y, 1, x, y, mainRad);
     g0.addColorStop(0, 'rgba(255,252,220,0.98)');
-    g0.addColorStop(0.28, 'rgba(255,180,60,0.85)');
-    g0.addColorStop(0.62, 'rgba(255,80,20,0.45)');
+    g0.addColorStop(0.2, 'rgba(255,190,70,0.88)');
+    g0.addColorStop(0.5, 'rgba(255,90,25,0.5)');
     g0.addColorStop(1, 'rgba(255,30,10,0)');
     ctx.fillStyle = g0;
-    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, mainRad, 0, Math.PI * 2); ctx.fill();
 
-    ctx.globalAlpha = vis * peak * 0.9;
-    ctx.strokeStyle = '#ff9040';
-    ctx.lineWidth = 3 + tier * 0.4;
-    ctx.beginPath(); ctx.arc(x, y, rad * (0.65 + bloom * 0.4), 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,230,140,0.85)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.arc(x, y, rad * (0.4 + bloom * 0.25), 0, Math.PI * 2); ctx.stroke();
+    // 副爆点：沿散布圈多点小爆炸
+    const subN = 5 + tier;
+    for (let i = 0; i < subN; i++) {
+      const seed = (i * 53 + tier * 7) % 71;
+      const ang = (i / subN) * Math.PI * 2 + seed * 0.1;
+      const sd = spreadR * (0.25 + (seed % 5) / 5 * 0.5) * (0.6 + bloom * 0.4);
+      const sxp = x + Math.cos(ang) * sd;
+      const syp = y + Math.sin(ang) * sd * 0.75;
+      const subDelay = (seed % 5) * 0.04;
+      const subP = Math.max(0, Math.min(1, bp - subDelay));
+      if (subP <= 0) continue;
+      const subPeak = Math.sin(Math.min(1, subP / 0.6) * Math.PI);
+      const subRad = CELL * (0.18 + (seed % 3) * 0.06) * (0.5 + subPeak * 1.2);
+      ctx.globalAlpha = vis * subPeak * (0.4 + (seed % 3) * 0.15);
+      const sg = ctx.createRadialGradient(sxp, syp, 0.5, sxp, syp, subRad);
+      sg.addColorStop(0, 'rgba(255,245,200,0.9)');
+      sg.addColorStop(0.4, 'rgba(255,150,50,0.6)');
+      sg.addColorStop(1, 'rgba(255,50,15,0)');
+      ctx.fillStyle = sg;
+      ctx.beginPath(); ctx.arc(sxp, syp, subRad, 0, Math.PI * 2); ctx.fill();
+    }
 
-    // 升腾火柱感（强化「万火」而非平面扇）
-    ctx.globalAlpha = vis * peak * 0.55;
-    const column = ctx.createLinearGradient(x, y + rad * 0.2, x, y - rad * 1.4);
-    column.addColorStop(0, 'rgba(255,120,30,0)');
-    column.addColorStop(0.4, 'rgba(255,160,50,0.55)');
-    column.addColorStop(1, 'rgba(255,240,180,0)');
-    ctx.fillStyle = column;
-    ctx.fillRect(x - rad * 0.22, y - rad * 1.4, rad * 0.44, rad * 1.6);
+    // 冲击波环（主爆心向外扩张）
+    if (p > 0.38) {
+      const wp = Math.min(1, (p - 0.38) / 0.35);
+      const wRad = mainRad * (0.6 + wp * 1.8);
+      ctx.globalAlpha = vis * (1 - wp) * 0.7;
+      ctx.strokeStyle = '#ffb050';
+      ctx.lineWidth = 2.5 + tier * 0.3;
+      ctx.beginPath(); ctx.arc(x, y, wRad, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,240,180,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, wRad * 0.75, 0, Math.PI * 2); ctx.stroke();
+    }
 
-    const sparks = 14 + tier * 2;
+    // 火星外溅（满屏飞散）
+    const sparks = 22 + tier * 4;
     for (let i = 0; i < sparks; i++) {
-      const a = (i / sparks) * Math.PI * 2 + bp * 1.8;
-      const dist = rad * (0.5 + (i % 4) * 0.18) * bloom;
+      const a = (i / sparks) * Math.PI * 2 + bp * 2.2;
+      const dist = spreadR * (0.15 + (i % 6) * 0.13) * bloom;
       const px = x + Math.cos(a) * dist;
-      const py = y + Math.sin(a) * dist - bloom * CELL * 0.15; // 火星略上扬
-      ctx.globalAlpha = vis * peak * (0.45 + (i % 2) * 0.4);
-      ctx.fillStyle = i % 3 === 0 ? '#fff3a0' : '#ff7a2c';
+      const py = y + Math.sin(a) * dist * 0.75 - bloom * CELL * 0.25;
+      ctx.globalAlpha = vis * peak * (0.35 + (i % 3) * 0.25);
+      ctx.fillStyle = i % 4 === 0 ? '#fff5b8' : i % 4 === 1 ? '#ffcc40' : '#ff7020';
       ctx.beginPath();
-      ctx.arc(px, py, 1.4 + (i % 3) * 0.55, 0, Math.PI * 2);
+      ctx.arc(px, py, 1.6 + (i % 3) * 0.7 + bloom * 0.8, 0, Math.PI * 2);
       ctx.fill();
       if (i % 2 === 0) {
-        ctx.strokeStyle = 'rgba(255,170,70,0.75)';
-        ctx.lineWidth = 1.3;
+        ctx.strokeStyle = 'rgba(255,180,80,0.6)';
+        ctx.lineWidth = 1.2;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(x + Math.cos(a) * rad * 0.2, y + Math.sin(a) * rad * 0.2);
+        ctx.moveTo(x + Math.cos(a) * spreadR * 0.05, y + Math.sin(a) * spreadR * 0.05 * 0.75);
         ctx.lineTo(px, py);
         ctx.stroke();
       }
