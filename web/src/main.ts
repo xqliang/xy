@@ -25,6 +25,7 @@ import {
   trayRowRect,
   summonAnimDone,
   traySlotAnimDone,
+  netLatencyHudPos,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -378,8 +379,11 @@ function netDeadHitHome(x: number, y: number): boolean {
 }
 
 /** 画顶部网络延迟 HUD：仅 PvP 对局中调用。rttMs 为 null 显示 "--"，否则 "<n>ms"。
- *  颜色：无样本/未超阈值用墨色，>150ms 用橙色警示。单人不进此函数（frame 里 pvpSock 门控）。 */
-function drawNetLatencyHud(ctx: CanvasRenderingContext2D, rttMs: number | null): void {
+ *  颜色：无样本/未超阈值用墨色，>150ms 用橙色警示。单人不进此函数（frame 里 pvpSock 门控）。
+ *  位置（用户要求）：与对手主动技能图标同一行（比旧 HUD_H/2 上移）；对手有主动技能时
+ *  技能优先占右上、延迟排到最左一枚图标左侧（锚点由 render.netLatencyHudPos 计算）。 */
+function drawNetLatencyHud(ctx: CanvasRenderingContext2D, rttMs: number | null, b: typeof battle): void {
+  const pos = netLatencyHudPos(b);
   ctx.save();
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -389,8 +393,7 @@ function drawNetLatencyHud(ctx: CanvasRenderingContext2D, rttMs: number | null):
   if (rttMs === null) ctx.fillStyle = 'rgba(90,60,30,0.5)';
   else if (rttMs > 150) ctx.fillStyle = '#d04520';
   else ctx.fillStyle = '#4a6a3a';
-  // 画在顶栏右上（暂停钮在左上），避开暂停钮与蟠桃。
-  ctx.fillText(label, VIEW_W - 12, HUD_H / 2);
+  ctx.fillText(label, pos.rightX, pos.y);
   ctx.restore();
 }
 
@@ -2283,7 +2286,7 @@ function frame(now: number): void {
     draw(ctx, battle, ui);
     // Task 7.6：顶部网络延迟 HUD——仅 PvP 对局中（pvpSock 非空）显示；单人不画。
     // rttMs 为首 pong 前为 null → 显示 "--"；否则 EWMA 延迟 ms。颜色：≤150 正常墨色，>150 橙色警示。
-    if (pvpSock) drawNetLatencyHud(ctx, pvpSock.rttMs);
+    if (pvpSock) drawNetLatencyHud(ctx, pvpSock.rttMs, battle);
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
     else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);

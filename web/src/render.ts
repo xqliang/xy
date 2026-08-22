@@ -9408,6 +9408,27 @@ type AiItemChip = {
 };
 
 /** HUD 右上角 AI 道具：上行最多 2 个主动（大），下行最多 6 个被动（小） */
+/**
+ * 网络延迟 HUD 的锚点（PvP 顶部）：与对手主动技能图标同一行（HUD_H/2-16，比旧位置上移）。
+ * 对手装备了主动技能时，技能图标优先占据右上，「延迟 Nms」排到最左一枚图标的左侧；
+ * 没有主动技能时延迟贴右上原位。返回 { rightX: 文本右缘, y: 垂直中心 }。
+ */
+export function netLatencyHudPos(b: Battle): { rightX: number; y: number } {
+  const actR = 13;
+  let leftmostActiveX: number | null = null;
+  for (const chip of aiItemChipLayout(b)) {
+    // actives 从右往左排；取「主动技能」里最小的 x（最左一枚）。
+    if (chip.kind === 'active' && (leftmostActiveX === null || chip.x < leftmostActiveX)) {
+      leftmostActiveX = chip.x;
+    }
+  }
+  const y = HUD_H / 2 - 16; // 与对手主动技能图标同一行（用户要求：延迟上移 + 主动技能优先、延迟在其左侧）
+  if (leftmostActiveX !== null) {
+    return { rightX: leftmostActiveX - actR - 8, y }; // 图标半径 13 + 8px 间距
+  }
+  return { rightX: VIEW_W - 12, y };
+}
+
 function aiItemChipLayout(b: Battle): AiItemChip[] {
   if (b.endless || b.aiPickedItems.length === 0) return [];
   if (b.status !== 'ready' && b.status !== 'playing') return [];

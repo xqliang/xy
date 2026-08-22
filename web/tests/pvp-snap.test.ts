@@ -502,3 +502,56 @@ describe('normalizeSnapClock：把收到的发送端时钟快照归一化到本�
     expect(d1220).toBeLessThanOrEqual(1.1 + 0.02);
   });
 });
+
+// ============================================================================
+//  按怪物 id 配对（修「对手杀一只怪 → 整组后移 + 残留」）：
+//  旧实现 prev/cur 怪按【index】配对——对手杀掉队首怪后数组左移一位，每个索引都配错对
+//  （index0 = 死怪的大 dist ↔ 幸存怪的小 dist → 判成真实回退平滑倒退 = 整组后移），
+//  棘轮态也按 index 存取导致串位残留。修为全链路按 monster.id 配对，cur 成员为权威。
+// ============================================================================
+describe('对手怪物按 id 配对（杀怪不整组后移、不残留）', () => {
+  it('队首怪被杀：幸存怪各自单调前进，死怪立即消失', () => {
+    const view = new PvpOppView();
+    view.ingest(mkSnap(1000, [
+      mkMonster(5.0, { id: 1 }),  // A 队首（最大 dist）
+      mkMonster(3.0, { id: 2 }),  // B
+      mkMonster(1.0, { id: 3 }),  // C
+    ]));
+    // 关键：死亡发生前先渲染若干帧（真实场景=每帧 interpAt、快照 100ms 一份），
+    // 让棘轮渲染态按 A/B/C 各自的 dist 初始化——否则惰性初始化会直接落在死后目标值上，
+    // 测不出 index 错位配对的回退。
+    for (let now = 1000; now < 1060; now += 16) view.interpAt(now);
+    view.ingest(mkSnap(1100, [
+      mkMonster(3.1, { id: 2 }),  // A 被杀，数组左移一位（旧 index 配对在此错位）
+      mkMonster(1.1, { id: 3 }),
+    ]));
+    // 全程细采样：幸存怪渲染 dist 单调不减（旧实现 B 会从 5.0 倒退向 3.1 = 整组后移）。
+    let prevB = -Infinity, prevC = -Infinity;
+    for (let now = 1060; now <= 1250; now += 10) {
+      const ms = view.interpAt(now).monsters;
+      expect(ms.map((m) => m.id).sort()).toEqual([2, 3]);   // A 不残留（cur 成员权威）
+      const b = ms.find((m) => m.id === 2)!;
+      const c = ms.find((m) => m.id === 3)!;
+      expect(b.dist).toBeGreaterThanOrEqual(prevB - 1e-9);  // B 单调不减
+      expect(c.dist).toBeGreaterThanOrEqual(prevC - 1e-9);  // C 单调不减
+      prevB = b.dist; prevC = c.dist;
+    }
+    // 终值落在各自 cur 值附近（B→3.1、C→1.1），而非错位配对出的他怪值。
+    expect(prevB).toBeGreaterThan(2.9);
+    expect(prevB).toBeLessThanOrEqual(3.1 + 0.05);
+    expect(prevC).toBeGreaterThan(0.9);
+    expect(prevC).toBeLessThanOrEqual(1.1 + 0.05);
+  });
+
+  it('中途新怪进场不扰动既有怪；多杀多生并存仍按 id 对齐', () => {
+    const view = new PvpOppView();
+    view.ingest(mkSnap(1000, [mkMonster(2.0, { id: 7 }), mkMonster(1.0, { id: 8 })]));
+    for (let now = 1000; now < 1060; now += 16) view.interpAt(now); // 死亡前先渲染
+    view.ingest(mkSnap(1100, [mkMonster(1.0, { id: 8 }), mkMonster(0.5, { id: 9 })])); // 7 死、9 生
+    for (let now = 1060; now <= 1250; now += 10) {
+      const ms = view.interpAt(now).monsters;
+      expect(ms.map((m) => m.id).sort()).toEqual([8, 9]);
+      expect(ms.find((m) => m.id === 8)!.dist).toBeGreaterThanOrEqual(0.99); // 8 从 1.0 起步只前进
+    }
+  });
+});

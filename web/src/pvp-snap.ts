@@ -249,7 +249,8 @@ export interface PvpSnapView {
 }
 
 /**
- * 逐怪渲染态（误差慢纠偏的内部棘轮缓冲）。按怪物 index 对齐（与双缓冲一致）。
+ * 逐怪渲染态（误差慢纠偏的内部棘轮缓冲）。按【怪物 id】键控（Map 键，见 interpAt）：
+ * 成员变化（死亡/新生）绝不串位——死怪 id 被 prune、新怪 id 惰性初始化。
  * - renderDist：当前渲染 dist（棘轮只前进，除非判定真实回退）；
  * - renderVel：本段外推用的逐怪速度(格/ms)，= 最近一对快照推出的逐怪速度（限速后）；棘轮公式也复用它。
  */
@@ -274,7 +275,7 @@ export class PvpOppView {
   private lastArrivalMs: number | null = null; // 上一份被接受快照的归一化到达时刻(cur.t)；算到达间隔
   private gapEma = INTERP_DELAY_MS; // 到达间隔 EWMA(ms)：自适应缓冲的输入（单次突发平滑、快速回落）
   private interpDelayMs = INTERP_DELAY_MS; // 当前自适应缓冲(ms)∈[INTERP_DELAY_MS, ADAPTIVE_DELAY_MAX]
-  private render: RenderState[] = []; // 逐怪棘轮渲染态（按 index 对齐 cur.monsters）
+  private render = new Map<number, RenderState>(); // 逐怪棘轮渲染态，按【怪物 id】键控（见 interpAt 注释）
   private lastInterpAtMs: number | null = null; // 上次 interpAt 的 nowMs（算 dtRender）
   private velEst = 0; // 实时速 EWMA(格/ms)：平滑瞬时尖峰；外推限速用它 → 外推不 overshoot 确认数据
   /** 已 ingest 接受的快照份数（0=尚未收到任何对手快照）。供探针/日志观测连接健康度。 */
@@ -335,19 +336,27 @@ export class PvpOppView {
     // measured 速度，若用它外推会 overshoot 确认数据 → 新段目标低于渲染值 → 网络性回退 dip。
     if (this.prev && this.cur.t > this.prev.t) {
       const span = this.cur.t - this.prev.t;
+      // 按怪 id 配对取段速：成员变化（死亡致数组左移/新怪进场）下按 index 配对会把
+      // 死怪的大 dist 与幸存怪错配出负速度，污染 velEst（外推限速被压低 → 整组后移感）。
+      const prevById = new Map(this.prev.monsters.map((m) => [m.id, m] as const));
       let sum = 0;
       let cnt = 0;
-      for (let i = 0; i < this.cur.monsters.length; i++) {
-        const p = this.prev.monsters[i];
+      for (const m of this.cur.monsters) {
+        const p = prevById.get(m.id);
         if (!p) continue;
-        sum += (this.cur.monsters[i]!.dist - p.dist) / span;
+        sum += (m.dist - p.dist) / span;
         cnt++;
       }
       if (cnt > 0) this.velEst = this.velEst * 0.5 + (sum / cnt) * 0.5;
     }
   }
 
-  /** 取平滑渲染视图：monsters.dist 经自适应缓冲插值 + 断流外推 + 误差棘轮，其余（含 fx）取 cur。 */
+  /** 取平滑渲染视图：monsters.dist 经自适应缓冲插值 + 断流外推 + 误差棘轮，其余（含 fx）取 cur。
+   *  怪物全链路按【monster.id】配对（prev↔cur 插值对、棘轮渲染态 Map）：cur 的成员列表是权威——
+   *  死怪（cur 中消失的 id）立即不渲染（不残留）；新怪（cur 新增 id）无前值则从 cur.dist 起步；
+   *  幸存怪只在【同一只怪】的 prev/cur dist 间插值。曾按 index 配对：对手杀掉队首怪后数组左移，
+   *  每个索引都错配（index0 = 死怪大 dist ↔ 幸存怪小 dist → 误判真实回退平滑倒退 = 用户实测
+   *  「杀一只怪整组后移」+ 棘轮态串位残留），id 配对从根上消除成员变化造成的错位。 */
   interpAt(nowMs: number): PvpSnapView {
     const cur = this.cur!;
     const prev = this.prev;
@@ -362,8 +371,7 @@ export class PvpOppView {
     this.lastInterpAtMs = nowMs;
 
     const n = cur.monsters.length;
-    // 逐怪渲染态按 index 对齐：cur 怪数变少则截断（退场怪棘轮态随之丢弃）；变多则补 undefined（惰性初始化）。
-    if (this.render.length > n) this.render.length = n;
+    const prevById = prev ? new Map(prev.monsters.map((m) => [m.id, m] as const)) : null;
 
     let monsters: PvpSnapMonster[];
     if (!prev || cur.t <= prev.t) {
@@ -372,10 +380,10 @@ export class PvpOppView {
       for (let i = 0; i < n; i++) {
         const m = cur.monsters[i]!;
         const target = m.dist;
-        const r = this.render[i];
-        if (!r) this.render[i] = { renderDist: target, renderVel: 0 };
-        else r.renderDist = this.ratchet(r, target, r.renderVel, dt);
-        monsters[i] = { ...m, dist: this.render[i]!.renderDist };
+        const r = this.render.get(m.id);
+        if (!r) this.render.set(m.id, { renderDist: target, renderVel: 0 });
+        else r.renderDist = this.advance(r.renderDist, target, 0, dt, false);
+        monsters[i] = { ...m, dist: this.render.get(m.id)!.renderDist };
       }
     } else {
       const span = cur.t - prev.t; // >0（已排除 cur.t<=prev.t）
@@ -388,16 +396,16 @@ export class PvpOppView {
       const monstersArr: PvpSnapMonster[] = new Array(n);
       for (let i = 0; i < n; i++) {
         const m = cur.monsters[i]!;
-        const p = prev.monsters[i];
+        const p = prevById!.get(m.id);
         let target: number;
         let vel: number; // 本段实时速(格/ms)：可负（真实回退），棘轮据此区分回退/前进
         let realBackward = false; // 真实回退（dist 真实下降）→ 平滑跟随；否则单调棘轮
         if (!p) {
-          // prev 无对应怪（数量变少或后到）：目标=cur.dist，不外推（无前值定速度）。
+          // 新进场怪（cur 新增 id，无前值）：目标=cur.dist，不外推（无前值定速度）。
           target = m.dist;
           vel = 0;
         } else {
-          const realtimeV = (m.dist - p.dist) / span; // 本段诚实实时速
+          const realtimeV = (m.dist - p.dist) / span; // 本段诚实实时速（同 id 配对，成员变化不再污染）
           realBackward = realtimeV < -1e-9; // dist 真实下降 → 真实回退（如来神掌击退）
           if (realBackward) {
             // 真实回退：目标=最后已知 dist，平滑跟随下降（不臆测未来后退幅度）。
@@ -420,17 +428,22 @@ export class PvpOppView {
             target = m.dist + EXTRAP_DIST_CAP;
           }
         }
-        // 误差棘轮：从逐怪渲染态向 target 平滑推进（单调棘轮 / 真实回退跟随）。
-        const r = this.render[i];
+        // 误差棘轮：从逐怪渲染态（按 id）向 target 平滑推进（单调棘轮 / 真实回退跟随）。
+        const r = this.render.get(m.id);
         if (!r) {
-          this.render[i] = { renderDist: target, renderVel: vel };
+          this.render.set(m.id, { renderDist: target, renderVel: vel });
         } else {
           r.renderVel = vel;
           r.renderDist = this.advance(r.renderDist, target, vel, dt, realBackward);
         }
-        monstersArr[i] = { ...m, dist: this.render[i]!.renderDist };
+        monstersArr[i] = { ...m, dist: this.render.get(m.id)!.renderDist };
       }
       monsters = monstersArr;
+    }
+    // cur 成员权威：清掉已死怪的棘轮态（cur 中消失的 id 不再渲染，也不留陈旧状态）。
+    const aliveIds = new Set(cur.monsters.map((m) => m.id));
+    for (const id of this.render.keys()) {
+      if (!aliveIds.has(id)) this.render.delete(id);
     }
     return { snap: cur, monsters, renderTime, nowMs };
   }
@@ -462,13 +475,5 @@ export class PvpOppView {
     const step = rate * dt;
     if (target >= curRender) return Math.min(target, curRender + step); // 前进追赶，绝不超目标
     return curRender; // target<curRender（外推 overshoot settling）→ 保持，不回退
-  }
-
-  /**
-   * 单快照/无速度时的棘轮贴近：目标=cur.dist，无实时速参考，用最小 catch-up 速率贴近 target（绝不回退）。
-   * 冷启动（render 未初始化）由 interpAt 在 advance 前直接以 target 初始化，不走此方法。
-   */
-  private ratchet(r: RenderState, target: number, _vel: number, dt: number): number {
-    return this.advance(r.renderDist, target, 0, dt, false);
   }
 }
