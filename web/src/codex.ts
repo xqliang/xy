@@ -40,7 +40,7 @@ const RANK_COLOR: Record<GeneralDef['rank'], string> = { T0: '#ffd76a', T1: '#7e
 const CARD_W = 250;
 const UNIT_CARD_H = 172;
 const UNIT_GAP = 14;
-const HERO_CARD_H = 132;
+const HERO_CARD_H = 152;
 const HERO_GAP = 12;
 const TYPE_CARD_H = 88;
 const TYPE_CARD_GAP = 8;
@@ -804,24 +804,28 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
   ctx.fillStyle = maxTierColor;
   ctx.fillText(`满${g.maxTier}`, x + 72, y + 48);
 
+  // 技能名（一行）+ 大招描述（含定身时长/击退格数/灼烧/增益倍率等具体数值，
+  // 自动折行至多 2 行，落在卡片内不越界）。描述位于头像下方，用整卡宽度。
+  ctx.fillStyle = '#e8c86a';
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.fillText(truncate(ctx, `技能「${g.skillName}」`, w - 24), x + 12, y + 66);
   ctx.fillStyle = '#c8b890';
-  ctx.font = '12px "PingFang SC", sans-serif';
-  const skillLine = `${g.skillName}：${g.skillDesc}`;
-  ctx.fillText(truncate(ctx, skillLine, w - 84), x + 72, y + 66);
-
-  ctx.fillStyle = 'rgba(255,240,210,0.72)';
   ctx.font = '11px "PingFang SC", sans-serif';
+  fitTextLines(ctx, g.skillDesc, w - 24, 2).forEach((ln, i) => ctx.fillText(ln, x + 12, y + 84 + i * 15));
+
+  // 数值行（固定 y，保证各卡对齐、不越界）
+  ctx.fillStyle = 'rgba(255,240,210,0.72)';
   const cdText = g.skillCd > 0 ? `　技能 ${g.skillCd}s` : '';
   ctx.fillText(
     `白阶 攻${stat1.atk.toFixed(1)} 速${stat1.frq.toFixed(1)} 距${stat1.rge} 目${g.targets}${cdText}`,
-    x + 72,
-    y + 84,
+    x + 12,
+    y + 120,
   );
   ctx.fillStyle = rankColor;
   ctx.fillText(
     `${g.maxTier}阶 攻${statMax.atk.toFixed(1)} 战力${powMax.toFixed(0)}`,
-    x + 72,
-    y + 100,
+    x + 12,
+    y + 136,
   );
 }
 
