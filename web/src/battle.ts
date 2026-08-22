@@ -6159,6 +6159,38 @@ export class Battle {
         }
         break;
       }
+      case 'lion': {
+        // 黄狮精「卷走」：半径内随机取 1 件（兵器/英雄字块/桃树），永久删除。
+        // 配对英雄只拆一格：words.delete 只删这一格，activeGenerals 下帧自动解散该对、
+        // pruneHeroStates 清掉对应武将状态。无目标时不置位，由上层按 miniBossInterval 重试。
+        const R = TUNING.miniBossStealRadius;
+        type Cand = { kind: 'unit' | 'word' | 'tree'; key: string; c: number; r: number; name: string };
+        const cands: Cand[] = [];
+        for (const u of this.units.values()) {
+          if (Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r) <= R) {
+            cands.push({ kind: 'unit', key: cellKey(u.cell.c, u.cell.r), c: u.cell.c, r: u.cell.r, name: UNITS[u.type].name });
+          }
+        }
+        for (const w of this.words.values()) {
+          if (Math.hypot(mp.c - w.cell.c, mp.r - w.cell.r) <= R) {
+            cands.push({ kind: 'word', key: cellKey(w.cell.c, w.cell.r), c: w.cell.c, r: w.cell.r, name: w.char });
+          }
+        }
+        for (const t of this.trees.values()) {
+          if (Math.hypot(mp.c - t.cell.c, mp.r - t.cell.r) <= R) {
+            cands.push({ kind: 'tree', key: cellKey(t.cell.c, t.cell.r), c: t.cell.c, r: t.cell.r, name: '蟠桃树' });
+          }
+        }
+        if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
+        const pick = cands[this.rng.int(cands.length)]!;
+        if (pick.kind === 'unit') this.units.delete(pick.key);
+        else if (pick.kind === 'word') this.words.delete(pick.key);
+        else this.trees.delete(pick.key);
+        this.clearAutoPlaceLayoutMemory(); // 与 recallToTray 一致：移除后清自动布阵记忆，避免 AI 引用失效格
+        affected = 1;
+        m.miniBossCasted = true; // 偷到一次，本局不再触发
+        break;
+      }
       default: {
         const _exhaustive: never = kind;
         void _exhaustive;
