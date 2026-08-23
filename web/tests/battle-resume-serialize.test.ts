@@ -58,6 +58,7 @@ describe('Battle 序列化/恢复', () => {
     expect(sb.aiHp).toBeCloseTo(sa.aiHp, 5);
     expect(sb.units).toBe(sa.units);       // snapshot.units = 数量
     expect(sb.monsters).toBe(sa.monsters); // snapshot.monsters = 数量
+    expect(sb.peach).toBe(sa.peach);       // 经济观测：桃子数须逐帧一致（收紧遗漏 sim 字段的网）
   });
 
   it('无尽局同样可往返（endless=true）', () => {

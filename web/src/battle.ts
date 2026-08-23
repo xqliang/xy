@@ -8122,8 +8122,22 @@ export class Battle {
     };
   }
 
-  /** 采集波次检查点全量核心状态（Map/Set→数组、RNG→uint32）。产物须经 JSON 落盘后再交给 applyCoreState。 */
+  /**
+   * 采集波次检查点全量核心状态（Map/Set→数组、RNG→uint32）。
+   *
+   * ⚠️ 返回对象「别名了实时引擎状态」：core 里的纯数组/对象（monsters/aiMonsters/tray/aiTray/
+   *    mods/aiMods/activeSlots/aiActiveSlots/wavePressure/bombs/… 等）是「按引用」返回的，并非深拷贝。
+   *    因此调用方必须「立即」把它 JSON 序列化落盘（JSON.parse(JSON.stringify(...)) 完成深拷贝）；
+   *    切勿跨 step() 保留该返回值，也不要改写它——否则要么捕获到后续被 step() 改动的漂移数据，
+   *    要么反过来污染正在运行的实时对局。产物经 JSON 往返后方可交给 applyCoreState。
+   */
   serialize(): { config: BattleSaveConfig; core: BattleCoreState } {
+    // 拷贝策略（混合，勿被后人误「统一修正」）：
+    //   · [...this.x] 只用于 Map/Set → 数组的「格式转换」（存档结构须可 JSON 化，不含 Map/Set）；
+    //   · 纯数组/对象（monsters/tray/mods/activeSlots/…）是「有意按引用别名」，深拷贝交由调用方的
+    //     立即 JSON 往返统一完成，避免此处重复深拷贝（既省开销也少一处走样风险）。
+    //   · kills 有意「不入档」：本地续玩恒为 !isPvp，kills 仅供 PvP 摘要/反作弊统计，无本地消费者，
+    //     恢复后归 0 不影响任何本地 sim/观测（故不在 core 字段集内，勿补加）。
     return {
       config: {
         mapId: this.map.id,
