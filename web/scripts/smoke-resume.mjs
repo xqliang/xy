@@ -92,6 +92,27 @@ try {
   if (after.units <= 0) fail('续玩后盘面为空——applyCoreState 未恢复单位');
   console.log(`✅ Part A 通过：刷新后自动续玩（screen=battle, status=ready, wave=${after.p.wave}, 单位数=${after.units}）`);
 
+  // ── Part C：续玩不重跑 planBattleFragmentDrop（回归最终评审发现的 bug）──
+  // 篡改存档把神兵碎片标记设满；若续玩误调 planBattleFragmentDrop 会重置为 false/null（并推进 rng）。
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('dasheng.battleSave'));
+    s.core.battleFragmentDropped = true;
+    s.core.battleFragmentDropId = 'jingubang';
+    localStorage.setItem('dasheng.battleSave', JSON.stringify(s));
+  });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await page.waitForFunction('window.__game && window.__game.battle');
+  await sleep(300);
+  const frag = await page.evaluate(() => {
+    const c = window.__game.battle.serialize().core;
+    return { dropped: c.battleFragmentDropped, id: c.battleFragmentDropId };
+  });
+  console.log('续玩后碎片状态：', JSON.stringify(frag));
+  if (frag.dropped !== true || frag.id !== 'jingubang') {
+    fail('续玩重置了神兵碎片状态（planBattleFragmentDrop 被误跑）：' + JSON.stringify(frag));
+  }
+  console.log('✅ Part C 通过：续玩保留碎片状态，未重跑 planBattleFragmentDrop');
+
   // ── Part B：在线 PvP 不落档（回归）──
   await page.evaluate(() => window.__game.enterPvp(7));
   await sleep(300);
