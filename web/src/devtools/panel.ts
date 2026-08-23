@@ -2,6 +2,8 @@ import { formatDiffValue } from './clone';
 import {
   TUNABLE_BAGS,
   TUNING_SKILL_KEYS,
+  TUNING_HERO_ULT_KEYS,
+  heroUltTuningKeys,
   TUNING_MONSTER_WAVE_KEYS,
   TUNING_MONSTER_ELITE_KEYS,
   TUNING_MONSTER_SKILL_KEYS,
@@ -829,7 +831,7 @@ export class DevToolsPanel {
   private renderAttack(body: HTMLElement): void {
     const hint = document.createElement('p');
     hint.className = 'xy-dt-hint';
-    hint.textContent = '英雄 / 兵器 / 神兵 / 主动·被动价格 / 大招与主动倍率。每项只出现一次。改完即时生效（已开对局建议重开）。';
+    hint.textContent = '英雄 / 兵器 / 神兵 / 主动·被动价格 / 大招与主动倍率。每个英雄的大招数值直接放在该英雄介绍下方；共享键会在多个英雄下出现（改一处即全生效）。改完即时生效（已开对局建议重开）。';
     body.appendChild(hint);
     const actions = document.createElement('div');
     actions.className = 'xy-dt-actions';
@@ -852,6 +854,13 @@ export class DevToolsPanel {
       body.appendChild(objectFields(g as unknown as Record<string, unknown>, (k) => (
         ['atk', 'frq', 'rge', 'targets', 'skillCd', 'weight', 'expCostMul'].includes(k)
       )));
+      // 该英雄大招实际用到的 TUNING 键（与 castGeneralSkill / pushHeroUltFx 取值口径一致），
+      // 直接展示在英雄介绍下方，便于按英雄调数值；共享键（如 heroBurstDmgMul）改一处即全生效
+      const ultKeys = heroUltTuningKeys(g);
+      if (ultKeys.length > 0) {
+        body.appendChild(descNote('大招数值（TUNING，本英雄实际读取）：'));
+        body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => ultKeys.includes(k)));
+      }
     }
 
     body.appendChild(section('兵器 UNITS'));
@@ -880,8 +889,11 @@ export class DevToolsPanel {
       )));
     }
 
-    body.appendChild(section('TUNING · 主动与大招倍率'));
-    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_SKILL_KEYS.has(k)));
+    // 底部公共区只展示非英雄专属的主动技能数值；英雄大招键已并入上方「英雄逐条」区
+    body.appendChild(section('TUNING · 主动技能与通用数值（大招数值在各英雄下方）'));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => (
+      TUNING_SKILL_KEYS.has(k) && !TUNING_HERO_ULT_KEYS.has(k)
+    )));
   }
 
   private renderMonster(body: HTMLElement): void {

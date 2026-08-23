@@ -3,7 +3,7 @@ import { UNITS } from '@core';
 import { TUNING, PEACH_TREE, PLACE_TIMING } from '../battle';
 import { BOARD_POWER } from '../board-power';
 import { AI_TIMING } from '../autoplace';
-import { GENERALS, GENERAL_TUNING } from '../generals';
+import { GENERALS, GENERAL_TUNING, type GeneralDef } from '../generals';
 import { ACTIVE_SKILLS } from '../actives';
 import { PASSIVE_SKILLS } from '../passives';
 import { WEAPON_TUNING } from '../weapons';
@@ -164,6 +164,53 @@ export const TUNING_SKILL_KEYS = new Set([
 
 /** @deprecated 用 TUNING_SKILL_KEYS；保留别名以免外部旧引用断裂 */
 export const TUNING_ATTACK_KEYS = TUNING_SKILL_KEYS;
+
+/**
+ * 每个英雄大招实际用到的 TUNING 键（与 battle.castGeneralSkill / pushHeroUltFx 取值口径一致）。
+ * DevTools「英雄逐条」区把这些键直接展示在对应英雄介绍下方，便于按英雄调大招数值
+ * （如文殊的减 CD 秒数、老君的增益倍率）。共享键会在多个英雄下出现，改一处即全生效。
+ */
+export function heroUltTuningKeys(def: GeneralDef): string[] {
+  const keys: string[] = [];
+  switch (def.skill) {
+    case 'burst': keys.push('heroBurstDmgMul'); break;
+    case 'ranged':
+      keys.push('heroRangedDmgMul', 'heroBeamCorridor');
+      keys.push(def.id === 'erlang' ? 'heroPierceMaxMain' : 'heroPierceMaxTransit');
+      if (def.id === 'erlang') keys.push('heroDogStunDur', 'heroDogTtl');
+      break;
+    case 'stun':
+      keys.push(def.maxTier === 5 ? 'heroStunDurMain' : 'heroStunDurTransit');
+      keys.push(def.id === 'niumowang' || def.id === 'qingniu' ? 'heroChargeStunDmgMul' : 'heroStunDmgMul');
+      break;
+    case 'knock':
+      keys.push(def.maxTier === 5 ? 'heroKnockPushMain' : 'heroKnockPushTransit', 'heroKnockDmgMul');
+      break;
+    case 'slow':
+      keys.push(def.maxTier === 5 ? 'heroSlowDmgMulMain' : 'heroSlowDmgMulTransit', 'heroSlowDur');
+      break;
+    case 'heal': keys.push('heroHealSlowDur', 'heroHealHp'); break;
+    case 'buff':
+      keys.push(def.maxTier === 5 ? 'heroBuffAtkMulMain' : 'heroBuffAtkMulTransit');
+      keys.push(def.maxTier === 5 ? 'heroBuffDurMain' : 'heroBuffDurTransit');
+      break;
+    case 'cdr':
+      keys.push(def.maxTier === 5 ? 'heroCdrSecMain' : 'heroCdrSecTransit');
+      break;
+    case 'burn': keys.push('heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur'); break;
+    case 'none': break;
+    default: break;
+  }
+  // 大招动画时长（pushHeroUltFx 分档）
+  if (def.id === 'dasheng' || def.id === 'honghaier') keys.push('heroUltFxTtlLong');
+  else if (def.id === 'bailong') keys.push('heroUltFxTtlBite');
+  else if (def.skill === 'heal' || def.skill === 'buff' || def.skill === 'cdr') keys.push('heroUltFxTtlSupport');
+  else if (def.skill !== 'none') keys.push('heroUltFxTtlDefault');
+  return keys;
+}
+
+/** 全部英雄大招 TUNING 键并集（英雄逐条区展示，底部公共数值区排除） */
+export const TUNING_HERO_ULT_KEYS = new Set(GENERALS.flatMap((g) => heroUltTuningKeys(g)));
 
 /** 征兵 AI Tab：征兵成本 / 字铲保底 / 候选区 */
 export const TUNING_SUMMON_KEYS = new Set([

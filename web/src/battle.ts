@@ -271,7 +271,7 @@ export const TUNING = {
   heroUltFxTtlBite: 0.8, // 白龙突进撕咬
   heroUltFxTtlSupport: 0.85, // 辅助系（观音/老君/文殊线）
   heroUltFxTtlDefault: 0.6, // 其余英雄
-  tangsengHurtImmuneDur: 1, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
+  tangsengHurtImmuneDur: 2, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
