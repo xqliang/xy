@@ -966,6 +966,7 @@ export class Battle {
   private aiJuiceLastMs = -1; // 上次补演时刻(ms)，算 dt（-1=未初始化）
   private readonly aiUnitPulse = new Map<string, number>(); // cellKey → 兵器出招脉冲[0..1]，本地衰减 + 每帧回写 aiUnits.firePulse
   private readonly aiUnitAtkCd = new Map<string, number>(); // cellKey → 兵器本地视觉攻击冷却剩余(秒)；首见用快照 cooldown 做种子
+  private readonly aiUnitFireDir = new Map<string, number>(); // cellKey → 兵器上次朝向(弧度)；每帧朝最近在射程怪、无怪保持上次（修朝向跳变）
   private readonly aiGeneralPulse = new Map<string, number>(); // heroPairKey → 英雄出招脉冲[0..1]，本地衰减 + 回写武将 state.firePulse
   private readonly aiGeneralAtkCd = new Map<string, number>(); // heroPairKey → 英雄本地视觉普攻冷却剩余(秒)；首见用快照 cooldown 做种子
   private readonly aiMonHpSeen = new Map<number, number>(); // 怪 id → 上次快照 hp（帧间掉血检测）
@@ -1997,13 +1998,24 @@ export class Battle {
     for (const u of this.aiUnits) {
       const key = cellKey(u.cell.c, u.cell.r);
       unitKeys.add(key);
+      const stat = getUnitStat(u.type, u.tier);
+      const inRange = this.sortCombatTargets(monPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p)));
+      // 朝向每帧更新：射程内有怪就朝最近那只并记住；无怪则保持上次朝向（像玩家兵不回摆）。
+      // 修跳变：此前只在「开火帧」设 fireDir，其余帧被 bridge 每帧重置成朝出怪口 → 每个 CD 周期抖一下。
+      if (inRange.length > 0) {
+        const tp = inRange[0]!.p;
+        const dir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
+        this.aiUnitFireDir.set(key, dir);
+        u.fireDir = dir;
+      } else {
+        const last = this.aiUnitFireDir.get(key);
+        if (last != null) u.fireDir = last; // 从没朝过怪则留 bridge 的出怪口朝向作待机
+      }
       // 首见（对手新部署/换格）：以快照带来的真实剩余 CD 为种子，让本地节奏与对手真实节奏同起步
       if (!this.aiUnitAtkCd.has(key)) this.aiUnitAtkCd.set(key, Math.max(0, u.cooldown ?? 0));
       const cd = (this.aiUnitAtkCd.get(key) ?? 0) - dt;
       if (cd > 0) { this.aiUnitAtkCd.set(key, cd); continue; }
-      const stat = getUnitStat(u.type, u.tier);
-      const inRange = this.sortCombatTargets(monPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p)));
-      if (inRange.length === 0) { this.aiUnitAtkCd.set(key, 0); continue; } // 圈内无怪憋招：进怪立刻打（与本地口径一致）
+      if (inRange.length === 0) { this.aiUnitAtkCd.set(key, 0); continue; } // 圈内无怪憋招：进怪立刻打
       const base = Math.floor(stat.targets);
       const maxTargets = Math.max(1, base + (this.aiRng.next() < stat.targets - base ? 1 : 0));
       const ttl = this.attackFxTtl(u.type, u.tier);
@@ -2015,13 +2027,12 @@ export class Battle {
         hit++;
       }
       this.aiUnitPulse.set(key, 1);
-      const tp = inRange[0]!.p;
-      u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c); // 朝首个目标（镜像坐标系同系，立绘/兵器随之转向）
       this.aiUnitAtkCd.set(key, 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1)));
     }
     // 单位移除/换格：清残留键，防泄漏（换格后旧键会因「首见」重新用快照 CD 做种子，天然对齐）
     for (const k of [...this.aiUnitAtkCd.keys()]) if (!unitKeys.has(k)) this.aiUnitAtkCd.delete(k);
     for (const k of [...this.aiUnitPulse.keys()]) if (!unitKeys.has(k)) this.aiUnitPulse.delete(k);
+    for (const k of [...this.aiUnitFireDir.keys()]) if (!unitKeys.has(k)) this.aiUnitFireDir.delete(k);
 
     // (3) 英雄普攻本地视觉模拟（镜像 (2)）：攻击起点=两格中点，特效带 heroId/品质色（pushGeneralAttackFx 同口径）。
     //     英雄大招不在此模拟——大招特效已由快照 fx（kind='ult'/'dog'）随服务端同步重建，本地只补普攻。
