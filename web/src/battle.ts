@@ -211,6 +211,7 @@ export const TUNING = {
   miniBossStealRadius: 3, // 黄狮精「卷走」作用半径（格）
   miniBossStealDelayMin: 1, // 出场后首次触发最短延时（秒）
   miniBossStealDelayMax: 20, // 出场后首次触发最长延时（秒）
+  miniBossStealFlashDur: 1.05, // 卷走预演时长（秒）：目标先原地闪 ~3 次让玩家看清是谁，期满才爆粒子消失
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
   knockdownDur: 3.5, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
   hasteDur: 4, // 疾风：周围妖怪加速持续（秒）
@@ -709,6 +710,23 @@ export interface Burst {
   color: string;
 }
 
+// 黄狮精「卷走」预演幽灵：目标在逻辑上已被立即删除（不再攻击/不可交互），
+// 但先以残影形态在被偷格原地闪烁 miniBossStealFlashDur 秒（金色警示框 + 原样重画的立绘/字块/桃树），
+// 期满那一刻才爆开金色粒子环——即玩家看到的「真正消失」。目的是让玩家看清被卷走的是哪件。
+// 纯视觉状态：不入序列化快照、清波不清（时长仅 ~1s，且信息量重要，宁可跨波播完）。
+export interface StealFx {
+  kind: 'unit' | 'word' | 'tree';
+  c: number;
+  r: number;
+  ttl: number;
+  maxTtl: number;
+  unitType?: UnitType; // kind='unit'：幽灵立绘（复用 drawUnit，含阶数角标）
+  unitTier?: number;
+  char?: string; // kind='word'：幽灵字块
+  wordTier?: number;
+  treeLevel?: number; // kind='tree'：幽灵桃树等级
+}
+
 // 武将大招专属特效（每英雄一套动画，渲染于格坐标；与主动技能的 ultFlash 无关）
 export interface HeroUltFx {
   heroId: string;        // 分派动画用（对应 GeneralDef.id）
@@ -914,6 +932,7 @@ export class Battle {
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
+  stealFx: StealFx[] = []; // 黄狮精卷走预演幽灵（闪几下再消失；见 StealFx 注释）
   heroUltFx: HeroUltFx[] = []; // 武将大招专属特效
   // 埋雷炸药（主动技能 bomb）：路径上待引爆的地雷，可埋多颗、同一格子最多一颗；t 累积秒用于引信闪烁
   bombs: { c: number; r: number; t: number }[] = [];
@@ -6524,16 +6543,41 @@ export class Battle {
         }
         if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
         const pick = cands[this.rng.int(cands.length)]!;
-        if (pick.kind === 'unit') this.units.delete(pick.key);
-        else if (pick.kind === 'word') this.words.delete(pick.key);
-        else this.trees.delete(pick.key);
+        // 卷走预演：逻辑上立即删除（停攻击、不可交互、AI 记忆清理），但先在被偷格
+        // 记一个「闪几下再消失」的幽灵残影（保留 type/tier/char/level 供 render 原样重画），
+        // 期满由 updateFx 爆金色粒子环——玩家先看清是哪件被卷走，再看它消失。
+        const ghost: StealFx = {
+          kind: pick.kind,
+          c: pick.c,
+          r: pick.r,
+          ttl: TUNING.miniBossStealFlashDur,
+          maxTtl: TUNING.miniBossStealFlashDur,
+        };
+        if (pick.kind === 'unit') {
+          const u = this.units.get(pick.key);
+          if (u) {
+            ghost.unitType = u.type;
+            ghost.unitTier = u.tier;
+          }
+          this.units.delete(pick.key);
+        } else if (pick.kind === 'word') {
+          const w = this.words.get(pick.key);
+          if (w) {
+            ghost.char = w.char;
+            ghost.wordTier = w.tier;
+          }
+          this.words.delete(pick.key);
+        } else {
+          const t = this.trees.get(pick.key);
+          if (t) ghost.treeLevel = t.level;
+          this.trees.delete(pick.key);
+        }
+        this.stealFx.push(ghost);
         this.clearAutoPlaceLayoutMemory(); // 与 recallToTray 一致：移除后清自动布阵记忆，避免 AI 引用失效格
         affected = 1;
         m.miniBossCasted = true; // 偷到一次，本局不再触发
         m.castFlash = 1; // 施法闪光（与其它小 Boss 一致，供渲染）
-        // 消失特效：在被偷格子爆开金色 death 粒子环（复用 drawBursts，无需新增 SkillFxKind）
-        this.bursts.push({ kind: 'death', c: pick.c, r: pick.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
-        // 底部提示：点明被卷走的具体目标
+        // 消失粒子环改到闪烁期满才爆（updateFx 内触发）；这里只发底部提示，点明被卷走的具体目标
         this.message = `⚠ ${meta.name}卷走了「${pick.name}」！`;
         break;
       }
@@ -7031,6 +7075,22 @@ export class Battle {
     }
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    // 黄狮精卷走幽灵：递减闪烁计时；到期那一刻爆金色 death 粒子环 = 真正「消失」
+    // （施法瞬间不爆，就是为了让玩家先看清闪的是哪件兵器/字块/桃树）
+    for (const s of this.stealFx) s.ttl -= dt;
+    this.stealFx = this.stealFx.filter((s) => {
+      if (s.ttl > 0) return true;
+      this.bursts.push({
+        kind: 'death',
+        c: s.c,
+        r: s.r,
+        ttl: 0.45,
+        maxTtl: 0.45,
+        big: true,
+        color: MINI_BOSS_META.lion.color,
+      });
+      return false;
+    });
     for (const uf of this.heroUltFx) uf.ttl -= dt;
     // 二郎哮天犬：被咬怪物死亡则狗立即消失（否则跟随 3s）；玩家/AI 怪物分属两数组，都要查
     this.heroUltFx = this.heroUltFx.filter((uf) => {

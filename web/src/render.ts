@@ -903,6 +903,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawPlaceDropMergeIncoming(ctx, b);
   drawPeachTrees(ctx, b, ui);
   drawFx(ctx, b);
+  drawStealFx(ctx, b); // 黄狮精卷走幽灵：被偷目标闪几下再消失（画在命中特效之上、粒子环之下）
   drawDigFx(ctx, b.digFx);
   drawDigFx(ctx, b.aiDigFx);
   drawBursts(ctx, b);
@@ -3257,6 +3258,38 @@ function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('🥄', 0, 0);
+    }
+    ctx.restore();
+  }
+}
+
+// 黄狮精「卷走」预演幽灵：目标已从逻辑盘面删除，但先在被偷格原地闪烁——
+// 金色警示框持续脉冲提示位置，立绘/字块/桃树残影按方波亮暗交替（约 3.3 次/秒），
+// 闪烁期满由 updateFx 爆金色粒子环真正消失。让玩家看清「是哪件被卷走了」。
+function drawStealFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const s of b.stealFx) {
+    const { x, y } = cellCenterPx(s.c, s.r);
+    const elapsed = s.maxTtl - s.ttl;
+    const blink = Math.sin(elapsed * Math.PI * 2 * 3.3); // -1..1，方波化后约 3.3 次/秒
+    ctx.save();
+    // 金色警示框：不随亮暗相位熄灭（它是「看这里」的锚点），强度随相位脉冲
+    ctx.globalAlpha = 0.5 + 0.3 * Math.max(0, blink);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = MINI_BOSS_META.lion.color;
+    roundRect(ctx, x - CELL * 0.38, y - CELL * 0.38, CELL * 0.76, CELL * 0.76, 8);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // 暗相位隐藏残影，形成「闪动」；亮相位按被偷对象原样重画（兵器含阶数角标，便于辨认）
+    if (blink < 0) {
+      ctx.restore();
+      continue;
+    }
+    if (s.kind === 'unit' && s.unitType != null) {
+      drawUnit(ctx, s.unitType, s.unitTier ?? 1, x, y, CELL * 0.72, false, { x, y, s: CELL * 0.72 });
+    } else if (s.kind === 'word' && s.char != null) {
+      drawWordTile(ctx, s.char, s.wordTier ?? 1, x, y, CELL * 0.78, true, 0);
+    } else if (s.kind === 'tree') {
+      drawPeachTree(ctx, x, y, CELL * 0.7, s.treeLevel ?? 1);
     }
     ctx.restore();
   }

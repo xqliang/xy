@@ -131,20 +131,48 @@ describe('黄狮精 卷走目标', () => {
 });
 
 describe('黄狮精 特效与提示', () => {
-  it('偷到后弹出金色 death 粒子 + 底部提示带目标名', () => {
+  it('卷走预演：先在被偷格闪几下（幽灵残影），期满才爆金色 death 粒子', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const target = { c: 3, r: 5 };
     const { b, lion } = lionOnPath(map, { c: 4, r: 6 }, 0);
-    b.units.set(`${target.c},${target.r}`, makePlacedUnit('dao', 1, target));
+    b.units.set(`${target.c},${target.r}`, makePlacedUnit('dao', 2, target));
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
-    // 被偷格有金色 death 粒子
-    const burst = b.bursts.find((x) => x.c === target.c && x.r === target.r && x.kind === 'death');
-    expect(burst).toBeTruthy();
-    expect(burst!.color).toBe(MINI_BOSS_META.lion.color);
+    // 施法瞬间：金色粒子环还没爆（要先闪烁让玩家看清是哪件）
+    expect(b.bursts.find((x) => x.c === target.c && x.r === target.r && x.kind === 'death')).toBeFalsy();
+    // 幽灵残影已就位：位置/种类/阶数与被偷兵器一致，倒计时为闪烁时长
+    expect(b.stealFx.length).toBe(1);
+    const ghost = b.stealFx[0]!;
+    expect(ghost.kind).toBe('unit');
+    expect(ghost.c).toBe(target.c);
+    expect(ghost.r).toBe(target.r);
+    expect(ghost.unitType).toBe('dao');
+    expect(ghost.unitTier).toBe(2);
+    expect(ghost.ttl).toBeCloseTo(TUNING.miniBossStealFlashDur - 0.05, 0);
     // 底部提示包含怪物名 + 目标名
     expect(b.message).toContain('黄狮精');
     expect(b.message).toContain('刀兵');
     expect(lion.castFlash).toBeGreaterThan(0);
+    // 闪烁期满：幽灵消失，金色 death 粒子环在被偷格爆开
+    b.step(TUNING.miniBossStealFlashDur);
+    expect(b.stealFx.length).toBe(0);
+    const burst = b.bursts.find((x) => x.c === target.c && x.r === target.r && x.kind === 'death');
+    expect(burst).toBeTruthy();
+    expect(burst!.color).toBe(MINI_BOSS_META.lion.color);
+  });
+
+  it('卷走字块/桃树：幽灵带字符与等级，期满同样爆粒子', () => {
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
+    const wcell = { c: 2, r: 5 };
+    const { b } = lionOnPath(map, { c: 3, r: 6 }, 0);
+    b.words.set(`${wcell.c},${wcell.r}`, { char: '大', general: 'dasheng', tier: 3, cell: wcell });
+    (b as unknown as { status: string }).status = 'playing';
+    b.step(0.05);
+    expect(b.stealFx[0]?.kind).toBe('word');
+    expect(b.stealFx[0]?.char).toBe('大');
+    expect(b.stealFx[0]?.wordTier).toBe(3);
+    b.step(TUNING.miniBossStealFlashDur);
+    expect(b.stealFx.length).toBe(0);
+    expect(b.bursts.find((x) => x.c === wcell.c && x.r === wcell.r && x.kind === 'death')).toBeTruthy();
   });
 });

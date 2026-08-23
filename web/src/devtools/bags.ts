@@ -124,7 +124,7 @@ export const TUNING_MONSTER_ELITE_KEYS = new Set([
   'miniBossFromWave', 'miniBossChance', 'miniBossHpMul', 'miniBossSpdMul',
   'miniBossSpdMulSlow', 'miniBossSpdMulFast',
   'miniBossRadius', 'miniBossInterval', 'miniBossFirstDelay',
-  'miniBossStealRadius', 'miniBossStealDelayMin', 'miniBossStealDelayMax',
+  'miniBossStealRadius', 'miniBossStealDelayMin', 'miniBossStealDelayMax', 'miniBossStealFlashDur',
   'heroBossFromCount', 'heroBossIntervalMin', 'heroBossIntervalMaxBase',
   'heroBossIntervalShrinkCap', 'heroBossMaxPerWave',
 ]);

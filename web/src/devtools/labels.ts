@@ -151,6 +151,7 @@ export const PARAM_ZH: Record<string, string> = {
   miniBossStealRadius: '黄狮精卷走半径',
   miniBossStealDelayMin: '黄狮精首次触发最短延时',
   miniBossStealDelayMax: '黄狮精首次触发最长延时',
+  miniBossStealFlashDur: '黄狮精卷走闪烁时长',
   eliteHpMul: '精英血量倍率',
   knockdownDur: '倒下时长',
   hasteDur: '疾风时长',
