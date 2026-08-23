@@ -6839,13 +6839,11 @@ export class Battle {
   }
 
   // AI 侧怪物施法（单机对手半场）：镜像 updateMonsterSkills——上半场的精英/BOSS 同样对 AI 兵器
-  // 施加地图减益，小 Boss 中 frost/blight/quake/gale/blood 同步镜像。此前 AI 侧完全没有施法逻辑，
-  // 上半场带「定/迟/弱/网」环的怪走到 AI 兵器旁也毫无效果（旧观感：debuff 不生效）。
+  // 施加地图减益，小 Boss（frost/blight/quake/gale/blood/lion）全部镜像。此前 AI 侧完全没有施法
+  // 逻辑，上半场带「定/迟/弱/网」环的怪走到 AI 兵器旁也毫无效果（旧观感：debuff 不生效）。
   // 与玩家侧的差异：
   //   - 不发底部 message（那是我方半场的提示通道，对手半场事件不该顶掉我的提示）；
-  //   - 爆点用 aiMonsterPos 的镜像格（共享 bursts 数组按原始坐标渲染 → 落在上半场）；
-  //   - lion（黄狮精卷走）暂不镜像：涉及删除 AI 布阵 + 自动布阵记忆清理，收益低风险高，
-  //     对手半场的黄狮精维持「只当普通怪走场」。
+  //   - 爆点用 aiMonsterPos 的镜像格（共享 bursts 数组按原始坐标渲染 → 落在上半场）。
   // PvP 不经过这里：updateAi 在 pvp 下整体早退，对手半场的施法由对手客户端权威 sim 执行、
   // 状态随快照 units 整对象传回本端渲染。
   private updateAiMonsterSkills(dt: number): void {
@@ -6854,7 +6852,7 @@ export class Battle {
       m.castFlash = Math.max(0, m.castFlash - dt * 4);
       // 小 Boss 光环
       if (m.isMiniBoss && m.miniBossKind) {
-        if (m.miniBossCasted || m.miniBossKind === 'lion') continue; // lion 不镜像（见上）
+        if (m.miniBossCasted) continue; // 黄狮精：卷走只触发一次，偷到后本局跳过（lion 在 castAiMiniBossSkill 内镜像）
         m.skillCd -= dt;
         if (m.skillCd > 0) continue;
         m.skillCd = TUNING.miniBossInterval;
@@ -6878,7 +6876,8 @@ export class Battle {
     }
   }
 
-  // AI 半场小 Boss 光环：frost/blight/quake 打 AI 兵器，gale/blood 增益其它 AI 怪（与玩家侧同口径同数值）
+  // AI 半场小 Boss 光环：frost/blight/quake 打 AI 兵器，gale/blood 增益其它 AI 怪，
+  // lion 卷走 AI 兵器/字牌（AI 侧无桃树）——与玩家侧同口径同数值
   private castAiMiniBossSkill(m: Monster): void {
     const kind = m.miniBossKind;
     if (!kind) return;
@@ -6914,8 +6913,55 @@ export class Battle {
         }
         break;
       }
-      case 'lion':
-        break; // 入口（updateAiMonsterSkills）已排除 lion，仅做穷尽收窄
+      case 'lion': {
+        // 黄狮精「卷走」AI 半场版：半径内随机取 1 件（AI 兵器/字牌；AI 侧无桃树），永久删除 +
+        // 原地闪现幽灵残影（共享 stealFx 按原始坐标渲染，AI 格即镜像格 → 落在上半场）。
+        // 字牌只拆一格：aiWords.delete 后 aiActiveGenerals 下帧自动解散该对。偷到置
+        // miniBossCasted 本局不再触发；清 AI 自动布阵记忆防引用失效格（对齐玩家侧）。
+        const R = TUNING.miniBossStealRadius;
+        type AiCand = { kind: 'unit' | 'word'; key: string; c: number; r: number; name: string };
+        const cands: AiCand[] = [];
+        for (const u of this.aiUnits) {
+          if (Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r) <= R) {
+            cands.push({ kind: 'unit', key: cellKey(u.cell.c, u.cell.r), c: u.cell.c, r: u.cell.r, name: UNITS[u.type].name });
+          }
+        }
+        for (const w of this.aiWords.values()) {
+          if (Math.hypot(mp.c - w.cell.c, mp.r - w.cell.r) <= R) {
+            cands.push({ kind: 'word', key: cellKey(w.cell.c, w.cell.r), c: w.cell.c, r: w.cell.r, name: w.char });
+          }
+        }
+        if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
+        const pick = cands[this.aiRng.int(cands.length)]!;
+        const ghost: StealFx = {
+          kind: pick.kind,
+          c: pick.c,
+          r: pick.r,
+          ttl: TUNING.miniBossStealFlashDur,
+          maxTtl: TUNING.miniBossStealFlashDur,
+        };
+        if (pick.kind === 'unit') {
+          const u = this.aiUnits.find((x) => cellKey(x.cell.c, x.cell.r) === pick.key);
+          if (u) {
+            ghost.unitType = u.type;
+            ghost.unitTier = u.tier;
+            this.aiUnits.splice(this.aiUnits.indexOf(u), 1);
+          }
+        } else {
+          const w = this.aiWords.get(pick.key);
+          if (w) {
+            ghost.char = w.char;
+            ghost.wordTier = w.tier;
+            this.aiWords.delete(pick.key);
+          }
+        }
+        this.stealFx.push(ghost);
+        this.clearAiAutoPlaceLayoutMemory(); // 移除后清 AI 自动布阵记忆，避免 AI 引用失效格
+        affected = 1;
+        m.miniBossCasted = true; // 偷到一次，本局不再触发
+        m.castFlash = 1;
+        break;
+      }
       default: {
         const _exhaustive: never = kind;
         void _exhaustive;

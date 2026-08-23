@@ -80,15 +80,24 @@ describe('AI 半场怪物施法（updateAiMonsterSkills）', () => {
     // （精确数值链路已由玩家侧测试锁定，此处确认字段被消费不报错即可）
   });
 
-  it('黄狮精（lion）在 AI 半场不施法（卷走不镜像）', () => {
+  it('黄狮精（lion）在 AI 半场卷走：半径内兵器被删 + 幽灵残影 + 本局只偷一次', () => {
     const b = mkB();
     const lion = aiMon({ id: 1, isMiniBoss: true, miniBossKind: 'lion' as any, skill: null, skillCd: 0.01 });
     const p = b.aiMonsterPos(lion);
+    const u = aiUnit({ c: p.c, r: p.r }); // 贴脚：必在偷取半径内
     b.aiMonsters = [lion];
-    b.aiUnits = [aiUnit({ c: p.c, r: p.r })];
+    b.aiUnits = [u];
+    for (let t = 0; t < 0.5; t += 1 / 30) b.step(1 / 30);
+    expect(b.aiUnits.length).toBe(0); // 被卷走
+    expect(b.aiMonsters[0]!.miniBossCasted).toBe(true); // 本局不再触发
+    expect(b.stealFx.length).toBe(1); // 原地幽灵残影（共享数组，坐标即 AI 半场镜像格；1.05s 后老化，故提前断言）
+    expect(b.stealFx[0]!.kind).toBe('unit');
+    // 之后再放一把兵器：lion 已偷过 → 不再卷
+    const u2 = aiUnit({ c: p.c, r: p.r });
+    b.aiUnits = [u2];
+    b.aiMonsters[0]!.skillCd = 0.01;
     for (let t = 0; t < 2.0; t += 1 / 30) b.step(1 / 30);
-    expect(b.aiUnits.length).toBe(1); // 没被卷走
-    expect(b.aiMonsters[0]!.miniBossCasted).toBe(false);
+    expect(b.aiUnits.length).toBe(1);
   });
 
   it('PvP 下不本地施法（对手半场由对手权威 sim 负责，快照携带状态）', () => {
