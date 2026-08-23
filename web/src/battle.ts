@@ -965,7 +965,7 @@ export class Battle {
   } {
     const units = new Map<string, PlacedUnit>();
     for (const [k, u] of this.units) {
-      units.set(k, { ...u, cell: { ...u.cell }, fireDir: { ...u.fireDir } });
+      units.set(k, { ...u, cell: { ...u.cell }, fireDir: u.fireDir });
     }
     const words = new Map<string, PlacedWord>();
     for (const [k, w] of this.words) {
@@ -1017,7 +1017,7 @@ export class Battle {
     tray: TrayToken[];
     lastRepositionPair: { a: Cell; b: Cell } | null;
   } {
-    const units = this.aiUnits.map((u) => ({ ...u, cell: { ...u.cell }, fireDir: { ...u.fireDir } }));
+    const units = this.aiUnits.map((u) => ({ ...u, cell: { ...u.cell }, fireDir: u.fireDir }));
     const words = new Map<string, PlacedWord>();
     for (const [k, w] of this.aiWords) {
       words.set(k, { ...w, cell: { ...w.cell } });
@@ -1846,12 +1846,12 @@ export class Battle {
     }
 
     // —— B. 需要镜像 cell（重建新容器；drawAiSide 直接用 cell 不再二次镜像）——
-    // units: cell 镜像，fireDir 有值才 +π（对手半场整体 180°）
-    this.aiUnits = snap.units.map((u) => ({
-      ...u,
-      cell: mirrorCell(u.cell),
-      fireDir: u.fireDir != null ? u.fireDir + Math.PI : undefined,
-    }));
+    // units: cell 镜像；fireDir 不采信传输值（易受镜像/序列化污染），改由本地按镜像后位置朝 AI 侧
+    // 路径入口重算——与单机 AI 的 faceDirToward(cell, aiGate) 完全一致，故对手立绘/兵器朝向天然正确。
+    this.aiUnits = snap.units.map((u) => {
+      const cell = mirrorCell(u.cell);
+      return { ...u, cell, fireDir: faceDirToward(cell, this.unitFaceGate(true)) };
+    });
     // words: 逐条镜像 cell 与 Map 键（键不镜像会让 aiActiveGenerals 左右邻接配对失准）
     const wm = new Map<string, PlacedWord>();
     for (const w of snap.words) {

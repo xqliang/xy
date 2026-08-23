@@ -8,7 +8,7 @@
 // （旧桥 bridgeOpponentFrom 已随 Task 5 删除，不再做旧/新桥逐字段 parity 比较）。
 import { describe, it, expect } from 'vitest';
 import { Battle, NO_META } from '../src/battle';
-import { mirrorCell } from '../src/board';
+import { mirrorCell, faceDirToward, pathEntranceCell, type Cell } from '../src/board';
 import { MAPS } from '../src/board';
 import { PvpOppView } from '../src/pvp-snap';
 
@@ -49,32 +49,30 @@ function bridgeSnap(A: Battle, tNow: number): Battle {
   return B2;
 }
 
-// 本方单位经桥镜像后的期望值（与桥内 B 类镜像规则同构：cell 镜像、fireDir 有值 +π）。
-const mirroredUnits = (A: Battle) =>
+// 本方单位经桥镜像后的期望值：cell 镜像；fireDir 不再采信传输值(+π)，改由桥本地按镜像后位置
+// 朝 AI 侧路径入口重算（与单机 AI 的 faceDirToward(cell, aiGate) 同口径），故恒为数字。
+const mirroredUnits = (A: Battle, aiGate: Cell) =>
   [...A.units.values()].map((u) => ({
     ...u,
     cell: mirrorCell(u.cell),
-    fireDir: u.fireDir != null ? u.fireDir + Math.PI : undefined,
+    fireDir: faceDirToward(mirrorCell(u.cell), aiGate),
   }));
 
 describe('bridgeOpponentFromSnap：镜像正确性（快照路径，逐字段对源 A）', () => {
-  it('aiUnits：镜像 cell + fireDir+π，逐条深度等价于 A 的镜像单位', () => {
+  it('aiUnits：镜像 cell + fireDir 本地重算，逐条深度等价于 A 的镜像单位', () => {
     const A = mkPvp();
     seedBoard(A);
     expect(A.units.size).toBeGreaterThan(0);
     const B2 = bridgeSnap(A, 1000);
 
+    const gate = pathEntranceCell(B2.aiPath);
     expect(B2.aiUnits.length).toBe(A.units.size);
-    expect(B2.aiUnits).toEqual(mirroredUnits(A));
-    // 再单点验镜像规则：cell 镜像、fireDir 有值 +π。
+    expect(B2.aiUnits).toEqual(mirroredUnits(A, gate));
+    // 再单点验镜像规则：cell 镜像、fireDir 本地按位置朝 AI 入口重算（恒为数字）。
     for (const u of A.units.values()) {
       const b2U = B2.aiUnits.find((x) => x.cell.c === mirrorCell(u.cell).c && x.cell.r === mirrorCell(u.cell).r)!;
       expect(b2U.cell).toEqual(mirrorCell(u.cell));
-      if (u.fireDir != null) {
-        expect(b2U.fireDir).toBeCloseTo(u.fireDir + Math.PI, 10);
-      } else {
-        expect(b2U.fireDir).toBeUndefined();
-      }
+      expect(b2U.fireDir).toBeCloseTo(faceDirToward(mirrorCell(u.cell), gate), 10);
       expect(b2U.type).toBe(u.type);
       expect(b2U.tier).toBe(u.tier);
     }
@@ -156,7 +154,7 @@ describe('bridgeOpponentFromSnap：镜像正确性（快照路径，逐字段对
 });
 
 describe('bridgeOpponentFromSnap：镜像正确性（快照路径直验）', () => {
-  it('单位 cell 镜像、fireDir 有值 +π、undefined 保留', () => {
+  it('单位 cell 镜像、fireDir 本地按位置重算（不采信传输值，恒为数字）', () => {
     const A = mkPvp();
     const tNow = 1000;
     const cell = { c: 2, r: 6 };
@@ -173,12 +171,15 @@ describe('bridgeOpponentFromSnap：镜像正确性（快照路径直验）', () 
 
     const B2 = bridgeSnap(A, tNow);
 
+    const gate = pathEntranceCell(B2.aiPath);
     const withDir = B2.aiUnits.find((u) => u.cell.c === mirrorCell(cell).c)!;
     const withoutDir = B2.aiUnits.find((u) => u.cell.c === mirrorCell({ c: 3, r: 6 }).c)!;
     expect(withDir.cell).toEqual(mirrorCell(cell));
-    expect(withDir.fireDir).toBeCloseTo(0.3 + Math.PI, 10);
+    // 源 fireDir=0.3 被忽略，桥按镜像后位置朝 AI 入口本地重算
+    expect(withDir.fireDir).toBeCloseTo(faceDirToward(mirrorCell(cell), gate), 10);
     expect(withoutDir.cell).toEqual(mirrorCell({ c: 3, r: 6 }));
-    expect(withoutDir.fireDir).toBeUndefined();
+    // 源 fireDir=undefined 也重算为数字（不再保留 undefined）
+    expect(withoutDir.fireDir).toBeCloseTo(faceDirToward(mirrorCell({ c: 3, r: 6 }), gate), 10);
   });
 
   it('aiUnlocked 逐元素镜像（翻转格也不丢）', () => {
