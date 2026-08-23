@@ -18,4 +18,8 @@ export class RNG {
   pick<T>(arr: readonly T[]): T {
     return arr[this.int(arr.length)]!;
   }
+  /** 读取内部推进状态（对局存档用）。返回 uint32。 */
+  getState(): number { return this.s >>> 0; }
+  /** 写回内部推进状态（存档恢复用）。 */
+  setState(v: number): void { this.s = v >>> 0; }
 }
