@@ -1195,7 +1195,7 @@ function tryResumeLocalBattle(): boolean {
   const r = loadResumeBattle();
   if (!r) return false;
   battle = r.battle;
-  bindBattleWeaponPickup();          // 重挂注入型函数字段 weaponPickupVisible
+  injectWeaponPickupVisible();        // 重挂注入型函数字段（不重跑碎片掉落规划，保恢复的 rng/碎片状态）
   currentMap = mapById(r.mapId);     // 氛围音/HUD 对齐存档地图
   endHandled = false;
   pendingMerchant = false;
@@ -1569,9 +1569,13 @@ function applyMerchantHitAt(x: number, y: number): void {
   merit = res.merit;
 }
 
-function bindBattleWeaponPickup(): void {
+// 只重挂注入型函数字段（续玩用）：不触发一次性神兵碎片掉落规划，避免覆盖已恢复状态/推进 RNG。
+function injectWeaponPickupVisible(): void {
   battle.weaponPickupVisible = (id) => !isWeaponFragmentsComplete(bag, id);
-  battle.planBattleFragmentDrop();
+}
+function bindBattleWeaponPickup(): void {
+  injectWeaponPickupVisible();
+  battle.planBattleFragmentDrop(); // 新开局：规划本局神兵碎片掉落（会消耗 rng、置 battleFragmentDropped/Id）
 }
 
 function visibleWeaponPickups(): string[] {
