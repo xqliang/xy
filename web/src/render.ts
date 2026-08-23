@@ -625,11 +625,13 @@ function drawUnit(
 
 // 「攻击瞬间形变为兵器」叠加层：在单位格上，沿 dir 朝目标出招，pulse(1→0) 驱动幅度/透明度/旋转。
 // 参考竞品——棋盘上的字在开火时实时化为刀/枪/骑/弓兵器，并显示朝向箭头。
-function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, dir: number, pulse: number, combo: number) {
+function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: number, x: number, y: number, dir: number, pulse: number, combo: number, flipH = false) {
   if (pulse <= 0.02) return;
   const s = CELL * 0.52 * (1 + tier * 0.05);
   ctx.save();
   ctx.translate(x, y);
+  // AI 侧：立绘已被水平镜像（drawUnit side='ai'），兵器同样水平镜像，令兵器朝向与立绘一致（都朝各自的怪物）。
+  if (flipH) ctx.scale(-1, 1);
   ctx.rotate(dir); // 旋转后 +x 轴指向目标
   ctx.globalAlpha = Math.min(1, pulse * 1.25);
   ctx.lineJoin = 'round';
@@ -9382,7 +9384,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
       false,
       'ai',
     );
-    drawUnitWeapon(ctx, u.type, drawTier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo);
+    drawUnitWeapon(ctx, u.type, drawTier, x, uy, u.fireDir ?? Math.PI / 2, pulse, u.combo, true);
     const statuses = unitStatusItems(u);
     if (statuses.length > 0) drawStatusRow(ctx, x, y - CELL * 0.42, statuses, 8);
   }
