@@ -582,9 +582,10 @@ function drawUnit(
     const dw = spr.width * scale;
     const dh = spr.height * scale;
     ctx.save();
-    // 根据 side 决定默认朝向：玩家侧默认面朝右，AI 侧默认面朝左（左右镜像）
-    // faceLeft 在此基础之上叠加「朝某方向攻击时」的翻转
-    const flip = side === 'ai' ? !faceLeft : faceLeft;
+    // 立绘水平翻转只看 faceLeft（朝左攻击时翻）。两侧同一套：因为 fireDir 现已是「屏幕正确」的
+    // 本地朝向（玩家朝己方入口、对手经桥 faceDirToward 朝 AI 入口），standard faceLeft 对两侧都对。
+    // （旧的 side==='ai' ? !faceLeft 是在补偿早期传输/镜像污染的 fireDir，现已随本地模拟移除。）
+    const flip = faceLeft;
     if (fallen) {
       // 倒下：横躺 + 略压扁，与「无法攻击」状态对应
       ctx.translate(x, y + s * 0.08);
