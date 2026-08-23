@@ -131,6 +131,13 @@ function activeSlotCenter(i: 0 | 1): { x: number; y: number } {
   return { x: actX[i]! + ACT_D / 2, y: actY + ACT_D / 2 };
 }
 
+/** 主动技能槽的高亮矩形（引导锚点用）。 */
+export function activeSlotRect(i: 0 | 1): { x: number; y: number; w: number; h: number } {
+  const ACT_D = 60;
+  const c = activeSlotCenter(i);
+  return { x: c.x - ACT_D / 2, y: c.y - ACT_D / 2, w: ACT_D, h: ACT_D };
+}
+
 const SKILL_TITLE_COLOR = '#e8c22c'; // 与神兵金阶同色
 const ACTIVE_CD_OVERLAY = 'rgba(0,0,0,0.30)'; // 主动技能冷却扇形遮罩（略透明以便看清图标）
 
@@ -1064,6 +1071,43 @@ const GUIDE_SKIP_Y = HUD_H + 10; // 紧贴 HUD 下方、棋盘顶部居中
 /** 「跳过」按钮矩形（draw 与 hit 共用，保证命中与绘制一致） */
 export function guideSkipRect(): { x: number; y: number; w: number; h: number } {
   return { x: (VIEW_W - GUIDE_SKIP_W) / 2, y: GUIDE_SKIP_Y, w: GUIDE_SKIP_W, h: GUIDE_PILL_H };
+}
+
+/** 每局开始的「征兵→部署」非阻塞提示：在征兵按钮、候选区上方各挂一个带下箭头的小标签。
+ *  过了首次引导后每局显示一次；不暂停、不影响出怪时机。secondsLeft 用于末尾淡出。 */
+export function drawGameStartHint(ctx: CanvasRenderingContext2D, secondsLeft: number): void {
+  const alpha = Math.max(0, Math.min(1, secondsLeft / 0.6)); // 最后 0.6s 淡出
+  if (alpha <= 0) return;
+  const tag = (rect: { x: number; y: number; w: number; h: number }, text: string) => {
+    ctx.font = 'bold 15px "PingFang SC", sans-serif';
+    const cx = rect.x + rect.w / 2;
+    const bw = ctx.measureText(text).width + 24;
+    const bh = 30;
+    const bx = cx - bw / 2;
+    const by = rect.y - bh - 12; // 悬在目标上方，下箭头指向目标
+    roundRect(ctx, bx, by, bw, bh, 8);
+    ctx.fillStyle = 'rgba(40,28,14,0.92)';
+    ctx.fill();
+    ctx.strokeStyle = '#e8c22c';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, by + bh);
+    ctx.lineTo(cx + 6, by + bh);
+    ctx.lineTo(cx, by + bh + 8);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(40,28,14,0.92)';
+    ctx.fill();
+    ctx.fillStyle = '#ffe27a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, cx, by + bh / 2);
+  };
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  tag(summonButtonRect(), '① 点击征兵抽兵');
+  tag(trayRowRect(), '② 拖到棋盘部署');
+  ctx.restore();
 }
 
 /** 绘制「跳过」胶囊（半透明深底 + 浅字，区别于主线箭头的暖白高亮，表明它是次要操作） */

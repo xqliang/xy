@@ -30,6 +30,8 @@ import {
   summonButtonRect,
   guideSkipRect,
   drawGuideSkip,
+  activeSlotRect,
+  drawGameStartHint,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -124,6 +126,7 @@ import type { MerchantUiState } from './merchant';
 import {
   loadTutorialState,
   maybeStartTutorial,
+  hasSeenTutorial,
   advanceTutorial,
   skipTutorial,
   tutorialHitAt,
@@ -356,6 +359,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pvpExitPopup = false; pausePhase = 'main';
   ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null; pendingFirstSummonTutorial = false;
   screen = 'battle';
+  armGameStartHint();
   scheduleFrame();
 }
 
@@ -726,6 +730,14 @@ const ui: UiState = {
 let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
 let tutorialOverlay: TutorialOverlay | null = null;
 
+// 每局开始的「征兵→部署」非阻塞提示：到期时间戳（performance.now() 毫秒），0=不显示。
+// 过了首次引导（见过 battleIntro）后，每局（AI/真人）开局显示一次；不暂停、不影响出怪时机。
+let gameStartHintUntil = 0;
+const GAME_START_HINT_MS = 3500;
+function armGameStartHint(): void {
+  gameStartHintUntil = hasSeenTutorial(tutorial, 'battleIntro') ? performance.now() + GAME_START_HINT_MS : 0;
+}
+
 // —— Task 10 首局部署引导：非模态动态箭头（征兵→部署两阶段）——
 // 与 tutorialOverlay 的「modal 高亮卡片」共存但独立：modal 开着时箭头隐藏、关掉后恢复。
 // 仅在首局单人（newGame 时 isFirstGame=true）激活；PvP/非首局为 'done'（不画箭头）。
@@ -926,6 +938,25 @@ function firstHeroComboAnchor(): { x: number; y: number; w: number; h: number } 
   return { x, y, w: Math.max(ra.x + ra.w, rb.x + rb.w) - x, h: Math.max(ra.y + ra.h, rb.y + rb.h) - y };
 }
 
+// 首次主动技能冷却完成 → 引导「点击释放 / 拖到地图使用」（一次性）。
+function firstActiveReadySequence(): TutorialSequence {
+  const idx = battle.activeSlots.findIndex((s) => s.ready);
+  if (idx < 0 || idx > 1) return { id: 'firstActiveReady', steps: [] };
+  const def = activeById(battle.activeSlots[idx]!.id);
+  const name = def?.name ?? '主动技能';
+  return {
+    id: 'firstActiveReady',
+    steps: [
+      {
+        id: 'activeReady',
+        title: `${name} · 已就绪`,
+        text: '主动技能冷却完成！点击释放，或按住拖到地图上使用。',
+        getAnchor: () => activeSlotRect(idx as 0 | 1),
+      },
+    ],
+  };
+}
+
 function firstHeroComboSequence(): TutorialSequence {
   return {
     id: 'firstHeroCombo',
@@ -1112,6 +1143,11 @@ function checkBattleTutorials(): void {
   if (visibleWeaponPickups().length > 0) {
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstFragmentDropSequence());
   }
+  if (tutorialOverlay) return;
+  // 首个主动技能冷却完成即引导（一次性）；未装备主动技能时 activeSlots 无 ready 项，不触发。
+  if (battle.activeSlots.some((s) => s.ready)) {
+    tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstActiveReadySequence());
+  }
 }
 
 function newGame() {
@@ -1235,6 +1271,7 @@ function handleMenu(id: string) {
     newGame();
     screen = 'battle';
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, battleIntroSequence());
+    armGameStartHint();
   } else if (id === 'pvpMatch' || id === 'pvpInvite') {
     // PvP 入口门槛（Task 10）：需先玩过一局单人关卡才解锁真人对战。
     // 未解锁时只飘字提示、不进入匹配；体力门槛在其后、彼此独立（先查解锁，再查体力）。
@@ -2481,6 +2518,8 @@ function frame(now: number): void {
     // 必须在 draw() 之前写入：drawHud 在渲染链路内读此态画两侧标注。
     setPvpNetLatency(pvpSock ? { myRtt: pvpSock.rttMs, oppRtt: oppView?.latestRtt ?? null } : null);
     draw(ctx, battle, ui);
+    // 每局开局「征兵→部署」提示（非阻塞、不暂停；modal 教程展示时让位）
+    if (gameStartHintUntil > now && !tutorialOverlay) drawGameStartHint(ctx, (gameStartHintUntil - now) / 1000);
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
     else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
