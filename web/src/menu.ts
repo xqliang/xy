@@ -329,11 +329,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       // 位置/大小对齐 menu-btn-settings 烘焙「设置」的墨迹区（y 约 67%~85%，字号约按钮高 21%）。
       if (codexSpr) {
         ctx.save();
-        ctx.font = `bold ${Math.round(b.h * 0.23)}px "PingFang SC", "STKaiti", serif`;
+        // 不加粗、字号比设置按钮小一号（用户反馈），细描边补笔画清晰度
+        ctx.font = `${Math.round(b.h * 0.2)}px "PingFang SC", "STKaiti", serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        // 同色细描边加粗笔画，向设置按钮的烘焙墨字（笔画较粗）视觉重量靠拢
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1;
         ctx.strokeStyle = 'rgba(35,28,20,0.92)';
         ctx.strokeText('图鉴', b.x + b.w / 2, b.y + b.h * 0.76);
         ctx.fillStyle = 'rgba(35,28,20,0.92)';
