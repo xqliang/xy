@@ -10,7 +10,19 @@ export const isWeChat: boolean =
 
 // 主画布：Web = 页面 <canvas id="game">；微信 = wx.createCanvas() 返回的主屏画布。
 export function getGameCanvas(): HTMLCanvasElement {
-  if (isWeChat) return wx.createCanvas();
+  if (isWeChat) {
+    // 小游戏主画布无 DOM 属性：补 style（防 main.ts resize 里 canvas.style.width= 崩）+
+    // getBoundingClientRect（全屏、左上角为原点），让 web 侧画布尺寸/坐标代码零改动跑通。
+    const c = wx.createCanvas() as {
+      style?: Record<string, string>; width: number; height: number;
+      getBoundingClientRect?: () => DOMRect;
+    };
+    if (!c.style) c.style = {};
+    if (typeof c.getBoundingClientRect !== 'function') {
+      c.getBoundingClientRect = () => ({ left: 0, top: 0, right: c.width, bottom: c.height, width: c.width, height: c.height, x: 0, y: 0, toJSON() { return this; } } as DOMRect);
+    }
+    return c as unknown as HTMLCanvasElement;
+  }
   return document.getElementById('game') as HTMLCanvasElement;
 }
 
@@ -49,4 +61,18 @@ export function onAppHide(cb: () => void): void {
 }
 export function onAppShow(cb: () => void): void {
   if (isWeChat && typeof wx.onShow === 'function') wx.onShow(cb);
+}
+
+// —— 触摸输入（小游戏）——
+// Web 用 canvas 的 pointer 事件；小游戏无 pointer，改用 wx.onTouch* 全局事件。此处仅在微信下把四类
+// 触摸交给上层（main.ts 合成 PointerEvent 复用同一套指针逻辑）；Web 下 no-op 返回 false（走原 pointer 绑定）。
+export interface WxTouch { clientX: number; clientY: number; identifier: number; }
+export interface WxTouchEvent { touches: WxTouch[]; changedTouches: WxTouch[]; }
+export function onWxTouch(h: {
+  start: (e: WxTouchEvent) => void; move: (e: WxTouchEvent) => void;
+  end: (e: WxTouchEvent) => void; cancel: (e: WxTouchEvent) => void;
+}): boolean {
+  if (!isWeChat) return false;
+  wx.onTouchStart(h.start); wx.onTouchMove(h.move); wx.onTouchEnd(h.end); wx.onTouchCancel(h.cancel);
+  return true;
 }

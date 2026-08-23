@@ -84,7 +84,7 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onWxTouch, type WxTouchEvent } from './platform';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
   cloudLogin,
@@ -1583,6 +1583,8 @@ function leaveSettleToMenu(): void {
 
 // —— 画布尺寸 / DPR —— //
 let cssScale = 1;
+let viewOffsetX = 0; // 小游戏 letterbox 水平偏移(CSS px)：VIEW 居中留黑边，toLogical 反算触摸用
+let viewOffsetY = 0; // 小游戏 letterbox 垂直偏移(CSS px)
 
 function isCoarseMobile(): boolean {
   return window.matchMedia('(pointer: coarse)').matches;
@@ -1617,6 +1619,17 @@ function resize() {
   const { w, h, offsetX, offsetY } = readViewport();
   const fit = Math.min(w / VIEW_W, h / VIEW_H);
   cssScale = fit;
+  if (isWeChat) {
+    // 小游戏：主画布即全屏，位图=屏幕像素；把 VIEW 居中等比 letterbox 画进去（黑边），
+    // 触摸坐标据 viewOffset/fit 反算（见 toLogical）。无 CSS，故不设 canvas.style。
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    viewOffsetX = Math.round((w - VIEW_W * fit) / 2);
+    viewOffsetY = Math.round((h - VIEW_H * fit) / 2);
+    ctx.setTransform(fit * dpr, 0, 0, fit * dpr, viewOffsetX * dpr, viewOffsetY * dpr);
+    scheduleFrame();
+    return;
+  }
   canvas.width = Math.round(VIEW_W * dpr);
   canvas.height = Math.round(VIEW_H * dpr);
   const cssW = Math.round(VIEW_W * fit);
@@ -1642,6 +1655,10 @@ resize();
 
 // —— 指针坐标 → 逻辑坐标 —— //
 function toLogical(clientX: number, clientY: number): { x: number; y: number } {
+  if (isWeChat) {
+    // 小游戏：touch 坐标是屏幕 CSS 像素；扣掉 letterbox 偏移再按 fit 反算到 VIEW 逻辑坐标。
+    return { x: (clientX - viewOffsetX) / cssScale, y: (clientY - viewOffsetY) / cssScale };
+  }
   const rect = canvas.getBoundingClientRect();
   return {
     x: (clientX - rect.left) / cssScale,
@@ -2013,6 +2030,21 @@ canvas.addEventListener('pointerdown', (e) => { tryMobileFullscreen(); onPointer
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
 canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
+// 小游戏无 pointer 事件：把 wx.onTouch* 合成成 PointerEvent 复用同一套指针逻辑（单指为主，多指取最新触点）。
+if (isWeChat) {
+  const synth = (t: { clientX: number; clientY: number; identifier: number }): PointerEvent => ({
+    clientX: t.clientX, clientY: t.clientY, pointerId: t.identifier ?? 0, pointerType: 'touch',
+    button: 0, buttons: 1, isPrimary: true,
+    preventDefault() {}, stopPropagation() {}, setPointerCapture() {}, releasePointerCapture() {},
+  } as unknown as PointerEvent);
+  const latest = (e: WxTouchEvent) => e.touches[e.touches.length - 1] ?? e.changedTouches[e.changedTouches.length - 1];
+  onWxTouch({
+    start: (e) => { const t = latest(e); if (!t) return; onPointerDown(synth(t)); scheduleFrame(); },
+    move: (e) => { const t = latest(e); if (t) onPointerMove(synth(t)); },
+    end: (e) => { const t = e.changedTouches[e.changedTouches.length - 1] ?? e.touches[0]; onPointerUp(t ? synth(t) : undefined); scheduleFrame(); },
+    cancel: (e) => { const t = e.changedTouches[e.changedTouches.length - 1]; onPointerUp(t ? synth(t) : undefined, true); scheduleFrame(); },
+  });
+}
 function onPointerMove(e: PointerEvent) {
   if (screen === 'menu') {
     const { x, y } = toLogical(e.clientX, e.clientY);
