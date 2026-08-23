@@ -906,6 +906,69 @@ export const NO_META: MetaBonuses = { bonusPeach: 0, bonusHp: 0, bonusSlots: 0, 
  *  对手半场由 WS 快照经 PvpOppView 插值后 bridgeOpponentFromSnap 重建（Model C），不再确定性重放对手动作。 */
 export interface PvpInit { enabled: boolean }
 
+/** 重建对局几何/骨架所需的构造参数（其余状态由 core 覆盖）。 */
+export interface BattleSaveConfig {
+  mapId: string;
+  difficultyMul: number;
+  endless: boolean;
+  aiAdjustIntervalScale: number;
+}
+
+/** 波次检查点的全量核心可变状态。Map→[k,v][]、Set→值数组、RNG→uint32。 */
+export interface BattleCoreState {
+  // A1 血量/波数/状态
+  tangsengHP: number; tangsengMaxHP: number; aiTangsengHP: number; aiDefeated: boolean;
+  tangsengHurtImmuneT: number; aiTangsengHurtImmuneT: number;
+  healUsedThisWave: boolean; aiHealUsedThisWave: boolean;
+  wave: number; status: Status; waveActive: boolean;
+  introT: number; introDone: boolean; nextWaveTimer: number;
+  // A2 经济
+  peach: number; aiPeach: number; shovels: number; aiShovels: number;
+  summonCost: number; aiSummonCost: number; summonCount: number; aiSummonCount: number;
+  summonsSinceShovel: number; summonsSinceWord: number; summonsSincePair: number;
+  earlySummonWordsCap: number; earlySummonWordsGuarantee: number; earlySummonShovels: number;
+  aiSummonsSinceShovel: number; aiSummonsSinceWord: number; aiSummonsSincePair: number;
+  aiEarlySummonWordsCap: number; aiEarlySummonWordsGuarantee: number; aiEarlySummonShovels: number;
+  wordCharCounts: [string, number][]; aiWordCharCounts: [string, number][];
+  aiSummonTimer: number; shovelTimer: number; aiShovelTimer: number;
+  plantTimer: number; plantBank: number; gardenOn: boolean;
+  // A3 棋盘/怪物
+  units: [string, PlacedUnit][]; words: [string, PlacedWord][]; trees: [string, PeachTree][];
+  unlocked: string[]; generalStates: [string, GeneralState][];
+  aiUnits: PlacedUnit[]; aiWords: [string, PlacedWord][]; aiUnlocked: string[];
+  aiGeneralStates: [string, GeneralState][];
+  lastActivePairKeys: string[]; lastAiActivePairKeys: string[];
+  tray: TrayToken[]; aiTray: TrayToken[];
+  monsters: Monster[]; aiMonsters: Monster[]; nextMonsterId: number;
+  bombs: { c: number; r: number; t: number }[]; aiBombs: { c: number; r: number; t: number }[];
+  // A4 波次调度（sinceLastElite: Infinity→null，恢复时还原）
+  spawnRemaining: number; spawnTimer: number; waveMonsterCount: number;
+  sinceLastElite: number | null; cavalryWave: boolean; cavalryWaveRatio: number;
+  waveMiniBoss: MiniBossKind | null; miniBossSpawnIdx: number;
+  wavePressure: PressurePlan | null; heroBossTimer: number; heroBossSpawnsThisWave: number;
+  bossWaves: number[]; bossScheduleThrough: number;
+  // A5 buff/技能/道具
+  mods: Modifiers; aiMods: Modifiers; aiFrqMul: number;
+  activeSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[];
+  aiActiveSlots: { id: string; cd: number; cdMax: number; ready: boolean; flash: number }[];
+  aiOffensiveDelay: Partial<Record<'meteor' | 'jinggu' | 'bomb', number>>;
+  meteorPending: boolean; aiMeteorPending: boolean;
+  pickedItems: string[]; aiPickedItems: string[]; passivesFlashedAtStart: boolean;
+  // A6 掉落/配对/AI 簿记
+  pendingWeaponPickups: string[]; battleFragmentDropId: string | null; battleFragmentDropped: boolean;
+  matchedHeroIdsThisGame: string[]; aiMatchedHeroIdsThisGame: string[];
+  heroMatchWaves: number[]; aiHeroMatchWaves: number[];
+  forceMatchThisGame: boolean; aiForceMatchThisGame: boolean;
+  recentMatchedHeroIds: string[];
+  aiRepositionTimer: number; aiLastRepositionPair: { a: Cell; b: Cell } | null; wasDangerNear: boolean;
+  // A7 强度（versusBand 类型即 versusRubberBand() 的返回类型 VersusRubberBand，
+  //        该类型未 import 到本文件，故用 ReturnType 取到同一类型，避免新增 import）
+  aiSkill: number; versusBand: ReturnType<typeof versusRubberBand>;
+  weaponBonuses: WeaponBonuses; aiWeaponBonuses: WeaponBonuses;
+  // A8 RNG（4 条内部状态）
+  rngS: number; aiRngS: number; aiSpawnRngS: number; bossScheduleRngS: number;
+}
+
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
 export class Battle {
@@ -8057,6 +8120,108 @@ export class Battle {
       monsterPow: Math.round(monsterPowTotal),
       message: this.message,
     };
+  }
+
+  /** 采集波次检查点全量核心状态（Map/Set→数组、RNG→uint32）。产物须经 JSON 落盘后再交给 applyCoreState。 */
+  serialize(): { config: BattleSaveConfig; core: BattleCoreState } {
+    return {
+      config: {
+        mapId: this.map.id,
+        difficultyMul: this.difficultyMul,
+        endless: this.endless,
+        aiAdjustIntervalScale: this.aiAdjustIntervalScale,
+      },
+      core: {
+        tangsengHP: this.tangsengHP, tangsengMaxHP: this.tangsengMaxHP, aiTangsengHP: this.aiTangsengHP,
+        aiDefeated: this.aiDefeated, tangsengHurtImmuneT: this.tangsengHurtImmuneT,
+        aiTangsengHurtImmuneT: this.aiTangsengHurtImmuneT, healUsedThisWave: this.healUsedThisWave,
+        aiHealUsedThisWave: this.aiHealUsedThisWave, wave: this.wave, status: this.status,
+        waveActive: this.waveActive, introT: this.introT, introDone: this.introDone, nextWaveTimer: this.nextWaveTimer,
+        peach: this.peach, aiPeach: this.aiPeach, shovels: this.shovels, aiShovels: this.aiShovels,
+        summonCost: this.summonCost, aiSummonCost: this.aiSummonCost, summonCount: this.summonCount, aiSummonCount: this.aiSummonCount,
+        summonsSinceShovel: this.summonsSinceShovel, summonsSinceWord: this.summonsSinceWord, summonsSincePair: this.summonsSincePair,
+        earlySummonWordsCap: this.earlySummonWordsCap, earlySummonWordsGuarantee: this.earlySummonWordsGuarantee, earlySummonShovels: this.earlySummonShovels,
+        aiSummonsSinceShovel: this.aiSummonsSinceShovel, aiSummonsSinceWord: this.aiSummonsSinceWord, aiSummonsSincePair: this.aiSummonsSincePair,
+        aiEarlySummonWordsCap: this.aiEarlySummonWordsCap, aiEarlySummonWordsGuarantee: this.aiEarlySummonWordsGuarantee, aiEarlySummonShovels: this.aiEarlySummonShovels,
+        wordCharCounts: [...this.wordCharCounts], aiWordCharCounts: [...this.aiWordCharCounts],
+        aiSummonTimer: this.aiSummonTimer, shovelTimer: this.shovelTimer, aiShovelTimer: this.aiShovelTimer,
+        plantTimer: this.plantTimer, plantBank: this.plantBank, gardenOn: this.gardenOn,
+        units: [...this.units], words: [...this.words], trees: [...this.trees],
+        unlocked: [...this.unlocked], generalStates: [...this.generalStates],
+        aiUnits: this.aiUnits, aiWords: [...this.aiWords], aiUnlocked: [...this.aiUnlocked],
+        aiGeneralStates: [...this.aiGeneralStates],
+        lastActivePairKeys: [...this.lastActivePairKeys], lastAiActivePairKeys: [...this.lastAiActivePairKeys],
+        tray: this.tray, aiTray: this.aiTray, monsters: this.monsters, aiMonsters: this.aiMonsters,
+        nextMonsterId: this.nextMonsterId, bombs: this.bombs, aiBombs: this.aiBombs,
+        spawnRemaining: this.spawnRemaining, spawnTimer: this.spawnTimer, waveMonsterCount: this.waveMonsterCount,
+        sinceLastElite: Number.isFinite(this.sinceLastElite) ? this.sinceLastElite : null,
+        cavalryWave: this.cavalryWave, cavalryWaveRatio: this.cavalryWaveRatio,
+        waveMiniBoss: this.waveMiniBoss, miniBossSpawnIdx: this.miniBossSpawnIdx,
+        wavePressure: this.wavePressure, heroBossTimer: this.heroBossTimer, heroBossSpawnsThisWave: this.heroBossSpawnsThisWave,
+        bossWaves: [...this.bossWaves], bossScheduleThrough: this.bossScheduleThrough,
+        mods: this.mods, aiMods: this.aiMods, aiFrqMul: this.aiFrqMul,
+        activeSlots: this.activeSlots, aiActiveSlots: this.aiActiveSlots, aiOffensiveDelay: this.aiOffensiveDelay,
+        meteorPending: this.meteorPending, aiMeteorPending: this.aiMeteorPending,
+        pickedItems: this.pickedItems, aiPickedItems: this.aiPickedItems, passivesFlashedAtStart: this.passivesFlashedAtStart,
+        pendingWeaponPickups: this.pendingWeaponPickups, battleFragmentDropId: this.battleFragmentDropId, battleFragmentDropped: this.battleFragmentDropped,
+        matchedHeroIdsThisGame: [...this.matchedHeroIdsThisGame], aiMatchedHeroIdsThisGame: [...this.aiMatchedHeroIdsThisGame],
+        heroMatchWaves: this.heroMatchWaves, aiHeroMatchWaves: this.aiHeroMatchWaves,
+        forceMatchThisGame: this.forceMatchThisGame, aiForceMatchThisGame: this.aiForceMatchThisGame,
+        recentMatchedHeroIds: [...this.recentMatchedHeroIds],
+        aiRepositionTimer: this.aiRepositionTimer, aiLastRepositionPair: this.aiLastRepositionPair, wasDangerNear: this.wasDangerNear,
+        aiSkill: this.aiSkill, versusBand: this.versusBand, weaponBonuses: this.weaponBonuses, aiWeaponBonuses: this.aiWeaponBonuses,
+        rngS: this.rng.getState(), aiRngS: this.aiRng.getState(), aiSpawnRngS: this.aiSpawnRng.getState(), bossScheduleRngS: this.bossScheduleRng.getState(),
+      },
+    };
+  }
+
+  /** 用存档核心状态覆盖当前实例（入参须为 JSON 往返后的纯数据）。特效字段留空由 step() 重建。 */
+  applyCoreState(c: BattleCoreState): void {
+    // 标量/布尔/枚举/纯数组/纯对象：直接赋值（parse 后已是新对象）
+    this.tangsengHP = c.tangsengHP; this.tangsengMaxHP = c.tangsengMaxHP; this.aiTangsengHP = c.aiTangsengHP;
+    this.aiDefeated = c.aiDefeated; this.tangsengHurtImmuneT = c.tangsengHurtImmuneT;
+    this.aiTangsengHurtImmuneT = c.aiTangsengHurtImmuneT; this.healUsedThisWave = c.healUsedThisWave;
+    this.aiHealUsedThisWave = c.aiHealUsedThisWave; this.wave = c.wave; this.status = c.status;
+    this.waveActive = c.waveActive; this.introT = c.introT; this.introDone = c.introDone; this.nextWaveTimer = c.nextWaveTimer;
+    this.peach = c.peach; this.aiPeach = c.aiPeach; this.shovels = c.shovels; this.aiShovels = c.aiShovels;
+    this.summonCost = c.summonCost; this.aiSummonCost = c.aiSummonCost; this.summonCount = c.summonCount; this.aiSummonCount = c.aiSummonCount;
+    this.summonsSinceShovel = c.summonsSinceShovel; this.summonsSinceWord = c.summonsSinceWord; this.summonsSincePair = c.summonsSincePair;
+    this.earlySummonWordsCap = c.earlySummonWordsCap; this.earlySummonWordsGuarantee = c.earlySummonWordsGuarantee; this.earlySummonShovels = c.earlySummonShovels;
+    this.aiSummonsSinceShovel = c.aiSummonsSinceShovel; this.aiSummonsSinceWord = c.aiSummonsSinceWord; this.aiSummonsSincePair = c.aiSummonsSincePair;
+    this.aiEarlySummonWordsCap = c.aiEarlySummonWordsCap; this.aiEarlySummonWordsGuarantee = c.aiEarlySummonWordsGuarantee; this.aiEarlySummonShovels = c.aiEarlySummonShovels;
+    this.aiSummonTimer = c.aiSummonTimer; this.shovelTimer = c.shovelTimer; this.aiShovelTimer = c.aiShovelTimer;
+    this.plantTimer = c.plantTimer; this.plantBank = c.plantBank; this.gardenOn = c.gardenOn;
+    this.aiUnits = c.aiUnits; this.tray = c.tray; this.aiTray = c.aiTray; this.monsters = c.monsters; this.aiMonsters = c.aiMonsters;
+    this.nextMonsterId = c.nextMonsterId; this.bombs = c.bombs; this.aiBombs = c.aiBombs;
+    this.spawnRemaining = c.spawnRemaining; this.spawnTimer = c.spawnTimer; this.waveMonsterCount = c.waveMonsterCount;
+    this.sinceLastElite = c.sinceLastElite == null || !Number.isFinite(c.sinceLastElite) ? Number.POSITIVE_INFINITY : c.sinceLastElite;
+    this.cavalryWave = c.cavalryWave; this.cavalryWaveRatio = c.cavalryWaveRatio;
+    this.waveMiniBoss = c.waveMiniBoss; this.miniBossSpawnIdx = c.miniBossSpawnIdx;
+    this.wavePressure = c.wavePressure; this.heroBossTimer = c.heroBossTimer; this.heroBossSpawnsThisWave = c.heroBossSpawnsThisWave;
+    this.bossScheduleThrough = c.bossScheduleThrough;
+    this.mods = c.mods; this.aiMods = c.aiMods; this.aiFrqMul = c.aiFrqMul;
+    this.activeSlots = c.activeSlots; this.aiActiveSlots = c.aiActiveSlots; this.aiOffensiveDelay = c.aiOffensiveDelay;
+    this.meteorPending = c.meteorPending; this.aiMeteorPending = c.aiMeteorPending;
+    this.pickedItems = c.pickedItems; this.aiPickedItems = c.aiPickedItems; this.passivesFlashedAtStart = c.passivesFlashedAtStart;
+    this.pendingWeaponPickups = c.pendingWeaponPickups; this.battleFragmentDropId = c.battleFragmentDropId; this.battleFragmentDropped = c.battleFragmentDropped;
+    this.heroMatchWaves = c.heroMatchWaves; this.aiHeroMatchWaves = c.aiHeroMatchWaves;
+    this.forceMatchThisGame = c.forceMatchThisGame; this.aiForceMatchThisGame = c.aiForceMatchThisGame;
+    this.recentMatchedHeroIds = c.recentMatchedHeroIds;
+    this.aiRepositionTimer = c.aiRepositionTimer; this.aiLastRepositionPair = c.aiLastRepositionPair; this.wasDangerNear = c.wasDangerNear;
+    this.aiSkill = c.aiSkill; this.versusBand = c.versusBand; this.weaponBonuses = c.weaponBonuses; this.aiWeaponBonuses = c.aiWeaponBonuses;
+    // Map：数组重建（parse 后的值对象已独立，无需再深拷贝）
+    this.units = new Map(c.units); this.words = new Map(c.words); this.trees = new Map(c.trees);
+    this.generalStates = new Map(c.generalStates); this.aiWords = new Map(c.aiWords); this.aiGeneralStates = new Map(c.aiGeneralStates);
+    this.wordCharCounts = new Map(c.wordCharCounts); this.aiWordCharCounts = new Map(c.aiWordCharCounts);
+    // Set（可重新赋值的）
+    this.unlocked = new Set(c.unlocked);
+    this.lastActivePairKeys = new Set(c.lastActivePairKeys); this.lastAiActivePairKeys = new Set(c.lastAiActivePairKeys);
+    this.matchedHeroIdsThisGame = new Set(c.matchedHeroIdsThisGame); this.aiMatchedHeroIdsThisGame = new Set(c.aiMatchedHeroIdsThisGame);
+    this.bossWaves = new Set(c.bossWaves);
+    // aiUnlocked 是 readonly 绑定：只能清空后逐个 add，不能整体赋值
+    this.aiUnlocked.clear(); for (const k of c.aiUnlocked) this.aiUnlocked.add(k);
+    // 4 条 RNG 内部状态回填
+    this.rng.setState(c.rngS); this.aiRng.setState(c.aiRngS); this.aiSpawnRng.setState(c.aiSpawnRngS); this.bossScheduleRng.setState(c.bossScheduleRngS);
   }
 }
 
