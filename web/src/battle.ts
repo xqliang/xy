@@ -5814,18 +5814,34 @@ export class Battle {
         u.buffAtkT = Math.max(0, (u.buffAtkT ?? 0) - dt);
         if (u.buffAtkT <= 0) u.buffAtkMul = undefined;
       }
+      // 减益计时衰减（镜像玩家侧 updateUnits；AI 侧此前无怪物施法，这些字段从未被消费）
+      if (u.stunT > 0) u.stunT = Math.max(0, u.stunT - dt);
+      if (u.slowT > 0) u.slowT = Math.max(0, u.slowT - dt);
+      if (u.weakenT > 0) u.weakenT = Math.max(0, u.weakenT - dt);
+      if (u.rangeCutT > 0) u.rangeCutT = Math.max(0, u.rangeCutT - dt);
+      if (u.knockdownT > 0) u.knockdownT = Math.max(0, u.knockdownT - dt);
+      if (u.stunImmuneT > 0) u.stunImmuneT = Math.max(0, u.stunImmuneT - dt);
+      if (u.slowImmuneT > 0) u.slowImmuneT = Math.max(0, u.slowImmuneT - dt);
+      if (u.weakenImmuneT > 0) u.weakenImmuneT = Math.max(0, u.weakenImmuneT - dt);
+      if (u.rangeCutImmuneT > 0) u.rangeCutImmuneT = Math.max(0, u.rangeCutImmuneT - dt);
+      if (u.knockdownImmuneT > 0) u.knockdownImmuneT = Math.max(0, u.knockdownImmuneT - dt);
+      if (u.stunT > 0 || u.knockdownT > 0) continue; // 定身/倒下：本帧无法攻击（冷却也不推进）
       u.cooldown -= dt;
       if (u.cooldown > 0) continue;
       const stat = getUnitStat(u.type, u.tier);
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0; // 用 AI 独立随机流，不扰动玩家 rng
       const maxTargets = Math.max(1, base + extra);
-      const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p));
+      // 缠丝：有效射程 -webbindRangeCut（最低 rangeTolerance，仍可与相邻格相交命中）
+      const effRge = u.rangeCutT > 0
+        ? Math.max(TUNING.rangeTolerance, stat.rge - TUNING.webbindRangeCut)
+        : stat.rge;
+      const inRangeRaw = monsterPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, effRge, x.p));
       if (inRangeRaw.length === 0) continue;
       const inRange = this.sortCombatTargets(inRangeRaw);
-      // 仙丹增伤 + 大圣羁绊 + 老君炼丹增益（与玩家侧同一套计算）
+      // 弱身减攻 + 仙丹增伤 + 大圣羁绊 + 老君炼丹增益（与玩家侧同一套计算）
       const heroAtkBuff = (u.buffAtkT ?? 0) > 0 ? (u.buffAtkMul ?? 1) : 1;
-      const dmg = damage(stat.atk * this.aiMods.atkMul * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul() * heroAtkBuff);
+      const dmg = damage(stat.atk * this.aiMods.atkMul * (u.weakenT > 0 ? TUNING.weakenAtkMul : 1) * (u.pillAtk ? TUNING.atkBuffMul : 1) * this.aiBondAtkMul() * heroAtkBuff);
       const color = this.unitColor(u.type);
       let hit = 0;
       for (const t of inRange) {
@@ -5843,7 +5859,8 @@ export class Battle {
         const tp = inRange[0]!.p;
         u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c);
       }
-      u.cooldown = 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1));
+      // 迟滞减速：拉长攻击间隔（镜像玩家侧 slowCooldownMul）
+      u.cooldown = (1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1))) * (u.slowT > 0 ? TUNING.slowCooldownMul : 1);
     }
   }
 
@@ -5978,6 +5995,7 @@ export class Battle {
       this.tickAiActives();
     }
     this.updateAiUnits(dt);
+    this.updateAiMonsterSkills(dt); // AI 半场怪物对 AI 兵器施减益（镜像玩家侧 updateMonsterSkills）
     this.updateAiGenerals(dt);
     // 4) 怪物推进 + 漏怪扣血 + 击杀产桃（基础经济）
     if (this.aiTangsengHurtImmuneT > 0) {
@@ -6675,12 +6693,12 @@ export class Battle {
     return lo + this.rng.int(hi - lo + 1);
   }
 
-  /** 半径内按距离取最近的若干兵器（至多 count 把） */
-  private nearestUnitsInRadius(c: number, r: number, radius: number, count: number): PlacedUnit[] {
+  /** 半径内按距离取最近的若干兵器（至多 count 把）。units 显式传入：玩家侧传 this.units.values()，AI 侧传 this.aiUnits */
+  private nearestUnitsInRadius(units: Iterable<PlacedUnit>, c: number, r: number, radius: number, count: number): PlacedUnit[] {
     const max = Math.max(0, Math.floor(count));
     if (max <= 0) return [];
     const hit: { u: PlacedUnit; d: number }[] = [];
-    for (const u of this.units.values()) {
+    for (const u of units) {
       const d = Math.hypot(c - u.cell.c, r - u.cell.r);
       if (d > radius) continue;
       hit.push({ u, d });
@@ -6692,7 +6710,15 @@ export class Battle {
   /** 单次怪物控制技：随机 1~2 把，在 skillRadius 内取最近 */
   private pickSkillTargets(c: number, r: number): PlacedUnit[] {
     const want = this.rollSkillTargetCount();
-    return this.nearestUnitsInRadius(c, r, TUNING.skillRadius, want);
+    return this.nearestUnitsInRadius(this.units.values(), c, r, TUNING.skillRadius, want);
+  }
+
+  /** AI 半场版目标选取：aiUnits + AI 独立随机流（不扰动玩家 rng / 对战回放确定性） */
+  private pickAiSkillTargets(c: number, r: number): PlacedUnit[] {
+    const lo = TUNING.skillTargetMin;
+    const hi = TUNING.skillTargetMax;
+    const want = hi <= lo ? lo : lo + this.aiRng.int(hi - lo + 1);
+    return this.nearestUnitsInRadius(this.aiUnits, c, r, TUNING.skillRadius, want);
   }
 
   private castMiniBossSkill(m: Monster): void {
@@ -6812,8 +6838,97 @@ export class Battle {
     }
   }
 
-  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): boolean {
-    switch (skill) {
+  // AI 侧怪物施法（单机对手半场）：镜像 updateMonsterSkills——上半场的精英/BOSS 同样对 AI 兵器
+  // 施加地图减益，小 Boss 中 frost/blight/quake/gale/blood 同步镜像。此前 AI 侧完全没有施法逻辑，
+  // 上半场带「定/迟/弱/网」环的怪走到 AI 兵器旁也毫无效果（旧观感：debuff 不生效）。
+  // 与玩家侧的差异：
+  //   - 不发底部 message（那是我方半场的提示通道，对手半场事件不该顶掉我的提示）；
+  //   - 爆点用 aiMonsterPos 的镜像格（共享 bursts 数组按原始坐标渲染 → 落在上半场）；
+  //   - lion（黄狮精卷走）暂不镜像：涉及删除 AI 布阵 + 自动布阵记忆清理，收益低风险高，
+  //     对手半场的黄狮精维持「只当普通怪走场」。
+  // PvP 不经过这里：updateAi 在 pvp 下整体早退，对手半场的施法由对手客户端权威 sim 执行、
+  // 状态随快照 units 整对象传回本端渲染。
+  private updateAiMonsterSkills(dt: number): void {
+    for (const m of this.aiMonsters) {
+      if (m.hp <= 0) continue;
+      m.castFlash = Math.max(0, m.castFlash - dt * 4);
+      // 小 Boss 光环
+      if (m.isMiniBoss && m.miniBossKind) {
+        if (m.miniBossCasted || m.miniBossKind === 'lion') continue; // lion 不镜像（见上）
+        m.skillCd -= dt;
+        if (m.skillCd > 0) continue;
+        m.skillCd = TUNING.miniBossInterval;
+        this.castAiMiniBossSkill(m);
+        continue;
+      }
+      // 精英 / 妖王：地图专属减益（半径内随机 1~2 把最近 AI 兵器）
+      if (!m.skill) continue;
+      m.skillCd -= dt;
+      if (m.skillCd > 0) continue;
+      m.skillCd = TUNING.skillInterval;
+      const mp = this.aiMonsterPos(m);
+      let affected = 0;
+      for (const target of this.pickAiSkillTargets(mp.c, mp.r)) {
+        if (this.applyUnitStatus(target, m.skill)) affected++;
+      }
+      if (affected > 0) {
+        m.castFlash = 1;
+        this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.4, maxTtl: 0.4, big: true, color: SKILL_META[m.skill].color });
+      }
+    }
+  }
+
+  // AI 半场小 Boss 光环：frost/blight/quake 打 AI 兵器，gale/blood 增益其它 AI 怪（与玩家侧同口径同数值）
+  private castAiMiniBossSkill(m: Monster): void {
+    const kind = m.miniBossKind;
+    if (!kind) return;
+    const meta = MINI_BOSS_META[kind];
+    const mp = this.aiMonsterPos(m);
+    let affected = 0;
+    switch (kind) {
+      case 'frost':
+      case 'blight':
+      case 'quake': {
+        const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
+        for (const target of this.pickAiSkillTargets(mp.c, mp.r)) {
+          if (this.applyUnitStatus(target, status)) affected++;
+        }
+        break;
+      }
+      case 'gale': {
+        for (const o of this.aiMonsters) {
+          if (o.id === m.id || o.hp <= 0) continue;
+          if (Math.hypot(mp.c - this.aiMonsterPos(o).c, mp.r - this.aiMonsterPos(o).r) > TUNING.miniBossRadius) continue;
+          o.hasteT = Math.max(o.hasteT, TUNING.hasteDur);
+          affected++;
+        }
+        break;
+      }
+      case 'blood': {
+        for (const o of this.aiMonsters) {
+          if (o.id === m.id || o.hp <= 0) continue;
+          if (Math.hypot(mp.c - this.aiMonsterPos(o).c, mp.r - this.aiMonsterPos(o).r) > TUNING.miniBossRadius) continue;
+          o.hp = Math.min(o.maxHp, o.hp + o.maxHp * TUNING.healPct);
+          o.healFlash = 1;
+          affected++;
+        }
+        break;
+      }
+      case 'lion':
+        break; // 入口（updateAiMonsterSkills）已排除 lion，仅做穷尽收窄
+      default: {
+        const _exhaustive: never = kind;
+        void _exhaustive;
+        break;
+      }
+    }
+    if (affected > 0) {
+      m.castFlash = 1;
+      this.bursts.push({ kind: 'hit', c: mp.c, r: mp.r, ttl: 0.45, maxTtl: 0.45, big: true, color: meta.color });
+    }
+  }
+
+  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): boolean {    switch (skill) {
       case 'stun': return this.applyUnitStatus(u, 'stun');
       case 'slow': return this.applyUnitStatus(u, 'slow');
       case 'weaken': return this.applyUnitStatus(u, 'weaken');
