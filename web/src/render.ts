@@ -2444,6 +2444,68 @@ function drawGroundShadow(
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
+// 冰封定身：怪物脚下冒出一圈白色尖角冰晶（纯渲染视觉，状态由 battle 的 frozenT 驱动）。
+// 淡入淡出：刚冻住 0.18s 内「长出」、解冻前 0.45s 「融化」；冰晶高低/朝向按怪物 id + dist 伪随机
+// 打散（冻住期间 dist 不变 → 同一怪每帧渲染稳定不闪烁）。画在立绘之后 → 冰晶压住脚踝，像站在冰碴里。
+function drawFrozenIceShards(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rad0: number,
+  m: { id?: number; dist: number; frozenT?: number },
+): void {
+  const fT = m.frozenT ?? 0;
+  if (fT <= 0) return;
+  const elapsed = TUNING.freezeStunDur - fT; // 已冻结秒数
+  const vis = Math.max(0, Math.min(1, Math.min(elapsed / 0.18, fT / 0.45)));
+  if (vis <= 0) return;
+  const baseY = y + rad0 * 0.6; // 脚踝位置（立绘底部）
+  const seed = (m.id ?? 0) + Math.floor(m.dist * 10);
+  ctx.save();
+  ctx.globalAlpha = vis;
+  // 冰面底盘：脚下半透明淡青椭圆，先压住「站在冰上」的底色
+  const g = ctx.createRadialGradient(x, baseY, 0, x, baseY, rad0 * 1.2);
+  g.addColorStop(0, 'rgba(226,247,255,0.8)');
+  g.addColorStop(0.65, 'rgba(186,233,255,0.35)');
+  g.addColorStop(1, 'rgba(186,233,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(x, baseY, rad0 * 1.2, rad0 * 0.52, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 尖角冰晶：绕脚前半圈（屏幕下方可见），身前高、两侧矮，高低再按 seed 起伏
+  const N = 7;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const ang = Math.PI * (0.1 + 0.8 * t); // 0.1π..0.9π：椭圆下半圈参数角
+    const px = x + Math.cos(ang) * rad0;
+    const py = baseY + Math.sin(ang) * rad0 * 0.4;
+    const rnd = Math.sin(seed * 97.31 + i * 41.73) * 0.5 + 0.5; // 0..1 稳定伪随机
+    const h = rad0 * (0.3 + 0.45 * Math.sin(Math.PI * t) + 0.25 * rnd);
+    const w = h * 0.42;
+    const tilt = Math.cos(ang) * h * 0.3; // 尖端略向外倾，更像崩开的冰碴
+    // 整块冰晶（白）+ 描边
+    ctx.beginPath();
+    ctx.moveTo(px - w / 2, py);
+    ctx.lineTo(px + tilt, py - h);
+    ctx.lineTo(px + w / 2, py);
+    ctx.closePath();
+    ctx.fillStyle = '#f2fbff';
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(120,195,250,0.8)';
+    ctx.stroke();
+    // 右半面淡青阴影，做出棱柱立体感
+    ctx.beginPath();
+    ctx.moveTo(px + tilt, py - h);
+    ctx.lineTo(px + w / 2, py);
+    ctx.lineTo(px + Math.max(0, tilt), py);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(150,215,255,0.55)';
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawMonsterAt(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -2451,6 +2513,7 @@ function drawMonsterAt(
   rad0: number,
   m: {
     dist: number;
+    id?: number;
     hp: number;
     maxHp: number;
     isBoss: boolean;
@@ -2462,6 +2525,7 @@ function drawMonsterAt(
     castFlash: number;
     spawnT: number;
     stunT?: number;
+    frozenT?: number;
     slowT?: number;
     hasteT?: number;
     healFlash?: number;
@@ -2559,6 +2623,8 @@ function drawMonsterAt(
     ctx.fillStyle = m.isBoss ? '#b02a5b' : '#b05a2a';
     ctx.fill();
   }
+  // 冰封定身：脚下白色尖角冰晶（画在立绘后压住脚踝；frozenT 只有冰冻技能写入，武将定身不出冰）
+  drawFrozenIceShards(ctx, x, y, rad0, m);
   // 墨风血条：深墨底条 + 朱红填充
   const bw = rad0 * 2;
   const hpPct = Math.max(0, m.hp / m.maxHp);

@@ -116,4 +116,41 @@ describe('主动技能专属特效', () => {
     expect(b.triggerActive(0)).toBe(true);
     expect(b.playerSkillFx?.kind).toBe('freeze');
   });
+
+  it('冰封同时写入 frozenT（脚下冰晶视觉源），随定身同步衰减到 0', () => {
+    const b = new Battle(1, 1, undefined, undefined, undefined, ['act_freeze'], [], false);
+    b.introDone = true;
+    b.status = 'playing';
+    b.activeSlots[0]!.cd = 0;
+    b.activeSlots[0]!.ready = true;
+    b.monsters = [{
+      id: 1, dist: 3, hp: 20, maxHp: 20, spd: 0, isBoss: false, isMiniBoss: false,
+      miniBossKind: null, isCavalry: false, hitFlash: 0, skill: null, skillCd: 99,
+      castFlash: 0, spawnT: 1, stunT: 0, slowT: 0, hasteT: 0, healFlash: 0, burnT: 0, burnDps: 0,
+    }];
+    expect(b.triggerActive(0)).toBe(true);
+    expect(b.monsters[0]!.frozenT).toBe(TUNING.freezeStunDur);
+    expect(b.monsters[0]!.stunT).toBe(TUNING.freezeStunDur);
+    // 推进：frozenT 与 stunT 同步衰减（渲染据此做冰晶淡出）
+    for (let t = 0; t < 0.5; t += 1 / 60) b.step(1 / 60);
+    expect(b.monsters[0]!.frozenT).toBeCloseTo(b.monsters[0]!.stunT, 5);
+    // 冻满全程后两者都归零
+    for (let t = 0; t < TUNING.freezeStunDur; t += 1 / 60) b.step(1 / 60);
+    expect(b.monsters[0]!.frozenT).toBe(0);
+  });
+
+  it('武将定身（hero stun）只写 stunT 不写 frozenT —— 脚下不出冰', () => {
+    const b = new Battle(1, 1, undefined, undefined, undefined, [], [], false);
+    b.introDone = true;
+    b.status = 'playing';
+    const m = {
+      id: 1, dist: 3, hp: 999, maxHp: 999, spd: 0, isBoss: false, isMiniBoss: false,
+      miniBossKind: null, isCavalry: false, hitFlash: 0, skill: null, skillCd: 99,
+      castFlash: 0, spawnT: 1, stunT: 1, slowT: 0, hasteT: 0, healFlash: 0, burnT: 0, burnDps: 0,
+    };
+    b.monsters = [m];
+    b.step(1 / 60); // 定身路径：stunT 衰减、frozenT 不被凭空写出
+    expect(m.stunT).toBeLessThan(1);
+    expect(m.frozenT).toBeUndefined();
+  });
 });

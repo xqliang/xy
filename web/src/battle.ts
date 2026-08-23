@@ -691,6 +691,7 @@ export interface Monster {
   castFlash: number; // 施法闪光(1→0)，用于渲染
   spawnT: number; // 出生后经过秒数（用于"由小变大崩出"入场缩放）
   stunT: number; // 被武将定身剩余(秒)：>0 时不前进
+  frozenT: number; // 被冰封定身剩余(秒)：与 stunT 并行衰减，仅供渲染（脚下冰晶）；只有冰冻技能写入，武将定身/哮天犬不写
   slowT: number; // 被武将减速剩余(秒)：>0 时移速降低
   hasteT: number; // 疾风加速剩余(秒)：>0 时移速提高
   healFlash: number; // 刚被血泉治疗的闪光(1→0)，用于 UI
@@ -5737,6 +5738,7 @@ export class Battle {
       castFlash: 0,
       spawnT: 0,
       stunT: 0,
+      frozenT: 0,
       slowT: 0,
       hasteT: 0,
       healFlash: 0,
@@ -5991,6 +5993,7 @@ export class Battle {
       } // 击杀产桃（精英/小Boss/大Boss 分档，对齐玩家语义）
       if (m.stunT > 0) {
         m.stunT = Math.max(0, m.stunT - dt);
+        if (m.frozenT > 0) m.frozenT = Math.max(0, m.frozenT - dt); // 冰晶视觉与定身同步融化
       } else if (!this.aiPalmPushFx) {
         m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
           * (this.aiMonsterInMudZone(m) ? 0.82 : 1) * dt;
@@ -6923,7 +6926,10 @@ export class Battle {
         this.emit('item');
         break;
       case 'freeze': {
-        for (const m of this.aiMonsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+        for (const m of this.aiMonsters) {
+          m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+          m.frozenT = Math.max(m.frozenT ?? 0, TUNING.freezeStunDur); // 视觉：脚下冰晶（AI 半场；??0 防测试/旧快照缺字段得 NaN）
+        }
         const fc = this.frontMonsterCell(true);
         if (fc) this.setSkillFx('freeze', fc, true);
         this.emit('item');
@@ -7125,7 +7131,10 @@ export class Battle {
         this.emit('ult');
         break;
       case 'freeze': {
-        for (const m of this.monsters) m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+        for (const m of this.monsters) {
+          m.stunT = Math.max(m.stunT, TUNING.freezeStunDur);
+          m.frozenT = Math.max(m.frozenT ?? 0, TUNING.freezeStunDur); // 视觉：脚下冰晶（渲染读，不动逻辑；??0 防缺字段得 NaN）
+        }
         const fc = this.frontMonsterCell(false);
         if (fc) this.setSkillFx('freeze', fc, false);
         this.message = '冰封定身！';
@@ -7213,6 +7222,7 @@ export class Battle {
       // 武将控制：定身期间不前进；减速减半、疾风加速
       if (m.stunT > 0) {
         m.stunT = Math.max(0, m.stunT - dt);
+        if (m.frozenT > 0) m.frozenT = Math.max(0, m.frozenT - dt); // 冰晶视觉与定身同步融化
       } else if (!this.palmPushFx) {
         const mudMul = this.monsterInMudZone(m) ? 0.82 : 1; // 淤泥：出怪口附近减速
         const slowMul = m.slowT > 0 ? 0.5 : 1;
