@@ -887,7 +887,7 @@ export class DevToolsPanel {
   private renderMonster(body: HTMLElement): void {
     const hint = document.createElement('p');
     hint.className = 'xy-dt-hint';
-    hint.textContent = '出怪血量波次、精英/Boss、怪物技能、承压比、击杀掉桃。SPAWN_INTERVAL_MIN（BOARD_POWER）与 spawnIntervalMin（TUNING）不同源：实战读后者。';
+    hint.textContent = '出怪血量波次、精英/Boss、妖王技能（定身/CD 等）、承压比、击杀掉桃。妖王技能数值在「妖王/精英技能」组（技能按地图固定：白骨岭定身·流沙河迟滞·火焰山弱身·盘丝洞缠丝）。SPAWN_INTERVAL_MIN（BOARD_POWER）与 spawnIntervalMin（TUNING）不同源：实战读后者。';
     body.appendChild(hint);
     const actions = document.createElement('div');
     actions.className = 'xy-dt-actions';
@@ -899,10 +899,10 @@ export class DevToolsPanel {
     body.appendChild(section('TUNING · 血量 / 波次 / 移速'));
     body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_WAVE_KEYS.has(k)));
 
-    body.appendChild(section('TUNING · 精英 / Boss / 骑兵 / 引妖王'));
+    body.appendChild(section('TUNING · 精英 / 妖王血量护卫 / 小Boss / 骑兵 / 引妖王'));
     body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_ELITE_KEYS.has(k)));
 
-    body.appendChild(section('TUNING · 怪物技能与控制'));
+    body.appendChild(section('TUNING · 妖王/精英技能（定身·迟滞·弱身·缠丝）与 CD'));
     body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_SKILL_KEYS.has(k)));
 
     body.appendChild(section('承压 BOARD_POWER'));
