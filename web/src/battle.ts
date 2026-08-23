@@ -955,12 +955,18 @@ export class Battle {
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   damageFloats: DamageFloat[] = []; // 受击伤害飘字
   // —— #2 对手半场战斗反馈本地补演（PvP 专用；见 stepOpponentJuice）——
-  // 对手是快照木偶（bridge 每帧整体重建 aiUnits/aiMonsters），其战斗 sim 不在本机跑：用「已在快照里的
-  // 权威数据」（aiMonsters.hp 离散 / 成员表 / aiTangsengHP）本地补演伤害飘字、击杀加桃、武器出招脉冲——
-  // 不算伤害（伤害/死亡以服务端快照为准）。这些态跨帧持久（不入快照、不被 bridge 重建），故单列于此；
-  // 飘字/特效/爆点复用共享数组（this.fx/damageFloats/peachFloats/bursts，坐标即 AI 半场镜像格，直接渲染）。
+  // 对手是快照木偶（bridge 每帧整体重建 aiUnits/aiMonsters），其战斗 sim 不在本机跑：
+  //   1) 兵器/英雄普攻动效由本地「视觉模拟」驱动——按真实攻击间隔本地出招（只发攻击特效 +
+  //      出招脉冲 + 朝向，不落任何伤害；hp/生死以服务端快照为准）；
+  //   2) 伤害飘字用快照权威 hp 帧间下降补（数值真实）、击杀加桃飘字 + death 爆点用成员表消失补；
+  //   3) firePulse 本地衰减并回写，摆脱采样「保持样本」造成的兵器冻结/一顿一顿。
+  // 这些态跨帧持久（不入快照、不被 bridge 重建），故单列于此；特效复用共享数组
+  // （this.fx/damageFloats/peachFloats/bursts，坐标即 AI 半场镜像格，直接渲染）。
   private aiJuiceLastMs = -1; // 上次补演时刻(ms)，算 dt（-1=未初始化）
-  private readonly aiUnitPulse = new Map<string, number>(); // cellKey → 出招脉冲[0..1]，本地衰减 + 每帧回写 aiUnits.firePulse
+  private readonly aiUnitPulse = new Map<string, number>(); // cellKey → 兵器出招脉冲[0..1]，本地衰减 + 每帧回写 aiUnits.firePulse
+  private readonly aiUnitAtkCd = new Map<string, number>(); // cellKey → 兵器本地视觉攻击冷却剩余(秒)；首见用快照 cooldown 做种子
+  private readonly aiGeneralPulse = new Map<string, number>(); // heroPairKey → 英雄出招脉冲[0..1]，本地衰减 + 回写武将 state.firePulse
+  private readonly aiGeneralAtkCd = new Map<string, number>(); // heroPairKey → 英雄本地视觉普攻冷却剩余(秒)；首见用快照 cooldown 做种子
   private readonly aiMonHpSeen = new Map<number, number>(); // 怪 id → 上次快照 hp（帧间掉血检测）
   private aiPrevTangsengHP = -1; // 上帧对手唐僧血（漏怪计数，-1=未初始化）
   private aiMonPrev: { id: number; dist: number; isBoss: boolean; isMiniBoss: boolean; isElite: boolean; c: number; r: number }[] = []; // 上帧怪成员（死亡检测：消失=被杀/漏）
@@ -1942,11 +1948,14 @@ export class Battle {
 
   /**
    * #2 对手半场战斗反馈本地补演（每帧渲染前、bridge 之后调用；仅 PvP）。
-   * 契约：只用快照权威数据补「视觉」，从不改怪物 hp / 判定生死（那些以服务端快照为准）。
-   *  1) hp 帧间下降（hp 取 cur、快照切换才变，故每次切换只离散触发一次）→ 伤害飘字 + 命中特效
-   *     + 最近在射程内单位出招脉冲；
-   *  2) 怪从成员表消失 → 击杀加桃飘字 + death 爆点（漏怪：靠 aiTangsengHP 降幅甄别，不加桃）；
-   *  3) firePulse 本地衰减并回写到 bridge 重建后的 aiUnits，摆脱采样「保持样本」造成的兵器冻结。
+   * 契约：视觉本地演，数值服务端定——普攻特效/出招脉冲/朝向本地模拟（不落伤害），
+   * hp/生死/掉血飘字数值全部以服务端快照为准：
+   *  1) 兵器/英雄普攻本地视觉模拟：按真实攻击间隔（frq × 增益）出招——只发攻击特效 + 出招脉冲 +
+   *     fireDir 朝向；冷却存本地表（首见用快照 cooldown 做种子对齐起步节奏），之后不读快照样本
+   *     （aiUnits/aiGeneralStates 每帧被 bridge 整体重建，样本是 100ms 前的旧值，逐帧读会被卡住）；
+   *  2) hp 帧间下降（hp 取 cur、快照切换才变，故每次切换只离散触发一次）→ 伤害飘字（数值真实）；
+   *  3) 怪从成员表消失 → 击杀加桃飘字 + death 爆点（漏怪：靠 aiTangsengHP 降幅甄别，不加桃）；
+   *  4) firePulse 本地衰减并回写到 bridge 重建后的 aiUnits/武将 state，摆脱采样「保持样本」造成的冻结。
    * @param nowMs 本机当前时刻（与 bridge 同源 Date.now()）
    */
   stepOpponentJuice(nowMs: number): void {
@@ -1954,25 +1963,103 @@ export class Battle {
     const dt = this.aiJuiceLastMs < 0 ? 0 : Math.max(0, Math.min(0.1, (nowMs - this.aiJuiceLastMs) / 1000));
     this.aiJuiceLastMs = nowMs;
 
-    // (1) 衰减上帧脉冲（非骑兵 6/s，与 updateFx 同口径；纯视觉，不影响任何数值）
+    // (1) 衰减上帧脉冲（6/s，与 updateFx 同口径；纯视觉，不影响任何数值）
     for (const [k, p] of this.aiUnitPulse) {
       const np = p - dt * 6;
       if (np <= 0.02) this.aiUnitPulse.delete(k);
       else this.aiUnitPulse.set(k, np);
     }
+    for (const [k, p] of this.aiGeneralPulse) {
+      const np = p - dt * 6;
+      if (np <= 0.02) this.aiGeneralPulse.delete(k);
+      else this.aiGeneralPulse.set(k, np);
+    }
 
+    const monPos = this.aiMonsters.map((m) => ({ m, p: this.aiMonsterPos(m) }));
+    const generals = this.aiActiveGenerals();
+
+    // (2) 兵器普攻本地视觉模拟：只发特效 + 脉冲 + 朝向，不扣 hp（镜像 updateAiUnits 的取值口径）
+    const unitKeys = new Set<string>();
+    for (const u of this.aiUnits) {
+      const key = cellKey(u.cell.c, u.cell.r);
+      unitKeys.add(key);
+      // 首见（对手新部署/换格）：以快照带来的真实剩余 CD 为种子，让本地节奏与对手真实节奏同起步
+      if (!this.aiUnitAtkCd.has(key)) this.aiUnitAtkCd.set(key, Math.max(0, u.cooldown ?? 0));
+      const cd = (this.aiUnitAtkCd.get(key) ?? 0) - dt;
+      if (cd > 0) { this.aiUnitAtkCd.set(key, cd); continue; }
+      const stat = getUnitStat(u.type, u.tier);
+      const inRange = this.sortCombatTargets(monPos.filter((x) => inAttackRange(u.cell.c, u.cell.r, stat.rge, x.p)));
+      if (inRange.length === 0) { this.aiUnitAtkCd.set(key, 0); continue; } // 圈内无怪憋招：进怪立刻打（与本地口径一致）
+      const base = Math.floor(stat.targets);
+      const maxTargets = Math.max(1, base + (this.aiRng.next() < stat.targets - base ? 1 : 0));
+      const ttl = this.attackFxTtl(u.type, u.tier);
+      const color = this.unitColor(u.type);
+      let hit = 0;
+      for (const t of inRange) {
+        if (hit >= maxTargets) break;
+        this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: t.p, ttl, maxTtl: ttl, color, wtype: u.type, tier: u.tier });
+        hit++;
+      }
+      this.aiUnitPulse.set(key, 1);
+      const tp = inRange[0]!.p;
+      u.fireDir = Math.atan2(tp.r - u.cell.r, tp.c - u.cell.c); // 朝首个目标（镜像坐标系同系，立绘/兵器随之转向）
+      this.aiUnitAtkCd.set(key, 1 / (stat.frq * this.aiFrqMul * this.aiMods.frqMul * (u.pillFrq ? TUNING.frqBuffMul : 1)));
+    }
+    // 单位移除/换格：清残留键，防泄漏（换格后旧键会因「首见」重新用快照 CD 做种子，天然对齐）
+    for (const k of [...this.aiUnitAtkCd.keys()]) if (!unitKeys.has(k)) this.aiUnitAtkCd.delete(k);
+    for (const k of [...this.aiUnitPulse.keys()]) if (!unitKeys.has(k)) this.aiUnitPulse.delete(k);
+
+    // (3) 英雄普攻本地视觉模拟（镜像 (2)）：攻击起点=两格中点，特效带 heroId/品质色（pushGeneralAttackFx 同口径）。
+    //     英雄大招不在此模拟——大招特效已由快照 fx（kind='ult'/'dog'）随服务端同步重建，本地只补普攻。
+    const genKeys = new Set<string>();
+    for (const g of generals) {
+      const key = Battle.heroPairKey(g.cells[0]!, g.cells[1]!);
+      genKeys.add(key);
+      if (!this.aiGeneralAtkCd.has(key)) this.aiGeneralAtkCd.set(key, Math.max(0, g.state.cooldown ?? 0));
+      const ax = (g.cells[0]!.c + g.cells[1]!.c) / 2;
+      const ay = (g.cells[0]!.r + g.cells[1]!.r) / 2;
+      const cd = (this.aiGeneralAtkCd.get(key) ?? 0) - dt;
+      if (cd > 0) { this.aiGeneralAtkCd.set(key, cd); continue; }
+      const inRange = this.sortCombatTargets(monPos.filter((x) => inAttackRange(ax, ay, this.aiGeneralRge(g), x.p)));
+      if (inRange.length === 0) { this.aiGeneralAtkCd.set(key, 0); continue; } // 憋招
+      const stat = generalStat(g.def, g.tier);
+      const base = Math.floor(stat.targets);
+      const maxTargets = Math.max(1, base + (this.aiRng.next() < stat.targets - base ? 1 : 0));
+      let hit = 0;
+      for (const t of inRange) {
+        if (hit >= maxTargets) break;
+        this.pushGeneralAttackFx(g, t.p); // 只发特效，不结算伤害/经验
+        hit++;
+      }
+      this.aiGeneralPulse.set(key, 1);
+      const tp = inRange[0]!.p;
+      g.state.fireDir = Math.atan2(tp.r - ay, tp.c - ax);
+      const frq = stat.frq * (1 + (this.aiWeaponBonuses[g.def.id]?.frq ?? 0));
+      this.aiGeneralAtkCd.set(key, 1 / (frq * this.aiMods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1)));
+    }
+    for (const k of [...this.aiGeneralAtkCd.keys()]) if (!genKeys.has(k)) this.aiGeneralAtkCd.delete(k);
+    for (const k of [...this.aiGeneralPulse.keys()]) if (!genKeys.has(k)) this.aiGeneralPulse.delete(k);
+
+    // (4) 回写脉冲到 bridge 重建后的 aiUnits / 武将 state（drawAiSide 读 firePulse 画挥砍/跳起动画）
+    for (const u of this.aiUnits) u.firePulse = this.aiUnitPulse.get(cellKey(u.cell.c, u.cell.r)) ?? 0;
+    for (const g of generals) g.state.firePulse = this.aiGeneralPulse.get(Battle.heroPairKey(g.cells[0]!, g.cells[1]!)) ?? 0;
+
+    // (5) 掉血检测：同 id 的 hp 较上次快照下降 → 只补「伤害飘字」（数值以服务端为准；
+    //     命中特效已由 (2)/(3) 本地按真实节奏模拟，不再按掉血离散归因——那样会把特效打成一坨、
+    //     且归因到「射程内最近单位」经常张冠李戴）
     const curById = new Map<number, Monster>();
     for (const m of this.aiMonsters) curById.set(m.id, m);
-
-    // (2) 掉血检测：同 id 的 hp 较上次快照下降 → 伤害飘字 + 命中特效 + 归因单位出招
     for (const m of this.aiMonsters) {
       const prevHp = this.aiMonHpSeen.get(m.id);
-      if (prevHp != null && m.hp < prevHp - 0.5) this.spawnAiHitJuice(this.aiMonsterPos(m), prevHp - m.hp);
+      if (prevHp != null && m.hp < prevHp - 0.5) {
+        const p = this.aiMonsterPos(m);
+        this.spawnDamageFloat(p.c, p.r, prevHp - m.hp);
+      }
       this.aiMonHpSeen.set(m.id, m.hp);
     }
     for (const id of [...this.aiMonHpSeen.keys()]) if (!curById.has(id)) this.aiMonHpSeen.delete(id);
 
-    // (3) 死亡检测：上帧在、本帧消失 = 被杀或漏怪。漏怪数 = 对手唐僧掉血量；消失怪按 dist 降序，
+    // (6) 死亡检测：上帧在、本帧消失 = 被杀或漏怪。漏怪数 = 对手唐僧掉血量；消失怪按 dist 降序，
     //     最靠近终点的 `leaks` 判漏怪（不加桃），其余判击杀（加桃）。
     const leaks = this.aiPrevTangsengHP < 0 ? 0 : Math.max(0, this.aiPrevTangsengHP - this.aiTangsengHP);
     const vanished = this.aiMonPrev.filter((pm) => !curById.has(pm.id)).sort((a, b) => b.dist - a.dist);
@@ -1981,10 +2068,7 @@ export class Battle {
       this.spawnAiKillJuice(vanished[i]!);
     }
 
-    // (4) 回写脉冲到 bridge 重建后的 aiUnits（drawAiSide 读 u.firePulse 画兵器挥砍）
-    for (const u of this.aiUnits) u.firePulse = this.aiUnitPulse.get(cellKey(u.cell.c, u.cell.r)) ?? 0;
-
-    // (5) 快照本帧成员，供下帧死亡检测与漏怪甄别
+    // (7) 快照本帧成员，供下帧死亡检测与漏怪甄别
     this.aiMonPrev = this.aiMonsters.map((m) => {
       const p = this.aiMonsterPos(m);
       return { id: m.id, dist: m.dist, isBoss: m.isBoss, isMiniBoss: m.isMiniBoss, isElite: !m.isBoss && !m.isMiniBoss && m.skill !== null, c: p.c, r: p.r };
@@ -1992,36 +2076,9 @@ export class Battle {
     this.aiPrevTangsengHP = this.aiTangsengHP;
   }
 
-  /** 找最近的、在射程内的 aiUnit，置其出招脉冲=1；返回该单位（供命中特效取 wtype/from），无则 null。 */
-  private pulseNearestAiUnit(pos: { c: number; r: number }): PlacedUnit | null {
-    let best: PlacedUnit | null = null;
-    let bestD = Infinity;
-    for (const u of this.aiUnits) {
-      const rge = getUnitStat(u.type, u.tier).rge;
-      if (!inAttackRange(u.cell.c, u.cell.r, rge, pos)) continue;
-      const d = Math.hypot(u.cell.c - pos.c, u.cell.r - pos.r);
-      if (d < bestD) { bestD = d; best = u; }
-    }
-    if (best) this.aiUnitPulse.set(cellKey(best.cell.c, best.cell.r), 1);
-    return best;
-  }
-
-  /** 对手怪掉血补演：伤害飘字（复用共享 damageFloats）+ 归因单位的命中特效/出招。 */
-  private spawnAiHitJuice(pos: { c: number; r: number }, amount: number): void {
-    const u = this.pulseNearestAiUnit(pos);
-    this.spawnDamageFloat(pos.c, pos.r, amount);
-    if (u) {
-      const ttl = this.attackFxTtl(u.type, u.tier);
-      const color = this.unitColor(u.type);
-      this.fx.push({ from: { c: u.cell.c, r: u.cell.r }, to: { c: pos.c, r: pos.r }, ttl, maxTtl: ttl, color, wtype: u.type, tier: u.tier });
-      this.bursts.push({ kind: 'hit', c: pos.c, r: pos.r, ttl: 0.22, maxTtl: 0.22, big: false, color });
-    }
-  }
-
-  /** 对手击杀补演：加桃飘字（按怪种，复用共享 peachFloats）+ death 爆点 + 归因单位出招。 */
+  /** 对手击杀补演：加桃飘字（按怪种，复用共享 peachFloats）+ death 爆点（出招动画由本地视觉模拟驱动）。 */
   private spawnAiKillJuice(pm: { isBoss: boolean; isMiniBoss: boolean; isElite: boolean; c: number; r: number }): void {
     const pos = { c: pm.c, r: pm.r };
-    this.pulseNearestAiUnit(pos);
     const base = pm.isBoss
       ? ECONOMY.PEACH_PER_BOSS
       : pm.isMiniBoss

@@ -2490,8 +2490,9 @@ function frame(now: number): void {
     if (pvpSock && oppView && oppView.hasSnap) {
       const nowMs = Date.now();
       battle.bridgeOpponentFromSnap(oppView.interpAt(nowMs));
-      // #2 对手战斗反馈本地补演：bridge 重建 aiUnits/aiMonsters 后，用快照权威数据补伤害飘字/击杀加桃/
-      // 武器出招脉冲（见 Battle.stepOpponentJuice）。放在 bridge 之后、渲染之前，同源 nowMs。
+      // #2 对手战斗反馈本地补演：bridge 重建 aiUnits/aiMonsters 后，本地模拟对手兵器/英雄普攻
+      // 动效（按真实攻击间隔出招，只发特效不落伤害——hp/生死以服务端快照为准），并补伤害飘字/
+      // 击杀加桃（见 Battle.stepOpponentJuice）。放在 bridge 之后、渲染之前，同源 nowMs。
       battle.stepOpponentJuice(nowMs);
     }
     // 本方快照 100ms 节流上报（每渲染帧检查、墙钟节流）：只要对局未终局（!pvpResult）就持续发，
