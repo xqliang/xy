@@ -7226,15 +7226,15 @@ export class Battle {
       this.updateFx(dt);
       return;
     }
-    // 生成妖怪：每次随机 1..N 只（N 随波次升高）；多出的怪在门口后方半格内错位
+    // 生成妖怪：每批随机 1..N 只（N 随波次升高）；同批「鱼贯而出」——沿路径单列排在出怪口(门)后方，
+    // 逐只从门口涌出（不再在门口两侧随机散开）。第 i 只排在门后 i×JITTER 格，front 先出、后面跟上。
     if (this.spawnRemaining > 0) {
       this.spawnTimer -= dt;
       if (this.spawnTimer <= 0) {
         const cap = spawnBatchCap(this.wave);
         const n = Math.min(this.spawnRemaining, 1 + this.rng.int(cap));
         for (let i = 0; i < n; i++) {
-          const offset = i === 0 ? 0 : -this.rng.next() * BOARD_POWER.SPAWN_DIST_JITTER;
-          this.spawnMonster(offset);
+          this.spawnMonster(-i * BOARD_POWER.SPAWN_DIST_JITTER);
           this.spawnRemaining -= 1;
         }
         this.spawnTimer = this.currentSpawnInterval();
