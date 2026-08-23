@@ -72,7 +72,7 @@ describe('monster control debuff limits', () => {
     expect(b.units.get(`${farCell.c},${farCell.r}`)!.stunT).toBe(0);
   });
 
-  it('when two weapons are within 1 cell, debuffs 1–2 nearest by roll', () => {
+  it('debuffs only the single nearest weapon when the roll is 1', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const b = new Battle(2, 1, map);
     const pathCell = { c: 4, r: 6 };
@@ -85,15 +85,15 @@ describe('monster control debuff limits', () => {
     // 路径 (3,6)->(4,6)->(5,6)：dist 取 (4,6) 再略偏左，使 a 更近
     const base = pathDistAt(map, pathCell);
     b.monsters.push(eliteMonster({ id: 3, dist: base - 0.35, skillCd: 0 }));
+    // skillTargetMin=0 起单次施法可能命中 0 把；本例固定 roll=1，专验「命中数=1 时取最近的 a」
+    (b as unknown as { rollSkillTargetCount(): number }).rollSkillTargetCount = () => 1;
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
 
     const ua = b.units.get(`${a.c},${a.r}`)!;
     const ub = b.units.get(`${bb.c},${bb.r}`)!;
-    const hitCount = (ua.stunT > 0 ? 1 : 0) + (ub.stunT > 0 ? 1 : 0);
-    expect(hitCount).toBeGreaterThanOrEqual(1);
-    expect(hitCount).toBeLessThanOrEqual(TUNING.skillTargetMax);
     expect(ua.stunT).toBeGreaterThan(0); // 偏左 → 最近 a 必中
+    expect(ub.stunT).toBe(0); // roll=1 → 较远的 b 不中
   });
 
   it('can debuff two weapons when roll is 2', () => {
@@ -115,6 +115,17 @@ describe('monster control debuff limits', () => {
     expect(ub.stunT).toBeGreaterThan(0);
   });
 
+  it('skillTargetMin=0：单次施法可落空（掷得 0 命中）', () => {
+    const b = new Battle(1, 1, MAPS[0]!);
+    const roll = (b as unknown as { rollSkillTargetCount(): number }).rollSkillTargetCount.bind(b);
+    const seen = new Set<number>();
+    for (let i = 0; i < 300; i++) seen.add(roll());
+    expect(TUNING.skillTargetMin).toBe(0); // 默认已下调到 0（如改回请同步本用例与 monster-skill-reference.md）
+    expect(seen.has(0)).toBe(true); // 可掷 0 → 空放
+    expect(Math.max(...seen)).toBeLessThanOrEqual(TUNING.skillTargetMax);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(0);
+  });
+
   it('weapon is immune to the same debuff for a while after being hit', () => {
     const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
     const b = new Battle(3, 1, map);
@@ -122,6 +133,8 @@ describe('monster control debuff limits', () => {
     const cell = { c: 3, r: 6 };
     b.units.set(`${cell.c},${cell.r}`, makePlacedUnit('dao', 1, cell));
     b.monsters.push(eliteMonster({ id: 1, dist: pathDistAt(map, pathCell), skillCd: 0 }));
+    // skillTargetMin=0 起单次施法可能 0 命中；固定命中该把以隔离「免疫」机制
+    (b as unknown as { rollSkillTargetCount(): number }).rollSkillTargetCount = () => 1;
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
     const u = b.units.get(`${cell.c},${cell.r}`)!;

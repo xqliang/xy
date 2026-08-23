@@ -186,9 +186,9 @@ export const TUNING = {
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
   eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 2, // 控制技能作用半径（格）
-  skillTargetMin: 1, // 单次施法最少命中兵器数
+  skillTargetMin: 0, // 单次施法最少命中兵器数（0=可落空/空放）
   skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
-  skillInterval: 4.5, // 两次施法间隔（秒）
+  skillInterval: 6, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 3.5, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
   slowDur: 4, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
@@ -197,7 +197,7 @@ export const TUNING = {
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
   webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
   webbindRangeCut: 0.5, // 缠丝：有效射程 -0.5 格（见 updateUnits）
-  debuffImmuneDur: 4.5, // 兵器对同一种 debuff 的免疫时间（秒，含效果期内）
+  debuffImmuneDur: 6, // 兵器对同一种 debuff 的免疫时间（秒，含效果期内）
   // —— 小 Boss（第 4 波之后、非妖王波：有概率刷出跨地图小头目，各带独立光环技能）——
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.5, // 非 BOSS 波出现小 Boss 的概率

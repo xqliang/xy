@@ -23,8 +23,8 @@
 - 分配（`rollMonsterSkill`）：技能**按地图主题固定**，不是随机三选一。
   - **妖王（Boss）必带**该图技能。
   - **精英**：第 `eliteFromWave=4` 波起，`eliteChance=0.28` 概率带同一技能，且两次精英间至少隔 `eliteMinGap=2` 只普通妖（防连控）。
-- 释放（`updateMonsterSkills`）：入场后 `skillFirstDelay=2.5s` 首次，之后每 `skillInterval=4.5s` 一次；每次在 `skillRadius=2` 格内按距离取最近 `1~3` 把兵器（`skillTargetMin=1`、`skillTargetMax=3`）。
-- 同种免疫：命中后该兵器对**同一种** debuff 免疫 `debuffImmuneDur=4.5s`（含效果持续期）。
+- 释放（`updateMonsterSkills`）：入场后 `skillFirstDelay=2.5s` 首次，之后每 `skillInterval=6s` 一次；每次在 `skillRadius=2` 格内按距离取最近 `0~2` 把兵器（`skillTargetMin=0`、`skillTargetMax=2`；掷 0 则空放）。
+- 同种免疫：命中后该兵器对**同一种** debuff 免疫 `debuffImmuneDur=6s`（含效果持续期）。
 
 | 地图 | 技能（`MAP_SKILL`） | 名称 | 对兵器效果 | 时长 | 幅度 |
 |------|------|------|-----------|------|------|
@@ -48,7 +48,7 @@
 |------|------------|---------|------|---------|
 | `frost` | 霜魄妖 / 霜缚 | 我方兵器 | 上「迟滞」= 减速 | 同上 slow：`slowDur=3s`、冷却×1.6 |
 | `blight` | 蚀甲妖 / 蚀甲 | 我方兵器 | 上「弱身」= 降攻 | 同上 weaken：`weakenDur=3s`、伤害×0.65 |
-| **`quake`** | **撼地妖 / 震地** | **我方兵器** | **上「倒下 / 击倒」= 无法攻击、立绘横躺** | **`knockdownDur=2.0s`、免疫 4.5s** |
+| **`quake`** | **撼地妖 / 震地** | **我方兵器** | **上「倒下 / 击倒」= 无法攻击、立绘横躺** | **`knockdownDur=2.0s`、免疫 6s** |
 | `gale` | 疾风妖 / 疾风 | 周围妖怪 | 加速（haste） | `hasteDur=3.0s` |
 | `blood` | 血泉妖 / 血泉 | 周围妖怪 | 回血 | 每次回目标 `maxHp×healPct(=0.08)` |
 
