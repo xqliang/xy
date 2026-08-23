@@ -1,5 +1,6 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, findTrayIndex, traySome } from './battle';
+import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
 import { canMerge } from '@core';
 import type { UnitType } from '@core';
@@ -490,7 +491,10 @@ void (async () => {
     loadProgress = { ...loadProgress, phase: 'done' };
     bootstrapMenuMusic();
     ensureUserId();
-    screen = 'menu';
+    // 本地对局续玩：无 PvP 深链且存在有效未终局存档时，直接恢复进战斗、跳过首页。
+    if (!(versusCode == null && tryResumeLocalBattle())) {
+      screen = 'menu';
+    }
     if (versusCode) enterPvpMatching('join', versusCode);
     void cloudLogin().then((ok) => {
       if (ok) track('login');
@@ -1164,6 +1168,7 @@ function newGame() {
   bindBattleWeaponPickup();
   battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
   endHandled = false;
+  clearBattleSave(); // 开新局：作废旧续玩存档（首个 ready 会写新档）
   endlessResult = null;
   settleChange = null;
   ui.paused = false;
@@ -1184,8 +1189,28 @@ function newGame() {
   resetFirstGameGuide(firstGame);
 }
 
+// 本地对局续玩：读有效存档→重建 battle→直接进战斗界面（不扣体力、跳过首页）。
+function tryResumeLocalBattle(): boolean {
+  const r = loadResumeBattle();
+  if (!r) return false;
+  battle = r.battle;
+  bindBattleWeaponPickup();          // 重挂注入型函数字段 weaponPickupVisible
+  currentMap = mapById(r.mapId);     // 氛围音/HUD 对齐存档地图
+  endHandled = false;
+  pendingMerchant = false;
+  endlessResult = null;
+  settleChange = null;
+  ui.paused = false;
+  pvpExitPopup = false;
+  pausePhase = 'main';
+  screen = 'battle';
+  scheduleFrame();
+  return true;
+}
+
 function abortBattleToMenu(): void {
   endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
+  clearBattleSave(); // 主动退出对局：作废续玩存档
   ui.paused = false;
   pvpExitPopup = false;
   pausePhase = 'main';
@@ -2466,6 +2491,7 @@ function frame(now: number): void {
           }
         } else {
           battle.step(dt);
+          saveResumeCheckpoint(battle); // 本地局波次检查点落档（内部守卫 isPvp / status==='ready' / 去重）
         }
       } catch (err) {
         console.error('[battle.step]', err);
@@ -2484,6 +2510,7 @@ function frame(now: number): void {
     // Task 10：PvP 由「服务端 result 权威」终局（下方块），单人不吃 pvpSock 分支——故这里加 `&& !pvpSock` 分流。
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost') && !pvpSock) {
       endHandled = true;
+      clearBattleSave(); // 本局终局：作废续玩存档
       pendingMerchant = true;
       recordHeroMatchGame(battle.heroMatchedIdsThisGame());
       // Task 10：单人到达终局 → 标记「已玩过一局」，据此解锁 PvP 入口。
@@ -2727,6 +2754,8 @@ interface GameHook {
   pvpLeaveSettle: () => { left: boolean; reason?: string };
   // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => { rankLevel: number; merit: number };
+  // 续玩冒烟：读当前 screen / 是否有存档 / 存档波数，供 smoke-resume.mjs 断言。
+  resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null };
 }
 const hook: GameHook = {
   get battle() {
@@ -2885,5 +2914,7 @@ const hook: GameHook = {
     leaveSettleToMenu();
     return { left: true };
   },
+  // 续玩冒烟：读当前 screen / 是否有存档 / 存档波数，供 smoke-resume.mjs 断言。
+  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle?.wave ?? -1, status: battle?.status ?? null }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;
