@@ -131,7 +131,7 @@ export const TUNING = {
   bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   bossHpRampWaves: 20, // 血量倍数从 early 爬到满所用波跨度（自 bossFirstSegLo 起算）
   bossEscortMin: 4, // 妖王出场护卫最少只数
-  bossEscortMax: 8, // 妖王出场护卫最多只数
+  bossEscortMax: 10, // 妖王出场护卫最多只数
   bossEscortHpShare: 0.35, // 妖王总血池分给护卫的比例（余下给妖王本体）
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
   // —— 骑兵波（后期随机某波：占比随波次升高；移速 ×cavalrySpdMul、血量略低）——
@@ -144,7 +144,7 @@ export const TUNING = {
   cavalryRatioLateLo: 0.56, // 第 21 波起每波在 [lateLo, lateHi] 随机
   cavalryRatioLateHi: 0.7,
   cavalrySpdMul: 1.25, // 骑兵移速倍率：比普通妖快 25%
-  cavalryHpMul: 2 / 3, // 骑兵血量倍率：比普通妖低 1/3（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
+  cavalryHpMul: 0.8, // 骑兵血量倍率：比普通妖低 1/5（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
   lateWaveExtraPerWave: 5, // 每超出一波额外 +5 只（越到后期越密，波6:+5 … 波12:+35）
