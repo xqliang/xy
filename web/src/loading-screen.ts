@@ -206,7 +206,7 @@ export function drawLoadingScreen(
 
   // 与主界面同款标题：bold 46px 宋体 + 双描边金字渐变（alphabetic baseline）
   const titleY = VIEW_H * 0.28;
-  drawMenuTitle(ctx, '大圣与唐僧', VIEW_W / 2, titleY);
+  drawMenuTitle(ctx, '悟空救我', VIEW_W / 2, titleY);
 
   const pulse = 0.5 + 0.5 * Math.sin(now / 420);
   ctx.textAlign = 'center';

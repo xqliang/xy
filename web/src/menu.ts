@@ -261,7 +261,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   const rankY = 182 + rankBlockDy + rankTitleGap;
   const starsY = rankY + 30;
 
-  drawMenuTitle(ctx, '大圣与唐僧', VIEW_W / 2, titleY);
+  drawMenuTitle(ctx, '悟空救我', VIEW_W / 2, titleY);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#5a3a12';
   ctx.font = 'bold 18px "PingFang SC", serif';
