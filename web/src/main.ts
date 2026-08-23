@@ -314,6 +314,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
   battle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
   bindBattleWeaponPickup();
+  battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
   // 对手半场 = WS 快照插值视图（不再确定性重放）。PvpOppView 双缓冲，每收到一份对手快照 ingest 一份。
   oppView = new PvpOppView();
   // WS 连接：本方权威半场每 100ms 发快照；下行 oppSnap→插值视图、nextWave→开波排程、result→结算、oppGone→提示。
@@ -1157,6 +1158,7 @@ function newGame() {
   // 使用当前(可在首页切换的)地图；每局随机种子(除非 ?seed= 固定)
   battle = new Battle(nextSeed(), rank.difficulty, currentMap, metaBonuses(merit), weaponBonuses(bag), loadout.equipped, loadout.passives, endlessOn, newBattleAiSkill(), 1, heroMatchOptsForNewBattle());
   bindBattleWeaponPickup();
+  battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
   endHandled = false;
   endlessResult = null;
   settleChange = null;

@@ -2290,10 +2290,65 @@ function drawTangsengFigure(
   drawTangsengHearts(ctx, x, headTop, hp, defeated, feetY);
 }
 
+// —— 开局唐僧出场气泡（仅本方唐僧、入场途中冒泡；台词/是否冒泡由 Battle.rollIntroSpeech 掷定）——
+const INTRO_SPEECH_START = 2.1; // 秒：出场行走约 1/3 处开始冒泡
+const INTRO_SPEECH_DUR = 2.2;   // 秒：气泡停留时长
+const INTRO_SPEECH_FADE = 0.3;  // 秒：两端淡入/淡出
+
+/** 气泡透明度（0=不显示）：introT 落在 [START, START+DUR] 内，两端各 FADE 秒淡入淡出。 */
+function introSpeechAlpha(introT: number): number {
+  const t = introT - INTRO_SPEECH_START;
+  if (t < 0 || t > INTRO_SPEECH_DUR) return 0;
+  const inA = Math.min(1, t / INTRO_SPEECH_FADE);
+  const outA = Math.min(1, (INTRO_SPEECH_DUR - t) / INTRO_SPEECH_FADE);
+  return Math.max(0, Math.min(inA, outA));
+}
+
+/** 唐僧头顶话语气泡：圆角白底 + 下指小尾 + 深棕字，居中于 cx，尾尖落在 tipY。 */
+function drawSpeechBubble(ctx: CanvasRenderingContext2D, cx: number, tipY: number, text: string, alpha: number): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = '600 15px "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const padX = 12, padY = 7, tail = 7, fontH = 15;
+  const w = ctx.measureText(text).width + padX * 2;
+  const h = fontH + padY * 2;
+  const bx = cx - w / 2;
+  const by = tipY - tail - h; // 气泡体顶
+  roundRect(ctx, bx, by, w, h, 9);
+  ctx.fillStyle = 'rgba(255,252,245,0.97)';
+  ctx.shadowColor = 'rgba(0,0,0,0.22)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(150,95,42,0.5)';
+  ctx.stroke();
+  // 下指小尾（指向唐僧头顶）
+  ctx.beginPath();
+  ctx.moveTo(cx - tail, by + h - 0.5);
+  ctx.lineTo(cx + tail, by + h - 0.5);
+  ctx.lineTo(cx, tipY);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,252,245,0.97)';
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#6a3a12';
+  ctx.fillText(text, cx, by + h / 2 + 0.5);
+  ctx.restore();
+}
+
 function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   const pos = b.tangsengRenderPos();
   const { x, y } = cellCenterPx(pos.c, pos.r);
   drawTangsengFigure(ctx, x, y, b.tangsengHP);
+  // 开局出场气泡（50% 概率已在 rollIntroSpeech 掷定；仅本方唐僧、入场未归位时冒泡）
+  if (!b.introDone && b.introSpeech) {
+    const a = introSpeechAlpha(b.introT);
+    if (a > 0) drawSpeechBubble(ctx, x, y - CELL * 0.6, b.introSpeech, a);
+  }
 }
 
 // 入场缩放：由小变大略带回弹(easeOutBack)，营造"崩出来"感

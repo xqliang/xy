@@ -2102,6 +2102,22 @@ export class Battle {
   static readonly INTRO_DUR = 6; // 秒
   // 新手引导展示期间强制渲染我方/AI 唐僧于归位点（不影响 introT/introDone 计时，仅用于展示）
   tangsengRenderOverride = false;
+  /** 开局唐僧出场气泡台词（50% 概率有；null=本局不说）。纯展示态：由 main 展示层用 Math.random 掷定
+   *  （不占 this.rng，保持战斗确定性/PvP 快照不受影响），仅本方唐僧、不入快照。见 rollIntroSpeech / drawTangseng。 */
+  introSpeech: string | null = null;
+  /** 出场气泡可选台词（数据，非随机源）。 */
+  static readonly INTRO_SPEECHES = ['妖怪来了！', '救命啊~'];
+  /**
+   * 开局掷定唐僧出场气泡：50% 概率不说；否则从 INTRO_SPEECHES 随机一句。
+   * rand 为调用方（main 展示层）注入的 [0,1)——本方法不碰 this.rng，故不影响战斗确定性/快照。
+   * 映射：[0,0.5)→不说；[0.5,0.75)→第 1 句；[0.75,1)→第 2 句（即 不说 50%、两句各 25%）。
+   */
+  rollIntroSpeech(rand: number): void {
+    if (rand < 0.5) { this.introSpeech = null; return; }
+    const n = Battle.INTRO_SPEECHES.length;
+    const idx = Math.min(n - 1, Math.floor(((rand - 0.5) / 0.5) * n));
+    this.introSpeech = Battle.INTRO_SPEECHES[idx]!;
+  }
 
   // —— Task 10 首局体验：第 1 波押后（给首次玩家留足征兵布阵时间）——
   // main.ts 在首局单人 newGame 时置 true；PvP / 非首局恒 false（零影响）。
