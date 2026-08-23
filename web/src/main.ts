@@ -2488,7 +2488,11 @@ function frame(now: number): void {
     // 仅 pvpSock 非空（在线对局中）且 oppView 已有至少一份快照时桥一次；单人路径完全不碰，零影响。
     // 注：对手唐僧血/存活直接来自其快照（发送端权威，snap.status==='lost'→aiDefeated），无需旧权威纠正。
     if (pvpSock && oppView && oppView.hasSnap) {
-      battle.bridgeOpponentFromSnap(oppView.interpAt(Date.now()));
+      const nowMs = Date.now();
+      battle.bridgeOpponentFromSnap(oppView.interpAt(nowMs));
+      // #2 对手战斗反馈本地补演：bridge 重建 aiUnits/aiMonsters 后，用快照权威数据补伤害飘字/击杀加桃/
+      // 武器出招脉冲（见 Battle.stepOpponentJuice）。放在 bridge 之后、渲染之前，同源 nowMs。
+      battle.stepOpponentJuice(nowMs);
     }
     // 本方快照 100ms 节流上报（每渲染帧检查、墙钟节流）：只要对局未终局（!pvpResult）就持续发，
     // 对手端据此双缓冲插值渲染本方半场。终局(pvpResult)一到即停发（本方冻结定格）。
