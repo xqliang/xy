@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "《悟空救我》Web 可玩原型（复用 game-core 数值内核）",
+  "description": "《妖怪来袭》Web 可玩原型（复用 game-core 数值内核）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

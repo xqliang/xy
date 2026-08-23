@@ -1,7 +1,7 @@
 {
   "name": "dasheng-game-core",
   "version": "0.1.0",
-  "description": "《悟空救我》战斗数值内核（引擎无关的纯 TS）",
+  "description": "《妖怪来袭》战斗数值内核（引擎无关的纯 TS）",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
