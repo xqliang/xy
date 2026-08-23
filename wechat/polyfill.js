@@ -159,4 +159,46 @@
       });
     };
   }
+
+  // —— WebSocket 桥（→ wx.connectSocket）——
+  // PvP 对局层 pvp-ws.ts 用 `new WebSocket(url)`，表面 = readyState(OPEN=1)/send(str)/close() +
+  // onopen/onmessage({data})/onclose。小游戏无全局 WebSocket，用 wx.connectSocket（SocketTask）包一层。
+  // 真机需把 wss 域名加入小程序后台「socket 合法域名」（devtools urlCheck:false 免配）。
+  if (typeof g.WebSocket === 'undefined') {
+    function WS(url) {
+      var self = this;
+      this.url = String(url);
+      this.readyState = 0; // CONNECTING
+      this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null;
+      this._q = []; // open 前 send 的数据，open 后补发
+      if (!hasWx || typeof wx.connectSocket !== 'function') {
+        setTimeout(function () { self.readyState = 3; if (self.onerror) self.onerror({ type: 'error', message: 'no wx.connectSocket' }); if (self.onclose) self.onclose({ type: 'close' }); }, 0);
+        return;
+      }
+      var task = wx.connectSocket({ url: this.url });
+      this._task = task;
+      task.onOpen(function () {
+        self.readyState = 1; // OPEN
+        var q = self._q; self._q = [];
+        q.forEach(function (d) { try { task.send({ data: d }); } catch (e) {} });
+        if (self.onopen) self.onopen({ type: 'open' });
+      });
+      task.onMessage(function (res) { if (self.onmessage) self.onmessage({ data: res.data, type: 'message' }); });
+      task.onClose(function (res) { self.readyState = 3; if (self.onclose) self.onclose({ code: res && res.code, reason: res && res.reason, type: 'close' }); });
+      task.onError(function (res) {
+        if (self.onerror) self.onerror({ type: 'error', message: res && res.errMsg });
+        if (self.readyState !== 3) { self.readyState = 3; if (self.onclose) self.onclose({ type: 'close' }); }
+      });
+    }
+    WS.prototype.send = function (data) {
+      if (this.readyState === 0) { this._q.push(data); return; } // 未 open：排队，open 后补发
+      if (this._task) { try { this._task.send({ data: data }); } catch (e) {} }
+    };
+    WS.prototype.close = function (code, reason) {
+      if (this._task) { try { this._task.close({ code: code, reason: reason }); } catch (e) {} }
+      else { this.readyState = 3; }
+    };
+    WS.CONNECTING = 0; WS.OPEN = 1; WS.CLOSING = 2; WS.CLOSED = 3;
+    g.WebSocket = WS;
+  }
 })();
