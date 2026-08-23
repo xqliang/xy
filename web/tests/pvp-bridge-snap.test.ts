@@ -291,3 +291,27 @@ describe('bridgeOpponentFromSnap：瞬态特效透传 + 镜像（T9.2）', () =>
     expect(B2.aiPalmPushFx!.cells).toBe(3);
   });
 });
+
+describe('bridge 武将镜像识别（180° 镜像会反读武将两字，需仍识别为同一武将）', () => {
+  it('对手横向武将「大圣」镜像后仍被 aiActiveGenerals 识别（不漏、不错认）', () => {
+    const A = mkPvp();
+    A.startNextWave();
+    // 玩家侧相邻放「大」(左)「圣」(右) → 武将 dasheng(chars ['大','圣'])
+    (A as unknown as { words: Map<string, unknown> }).words.set('2,3', { char: '大', general: '', tier: 1, cell: { c: 2, r: 3 } });
+    (A as unknown as { words: Map<string, unknown> }).words.set('3,3', { char: '圣', general: '', tier: 1, cell: { c: 3, r: 3 } });
+    // 本方侧应识别为 dasheng（正序 matchGeneral 命中）
+    expect(A.activeGenerals().map((g) => g.def.id)).toContain('dasheng');
+    // 桥到对手视图：180° 镜像把两字左右对调（圣→左、大→右），
+    // aiActiveGenerals 需支持反读，否则漏识别 → 画成未激活的反序字牌「圣大」。
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.aiActiveGenerals().map((g) => g.def.id)).toContain('dasheng');
+    // 数据层验证镜像反序：左格(较小 c)存「圣」、右格存「大」——所以 drawActiveGeneralGroup 在
+    // PvP(b.isPvp) 下需交换两格所画的字，才能读作「大圣」；单机 AI 则本就是「大」左「圣」右、不交换。
+    const g = B2.aiActiveGenerals().find((x) => x.def.id === 'dasheng')!;
+    const [c0, c1] = g.cells;
+    const left = c0.c <= c1.c ? c0 : c1;
+    const right = c0.c <= c1.c ? c1 : c0;
+    expect(B2.aiWords.get(`${left.c},${left.r}`)!.char).toBe('圣');
+    expect(B2.aiWords.get(`${right.c},${right.r}`)!.char).toBe('大');
+  });
+});

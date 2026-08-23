@@ -3286,7 +3286,9 @@ export class Battle {
       if (!right) continue;
       const kR = cellKey(right.cell.c, right.cell.r);
       if (used.has(kR)) continue;
-      const def = matchGeneral(w.char, right.char); // 按字连读匹配，支持门派共享字
+      // 反读兼容：PvP 对手半场按 180° 镜像重建，武将两字左右会对调（大圣→圣·大）。
+      // 先按正序匹配（单机 AI 正序命中），失败再按反序匹配（对手镜像命中），避免漏识别。
+      const def = matchGeneral(w.char, right.char) ?? matchGeneral(right.char, w.char);
       if (!def) continue;
       used.add(kL); used.add(kR);
       const cap = def.maxTier;

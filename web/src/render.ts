@@ -8245,10 +8245,10 @@ function drawActiveGeneralGroup(
   ctx.scale(sc, sc);
   ctx.translate(-cx, -cy);
 
-  // AI 半场棋盘按列镜像显示，会把横向武将两字的左右顺序也翻过来（大圣→圣大）。
-  // 横向武将（两格同行）在 AI 侧交换两格所画的字，让名字仍从左到右正常阅读；
-  // 竖向武将（同列不同行）不受列镜像影响，保持原样。
-  const mirrorName = side === 'ai' && g.cells.length === 2 && g.cells[0].r === g.cells[1].r;
+  // 仅 PvP 对手半场需要：其数据按 180° 镜像重建，横向武将两字左右被对调（大圣→圣·大），
+  // 故交换两格所画的字，让名字仍从左到右正常阅读。单机 AI 的字牌本就按显示顺序存放，不能交换
+  // （否则反被转成「圣大」）；竖向武将也不处理。
+  const mirrorName = side === 'ai' && b.isPvp && g.cells.length === 2 && g.cells[0].r === g.cells[1].r;
   for (let i = 0; i < g.cells.length; i++) {
     const c = g.cells[i];
     const src = mirrorName ? g.cells[g.cells.length - 1 - i] : c; // 取镜像伙伴格的字画在本格位置上
