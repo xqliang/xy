@@ -1,4 +1,4 @@
-// 图鉴：兵器 / 英雄 / 妖怪 / 技能 四 Tab。从主菜单进入，返回主菜单。
+// 图鉴：兵器 / 英雄 / 妖怪 / 技能 / 境界 五 Tab。从主菜单进入，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
 import { UNITS, getUnitStat, towerPOW, MAX_TIER, monsterPOW, type UnitType } from '@core';
 import { sprite, unitAsset, miniBossSprite, type AssetKey } from './assets';
@@ -8,8 +8,9 @@ import { TUNING, Battle, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS,
 import { enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import { skillRarityColor } from './merchant';
-import { drawInkActionButton, roundRect } from './menu-ui';
+import { drawInkActionButton, drawRankStarsAnimated, roundRect } from './menu-ui';
 import { drawSkillGlyph } from './skill-icon';
+import { STARS_PER_TIER, LADDER_LEN, rankName, type RankState } from './rank';
 import {
   isEquipped,
   isOwnedActive,
@@ -18,7 +19,7 @@ import {
   type LoadoutState,
 } from './loadout';
 
-export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill';
+export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill' | 'rank';
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
 const CONTENT_TOP = 136;
@@ -27,11 +28,12 @@ const TAB_W = 82;
 const TAB_H = 36;
 const TAB_GAP = 6;
 const TAB_Y = 92;
-const TAB_X0 = (VIEW_W - (TAB_W * 4 + TAB_GAP * 3)) / 2;
+const TAB_X0 = (VIEW_W - (TAB_W * 5 + TAB_GAP * 4)) / 2;
 const TAB_UNIT = { x: TAB_X0, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_HERO = { x: TAB_X0 + TAB_W + TAB_GAP, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_MONSTER = { x: TAB_X0 + (TAB_W + TAB_GAP) * 2, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_SKILL = { x: TAB_X0 + (TAB_W + TAB_GAP) * 3, y: TAB_Y, w: TAB_W, h: TAB_H };
+const TAB_RANK = { x: TAB_X0 + (TAB_W + TAB_GAP) * 4, y: TAB_Y, w: TAB_W, h: TAB_H };
 
 const UNIT_ORDER: UnitType[] = ['dao', 'spear', 'cavalry', 'archer'];
 const UNIT_COLOR: Record<UnitType, string> = { dao: '#ff9a3c', spear: '#5bd1ff', cavalry: '#7dff8a', archer: '#c79bff' };
@@ -205,6 +207,22 @@ function skillContentHeight(): number {
   );
 }
 
+// —— 境界 Tab 布局常量 ——
+const RANK_CUR_CARD_H = 118; // 当前境界卡（名称+星+难度系数）
+const RANK_ROW_H = 42;       // 阶梯每档一行
+const RANK_ROW_GAP = 6;
+const RANK_SECTION_H = 22;   // 区标题行高（与怪物 Tab 一致）
+const RANK_ACCENT = '#ffd76a';
+
+function rankContentHeight(): number {
+  return (
+    RANK_CUR_CARD_H + 14
+    + RANK_SECTION_H + LADDER_LEN * (RANK_ROW_H + RANK_ROW_GAP) // 境界阶梯
+    + 10 + RANK_SECTION_H + 3 * (TYPE_CARD_H + TYPE_CARD_GAP)   // 三张规则卡（复用怪物 Tab 卡样式）
+    + 8
+  );
+}
+
 function codexContentHeight(tab: CodexTab): number {
   switch (tab) {
     case 'unit':
@@ -215,6 +233,8 @@ function codexContentHeight(tab: CodexTab): number {
       return monsterContentHeight();
     case 'skill':
       return skillContentHeight();
+    case 'rank':
+      return rankContentHeight();
     default: {
       const _exhaustive: never = tab;
       return _exhaustive;
@@ -253,6 +273,7 @@ function codexTabAt(x: number, y: number): CodexTab | null {
   if (inRect(x, y, TAB_HERO)) return 'hero';
   if (inRect(x, y, TAB_MONSTER)) return 'monster';
   if (inRect(x, y, TAB_SKILL)) return 'skill';
+  if (inRect(x, y, TAB_RANK)) return 'rank';
   return null;
 }
 
@@ -391,6 +412,7 @@ function drawCodexTabs(ctx: CanvasRenderingContext2D): void {
   drawInkActionButton(ctx, TAB_HERO, '英雄', false, codexTab === 'hero' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_MONSTER, '妖怪', false, codexTab === 'monster' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_SKILL, '技能', false, codexTab === 'skill' ? 'primary' : 'secondary');
+  drawInkActionButton(ctx, TAB_RANK, '境界', false, codexTab === 'rank' ? 'primary' : 'secondary');
 }
 
 function drawScrollFade(ctx: CanvasRenderingContext2D): void {
@@ -983,7 +1005,136 @@ function drawSkillTab(ctx: CanvasRenderingContext2D, scrollY: number, loadout: L
   }
 }
 
-function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState): void {
+// 境界 Tab：当前境界卡 + 8 档境界阶梯 + 升星/难度/无尽与PvP 三张规则卡。
+// 数值全部取自 rank.ts 的真实规则（星级进退、难度自适应系数），不另写死文案数值。
+function drawRankTab(ctx: CanvasRenderingContext2D, scrollY: number, rank: RankState): void {
+  const y0 = CONTENT_TOP - scrollY;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  // —— 当前境界卡 ——
+  roundRect(ctx, GRID_LEFT, y0, GRID_W, RANK_CUR_CARD_H, 12);
+  ctx.fillStyle = '#241f16';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = RANK_ACCENT;
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,240,210,0.65)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText('当前境界', GRID_LEFT + 16, y0 + 12);
+  ctx.fillStyle = '#ffe08a';
+  ctx.font = 'bold 26px "PingFang SC", sans-serif';
+  ctx.fillText(rankName(rank.level), GRID_LEFT + 16, y0 + 30);
+  const curFills = Array.from({ length: STARS_PER_TIER }, (_, i) => (i < rank.stars ? 1 : 0));
+  drawRankStarsAnimated(ctx, GRID_LEFT + 16 + (STARS_PER_TIER - 1) * 14, y0 + 88, curFills, {
+    total: STARS_PER_TIER,
+    gap: 28,
+    size: 22,
+  });
+
+  const rx = GRID_LEFT + 236;
+  ctx.fillStyle = 'rgba(255,240,210,0.7)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText(`难度系数 ${rank.difficulty.toFixed(2)}（怪物强度）`, rx, y0 + 14);
+  ctx.fillText('每胜 ×1.06 · 每败 ×0.88', rx, y0 + 36);
+  ctx.fillText('下限 0.60 · 长期胜率约 70%', rx, y0 + 58);
+  ctx.fillStyle = 'rgba(255,240,210,0.5)';
+  ctx.fillText('境界跨局保存（本机存档）', rx, y0 + 80);
+
+  // —— 境界阶梯 ——
+  let y = y0 + RANK_CUR_CARD_H + 14;
+  ctx.fillStyle = RANK_ACCENT;
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText('境界阶梯（共 8 境 · 每境 5★）', GRID_LEFT, y);
+  y += RANK_SECTION_H;
+  for (let lv = 0; lv < LADDER_LEN; lv++) {
+    const isCur = lv === rank.level;
+    const passed = lv < rank.level;
+    roundRect(ctx, GRID_LEFT, y, GRID_W, RANK_ROW_H, 10);
+    ctx.fillStyle = '#241f16';
+    ctx.fill();
+    ctx.lineWidth = isCur ? 2 : 1.5;
+    ctx.strokeStyle = isCur
+      ? RANK_ACCENT
+      : passed
+        ? 'rgba(138,154,184,0.5)'
+        : 'rgba(255,215,106,0.22)';
+    ctx.stroke();
+
+    ctx.font = 'bold 15px "PingFang SC", sans-serif';
+    ctx.fillStyle = isCur ? '#ffe08a' : passed ? '#8a9ab8' : 'rgba(255,240,210,0.5)';
+    ctx.fillText(`${lv + 1}. ${rankName(lv)}`, GRID_LEFT + 14, y + 12);
+
+    // 小星星：已过境全满、当前境按实际星数、未至为空
+    const rowFills = Array.from(
+      { length: STARS_PER_TIER },
+      (_, i) => (passed || (isCur && i < rank.stars) ? 1 : 0),
+    );
+    drawRankStarsAnimated(ctx, GRID_LEFT + 320, y + RANK_ROW_H / 2, rowFills, {
+      total: STARS_PER_TIER,
+      gap: 16,
+      size: 13,
+    });
+
+    ctx.font = 'bold 12px "PingFang SC", sans-serif';
+    ctx.textAlign = 'right';
+    if (isCur) {
+      ctx.fillStyle = RANK_ACCENT;
+      ctx.fillText('当前', GRID_LEFT + GRID_W - 14, y + 13);
+    } else if (passed) {
+      ctx.fillStyle = 'rgba(138,154,184,0.8)';
+      ctx.fillText('已达', GRID_LEFT + GRID_W - 14, y + 13);
+    } else if (lv === rank.level + 1) {
+      ctx.fillStyle = 'rgba(255,240,210,0.4)';
+      ctx.fillText('下一境', GRID_LEFT + GRID_W - 14, y + 13);
+    }
+    ctx.textAlign = 'left';
+    y += RANK_ROW_H + RANK_ROW_GAP;
+  }
+
+  // —— 提升与规则（复用怪物 Tab 的说明卡样式） ——
+  y += 10;
+  ctx.fillStyle = RANK_ACCENT;
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.fillText('提升与规则', GRID_LEFT, y);
+  y += RANK_SECTION_H;
+  const ruleCards: MonsterTypeCard[] = [
+    {
+      name: '升星与晋级',
+      color: '#ffd76a',
+      lines: [
+        `胜利 +1★；集满 ${STARS_PER_TIER}★ 晋级下一境界，★清零`,
+        `失败 -1★；零星再败降回上一境界（回 ${STARS_PER_TIER - 1}★）`,
+        '凡人 0★ 为下限 · 齐天大圣满星为上限',
+      ],
+    },
+    {
+      name: '难度自适应',
+      color: '#7ec8ff',
+      lines: [
+        '每胜怪物强度 ×1.06、每败 ×0.88（下限 0.60）',
+        '强度只随单人胜负调节，自动贴合你的水平',
+        '连败卡级会越打越轻松，长期胜率约 70%',
+      ],
+    },
+    {
+      name: '无尽与对战',
+      color: '#7ec46a',
+      lines: [
+        '无尽模式：不涨降星，只记最高波数',
+        'PvP：胜负照常结算★，但不影响难度系数',
+        'PvP 匹配按双方境界就近',
+      ],
+    },
+  ];
+  for (const card of ruleCards) {
+    drawMonsterTypeCard(ctx, card, GRID_LEFT, y, GRID_W, TYPE_CARD_H);
+    y += TYPE_CARD_H + TYPE_CARD_GAP;
+  }
+}
+
+function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState, rankState: RankState): void {
   switch (codexTab) {
     case 'unit':
       drawUnitTab(ctx, scrollY);
@@ -997,6 +1148,9 @@ function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadou
     case 'skill':
       drawSkillTab(ctx, scrollY, loadout);
       break;
+    case 'rank':
+      drawRankTab(ctx, scrollY, rankState);
+      break;
     default: {
       const _exhaustive: never = codexTab;
       return _exhaustive;
@@ -1004,7 +1158,7 @@ function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadou
   }
 }
 
-export function drawCodex(ctx: CanvasRenderingContext2D, loadout: LoadoutState): void {
+export function drawCodex(ctx: CanvasRenderingContext2D, loadout: LoadoutState, rankState?: RankState): void {
   const bg = ctx.createLinearGradient(0, 0, 0, VIEW_H);
   bg.addColorStop(0, '#2a2418');
   bg.addColorStop(1, '#3a3222');
@@ -1030,7 +1184,8 @@ export function drawCodex(ctx: CanvasRenderingContext2D, loadout: LoadoutState):
   ctx.beginPath();
   ctx.rect(0, CONTENT_TOP, VIEW_W, CONTENT_H);
   ctx.clip();
-  drawCodexContent(ctx, codexScrollY, loadout);
+  // 境界 Tab 需要当前段位/星/难度：未传时按初始态渲染（凡人 0★）
+  drawCodexContent(ctx, codexScrollY, loadout, rankState ?? { level: 0, stars: 0, difficulty: 1 });
   ctx.restore();
 
   ctx.fillStyle = 'rgba(42,36,24,0.92)';

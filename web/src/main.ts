@@ -683,6 +683,9 @@ function openHelpLink(id: HelpLinkId): void {
     case 'codex-skill':
       enterCodex('skill');
       return;
+    case 'codex-rank':
+      enterCodex('rank');
+      return;
     case 'bag':
       enterBag();
       return;
@@ -2331,7 +2334,7 @@ function frame(now: number): void {
     }
     drawMenuFloatToasts(ctx);
   } else if (screen === 'codex') {
-    codexLazy.get()!.drawCodex(ctx, loadout);
+    codexLazy.get()!.drawCodex(ctx, loadout, rank);
   } else if (screen === 'rank') {
     leaderboardLazy.get()!.drawLeaderboard(ctx, rank.level);
   } else if (screen === 'bag') {

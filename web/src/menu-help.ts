@@ -49,7 +49,7 @@ type HelpBlock =
   | { kind: 'gap'; h: number };
 
 /** 说明内跳转目标：图鉴 Tab / 神兵背包 */
-export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'bag' | 'stamina';
+export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'codex-rank' | 'bag' | 'stamina';
 
 /** 新手操作说明正文（固定文案，便于排版与单测） */
 export const HELP_BLOCKS: HelpBlock[] = [
@@ -179,6 +179,18 @@ export const HELP_BLOCKS: HelpBlock[] = [
   },
   { kind: 'gap', h: 14 },
 
+  { kind: 'title', text: '境界（段位）' },
+  {
+    kind: 'body',
+    text: '境界是你的跨局段位：凡人 → 弼马温 → … → 齐天大圣 共 8 境，每境 5★。胜利 +1★，集满晋级下一境；失败 -1★，零星再败降回上一境。',
+  },
+  {
+    kind: 'body',
+    text: '怪物强度随胜负自动调节（每胜 ×1.06、每败 ×0.88），长期胜率约 70%，连败卡级会越打越轻松。无尽模式不涨降星；PvP 结算星级但不影响难度。',
+  },
+  { kind: 'link', id: 'codex-rank', text: '打开境界图鉴 ›' },
+  { kind: 'gap', h: 14 },
+
   { kind: 'title', text: '体力' },
   {
     kind: 'body',
@@ -198,6 +210,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'link', id: 'bag', text: '神兵背包 ›' },
   { kind: 'link', id: 'codex-monster', text: '妖怪图鉴 ›' },
   { kind: 'link', id: 'codex-skill', text: '技能图鉴 ›' },
+  { kind: 'link', id: 'codex-rank', text: '境界图鉴 ›' },
   { kind: 'link', id: 'stamina', text: '获取体力 ›' },
 ];
 
