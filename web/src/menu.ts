@@ -323,7 +323,23 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       continue;
     }
     if (b.id === 'codex') {
-      drawMenuSpriteButton(ctx, sprite('menu-btn-codex'), b, interact, 'none', '图鉴', 'secondary', 'cover');
+      const codexSpr = sprite('menu-btn-codex');
+      drawMenuSpriteButton(ctx, codexSpr, b, interact, 'none', '图鉴', 'secondary', 'cover');
+      // 「图鉴」文字程序化叠加：图鉴按钮图不再烘焙文字（Seedream 曾把「鉴」画错），
+      // 位置/大小对齐 menu-btn-settings 烘焙「设置」的墨迹区（y 约 67%~85%，字号约按钮高 21%）。
+      if (codexSpr) {
+        ctx.save();
+        ctx.font = `bold ${Math.round(b.h * 0.23)}px "PingFang SC", "STKaiti", serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // 同色细描边加粗笔画，向设置按钮的烘焙墨字（笔画较粗）视觉重量靠拢
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = 'rgba(35,28,20,0.92)';
+        ctx.strokeText('图鉴', b.x + b.w / 2, b.y + b.h * 0.76);
+        ctx.fillStyle = 'rgba(35,28,20,0.92)';
+        ctx.fillText('图鉴', b.x + b.w / 2, b.y + b.h * 0.76);
+        ctx.restore();
+      }
       continue;
     }
     if (b.id === 'help') {
