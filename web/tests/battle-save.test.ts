@@ -103,4 +103,31 @@ describe('battle-save 存档编排', () => {
     clearBattleSave();
     expect(readBattleSave()).toBeNull();
   });
+
+  it('saveResumeCheckpoint 同一 ready 窗去重、clear 后可重写', () => {
+    const b = readyVersus(321);
+    saveResumeCheckpoint(b);
+    expect(readBattleSave()).not.toBeNull();
+    storeSet(SAVE_KEY, 'SENTINEL');      // 篡改：若再写会被覆盖
+    saveResumeCheckpoint(b);             // 同 (mode,wave) → 去重 → 不写
+    expect(storeGet(SAVE_KEY)).toBe('SENTINEL');
+    clearBattleSave();                   // 重置 lastKey
+    saveResumeCheckpoint(b);             // 再次落档
+    expect(readBattleSave()).not.toBeNull();
+  });
+
+  it('本地 playing（非 ready）不落档', () => {
+    const b = new Battle(555, 1, mapById('huoyanshan'), undefined, undefined, undefined, undefined, false, 1.0, 1);
+    const dt = 1 / 30;
+    let entered = false;
+    for (let f = 0; f < 30 * 300; f++) {
+      if (b.status === 'ready') b.startNextWave();
+      else if (b.status === 'playing') { entered = true; break; }
+      b.step(dt);
+      if (b.status === 'won' || b.status === 'lost') break;
+    }
+    expect(entered).toBe(true);          // 确实进入交战态
+    saveResumeCheckpoint(b);             // status!=='ready' → 不写
+    expect(readBattleSave()).toBeNull();
+  });
 });

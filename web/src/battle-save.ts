@@ -12,7 +12,7 @@ const SAVE_VERSION = 1;
 export interface BattleSaveV1 {
   v: 1;
   gameVersion: string;
-  savedAt: number;
+  savedAt: number; // 预留：陈旧度元数据，当前未做过期校验
   mode: 'versus' | 'endless';
   config: BattleSaveConfig;
   core: BattleCoreState;
@@ -34,11 +34,13 @@ export function writeBattleSave(b: Battle): void {
     core,
   };
   storeSet(SAVE_KEY, JSON.stringify(save));
+  // 乐观置位——storeSet 已吞错(配额/wx)，本窗不重试，避免每帧 stringify+写抖动（best-effort）
   lastKey = `${save.mode}:${core.wave}`;
 }
 
 /** 主循环每帧调用：仅本地局、仅 ready、去重后落档。 */
 export function saveResumeCheckpoint(b: Battle): void {
+  // 每个 ready 窗仅首帧落档；刷新回到该波开头，丢弃 ready 窗内至多 waveGapSec 的临时布置——符合波次检查点语义
   if (b.isPvp) return;
   if (b.status !== 'ready') return; // 波次检查点：只在两波之间
   const key = `${b.endless ? 'endless' : 'versus'}:${b.wave}`;
@@ -57,7 +59,7 @@ export function readBattleSave(): BattleSaveV1 | null {
     return null;
   }
   if (!save || save.v !== SAVE_VERSION || save.gameVersion !== APP_VERSION) return null;
-  if (!save.core || save.core.status === 'won' || save.core.status === 'lost') return null;
+  if (!save.core || save.core.status !== 'ready') return null; // 仅接受波次检查点(ready)存档；playing/won/lost 皆不可续（serialize 在非 ready 时别名飞行中实体，续玩不安全）
   return save;
 }
 
