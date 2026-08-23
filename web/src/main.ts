@@ -1190,6 +1190,7 @@ function newGame() {
 }
 
 // 本地对局续玩：读有效存档→重建 battle→直接进战斗界面（不扣体力、跳过首页）。
+// 仅在启动 IIFE 调用：此时所有模块级 UI 标志（各 ui.*Popup / 引导态 / tutorialOverlay）尚为初始默认值，故这里只复位与 newGame 对称的核心循环/结算标志。若将来要在会话中途复用本函数，请先抽取共享的 resetBattleUiState() 以免残留弹窗/引导渲染到续玩局上。
 function tryResumeLocalBattle(): boolean {
   const r = loadResumeBattle();
   if (!r) return false;
@@ -2754,7 +2755,7 @@ interface GameHook {
   pvpLeaveSettle: () => { left: boolean; reason?: string };
   // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => { rankLevel: number; merit: number };
-  // 续玩冒烟：读当前 screen / 是否有存档 / 存档波数，供 smoke-resume.mjs 断言。
+  // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
   resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null };
 }
 const hook: GameHook = {
@@ -2914,7 +2915,7 @@ const hook: GameHook = {
     leaveSettleToMenu();
     return { left: true };
   },
-  // 续玩冒烟：读当前 screen / 是否有存档 / 存档波数，供 smoke-resume.mjs 断言。
-  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle?.wave ?? -1, status: battle?.status ?? null }),
+  // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
+  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle.wave, status: battle.status }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;
