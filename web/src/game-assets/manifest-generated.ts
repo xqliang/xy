@@ -28,7 +28,7 @@ export const HASHED_URLS: Record<string, string> = {
   "hero-laojun.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-laojun-ffb1aa61.png",
   "hero-liusha.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-liusha-48e6d774.png",
   "hero-mile.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-mile-8aff9657.png",
-  "hero-nezha.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-nezha-54a4dcc6.png",
+  "hero-nezha.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-nezha-7792bc02.png",
   "hero-niulang.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-niulang-4af35259.png",
   "hero-niumowang.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-niumowang-ae9c378d.png",
   "hero-qingniu.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/hero-qingniu-bfe89715.png",

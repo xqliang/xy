@@ -241,7 +241,11 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   if (av) {
     const s = AVATAR.w - 8;
     const scale = Math.min(s / av.width, s / av.height);
-    ctx.drawImage(av, AVATAR.x + 4, AVATAR.y + 4, av.width * scale, av.height * scale);
+    const dw = av.width * scale;
+    const dh = av.height * scale;
+    // 长宽比非 1:1 的立绘（唐僧 0.72 / 观音 0.67 / 沙僧 0.85 等）按短边缩放后仍有余量，
+    // 必须双轴居中——此前固定画在 (x+4, y+4) 左上角，瘦高立绘在头像框里全部偏左。
+    ctx.drawImage(av, AVATAR.x + 4 + (s - dw) / 2, AVATAR.y + 4 + (s - dh) / 2, dw, dh);
   }
 
   drawInkResourceBar(ctx, MERIT_BAR, '功德', `${info.merit}/${MERIT_MAX}`, 0, 'icon-merit');
