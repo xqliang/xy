@@ -32,7 +32,9 @@ describe('Battle 序列化/恢复', () => {
     const b = new Battle(1, dumped.config.difficultyMul, mapById(dumped.config.mapId),
       undefined, undefined, undefined, undefined, dumped.config.endless, undefined, dumped.config.aiAdjustIntervalScale);
     b.applyCoreState(dumped.core);
-    expect(b.serialize().core).toEqual(dumped.core); // 全字段保真：serialize∘apply 在 JSON 后是恒等
+    // 比较「JSON 归一化后」的形态（即真正落盘的形态）：applyCoreState 会把 tray 的 null 槽还原成洞，
+    // 直接 toEqual 会因「洞 vs null」误判；再 JSON 往返一次把两侧都归一化到 null，锁字段集/值保真。
+    expect(JSON.parse(JSON.stringify(b.serialize().core))).toEqual(dumped.core);
   });
 
   it('恢复后与原局同输入步进 → 观测量一致（证明无遗漏 sim 字段 + RNG 正确）', () => {
@@ -68,6 +70,21 @@ describe('Battle 序列化/恢复', () => {
     const b = new Battle(1, dumped.config.difficultyMul, mapById(dumped.config.mapId),
       undefined, undefined, undefined, undefined, dumped.config.endless, undefined, dumped.config.aiAdjustIntervalScale);
     b.applyCoreState(dumped.core);
-    expect(b.serialize().core).toEqual(dumped.core);
+    expect(JSON.parse(JSON.stringify(b.serialize().core))).toEqual(dumped.core);
+  });
+
+  it('applyCoreState 把 tray 的 null 槽恢复成洞（稀疏语义），forEach 不读到 null', () => {
+    const a = newVersus(555);
+    driveToReadyAfterWave1(a);
+    const dumped = JSON.parse(JSON.stringify(a.serialize()));
+    dumped.core.tray = [null, null, null];      // 模拟 JSON 把洞变 null
+    const b = new Battle(1, dumped.config.difficultyMul, mapById(dumped.config.mapId), undefined, undefined, undefined, undefined, dumped.config.endless, undefined, dumped.config.aiAdjustIntervalScale);
+    b.applyCoreState(dumped.core);
+    expect(0 in b.tray).toBe(false);            // 是洞，不是 null
+    expect(2 in b.tray).toBe(false);
+    expect(b.tray.length).toBe(3);
+    let sawNull = false;
+    b.tray.forEach((t) => { if (t === null) sawNull = true; else void t.kind; }); // 洞被跳过；绝不产出 null
+    expect(sawNull).toBe(false);
   });
 });

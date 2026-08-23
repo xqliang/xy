@@ -971,6 +971,15 @@ export interface BattleCoreState {
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
+// tray/aiTray 是稀疏数组（空位由 clearTraySlot 的 delete 挖成洞）。JSON 往返会把洞变成 null，
+// 而 forEach/map 等原生方法跳过洞却会对 null 触发回调（如 firstMergeableAnchor 读 t.kind），
+// 导致续玩后每帧崩。恢复时把 null/undefined 槽重新挖成洞，保持与实时对局一致的稀疏语义。
+function toSparseTray(arr: readonly (TrayToken | null | undefined)[]): TrayToken[] {
+  const out: TrayToken[] = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) { const t = arr[i]; if (t != null) out[i] = t; }
+  return out;
+}
+
 export class Battle {
   peach = ECONOMY.INITIAL_PEACH;
   tangsengHP = ECONOMY.TANGSENG_INITIAL_HP;
@@ -8205,7 +8214,7 @@ export class Battle {
     this.aiEarlySummonWordsCap = c.aiEarlySummonWordsCap; this.aiEarlySummonWordsGuarantee = c.aiEarlySummonWordsGuarantee; this.aiEarlySummonShovels = c.aiEarlySummonShovels;
     this.aiSummonTimer = c.aiSummonTimer; this.shovelTimer = c.shovelTimer; this.aiShovelTimer = c.aiShovelTimer;
     this.plantTimer = c.plantTimer; this.plantBank = c.plantBank; this.gardenOn = c.gardenOn;
-    this.aiUnits = c.aiUnits; this.tray = c.tray; this.aiTray = c.aiTray; this.monsters = c.monsters; this.aiMonsters = c.aiMonsters;
+    this.aiUnits = c.aiUnits; this.tray = toSparseTray(c.tray); this.aiTray = toSparseTray(c.aiTray); this.monsters = c.monsters; this.aiMonsters = c.aiMonsters;
     this.nextMonsterId = c.nextMonsterId; this.bombs = c.bombs; this.aiBombs = c.aiBombs;
     this.spawnRemaining = c.spawnRemaining; this.spawnTimer = c.spawnTimer; this.waveMonsterCount = c.waveMonsterCount;
     this.sinceLastElite = c.sinceLastElite == null || !Number.isFinite(c.sinceLastElite) ? Number.POSITIVE_INFINITY : c.sinceLastElite;
