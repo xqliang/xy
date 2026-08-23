@@ -22,8 +22,8 @@ export function heroSkillFocusDps(def: GeneralDef, atk: number): number {
   const cd = def.skillCd;
   if (def.skill === 'none' || cd <= 0) return 0;
   switch (def.skill) {
-    case 'burst': return (atk * 3) / cd;
-    case 'ranged': return (atk * 5 * GENERAL_TUNING.CRIT_MULT) / cd;
+    case 'burst': return (atk * TUNING.heroBurstDmgMul) / cd;
+    case 'ranged': return (atk * TUNING.heroRangedDmgMul * GENERAL_TUNING.CRIT_MULT) / cd;
     case 'stun': {
       const isCharge = def.id === 'niumowang' || def.id === 'qingniu';
       const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;

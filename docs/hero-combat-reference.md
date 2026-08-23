@@ -52,12 +52,12 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 | skill 类型 | 代表英雄 | 大招效果 |
 |------------|----------|----------|
-| `burst` | 大圣、大蟒、哪吒、金吒 | 范围内全员 ×3 攻击伤害 |
+| `burst` | 大圣、大蟒、哪吒、金吒 | 范围内全员 ×`heroBurstDmgMul`（3）攻击伤害 |
 | `burn` | 红孩、红袍 | 范围内全员瞬时伤 + 持续灼烧 DoT |
 | `stun` | 八戒、八仙、牛魔、青牛 | 范围内全员定身 + 伤害 |
 | `knock` | 铁扇、铁背、沙僧、流沙 | 范围内全员击退 + 伤害 |
 | `slow` | 白龙、白骨 | 范围内全员减速 + 伤害 |
-| `heal` | 观音、梵音 | 范围内全员减速；每波最多为唐僧 +1 血（几乎无伤害） |
+| `heal` | 观音、梵音 | 范围内全员减速；每波最多为唐僧 +`heroHealHp`（1）血（几乎无伤害） |
 
 **共 18 名武将**的大招属于对怪范围型。
 
@@ -71,12 +71,12 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 > 例：**大圣「七十二变·横扫」**（`burst`）与哪吒「万火齐发」同类，一次可打圈内全部怪；普攻仍受 `targets` 限制（大圣为 2）。
 
-### 2.2 单体大招（仅最近 1 只）
+### 2.2 单体/贯穿大招（仅最近目标为主）
 
 | 英雄 | skill | 说明 |
 |------|-------|------|
-| 二郎 | `ranged` | 只打 `inRange[0]`（最靠前），×5×暴击倍率（`CRIT_MULT = 1.5`） |
-| 牛郎 | `ranged` | 同上，过渡版 |
+| 二郎 | `ranged` | 以 `inRange[0]`（最靠前）为主目标，×`heroRangedDmgMul`（5）×暴击倍率（`CRIT_MULT = 1.5`）；光束走廊（垂直半宽 `heroBeamCorridor` = 0.95 格）上最多贯穿 `heroPierceMaxMain`（4）只；哮天犬咬最前高血目标：定身 `heroDogStunDur`（3s）、跟随特效 `heroDogTtl`（3s） |
+| 牛郎 | `ranged` | 同上但 `heroPierceMaxTransit` = 1（单体过渡，无贯穿/无犬） |
 
 ### 2.3 友军辅助大招（不对怪结算）
 
@@ -198,6 +198,18 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 | 般若减 CD `heroCdrSec*` | 4s | 2.5s |
 
 牛魔 / 青牛定身附带伤害倍率仍为 `heroChargeStunDmgMul = 2.0`（高于八戒线 `0.8`）。
+
+### 大招伤害 / 贯穿 / 回复 / 动画时长（`TUNING`，2026-08-23 起可调）
+
+| 常量 | 默认 | 含义 |
+|------|------|------|
+| `heroBurstDmgMul` | 3 | burst 系大招瞬时倍率 |
+| `heroRangedDmgMul` | 5 | ranged 系大招基础倍率（再乘 `CRIT_MULT`） |
+| `heroPierceMaxMain` / `heroPierceMaxTransit` | 4 / 1 | 二郎贯穿怪数 / 牛郎单体 |
+| `heroBeamCorridor` | 0.95 格 | 贯穿光束走廊垂直半宽 |
+| `heroDogStunDur` / `heroDogTtl` | 3s / 3s | 哮天犬定身与跟随时长 |
+| `heroHealHp` | 1 | 观音系每波为唐僧回血 |
+| `heroUltFxTtlLong/Bite/Support/Default` | 0.9 / 0.8 / 0.85 / 0.6 | 大招动画时长（大圣·红孩 / 白龙 / 辅助系 / 其余；纯视觉） |
 
 ### 唐僧受伤免疫
 

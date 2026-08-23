@@ -257,6 +257,20 @@ export const TUNING = {
   heroBuffDurTransit: 3.5, // 丹君增益时长（秒）
   heroCdrSecMain: 4, // 文殊：其他武将大招剩余 CD 缩短（秒）
   heroCdrSecTransit: 2.5, // 慧殊：缩短秒数
+  // —— 武将大招伤害/贯穿/回复（原先硬编码，现并入 TUNING 供 DevTools 调）——
+  heroBurstDmgMul: 3, // 范围爆发系大招瞬时倍率（大圣/大蟒/哪吒/金吒）
+  heroRangedDmgMul: 5, // 远程暴击系大招基础倍率（二郎/牛郎；结算再乘 CRIT_MULT）
+  heroPierceMaxMain: 4, // 二郎「天眼诛邪」光束最多贯穿怪数
+  heroPierceMaxTransit: 1, // 牛郎「织云箭」单体（无贯穿）
+  heroBeamCorridor: 0.95, // 贯穿光束走廊的垂直半宽（格）：垂距超过则不视为在直线上
+  heroDogStunDur: 3, // 哮天犬咬住目标的定身时长（秒）
+  heroDogTtl: 3, // 哮天犬跟随特效时长（秒，怪死亡则提前消失）
+  heroHealHp: 1, // 观音/梵音大招每波为唐僧回复的血量
+  // —— 大招动画时长（纯视觉，不影响数值平衡）——
+  heroUltFxTtlLong: 0.9, // 大圣/红孩（招式演出更长）
+  heroUltFxTtlBite: 0.8, // 白龙突进撕咬
+  heroUltFxTtlSupport: 0.85, // 辅助系（观音/老君/文殊线）
+  heroUltFxTtlDefault: 0.6, // 其余英雄
   tangsengHurtImmuneDur: 1, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
@@ -284,8 +298,8 @@ function heroSkillFocusDps(def: GeneralDef, atk: number): number {
   const cd = def.skillCd;
   if (def.skill === 'none' || cd <= 0) return 0;
   switch (def.skill) {
-    case 'burst': return (atk * 3) / cd;
-    case 'ranged': return (atk * 5 * GENERAL_TUNING.CRIT_MULT) / cd;
+    case 'burst': return (atk * TUNING.heroBurstDmgMul) / cd;
+    case 'ranged': return (atk * TUNING.heroRangedDmgMul * GENERAL_TUNING.CRIT_MULT) / cd;
     case 'stun': {
       const isCharge = def.id === 'niumowang' || def.id === 'qingniu';
       const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
@@ -6138,11 +6152,11 @@ export class Battle {
     rgeCells: number,
   ): void {
     const crit = ultTypeOf(g.def) === 'crit';
-    const ultTtl = g.def.id === 'dasheng' ? 0.9
-      : g.def.id === 'honghaier' ? 0.9
-      : g.def.id === 'bailong' ? 0.8
-      : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? 0.85
-      : 0.6;
+    // 大招动画时长按英雄分档（纯视觉，可调）
+    const ultTtl = g.def.id === 'dasheng' || g.def.id === 'honghaier' ? TUNING.heroUltFxTtlLong
+      : g.def.id === 'bailong' ? TUNING.heroUltFxTtlBite
+      : (g.def.skill === 'heal' || g.def.skill === 'buff' || g.def.skill === 'cdr') ? TUNING.heroUltFxTtlSupport
+      : TUNING.heroUltFxTtlDefault;
     const fxAtCaster = g.def.skill === 'buff' || g.def.skill === 'cdr';
     const bite = this.biteTarget;
     this.biteTarget = null; // 消费即清，避免下次大招残留旧目标
@@ -6249,22 +6263,22 @@ export class Battle {
     let center = inRange[0]?.p ?? { c: gAx, r: gAy };
     switch (g.def.skill) {
       case 'burst': {
-        for (const t of inRange) hurt(t.m, damage(atk * 3), t.p, 0.15);
+        for (const t of inRange) hurt(t.m, damage(atk * TUNING.heroBurstDmgMul), t.p, 0.15);
         // 哪吒「万火齐发」命中音效（单个清脆穿刺声，对齐枪雨落点）
         if (g.def.id === 'nezha' && inRange.length > 0) this.emit('hit');
         break;
       }
       case 'ranged': {
         // 真·穿透：命中「二郎→主目标」这条直线走廊上的多个敌人（垂距≤~1 格）。
-        // 二郎「天眼诛邪」贯穿最多 4 个；牛郎「织云箭」为单体过渡，仍只打 1 个。
+        // 二郎「天眼诛邪」贯穿最多 heroPierceMaxMain 个；牛郎「织云箭」为单体过渡。
         const primary = inRange[0]!;
-        const pierceMax = g.def.id === 'erlang' ? 4 : 1;
+        const pierceMax = g.def.id === 'erlang' ? TUNING.heroPierceMaxMain : TUNING.heroPierceMaxTransit;
         const dirC = primary.p.c - gAx;
         const dirR = primary.p.r - gAy;
         const len = Math.hypot(dirC, dirR) || 1;
         const ux = dirC / len;
         const uy = dirR / len;
-        const CORRIDOR = 0.95; // 光束轴向的垂直半宽（格）
+        const CORRIDOR = TUNING.heroBeamCorridor; // 光束轴向的垂直半宽（格）
         const line = inRange
           .map((x) => {
             const rx = x.p.c - gAx;
@@ -6274,7 +6288,7 @@ export class Battle {
           .filter((x) => x.proj >= 0 && x.perp <= CORRIDOR)
           .sort((a, b) => a.proj - b.proj)
           .slice(0, pierceMax);
-        const dmg = damage(atk * 5 * GENERAL_TUNING.CRIT_MULT);
+        const dmg = damage(atk * TUNING.heroRangedDmgMul * GENERAL_TUNING.CRIT_MULT);
         for (const t of line) hurt(t.m, dmg, t.p, 0.2, true);
         // 光束延伸到最远命中目标，凸显「贯穿一整条线」
         center = line[line.length - 1]?.p ?? primary.p;
@@ -6288,12 +6302,12 @@ export class Battle {
             if (!pick || t.m.maxHp > pick.m.maxHp) pick = t;
           }
           if (pick) {
-            pick.m.stunT = Math.max(pick.m.stunT ?? 0, 3.0);
+            pick.m.stunT = Math.max(pick.m.stunT ?? 0, TUNING.heroDogStunDur);
             this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r), mid: pick.m.id };
             // 光束角度：从施法者中心→咬点（让狗朝向光束冲锋方向）
             const beamAng = Math.atan2(pick.p.r - gAy, pick.p.c - gAx);
-            // 哮天犬咬住后持续跟随 3s（怪死亡则消失）
-            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: 3.0, maxTtl: 3.0, tier: g.tier, ang: beamAng, fromC: gAx, fromR: gAy });
+            // 哮天犬咬住后持续跟随（怪死亡则消失）
+            this.erlangDogFx.push({ mid: pick.m.id, c: Math.round(pick.p.c), r: Math.round(pick.p.r), ttl: TUNING.heroDogTtl, maxTtl: TUNING.heroDogTtl, tier: g.tier, ang: beamAng, fromC: gAx, fromR: gAy });
           }
         }
         break;
@@ -6328,13 +6342,13 @@ export class Battle {
         for (const t of inRange) t.m.slowT = Math.max(t.m.slowT, TUNING.heroHealSlowDur);
         if (ai) {
           if (!this.aiHealUsedThisWave && this.aiTangsengHP < this.tangsengMaxHP) {
-            this.aiTangsengHP += 1;
+            this.aiTangsengHP += TUNING.heroHealHp;
             this.aiHealUsedThisWave = true;
           }
         } else if (!this.healUsedThisWave && this.tangsengHP < this.tangsengMaxHP) {
-          this.tangsengHP += 1;
+          this.tangsengHP += TUNING.heroHealHp;
           this.healUsedThisWave = true;
-          this.message = `${g.def.name}甘露：唐僧回复 1 血`;
+          this.message = `${g.def.name}甘露：唐僧回复 ${TUNING.heroHealHp} 血`;
         }
         break;
       }

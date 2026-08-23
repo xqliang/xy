@@ -89,7 +89,7 @@ const ROOT_ID = 'xy-devtools-root';
 const TABS: { id: DevTab; label: string }[] = [
   { id: 'user', label: '用户' },
   { id: 'preview', label: '预览' },
-  { id: 'attack', label: '武将技能' },
+  { id: 'attack', label: '英雄技能' },
   { id: 'monster', label: '出怪承压' },
   { id: 'system', label: '征兵AI' },
   { id: 'dps', label: '输出对比' },
@@ -337,7 +337,7 @@ function section(title: string): HTMLElement {
   return h;
 }
 
-/** 条目说明文字（技能 desc / 武将大招说明等），复用 hint 样式 */
+/** 条目说明文字（技能 desc / 英雄大招说明等），复用 hint 样式 */
 function descNote(text: string): HTMLElement {
   const p = document.createElement('p');
   p.className = 'xy-dt-hint';
@@ -766,7 +766,7 @@ export class DevToolsPanel {
     }
     body.appendChild(fxActions);
 
-    body.appendChild(section('武将普攻 / 大招'));
+    body.appendChild(section('英雄普攻 / 大招'));
     const heroFx = document.createElement('div');
     heroFx.className = 'xy-dt-actions';
     for (const g of GENERALS) {
@@ -794,7 +794,7 @@ export class DevToolsPanel {
       body.appendChild(card);
     }
 
-    body.appendChild(section('武将基础（白阶）'));
+    body.appendChild(section('英雄基础（白阶）'));
     for (const g of GENERALS) {
       const card = document.createElement('div');
       card.className = 'xy-dt-card';
@@ -829,7 +829,7 @@ export class DevToolsPanel {
   private renderAttack(body: HTMLElement): void {
     const hint = document.createElement('p');
     hint.className = 'xy-dt-hint';
-    hint.textContent = '武将 / 兵器 / 神兵 / 主动·被动价格 / 大招与主动倍率。每项只出现一次。改完即时生效（已开对局建议重开）。';
+    hint.textContent = '英雄 / 兵器 / 神兵 / 主动·被动价格 / 大招与主动倍率。每项只出现一次。改完即时生效（已开对局建议重开）。';
     body.appendChild(hint);
     const actions = document.createElement('div');
     actions.className = 'xy-dt-actions';
@@ -838,13 +838,13 @@ export class DevToolsPanel {
     }
     body.appendChild(actions);
 
-    body.appendChild(section('武将全局 GENERAL_TUNING'));
+    body.appendChild(section('英雄全局 GENERAL_TUNING'));
     body.appendChild(objectFields(GENERAL_TUNING as unknown as Record<string, unknown>));
 
     body.appendChild(section('神兵 WEAPON_TUNING'));
     body.appendChild(objectFields(WEAPON_TUNING as unknown as Record<string, unknown>));
 
-    body.appendChild(section('武将逐条 GENERALS'));
+    body.appendChild(section('英雄逐条 GENERALS'));
     for (let i = 0; i < GENERALS.length; i++) {
       const g = GENERALS[i]!;
       body.appendChild(section(`${g.name} (${g.id})`));
@@ -959,9 +959,9 @@ export class DevToolsPanel {
     hint.className = 'xy-dt-hint';
     hint.innerHTML = [
       '同类型内才可直接比柱高。口径：',
-      '武将=普攻秒伤+大招专注秒伤；',
+      '英雄=普攻秒伤+大招专注秒伤；',
       '兵器=POW(ATK×FRQ×RGE×目标，枪/骑/弓设计上 POW 相同)；',
-      '神兵=对专属武将普攻的<strong>增益量</strong>（非加成后总伤）；',
+      '神兵=对专属英雄普攻的<strong>增益量</strong>（非加成后总伤）；',
       '主动=波血标尺近似。',
       '选「全部」时柱高为<strong>类内相对分 0–100</strong>，避免跨口径误导。',
     ].join('');
@@ -972,7 +972,7 @@ export class DevToolsPanel {
     const filterSel = document.createElement('select');
     const filterLabels: Record<DpsKind | 'all', string> = {
       all: '全部（类内相对）',
-      hero: '武将',
+      hero: '英雄',
       unit: '兵器',
       weapon: '神兵增益',
       active: '主动技能',
@@ -989,7 +989,7 @@ export class DevToolsPanel {
       this.renderBody();
     });
     controls.appendChild(fieldRow('类型', filterSel));
-    controls.appendChild(fieldRow('武将阶', numInput(this.heroTier, (n) => {
+    controls.appendChild(fieldRow('英雄阶', numInput(this.heroTier, (n) => {
       this.heroTier = Math.max(1, Math.min(5, Math.floor(n)));
       this.renderBody();
     }, '1')));

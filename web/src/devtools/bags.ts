@@ -44,9 +44,9 @@ export const TUNABLE_BAGS: TunableBag[] = [
   bag('placeTiming', '布阵间隔 PLACE_TIMING', PLACE_TIMING),
   bag('peachTree', '蟠桃园 PEACH_TREE', PEACH_TREE),
   bag('aiTiming', 'AI 调位 AI_TIMING', AI_TIMING),
-  bag('generalTuning', '武将战斗 GENERAL_TUNING', GENERAL_TUNING),
+  bag('generalTuning', '英雄战斗 GENERAL_TUNING', GENERAL_TUNING),
   bag('weaponTuning', '神兵 WEAPON_TUNING', WEAPON_TUNING),
-  bag('generals', '武将 GENERALS', GENERALS),
+  bag('generals', '英雄 GENERALS', GENERALS),
   bag('actives', '主动技能 ACTIVE_SKILLS', ACTIVE_SKILLS),
   bag('passives', '被动技能 PASSIVE_SKILLS', PASSIVE_SKILLS),
   bag('units', '兵器 UNITS', UNITS),
@@ -144,7 +144,7 @@ export const TUNING_MONSTER_KEYS = new Set([
   ...TUNING_MONSTER_SKILL_KEYS,
 ]);
 
-/** 武将技能 Tab：主动技能数值 + 武将大招分档 + 命中容差 */
+/** 英雄技能 Tab：主动技能数值 + 英雄大招分档与全部大招效果数值 + 命中容差 */
 export const TUNING_SKILL_KEYS = new Set([
   'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
   'bombDmgMul', 'bombExplodeRadius', 'bombContactRadius',
@@ -155,6 +155,10 @@ export const TUNING_SKILL_KEYS = new Set([
   'heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur',
   'heroBuffAtkMulMain', 'heroBuffAtkMulTransit', 'heroBuffDurMain', 'heroBuffDurTransit',
   'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
+  'heroBurstDmgMul', 'heroRangedDmgMul',
+  'heroPierceMaxMain', 'heroPierceMaxTransit', 'heroBeamCorridor',
+  'heroDogStunDur', 'heroDogTtl', 'heroHealHp',
+  'heroUltFxTtlLong', 'heroUltFxTtlBite', 'heroUltFxTtlSupport', 'heroUltFxTtlDefault',
   'rangeTolerance',
 ]);
 
