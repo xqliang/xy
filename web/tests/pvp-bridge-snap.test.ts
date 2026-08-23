@@ -11,6 +11,7 @@ import { Battle, NO_META } from '../src/battle';
 import { mirrorCell, faceDirToward, pathEntranceCell, type Cell } from '../src/board';
 import { MAPS } from '../src/board';
 import { PvpOppView } from '../src/pvp-snap';
+import { ECONOMY } from '@core';
 
 // 与旧 pvp-bridge.test.ts 的 mkPvp 同构。
 const mkPvp = () =>
@@ -313,5 +314,43 @@ describe('bridge 武将镜像识别（180° 镜像会反读武将两字，需仍
     const right = c0.c <= c1.c ? c1 : c0;
     expect(B2.aiWords.get(`${left.c},${left.r}`)!.char).toBe('圣');
     expect(B2.aiWords.get(`${right.c},${right.r}`)!.char).toBe('大');
+  });
+});
+
+describe('bridge 同心咒跨侧生效（PvP：对手 +2 须落到我方权威 sim，而非被快照覆盖的 aiTangsengHP）', () => {
+  // 对手 A 装备同心咒：A 自己 +3（其本机权威）；快照 pickedItems 携带 'tongxin'。
+  const mkOppWithTongxin = () =>
+    new Battle(1, 1, MAPS[0]!, NO_META, {}, [], ['tongxin'], false, undefined, 1, undefined, { enabled: true });
+
+  it('桥到含 tongxin 的快照 → 我方唐僧 max/HP 各 +2（一次）', () => {
+    const A = mkOppWithTongxin();
+    expect(A.pickedItems).toContain('tongxin');
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.tangsengMaxHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 2);
+    expect(B2.tangsengHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 2);
+  });
+
+  it('每帧重复桥接不叠加（快照每 100ms 重发，去重只加一次）', () => {
+    const A = mkOppWithTongxin();
+    const view = new PvpOppView();
+    view.ingest(A.pvpOwnSnapshot(1000));
+    const B2 = mkPvp();
+    for (let t = 1000; t <= 2000; t += 100) {
+      B2.bridgeOpponentFromSnap(view.interpAt(t));
+    }
+    expect(B2.tangsengMaxHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 2);
+    expect(B2.tangsengHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 2);
+  });
+
+  it('对手无 tongxin → 不加；我方自己装备 tongxin 在 PvP 下不再碰 aiTangsengHP（快照木偶无意义）', () => {
+    const A = mkPvp();
+    const B2 = bridgeSnap(A, 1000);
+    expect(B2.tangsengMaxHP).toBe(ECONOMY.TANGSENG_INITIAL_HP);
+    expect(B2.tangsengHP).toBe(ECONOMY.TANGSENG_INITIAL_HP);
+
+    const me = mkOppWithTongxin(); // 我方视角：自己装备 tongxin 的 PvP 对局
+    expect(me.tangsengMaxHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 3);
+    expect(me.tangsengHP).toBe(ECONOMY.TANGSENG_INITIAL_HP + 3);
+    expect(me.aiTangsengHP).toBe(ECONOMY.TANGSENG_INITIAL_HP); // pvp 门控：不本地 +2（由对手端落到他自己 sim）
   });
 });

@@ -1722,6 +1722,8 @@ export class Battle {
   }
 
   tangsengMaxHP = ECONOMY.TANGSENG_INITIAL_HP; // 唐僧血量上限（受功德/道具提升，但封顶 TANGSENG_MAX_HP）
+  /** PvP 对手同心咒的「+2」是否已落到我方 sim（每帧桥接都会看到 pickedItems，去重防整局多次叠加） */
+  private pvpOppTongxinBonusApplied = false;
   healUsedThisWave = false; // 观音甘露每波限回一次
   aiHealUsedThisWave = false; // AI 侧观音甘露每波限回一次
   tangsengHurtImmuneT = 0; // 漏怪扣血后短暂免疫剩余（秒）
@@ -1840,6 +1842,17 @@ export class Battle {
     // 单机 AI 本就同时把主动推进 aiPickedItems（见开局 rollAiLoadout），这里让 PvP 对手与之一致。
     for (const s of snap.activeSlots) {
       if (!this.aiPickedItems.includes(s.id)) this.aiPickedItems.push(s.id);
+    }
+
+    // —— A1.5 同心咒（唯一跨侧被动）：对手装备了同心咒 → 我方唐僧 +2 ——
+    // 单机走 applyItem/applyAiItem（AI sim 本地跑，aiTangsengHP 是真值）；PvP 下对手是快照木偶，
+    // 其「给我 +2」若写 aiTangsengHP 会被本函数每帧覆盖（旧 bug：+2 从未生效）。
+    // 正确做法是把 +2 落到**我方权威 sim**（自己的 tangsengHP），再随本方快照发回对手显示。
+    // 靠快照 pickedItems 携带触发（每 100ms 重发，断线重连也可靠）；本方去重，整局只加一次。
+    if (!this.pvpOppTongxinBonusApplied && snap.pickedItems.includes('tongxin')) {
+      this.pvpOppTongxinBonusApplied = true;
+      this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 2);
+      this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 2);
     }
 
     // —— A2. 瞬态特效：按 nowMs 老化后重建渲染对象 ——
@@ -4961,8 +4974,14 @@ export class Battle {
       case 'xianyuan': this.mods.summonCostDelta -= 1; break;
       case 'jubaopen': this.mods.killBonus += 1; break;
       case 'hushen': this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 1); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 1); break;
-      // 非对称正向：我方收益优于 AI 对手
-      case 'tongxin': this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 3); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 3); this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 2); break;
+      // 非对称正向：我方收益优于 AI 对手。
+      // PvP：对手唐僧血是快照木偶（桥每帧覆盖），本地 +2 无意义且会闪跳——「对手 +2」改由对手端
+      // 桥到我的 pickedItems 后落到他自己的权威 sim（见 bridgeOpponentFromSnap A1.5），随其快照回流。
+      case 'tongxin':
+        this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 3);
+        this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 3);
+        if (!this.pvp) this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 2);
+        break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.10); break;
       case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
     }
