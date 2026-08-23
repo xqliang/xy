@@ -2444,6 +2444,88 @@ function drawGroundShadow(
 }
 
 // 单个怪物渲染（图标/圆形兜底 + 墨风血条 + 受击闪白 + 技能环 + 入场缩放 + 行走摆动 + 地面阴影）
+// —— 帧率自适应特效档位（0.3~1）：机器卡顿时由 main 的帧率监视器调低，渲染据此减少灼烧/冰冻等粒子密度。——
+let fxQuality = 1;
+/** 设置特效画质档位（clamp 到 0.3~1）。main 帧率监视器据平滑帧时调用。 */
+export function setFxQuality(q: number): void {
+  fxQuality = Math.max(0.3, Math.min(1, q));
+}
+/** 当前特效画质档位（供 main 迟滞判断 / 测试探针）。 */
+export function getFxQuality(): number {
+  return fxQuality;
+}
+
+// 单条火舌（灼烧专用）：底宽尖窄，随 phase 左右摇曳；外层暗橙红 + 内层亮黄，配合调用方 lighter 叠加出发光。
+function drawBurnFlameTongue(ctx: CanvasRenderingContext2D, cx: number, baseY: number, h: number, w: number, phase: number): void {
+  const sway = Math.sin(phase * 2.3) * w * 0.55;
+  const tipX = cx + sway;
+  ctx.beginPath();
+  ctx.moveTo(cx - w / 2, baseY);
+  ctx.quadraticCurveTo(cx - w * 0.5, baseY - h * 0.5, tipX, baseY - h);
+  ctx.quadraticCurveTo(cx + w * 0.5, baseY - h * 0.5, cx + w / 2, baseY);
+  ctx.quadraticCurveTo(cx, baseY + h * 0.06, cx - w / 2, baseY);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(214,64,20,0.5)';
+  ctx.fill();
+  const iw = w * 0.52, ih = h * 0.62, itip = cx + sway * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(cx - iw / 2, baseY);
+  ctx.quadraticCurveTo(cx - iw * 0.5, baseY - ih * 0.5, itip, baseY - ih);
+  ctx.quadraticCurveTo(cx + iw * 0.5, baseY - ih * 0.5, cx + iw / 2, baseY);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,206,86,0.68)';
+  ctx.fill();
+}
+
+// 灼烧火焰：burnT>0 时在妖怪身上画连续跳动的火焰（+上升火星），画在立绘之后、血条之前。
+// 火舌/火星数量随 fxQuality 缩放（卡顿降档时更省帧）。淡入淡出与冰封同构（起 0.2s 入、末 0.5s 出）。
+// 用 performance.now 驱动火焰跳动（纯渲染，不入 sim），每怪按 id 起相位错开。
+function drawMonsterBurn(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rad0: number,
+  m: { id?: number; burnT?: number; isBoss?: boolean; isMiniBoss?: boolean },
+): void {
+  const bT = m.burnT ?? 0;
+  if (bT <= 0) return;
+  const elapsed = TUNING.heroBurnDur - bT;
+  const vis = Math.max(0, Math.min(1, Math.min(elapsed / 0.2, bT / 0.5)));
+  if (vis <= 0) return;
+  const now = performance.now() / 1000;
+  const seed = (m.id ?? 0) * 1.7 + 3.1;
+  const baseY = y + rad0 * 0.55;
+  const baseN = m.isBoss ? 8 : m.isMiniBoss ? 6 : 5;
+  const tongues = Math.max(3, Math.round(baseN * fxQuality));
+  ctx.save();
+  ctx.globalAlpha = vis;
+  ctx.globalCompositeOperation = 'lighter'; // 叠加：交叠火舌互相提亮，像真火发光
+  for (let i = 0; i < tongues; i++) {
+    const a = tongues === 1 ? 0.5 : i / (tongues - 1); // 0..1 横铺满身
+    const flick = 0.55 + 0.45 * Math.sin(now * (6 + (i % 4) * 1.3) + seed + i * 2.1);
+    const center = Math.max(0.35, 1 - Math.abs(a - 0.5) * 1.3); // 中间高、两侧矮
+    const h = rad0 * (0.9 + 0.7 * flick) * center;
+    const w = rad0 * (0.36 + 0.12 * flick);
+    const px = x + (a - 0.5) * rad0 * 1.7 + Math.sin(now * 3 + seed + i) * rad0 * 0.08;
+    drawBurnFlameTongue(ctx, px, baseY, h, w, now + seed + i);
+  }
+  if (fxQuality > 0.55) { // 上升火星：低画质省略以省帧
+    const embers = Math.round(5 * fxQuality);
+    for (let i = 0; i < embers; i++) {
+      const ph = (now * 0.9 + i / embers + seed) % 1; // 0..1 上升进度
+      const ex = x + Math.sin(now * 2 + i * 2.7 + seed) * rad0 * 0.7;
+      const ey = baseY - ph * rad0 * 2.2;
+      const er = (1 - ph) * rad0 * 0.09 + 0.5;
+      ctx.globalAlpha = vis * (1 - ph) * 0.9;
+      ctx.fillStyle = 'rgba(255,180,80,0.95)';
+      ctx.beginPath();
+      ctx.arc(ex, ey, er, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 // 冰封定身：怪物脚下冒出一圈白色尖角冰晶（纯渲染视觉，状态由 battle 的 frozenT 驱动）。
 // 淡入淡出：刚冻住 0.18s 内「长出」、解冻前 0.45s 「融化」；冰晶高低/朝向按怪物 id + dist 伪随机
 // 打散（冻住期间 dist 不变 → 同一怪每帧渲染稳定不闪烁）。画在立绘之后 → 冰晶压住脚踝，像站在冰碴里。
@@ -2473,7 +2555,7 @@ function drawFrozenIceShards(
   ctx.ellipse(x, baseY, rad0 * 1.2, rad0 * 0.52, 0, 0, Math.PI * 2);
   ctx.fill();
   // 尖角冰晶：绕脚前半圈（屏幕下方可见），身前高、两侧矮，高低再按 seed 起伏
-  const N = 7;
+  const N = Math.max(3, Math.round(7 * fxQuality)); // 卡顿降档时减少冰晶数
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1);
     const ang = Math.PI * (0.1 + 0.8 * t); // 0.1π..0.9π：椭圆下半圈参数角
@@ -2625,6 +2707,8 @@ function drawMonsterAt(
   }
   // 冰封定身：脚下白色尖角冰晶（画在立绘后压住脚踝；frozenT 只有冰冻技能写入，武将定身不出冰）
   drawFrozenIceShards(ctx, x, y, rad0, m);
+  // 灼烧火焰：burnT>0 时身上连续火烧（主动技能/大招灼烧的持续视觉；卡顿时随 fxQuality 降密度）
+  drawMonsterBurn(ctx, x, y, rad0, m);
   // 墨风血条：深墨底条 + 朱红填充
   const bw = rad0 * 2;
   const hpPct = Math.max(0, m.hp / m.maxHp);

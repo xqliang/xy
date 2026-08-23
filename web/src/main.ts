@@ -32,6 +32,7 @@ import {
   drawGuideSkip,
   activeSlotRect,
   drawGameStartHint,
+  setFxQuality,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -189,6 +190,9 @@ const ctx = canvas.getContext('2d')!;
 let last = performance.now();
 let rafId: number | null = null;
 const MIN_FRAME_MS = 1000 / 60 - 4;
+// 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，fxQualityLevel=当前档位(1=满/0.4=省)。
+let frameMsEma = 0;
+let fxQualityLevel = 1;
 
 // 切后台暂停：停 rAF 循环与背景音，回前台再唤醒（pauseLoop/resumeLoop 见游戏循环处，函数声明已提升）。
 // 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
@@ -2295,6 +2299,13 @@ function frame(now: number): void {
   let dt = elapsed / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
+  // 帧率自适应特效档位：连续动画中测平滑帧时(EMA)，过慢降灼烧/冰冻粒子密度、恢复则复原（迟滞防抖）。
+  // 忽略切前台/入场的巨帧(elapsed≥120ms)。阈值参照 60fps 上限(MIN_FRAME_MS≈12.7ms)：>26ms(≈<38fps)降、<19ms(≈>52fps)复。
+  if (needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
+    frameMsEma = frameMsEma <= 0 ? elapsed : frameMsEma * 0.9 + elapsed * 0.1;
+    if (fxQualityLevel > 0.5 && frameMsEma > 26) { fxQualityLevel = 0.4; setFxQuality(0.4); }
+    else if (fxQualityLevel < 0.9 && frameMsEma < 19) { fxQualityLevel = 1; setFxQuality(1); }
+  }
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
