@@ -190,8 +190,8 @@ export const TUNING = {
   skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 4.5, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
-  stunDur: 4.0, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
-  slowDur: 6, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
+  stunDur: 3.5, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
+  slowDur: 4, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
@@ -204,17 +204,17 @@ export const TUNING = {
   miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
   miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口（blight/blood 等未特指种类用此默认）
   miniBossSpdMulSlow: 0.75, // 霜魄/撼地小 Boss 本体移速倍率（偏慢，给玩家反应）
-  miniBossSpdMulFast: 1.1, // 疾风小 Boss 本体移速倍率（本身很快）
+  miniBossSpdMulFast: 1.05, // 疾风小 Boss 本体移速倍率（本身很快）
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
-  miniBossInterval: 4.0, // 两次施法间隔（秒）
+  miniBossInterval: 6, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
   miniBossStealRadius: 3, // 黄狮精「卷走」作用半径（格）
   miniBossStealDelayMin: 1, // 出场后首次触发最短延时（秒）
   miniBossStealDelayMax: 20, // 出场后首次触发最长延时（秒）
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
-  knockdownDur: 4.0, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
-  hasteDur: 3.0, // 疾风：周围妖怪加速持续（秒）
-  hasteSpdMul: 1.25, // 疾风光环：周围妖怪加速期间移速倍率
+  knockdownDur: 3.5, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
+  hasteDur: 4, // 疾风：周围妖怪加速持续（秒）
+  hasteSpdMul: 1.20, // 疾风光环：周围妖怪加速期间移速倍率
   healPct: 0.08, // 血泉：每次回复目标最大生命的比例
   // —— AI 清场 / 紧箍咒 ——
   aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
