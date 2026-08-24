@@ -11002,10 +11002,11 @@ function drawPillDropHints(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState
   if (!def) return;
   // 炸药：参考兵器布置——先用黄色四角框标出所有「可埋」的路径格，再高亮鼠标所在格
   if (isBombActiveEffect(def.effect)) {
-    // 所有可埋路径格打黄色四角框（唐僧格 / 已埋格与 placeBomb 同口径自动排除）
+    // 所有可埋路径格打黄色四角框+中央「+」（与兵器部署的可落格标识同款；唐僧格 / 已埋格与
+    // placeBomb 同口径自动排除）。「+」含义同为「空位可落」——路径格对炸药而言空格即可埋。
     for (const pc of b.map.path) {
       if (!b.canPlaceBomb(pc)) continue;
-      drawAimReticle(ctx, BOARD_X + pc.c * CELL, BOARD_Y + pc.r * CELL, CELL, CELL, { plus: false, fill: false });
+      drawAimReticle(ctx, BOARD_X + pc.c * CELL, BOARD_Y + pc.r * CELL, CELL, CELL, { plus: true, fill: false });
     }
     // 鼠标所在格：路径合法且未埋=橙，否则=红（精确落点反馈）
     const cell = pxToCell(ui.dragPos.x, ui.dragPos.y);
