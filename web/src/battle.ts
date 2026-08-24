@@ -190,7 +190,7 @@ export const TUNING = {
   skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
   skillInterval: 6, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
-  stunDur: 3.5, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
+  stunDur: 3, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
   slowDur: 4, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
@@ -213,7 +213,7 @@ export const TUNING = {
   miniBossStealDelayMax: 20, // 出场后首次触发最长延时（秒）
   miniBossStealFlashDur: 1.05, // 卷走预演时长（秒）：目标先原地闪 ~3 次让玩家看清是谁，期满才爆粒子消失
   eliteHpMul: 1.4, // 精英血量倍数：精英掉落桃子是普通妖 4 倍，血量需相应更高，否则性价比失衡
-  knockdownDur: 3.5, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
+  knockdownDur: 3, // 倒下（震地）：武器横躺、无法攻击（秒；怪物小Boss震地，时长×2）
   hasteDur: 4, // 疾风：周围妖怪加速持续（秒）
   hasteSpdMul: 1.20, // 疾风光环：周围妖怪加速期间移速倍率
   healPct: 0.08, // 血泉：每次回复目标最大生命的比例
@@ -2176,6 +2176,22 @@ export class Battle {
   /** 对手击杀掉桃特效：加桃飘字（按怪种，复用共享 peachFloats）+ death 爆点。双模式共用：
    *  在线 PvP 由 stepOpponentJuice 快照补演调用；离线 AI 对战由 updateAi 击杀分支直调
    *  （出招动画在线由本地视觉模拟驱动，离线由 AI 半场真实 sim 驱动）。只产视觉不碰 aiPeach。 */
+  private jubaAccum = 0; // 聚宝盆：玩家击杀累计，满 4 产 1 桃
+  private aiJubaAccum = 0; // 聚宝盆：AI 侧同上（单人 AI 对手经济）
+  /** 聚宝盆产桃：按 killBonus 点累计，满 4 产 1 桃（jubaopen 使 killBonus=1 → 每 4 杀 +1）。ai=true 走 AI 侧计数。 */
+  private jubaBonus(ai: boolean): number {
+    const kb = ai ? this.aiMods.killBonus : this.mods.killBonus;
+    if (kb <= 0) return 0;
+    if (ai) {
+      this.aiJubaAccum += kb;
+      if (this.aiJubaAccum >= 4) { this.aiJubaAccum -= 4; return 1; }
+      return 0;
+    }
+    this.jubaAccum += kb;
+    if (this.jubaAccum >= 4) { this.jubaAccum -= 4; return 1; }
+    return 0;
+  }
+
   private spawnAiKillJuice(pm: { isBoss: boolean; isMiniBoss: boolean; isElite: boolean; c: number; r: number }): void {
     const pos = { c: pm.c, r: pm.r };
     const base = pm.isBoss
@@ -2185,7 +2201,7 @@ export class Battle {
         : pm.isElite
           ? ECONOMY.PEACH_PER_ELITE
           : ECONOMY.PEACH_PER_KILL;
-    const amount = base + this.aiMods.killBonus;
+    const amount = base; // 视觉飘字：聚宝盆每4杀1桃仅计入经济(creditAiKill)，此处只显示基础，避免双计
     this.peachFloats.push({ c: pos.c, r: pos.r, amount, y: PEACH_FLOAT_HEAD_Y, vy: peachFloatInitialVy(), peakY: PEACH_FLOAT_HEAD_Y });
     this.bursts.push({ kind: 'death', c: pos.c, r: pos.r, ttl: 0.4, maxTtl: 0.4, big: pm.isBoss || pm.isMiniBoss, color: pm.isBoss ? '#ff5a8a' : pm.isMiniBoss ? '#ff9a4a' : '#c25a5a' });
   }
@@ -3923,7 +3939,7 @@ export class Battle {
         : isElite
           ? ECONOMY.PEACH_PER_ELITE
           : ECONOMY.PEACH_PER_KILL;
-    this.aiPeach += base + this.aiMods.killBonus;
+    this.aiPeach += base + this.jubaBonus(true);
   }
 
   // AI 布阵视图（喂给共享 planAutoPlace）
@@ -7447,7 +7463,7 @@ export class Battle {
             : isElite
               ? ECONOMY.PEACH_PER_ELITE
               : ECONOMY.PEACH_PER_KILL;
-        const amount = base + this.mods.killBonus; // 击杀产蟠桃（普通1 / 精英4 / 小Boss6 / 大Boss10，+道具）
+        const amount = base + this.jubaBonus(false); // 击杀产蟠桃（普通1/精英4/小Boss6/大Boss10）+聚宝盆每4杀1桃
         this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + amount);
         this.kills++; // 本方累计击杀（PvP 摘要/反作弊用；仅本方击杀分支，不含 creditAiKill）
         const dp = posAtDistance(this.map, m.dist);

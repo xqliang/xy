@@ -32,7 +32,7 @@ export const PASSIVE_SKILLS: PassiveSkillDef[] = [
   { id: 'yunshi', name: '陨石', icon: '陨', cost: 65, desc: '每波待最前活怪走过约 2 格后再砸最前妖怪（×1.4）' },
   { id: 'yuni', name: '淤泥', icon: '泥', cost: 50, desc: '出怪口附近妖怪移速 -18%' },
   { id: 'xianyuan', name: '仙缘幡', icon: '缘', cost: 45, desc: '召唤成本 -1' },
-  { id: 'jubaopen', name: '聚宝盆', icon: '盆', cost: 55, desc: '击杀额外 +1 蟠桃' },
+  { id: 'jubaopen', name: '聚宝盆', icon: '盆', cost: 55, desc: '每击杀 4 个妖怪 +1 蟠桃' },
   { id: 'hushen', name: '护身金光', icon: '护', cost: 40, desc: '唐僧 +1 血' },
   { id: 'zhuwang', name: '绊妖蛛网', icon: '网', cost: 55, desc: '妖怪移速 -10%' },
   { id: 'tongxin', name: '同心咒', icon: '心', cost: 70, desc: '唐僧 +3 血（对手 +2）' },

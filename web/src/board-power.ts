@@ -8,7 +8,7 @@ import { placeCellScore } from './autoplace';
 /** 承压 / 出怪批次等可调参数（DevTools 可改；函数内读此对象） */
 export const BOARD_POWER = {
   /** 压力比起点（第 fromWave 波） */
-  PRESSURE_RATIO: 0.60,
+  PRESSURE_RATIO: 0.56,
   /** 线性段终点压力比（第 midWave 波） */
   PRESSURE_RATIO_MID: 0.75,
   /** 线性爬升结束波（fromWave → midWave：RATIO → RATIO_MID） */
