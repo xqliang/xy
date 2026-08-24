@@ -1,6 +1,7 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, findTrayIndex, traySome } from './battle';
 import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
+import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
 import { canMerge } from '@core';
 import type { UnitType } from '@core';
@@ -1169,6 +1170,7 @@ function newGame() {
   battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
   endHandled = false;
   clearBattleSave(); // 开新局：作废旧续玩存档（首个 ready 会写新档）
+  clearBattleToasts(); // 清残留续玩 toast
   endlessResult = null;
   settleChange = null;
   ui.paused = false;
@@ -1205,6 +1207,8 @@ function tryResumeLocalBattle(): boolean {
   pvpExitPopup = false;
   pausePhase = 'main';
   screen = 'battle';
+  // 续玩提示：弹一条 toast 告知从上次进行到的波次恢复（wave 为该 ready 检查点已进行到的波次）。
+  pushBattleToast(battle.wave >= 1 ? `已恢复对局 · 上次进行到第 ${battle.wave} 波` : '已恢复上次对局');
   scheduleFrame();
   return true;
 }
@@ -1212,6 +1216,7 @@ function tryResumeLocalBattle(): boolean {
 function abortBattleToMenu(): void {
   endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
   clearBattleSave(); // 主动退出对局：作废续玩存档
+  clearBattleToasts(); // 清残留续玩 toast
   ui.paused = false;
   pvpExitPopup = false;
   pausePhase = 'main';
@@ -2506,6 +2511,7 @@ function frame(now: number): void {
       updateFirstGameGuide(); // Task 10：推进首局引导阶段（征兵→部署→done，modal 期间暂停）
     }
     startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
+    updateBattleToasts(dt); // 战斗内 toast（续玩提示等）按真实时间淡出
     // 播放引擎发出的音效事件
     if (battle.sfxEvents.length) {
       for (const ev of battle.sfxEvents) playSfx(ev);
@@ -2638,6 +2644,7 @@ function frame(now: number): void {
     draw(ctx, battle, ui);
     // 每局开局「征兵→部署」提示（非阻塞、不暂停；modal 教程展示时让位）
     if (gameStartHintUntil > now && !tutorialOverlay) drawGameStartHint(ctx, (gameStartHintUntil - now) / 1000);
+    drawBattleToasts(ctx); // 续玩恢复提示 toast（非阻塞；结算/暂停等叠层之下）
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
     else if (endlessResult) drawEndlessSettle(ctx, endlessResult, now - settleStart);
@@ -2760,7 +2767,7 @@ interface GameHook {
   // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => { rankLevel: number; merit: number };
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
-  resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null };
+  resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null; toast: string | null };
 }
 const hook: GameHook = {
   get battle() {
@@ -2920,6 +2927,6 @@ const hook: GameHook = {
     return { left: true };
   },
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
-  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle.wave, status: battle.status }),
+  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle.wave, status: battle.status, toast: peekBattleToast() }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;

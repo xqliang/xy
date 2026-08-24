@@ -90,6 +90,9 @@ try {
   if (after.p.status !== 'ready') fail('续玩后状态应为 ready，实际：' + after.p.status);
   if (after.p.wave !== saved.wave) fail(`续玩波数与存档不一致：存档 ${saved.wave} → 恢复 ${after.p.wave}`);
   if (after.units <= 0) fail('续玩后盘面为空——applyCoreState 未恢复单位');
+  if (!after.p.toast || !after.p.toast.includes('恢复')) fail('续玩未弹出恢复 toast：' + JSON.stringify(after.p.toast));
+  await page.screenshot({ path: '/tmp/resume-toast.png' });
+  console.log('续玩 toast：', after.p.toast, '（截图 /tmp/resume-toast.png）');
   console.log(`✅ Part A 通过：刷新后自动续玩（screen=battle, status=ready, wave=${after.p.wave}, 单位数=${after.units}）`);
 
   // ── Part C：续玩不重跑 planBattleFragmentDrop（回归最终评审发现的 bug）──
