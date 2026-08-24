@@ -39,7 +39,7 @@ describe('GENERALS.element（武将五行）', () => {
 });
 
 describe('MAP_ELEMENT（地图五行）', () => {
-  it('现有四图各配一行，与 MAP_SKILL 同范式', () => {
+  it('现有五图各配一行，与 MAP_SKILL 同范式', () => {
     expect(MAP_ELEMENT.huoyanshan).toBe('fire');
     expect(MAP_ELEMENT.liushahe).toBe('water');
     expect(MAP_ELEMENT.baiguling).toBe('metal');

@@ -221,7 +221,7 @@ export function slotUnlockOrder(map: GameMap): Cell[] {
   return [...block, ...rest];
 }
 
-// —— 四张西游地图（每日轮换）——
+// —— 五张西游地图（每日轮换）——
 export const MAPS: GameMap[] = [
   {
     id: 'huoyanshan',
