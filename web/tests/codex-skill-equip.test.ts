@@ -65,8 +65,8 @@ describe('图鉴技能页装配', () => {
       ownedActives: [active.id],
       equipped: [active.id],
     });
-    // 首张主动卡约在 contentY≈104，屏幕 y≈240；按钮靠右
-    const hit = codexSkillActionAt(VIEW_W - 80, 240, loadout);
+    // 首张主动卡按钮：卡片加高含风味行后，按钮约在 contentY≈129（屏幕 y≈265）；按钮靠右
+    const hit = codexSkillActionAt(VIEW_W - 80, 265, loadout);
     expect(hit).toEqual({ kind: 'unequip', skillKind: 'active', id: active.id });
   });
 
@@ -76,13 +76,13 @@ describe('图鉴技能页装配', () => {
       ownedActives: [active.id],
       equipped: [],
     });
-    const hit = codexSkillActionAt(VIEW_W - 80, 240, loadout);
+    const hit = codexSkillActionAt(VIEW_W - 80, 265, loadout);
     expect(hit).toEqual({ kind: 'equip', skillKind: 'active', id: active.id });
   });
 
   it('未购买技能没有可点操作', () => {
     const loadout = emptyLoadout();
-    const hit = codexSkillActionAt(VIEW_W - 80, 240, loadout);
+    const hit = codexSkillActionAt(VIEW_W - 80, 265, loadout);
     expect(hit).toBeNull();
   });
 

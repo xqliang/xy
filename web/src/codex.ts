@@ -18,6 +18,11 @@ import {
   isPassiveEquipped,
   type LoadoutState,
 } from './loadout';
+import { HERO_LORE, UNIT_LORE, ACTIVE_LORE, PASSIVE_LORE, MONSTER_TYPE_LORE, MINIBOSS_LORE, BOSS_LORE } from './codex-lore';
+
+// 风味介绍统一样式：淡金斜体，与机制文案（正体）区分。
+const LORE_FONT = 'italic 11px "PingFang SC", serif';
+const LORE_COLOR = 'rgba(255,236,196,0.58)';
 
 export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill' | 'rank';
 
@@ -40,18 +45,21 @@ const UNIT_COLOR: Record<UnitType, string> = { dao: '#ff9a3c', spear: '#5bd1ff',
 const RANK_COLOR: Record<GeneralDef['rank'], string> = { T0: '#ffd76a', T1: '#7ec46a', T2: '#a8a090' };
 
 const CARD_W = 250;
-const UNIT_CARD_H = 172;
+const UNIT_CARD_H = 194; // 172 + 22：底部加一行风味介绍
 const UNIT_GAP = 14;
-const HERO_CARD_H = 152;
+const HERO_CARD_H = 176; // 152 + 24：底部加一行风味介绍
 const HERO_GAP = 12;
 const TYPE_CARD_H = 88;
 const TYPE_CARD_GAP = 8;
+const MTYPE_CARD_H = 106;    // 妖怪「种类」卡：88 + 18 风味行（与境界 Tab 复用的 TYPE_CARD_H 解耦，后者不加高）
+const MINIBOSS_CARD_H = 116; // 小 Boss 卡：96 + 20 风味行
+const BOSS_CARD_H = 130;     // 妖王卡：110 + 20 风味行
 const MAP_ROW_H = 118;
 const MAP_NAME_W = 72;
 const EXAMPLE_WAVE = 5;
 const GRID_LEFT = (VIEW_W - (CARD_W * 2 + UNIT_GAP)) / 2;
 const GRID_W = CARD_W * 2 + UNIT_GAP;
-const SKILL_CARD_H = 108;
+const SKILL_CARD_H = 126; // 108 + 18：底部加一行风味介绍
 const SKILL_CARD_GAP = 6;
 const SKILL_ACTIVE_COLOR = '#6ab0ff';
 const SKILL_PASSIVE_COLOR = '#7ec46a';
@@ -71,6 +79,7 @@ type MonsterTypeCard = {
   name: string;
   color: string;
   lines: string[];
+  lore?: string; // 风味介绍（仅妖怪种类卡有；境界 Tab 复用本卡样式时不设）
 };
 
 function waveMinionHp(wave: number): number {
@@ -85,6 +94,7 @@ function monsterTypeCards(): MonsterTypeCard[] {
     {
       name: '小妖',
       color: '#c8792b',
+      lore: MONSTER_TYPE_LORE.minion,
       lines: [
         `血量 24 + 16×波次（第${EXAMPLE_WAVE}波 ≈ ${hp5}）`,
         `移速 ${spd.toFixed(2)} 格/s · 战力 ${monsterPOW(hp5, spd).toFixed(0)}`,
@@ -94,6 +104,7 @@ function monsterTypeCards(): MonsterTypeCard[] {
     {
       name: '精英妖',
       color: SKILL_META.weaken.color,
+      lore: MONSTER_TYPE_LORE.elite,
       lines: [
         `血量 ×${TUNING.eliteHpMul}（第${EXAMPLE_WAVE}波 ≈ ${Math.round(hp5 * TUNING.eliteHpMul)}）`,
         `移速同小妖 · 第${TUNING.eliteFromWave}波起随机出现`,
@@ -103,6 +114,7 @@ function monsterTypeCards(): MonsterTypeCard[] {
     {
       name: '骑兵妖',
       color: '#7dff8a',
+      lore: MONSTER_TYPE_LORE.cavalry,
       lines: [
         `血量 ×${TUNING.cavalryHpMul.toFixed(2)}（第${EXAMPLE_WAVE}波 ≈ ${Math.round(hp5 * TUNING.cavalryHpMul)}）`,
         `移速 ×${TUNING.cavalrySpdMul}（≈ ${(spd * TUNING.cavalrySpdMul).toFixed(2)} 格/s，快血薄）`,
@@ -112,6 +124,7 @@ function monsterTypeCards(): MonsterTypeCard[] {
     {
       name: '小 Boss',
       color: '#7ec8ff',
+      lore: MONSTER_TYPE_LORE.miniboss,
       lines: [
         `血量 ×${TUNING.miniBossHpMul}（第${EXAMPLE_WAVE}波 ≈ ${Math.round(hp5 * TUNING.miniBossHpMul)}）`,
         `移速 ×${TUNING.miniBossSpdMul} · 第${TUNING.miniBossFromWave}波起随机出现`,
@@ -121,6 +134,7 @@ function monsterTypeCards(): MonsterTypeCard[] {
     {
       name: '妖王',
       color: '#ff5a8a',
+      lore: MONSTER_TYPE_LORE.boss,
       lines: [
         `血量 ×${TUNING.bossHpMulEarly}~×${TUNING.bossHpMul}（第${EXAMPLE_WAVE}波 ≈ ${Math.round(hp5 * TUNING.bossHpMulEarly)}+）`,
         `移速 ×${TUNING.bossSpdMul} · 出场带 ${TUNING.bossEscortMin}~${TUNING.bossEscortMax} 名护卫`,
@@ -185,10 +199,10 @@ function heroContentHeight(): number {
 function monsterContentHeight(): number {
   const types = monsterTypeCards().length;
   const bossRows = Math.ceil(MAPS.length / 2); // 妖王两列排布
-  const bossCardH = 110, bossGap = 10;
+  const bossCardH = BOSS_CARD_H, bossGap = 10;
   const bossH = 26 + bossRows * bossCardH + (bossRows - 1) * bossGap;
   return (
-    28 + 22 + types * (TYPE_CARD_H + TYPE_CARD_GAP) // 种类区
+    28 + 22 + types * (MTYPE_CARD_H + TYPE_CARD_GAP) // 种类区
     + 18 + 22 + MAPS.length * (MAP_ROW_H + 10) // 各地图行
     + 6 + miniBossSectionH() // 小 Boss 区（紧贴地图行）
     + 20 // 小 Boss 与妖王区间距
@@ -476,6 +490,13 @@ function drawUnitCard(ctx: CanvasRenderingContext2D, type: UnitType, x: number, 
     ctx.fillStyle = color;
     ctx.fillText(towerPOW(type, t).toFixed(1), x + 186, yy);
   }
+
+  const lore = UNIT_LORE[type];
+  if (lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, lore, w - 28), x + 14, y + 174);
+  }
 }
 
 function drawMonsterTypeCard(ctx: CanvasRenderingContext2D, card: MonsterTypeCard, x: number, y: number, w: number, h: number): void {
@@ -496,6 +517,11 @@ function drawMonsterTypeCard(ctx: CanvasRenderingContext2D, card: MonsterTypeCar
   card.lines.forEach((line, i) => {
     ctx.fillText(truncate(ctx, line, w - 24), x + 12, y + 34 + i * 16);
   });
+  if (card.lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, card.lore, w - 24), x + 12, y + h - 20);
+  }
 }
 
 function drawMonsterSprite(
@@ -599,7 +625,7 @@ function drawUnitTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
 // 小 Boss 区在怪物 Tab 中占据的垂直高度（与 drawMiniBossCodexSection 布局一致，供滚动上限与下区定位）
 function miniBossSectionH(): number {
   const rows = Math.ceil(MINI_BOSS_KINDS.length / 2);
-  return 26 + rows * 96 + (rows - 1) * 10;
+  return 26 + rows * MINIBOSS_CARD_H + (rows - 1) * 10;
 }
 
 function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
@@ -617,8 +643,8 @@ function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
   y += 22;
 
   for (const card of monsterTypeCards()) {
-    drawMonsterTypeCard(ctx, card, GRID_LEFT, y, GRID_W, TYPE_CARD_H);
-    y += TYPE_CARD_H + TYPE_CARD_GAP;
+    drawMonsterTypeCard(ctx, card, GRID_LEFT, y, GRID_W, MTYPE_CARD_H);
+    y += MTYPE_CARD_H + TYPE_CARD_GAP;
   }
 
   y += 10;
@@ -649,7 +675,7 @@ function drawMiniBossCodexSection(ctx: CanvasRenderingContext2D, y0: number): vo
 
   const CARD_GAP = 10;
   const cardW = (GRID_W - CARD_GAP) / 2;
-  const cardH = 96;
+  const cardH = MINIBOSS_CARD_H;
   const refMap = 'pansidong'; // 小 Boss 立绘与地图无关，取一张作展示
   let y = y0 + 26;
   MINI_BOSS_KINDS.forEach((kind, i) => {
@@ -707,6 +733,13 @@ function drawMiniBossCard(
   ctx.fillStyle = 'rgba(255,240,210,0.7)';
   ctx.fillText(`血量：普通怪×${TUNING.miniBossHpMul}`, tx, y + 64);
   ctx.fillText(`移速：×${spd.toFixed(2)}`, tx, y + 78);
+
+  const lore = MINIBOSS_LORE[kind];
+  if (lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, lore, w - 20), x + 10, y + 96);
+  }
 }
 
 // 妖王独立栏目：每张图一只妖王，展示立绘 + 血量/移速/技能/护卫（地图专属减益）
@@ -726,7 +759,7 @@ function drawBossCodexSection(ctx: CanvasRenderingContext2D, y0: number): void {
 
   const CARD_GAP = 10;
   const cardW = (GRID_W - CARD_GAP) / 2;
-  const cardH = 110;
+  const cardH = BOSS_CARD_H;
   let y = y0 + 26;
   MAPS.forEach((map, i) => {
     const col = i % 2;
@@ -786,6 +819,13 @@ function drawBossCard(
   ctx.fillText(`血量：普通怪×${TUNING.bossHpMulEarly}~×${TUNING.bossHpMul}`, tx, y + 60);
   ctx.fillText(`移速：×${TUNING.bossSpdMul}（≈ ${spd.toFixed(2)} 格/s，慢血厚）`, tx, y + 76);
   ctx.fillText(`护卫：${TUNING.bossEscortMin}~${TUNING.bossEscortMax} 名 · 分血`, tx, y + 92);
+
+  const lore = BOSS_LORE[map.id];
+  if (lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, lore, w - 20), x + 10, y + 110);
+  }
 }
 
 function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y: number, w: number, h: number): void {
@@ -849,6 +889,13 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
     x + 12,
     y + 136,
   );
+
+  const lore = HERO_LORE[g.id];
+  if (lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, lore, w - 24), x + 12, y + 156);
+  }
 }
 
 function drawHeroTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
@@ -877,6 +924,7 @@ function drawSkillCard(
   cost: number,
   action: SkillCardAction,
   statusLabel: string,
+  lore: string,
 ): void {
   const rarity = skillRarityColor(cost);
   roundRect(ctx, x, y, w, h, 10);
@@ -918,6 +966,11 @@ function drawSkillCard(
   descLines.forEach((line, i) => {
     ctx.fillText(line, textX, descY + i * 15);
   });
+  if (lore) {
+    ctx.fillStyle = LORE_COLOR;
+    ctx.font = LORE_FONT;
+    ctx.fillText(truncate(ctx, lore, textW), textX, y + 100);
+  }
 
   if (!hasBtn) return;
 
@@ -971,6 +1024,7 @@ function drawSkillTab(ctx: CanvasRenderingContext2D, scrollY: number, loadout: L
       skill.cost,
       action,
       status,
+      ACTIVE_LORE[skill.id] ?? '',
     );
     y += SKILL_CARD_H + SKILL_CARD_GAP;
   }
@@ -1000,6 +1054,7 @@ function drawSkillTab(ctx: CanvasRenderingContext2D, scrollY: number, loadout: L
       skill.cost,
       action,
       status,
+      PASSIVE_LORE[skill.id] ?? '',
     );
     y += SKILL_CARD_H + SKILL_CARD_GAP;
   }
