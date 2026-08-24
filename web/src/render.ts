@@ -2698,6 +2698,10 @@ function drawFrozenIceShards(
   ctx.restore();
 }
 
+// 骑兵立绘默认约定「面朝右」；个别图的美术面朝左（如流沙河「鱼头」朝左），在此登记其 mapId，
+// 翻转条件取反即可两半场朝向都对——等价于校正该立绘朝向，但无需改动 CDN 素材（web/小游戏同源生效）。
+const CAVALRY_ART_FACES_LEFT = new Set<string>(['liushahe']);
+
 function drawMonsterAt(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -2787,12 +2791,12 @@ function drawMonsterAt(
     const scale = Math.min(box / spr.width, box / spr.height);
     const dw = spr.width * scale;
     const dh = spr.height * scale;
-    // 骑兵立绘约定：默认面朝右。trailDir 由实际屏幕位移得出（玩家侧取原路径、AI 镜像侧取
-    // aiMonsterPos 镜像位移，两侧均正确），故只需在向左行(trailDir<0)时水平翻转折面。
-    // ⚠️ 各图骑兵立绘(monster-cavalry-<mapId>)必须统一面朝右：若某张朝左，本翻转会让它在
-    // 左右两半场都反向（白骨岭曾因此「方向反了」——修法是校正该立绘朝向，而非改此处逻辑）。
+    // 骑兵立绘默认面朝右，向左行(trailDir<0)时水平翻转折面即可。
+    // 例外：美术面朝左的图(见 CAVALRY_ART_FACES_LEFT，如流沙河的鱼)翻转条件取反，两半场都朝正确方向。
     // 仅翻转骑兵本体（speed 拖尾在上方已按 trailDir 单独画，不受影响）。
-    if (m.isCavalry && trailDir < 0) {
+    const artFacesLeft = CAVALRY_ART_FACES_LEFT.has(mapId);
+    const flipCavalry = m.isCavalry && (artFacesLeft ? trailDir >= 0 : trailDir < 0);
+    if (flipCavalry) {
       ctx.save();
       ctx.translate(x, 0);
       ctx.scale(-1, 1);
