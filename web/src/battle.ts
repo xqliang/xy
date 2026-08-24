@@ -2101,7 +2101,9 @@ export class Battle {
     this.aiPrevTangsengHP = this.aiTangsengHP;
   }
 
-  /** 对手击杀补演：加桃飘字（按怪种，复用共享 peachFloats）+ death 爆点（出招动画由本地视觉模拟驱动）。 */
+  /** 对手击杀掉桃特效：加桃飘字（按怪种，复用共享 peachFloats）+ death 爆点。双模式共用：
+   *  在线 PvP 由 stepOpponentJuice 快照补演调用；离线 AI 对战由 updateAi 击杀分支直调
+   *  （出招动画在线由本地视觉模拟驱动，离线由 AI 半场真实 sim 驱动）。只产视觉不碰 aiPeach。 */
   private spawnAiKillJuice(pm: { isBoss: boolean; isMiniBoss: boolean; isElite: boolean; c: number; r: number }): void {
     const pos = { c: pm.c, r: pm.r };
     const base = pm.isBoss
@@ -6018,6 +6020,13 @@ export class Battle {
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       if (m.hp <= 0) {
         this.creditAiKill(m.isBoss, !m.isBoss && !m.isMiniBoss && !!m.skill, m.isMiniBoss);
+        // 掉桃特效：与玩家击杀（updateMonsters 的 burst+peachFloats）及在线 PvP 对手击杀补演
+        // （spawnAiKillJuice）对称。spawnAiKillJuice 只产视觉不碰 aiPeach，不会双记经济。
+        const p = this.aiMonsterPos(m);
+        this.spawnAiKillJuice({
+          isBoss: m.isBoss, isMiniBoss: m.isMiniBoss,
+          isElite: !m.isBoss && !m.isMiniBoss && !!m.skill, c: p.c, r: p.r,
+        });
         continue;
       } // 击杀产桃（精英/小Boss/大Boss 分档，对齐玩家语义）
       if (m.stunT > 0) {
