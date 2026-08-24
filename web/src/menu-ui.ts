@@ -1,6 +1,6 @@
 // 首页 / 弹窗共用水墨 UI 组件（朱红金边、宣纸底，无 emoji）。
 import { sprite } from './assets';
-import { VIEW_W, VIEW_H } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 
 export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -47,9 +47,8 @@ export function drawInkPopupFrame(
   title: string,
   closeR: { x: number; y: number; w: number; h: number },
 ): number {
-  // 半透明压暗底层界面（菜单/战场），卷轴浮在其上
-  ctx.fillStyle = 'rgba(28,22,16,0.38)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  // 半透明压暗底层界面（菜单/战场），卷轴浮在其上（小游戏下同时记录蒙层色，帧尾给黑边补色）
+  fillViewScrim(ctx, 'rgba(28,22,16,0.38)');
 
   roundRect(ctx, x, y, w, h, 14);
   const body = ctx.createLinearGradient(x, y, x, y + h);

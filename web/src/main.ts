@@ -36,6 +36,7 @@ import {
   drawGameStartHint,
   setFxQuality,
   drawScreenBackdrop,
+  takeScrim,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -2648,6 +2649,22 @@ function frame(now: number): void {
   }
   if (isWeChat) {
     ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与帧首 save/clip 配对）；黑边区已在帧首由 drawScreenBackdrop 用当前页背景铺满
+    // 弹窗蒙层只画在 VIEW 内（受上面的裁剪），上下/左右黑边露出未压暗的亮底；此处给黑边补一层同色蒙层，使其盖满整屏。
+    // 黑边区只有背景、无卡片，补一层与 VIEW 内相同的半透明色即视觉一致（撤裁剪后画，不会二次压暗 VIEW）。
+    const scrim = takeScrim();
+    if (scrim) {
+      const bx = viewOffsetX / cssScale; // 左右黑边逻辑宽（竖屏一般为 0）
+      const by = viewOffsetY / cssScale; // 上下黑边逻辑高
+      ctx.fillStyle = scrim;
+      if (by > 0) {
+        ctx.fillRect(-bx, -by, VIEW_W + bx * 2, by); // 顶部黑边
+        ctx.fillRect(-bx, VIEW_H, VIEW_W + bx * 2, by); // 底部黑边
+      }
+      if (bx > 0) {
+        ctx.fillRect(-bx, 0, bx, VIEW_H); // 左黑边
+        ctx.fillRect(VIEW_W, 0, bx, VIEW_H); // 右黑边
+      }
+    }
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();

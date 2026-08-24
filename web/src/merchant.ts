@@ -1,5 +1,5 @@
 // 神秘商人：每局战斗结算回到首页后自动弹出一次（水墨卷轴弹窗），关闭后无入口直至下局结束。
-import { VIEW_W, VIEW_H } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import {
   roundRect,
   drawInkPopupFrame,
@@ -1186,8 +1186,7 @@ function drawOfferConfirmPopup(
   const cost = skillCost(offer.kind, offer.id);
   const rarity = skillRarityColor(def.cost);
 
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  fillViewScrim(ctx, 'rgba(0,0,0,0.45)');
 
   roundRect(ctx, CONF_PX, CONF_PY, CONF_PW, CONF_PH, 12);
   ctx.fillStyle = '#f8ecd2';
@@ -1225,8 +1224,7 @@ function drawSkillInfoPopup(
   const rarity = skillRarityColor(def.cost);
   const equipped = isSkillRefEquipped(loadout, info);
 
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  fillViewScrim(ctx, 'rgba(0,0,0,0.45)');
 
   roundRect(ctx, INFO_PX, INFO_PY, INFO_PW, INFO_PH, 12);
   ctx.fillStyle = '#f8ecd2';

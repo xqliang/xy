@@ -919,6 +919,28 @@ export function drawScreenBackdrop(
   }
 }
 
+// —— 小游戏弹窗蒙层「补黑边」机制 —— //
+// 弹窗蒙层只画在 VIEW 内(受帧级 VIEW 裁剪)，上下/左右 letterbox 黑边会露出未压暗的亮底。
+// 各蒙层改用 fillViewScrim/markScrim 记录本帧最后一次全屏蒙层色，main.ts 帧尾在黑边区补一层同色，
+// 使蒙层视觉上盖住整屏(黑边只有背景、无卡片，补一层同色即与 VIEW 内一致)。Web 无黑边，记录被忽略。
+let pendingBarScrim: string | null = null;
+/** 标记本帧全屏蒙层色（仅小游戏下记录，供 main.ts 帧尾给黑边补色）。用于无法直接改成 fillViewScrim 的蒙层(如引导镂空遮罩)。 */
+export function markScrim(color: string): void {
+  if (isWeChat) pendingBarScrim = color;
+}
+/** 画一层覆盖 VIEW 的半透明蒙层并记录其色（等价于原 fillStyle+fillRect(0,0,VIEW_W,VIEW_H)）。 */
+export function fillViewScrim(ctx: CanvasRenderingContext2D, color: string): void {
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  markScrim(color);
+}
+/** 取出并清空本帧蒙层色（main.ts 帧尾调用；无蒙层时返回 null）。 */
+export function takeScrim(): string | null {
+  const c = pendingBarScrim;
+  pendingBarScrim = null;
+  return c;
+}
+
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
   // 背景：优先用当地图生成的场景大图(cover铺满)，叠一层同色系薄纱使网格清晰；无图时回退主题渐变。
   // 小游戏下背景改由 drawScreenBackdrop 铺满整屏(含黑边)，此处跳过，避免 VIEW 内外两套不同缩放的图接缝/双重底。

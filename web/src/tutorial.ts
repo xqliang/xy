@@ -1,6 +1,6 @@
 // 新手引导：高亮锚点 + 动态箭头 + tips 卷轴卡片，全屏昏暗遮罩弱化其余区域，展示期间局内暂停。
 // 纯引擎：不感知 Battle/UI，触发时机与锚点计算全部由调用方（main.ts）以闭包传入。
-import { VIEW_W, VIEW_H } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim, markScrim } from './render';
 import { roundRect, drawInkActionButton } from './menu-ui';
 import { storeGet, storeSet, parseStoredJson } from './storage';
 
@@ -342,6 +342,7 @@ export function drawTutorialOverlay(ctx: CanvasRenderingContext2D, overlay: Tuto
     ctx.closePath();
     ctx.fillStyle = 'rgba(10,8,4,0.62)';
     ctx.fill('evenodd');
+    markScrim('rgba(10,8,4,0.62)'); // 小游戏：帧尾给上下黑边补同色，遮罩盖满整屏（黑边内无镂空）
 
     const pulse = 0.5 + 0.5 * Math.sin(now / 260);
     ctx.save();
@@ -353,8 +354,7 @@ export function drawTutorialOverlay(ctx: CanvasRenderingContext2D, overlay: Tuto
     ctx.stroke();
     ctx.restore();
   } else {
-    ctx.fillStyle = 'rgba(10,8,4,0.62)';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    fillViewScrim(ctx, 'rgba(10,8,4,0.62)');
   }
 
   if (layout.arrowFrom && layout.arrowTo) drawBounceArrow(ctx, layout.arrowFrom, layout.arrowTo, now);

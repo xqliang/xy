@@ -1,5 +1,5 @@
 // 个人信息弹层：横向卷轴选头像 + 昵称 + UID。
-import { VIEW_W, VIEW_H } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import { sprite } from './assets';
 import { AVATARS, unlockHint, type AvatarDef } from './avatar-catalog';
 import { loadProfile } from './profile';
@@ -140,8 +140,7 @@ export function applyProfileScrollDrag(st: ProfilePopupState, drag: ProfileScrol
 }
 
 export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopupState): void {
-  ctx.fillStyle = 'rgba(20,14,8,0.55)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  fillViewScrim(ctx, 'rgba(20,14,8,0.55)');
 
   roundRect(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, 16);
   const bg = ctx.createLinearGradient(PANEL.x, PANEL.y, PANEL.x, PANEL.y + PANEL.h);

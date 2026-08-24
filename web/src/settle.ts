@@ -1,6 +1,6 @@
 // 段位星级结算弹层：胜/败后叠在战斗页上播放加星或减星动画。
 // 由 main.ts 在战斗页 isSettleOpen 时按帧调用，动画进度由「打开弹层的毫秒数」驱动。
-import { VIEW_W, VIEW_H } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
 import { drawRankStarsAnimated, roundRect } from './menu-ui';
 import { avatarById } from './avatar-catalog';
@@ -67,10 +67,8 @@ function computeStars(c: RankChange, progress: number): { tier: number; fills: n
 /** 半透明遮罩：压暗战场，仍能透出对局画面。 */
 function drawSettleAtmosphere(ctx: CanvasRenderingContext2D, tone: 'win' | 'lose' | 'endless'): void {
   const cx = VIEW_W / 2;
-  if (tone === 'win') ctx.fillStyle = 'rgba(28, 36, 22, 0.52)';
-  else if (tone === 'lose') ctx.fillStyle = 'rgba(36, 18, 16, 0.55)';
-  else ctx.fillStyle = 'rgba(28, 22, 14, 0.52)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  const scrim = tone === 'win' ? 'rgba(28, 36, 22, 0.52)' : tone === 'lose' ? 'rgba(36, 18, 16, 0.55)' : 'rgba(28, 22, 14, 0.52)';
+  fillViewScrim(ctx, scrim);
 
   // 中心略提亮，突出卷轴面板
   const glow = ctx.createRadialGradient(cx, VIEW_H * 0.42, 30, cx, VIEW_H * 0.45, VIEW_H * 0.55);
