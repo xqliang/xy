@@ -140,7 +140,7 @@ export function menuButtons(): MenuButton[] {
     { id: 'settings', ...SIDE_BTN, y: SIDE_Y0 },
     { id: 'codex', ...SIDE_BTN, y: SIDE_Y0 + SIDE + SIDE_GAP },
     { id: 'help', ...SIDE_BTN, y: SIDE_Y0 + (SIDE + SIDE_GAP) * 2 },
-    { id: 'staminaPlus', ...STAMINA_PLUS_BTN },
+    { id: 'staminaPlus', ...STAMINA_BAR }, // 命中整条体力条(不止小+号)：+号太小难点，整条都可点开补充弹窗
     { id: 'mapPick', ...MAP_PICK_BTN },
     { id: 'endless', ...ENDLESS_HIT },
     { id: 'start', ...START_BTN },
