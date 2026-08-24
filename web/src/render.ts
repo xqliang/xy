@@ -1140,10 +1140,49 @@ export function guideSkipRect(): { x: number; y: number; w: number; h: number } 
   return { x: (VIEW_W - GUIDE_SKIP_W) / 2, y: GUIDE_SKIP_Y, w: GUIDE_SKIP_W, h: GUIDE_PILL_H };
 }
 
-/** 每局开始的「征兵→部署」非阻塞提示：在征兵按钮、候选区上方各挂一个带下箭头的小标签。
- *  过了首次引导后每局显示一次；不暂停、不影响出怪时机。secondsLeft 用于末尾淡出。 */
-export function drawGameStartHint(ctx: CanvasRenderingContext2D, secondsLeft: number): void {
-  const alpha = Math.max(0, Math.min(1, secondsLeft / 0.6)); // 最后 0.6s 淡出
+/** 每局开始的「征兵→部署」非阻塞提示：两阶段状态机（征兵常驻→征兵后部署→放置后淡出）。
+ *  过了首次引导后每局显示一次；不暂停、不影响出怪时机。阶段推进是纯函数（stepGameStartHint），
+ *  canvas 绘制本身不测（仓库惯例）。 */
+export type GameStartHintStage = 'off' | 'summon' | 'deploy' | 'fade';
+export interface GameStartHintState { stage: GameStartHintStage; fadeT: number }
+
+/** 部署提示淡出时长（秒）：放置首个 tray 令牌后「慢慢消失」。 */
+export const GAME_START_HINT_FADE_S = 2;
+
+/**
+ * 纯函数：每帧推进提示阶段。
+ * - summon：征兵提示①常驻，直到玩家点过征兵（summoned = battle.summonCount>0）→ deploy
+ * - deploy：部署提示②显示，直到放置了一枚 tray 令牌（trayPlaced = tray 长度较上帧下降）→ fade
+ * - fade：按 dt 累计计时淡出，到 GAME_START_HINT_FADE_S 后 off
+ * - off：本局不再出现
+ */
+export function stepGameStartHint(
+  prev: GameStartHintState,
+  summoned: boolean,
+  trayPlaced: boolean,
+  dt: number,
+): GameStartHintState {
+  if (prev.stage === 'off') return prev;
+  if (prev.stage === 'summon') {
+    return summoned ? { stage: 'deploy', fadeT: 0 } : prev;
+  }
+  if (prev.stage === 'deploy') {
+    return trayPlaced ? { stage: 'fade', fadeT: 0 } : prev;
+  }
+  const fadeT = prev.fadeT + dt;
+  return fadeT >= GAME_START_HINT_FADE_S ? { stage: 'off', fadeT: 0 } : { stage: 'fade', fadeT };
+}
+
+/** 当前提示整体透明度：summon/deploy 恒 1；fade 线性降到 0；off 为 0（不绘制）。 */
+export function gameStartHintAlpha(s: GameStartHintState): number {
+  if (s.stage === 'off') return 0;
+  if (s.stage === 'fade') return Math.max(0, 1 - s.fadeT / GAME_START_HINT_FADE_S);
+  return 1;
+}
+
+/** 绘制开局提示：summon 阶段画①（征兵按钮上方），deploy/fade 阶段画②（候选区上方）。 */
+export function drawGameStartHint(ctx: CanvasRenderingContext2D, s: GameStartHintState): void {
+  const alpha = gameStartHintAlpha(s);
   if (alpha <= 0) return;
   const tag = (rect: { x: number; y: number; w: number; h: number }, text: string) => {
     ctx.font = 'bold 15px "PingFang SC", sans-serif';
@@ -1158,9 +1197,11 @@ export function drawGameStartHint(ctx: CanvasRenderingContext2D, secondsLeft: nu
     ctx.strokeStyle = '#e8c22c';
     ctx.lineWidth = 1.5;
     ctx.stroke();
+    // 三角底边上移 2px 压过描边（stroke 以 by+bh 为中心向两侧各渗 ~0.75px，底边贴线会露出
+    // 上半条金边，看起来箭头没盖住边框）；下移一点即完全遮住，成完整气泡尾巴。
     ctx.beginPath();
-    ctx.moveTo(cx - 6, by + bh);
-    ctx.lineTo(cx + 6, by + bh);
+    ctx.moveTo(cx - 6, by + bh - 2);
+    ctx.lineTo(cx + 6, by + bh - 2);
     ctx.lineTo(cx, by + bh + 8);
     ctx.closePath();
     ctx.fillStyle = 'rgba(40,28,14,0.92)';
@@ -1172,8 +1213,8 @@ export function drawGameStartHint(ctx: CanvasRenderingContext2D, secondsLeft: nu
   };
   ctx.save();
   ctx.globalAlpha = alpha;
-  tag(summonButtonRect(), '① 点击征兵抽兵');
-  tag(trayRowRect(), '② 拖到棋盘部署');
+  if (s.stage === 'summon') tag(summonButtonRect(), '① 点击征兵抽兵');
+  else tag(trayRowRect(), '② 拖到棋盘部署'); // deploy | fade
   ctx.restore();
 }
 

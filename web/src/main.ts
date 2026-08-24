@@ -1,5 +1,5 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
-import { Battle, TUNING, findTrayIndex, traySome } from './battle';
+import { Battle, TUNING, findTrayIndex, traySome, trayTokens } from './battle';
 import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
 import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
@@ -34,6 +34,8 @@ import {
   drawGuideSkip,
   activeSlotRect,
   drawGameStartHint,
+  stepGameStartHint,
+  type GameStartHintState,
   setFxQuality,
   drawScreenBackdrop,
   takeScrim,
@@ -745,12 +747,17 @@ const ui: UiState = {
 let tutorial: TutorialState = safePersisted(loadTutorialState, { seen: {} });
 let tutorialOverlay: TutorialOverlay | null = null;
 
-// 每局开始的「征兵→部署」非阻塞提示：到期时间戳（performance.now() 毫秒），0=不显示。
+// 每局开始的「征兵→部署」非阻塞提示：两阶段状态机（见 render.ts stepGameStartHint）。
 // 过了首次引导（见过 battleIntro）后，每局（AI/真人）开局显示一次；不暂停、不影响出怪时机。
-let gameStartHintUntil = 0;
-const GAME_START_HINT_MS = 3500;
+// ① 征兵提示常驻直到玩家点过征兵；② 部署提示在征兵后出现、放置首个 tray 令牌后 2s 淡出。
+let gameStartHint: GameStartHintState = { stage: 'off', fadeT: 0 };
+let gameStartHintTrayLen = -1; // 上帧 tray 有效令牌数（-1=未初始化）：下降沿=放置了一枚令牌。
+// 注意 tray 是稀疏数组（clearTraySlot 用 delete 挖洞，length 不变），必须用 trayTokens 压实计数。
 function armGameStartHint(): void {
-  gameStartHintUntil = hasSeenTutorial(tutorial, 'battleIntro') ? performance.now() + GAME_START_HINT_MS : 0;
+  gameStartHint = hasSeenTutorial(tutorial, 'battleIntro')
+    ? { stage: 'summon', fadeT: 0 }
+    : { stage: 'off', fadeT: 0 };
+  gameStartHintTrayLen = trayTokens(battle.tray).length;
 }
 
 // —— Task 10 首局部署引导：非模态动态箭头（征兵→部署两阶段）——
@@ -2622,8 +2629,15 @@ function frame(now: number): void {
     // 必须在 draw() 之前写入：drawHud 在渲染链路内读此态画两侧标注。
     setPvpNetLatency(pvpSock ? { myRtt: pvpSock.rttMs, oppRtt: oppView?.latestRtt ?? null } : null);
     draw(ctx, battle, ui);
-    // 每局开局「征兵→部署」提示（非阻塞、不暂停；modal 教程展示时让位）
-    if (gameStartHintUntil > now && !tutorialOverlay) drawGameStartHint(ctx, (gameStartHintUntil - now) / 1000);
+    // 每局开局「征兵→部署」提示（非阻塞、不暂停；modal 教程展示时让位）。
+    // 每帧推进状态机：征兵过(summonCount>0)、放置过 tray（长度下降沿）两个事件源驱动阶段切换。
+    if (gameStartHint.stage !== 'off' && !tutorialOverlay) {
+      const trayLen = trayTokens(battle.tray).length;
+      const placed = gameStartHintTrayLen >= 0 && trayLen < gameStartHintTrayLen;
+      gameStartHintTrayLen = trayLen;
+      gameStartHint = stepGameStartHint(gameStartHint, battle.summonCount > 0, placed, dt);
+      drawGameStartHint(ctx, gameStartHint);
+    }
     drawBattleToasts(ctx); // 续玩恢复提示 toast（非阻塞；结算/暂停等叠层之下）
     // 结算层互斥：PvP 结算屏优先（pvpSettleResult 非空=服务端 result 已到），否则单人无尽/段位结算。
     if (pvpSettleResult) drawPvpSettle(ctx, pvpSettleResult, now - pvpSettleStart);
@@ -2708,6 +2722,8 @@ interface GameHook {
   drag: (from: Cell, to: Cell) => boolean;
   placeFromTray: (index: number, to: Cell) => boolean;
   autoPlace: () => void;
+  // 开局「征兵→部署」提示当前阶段（冒烟断言用；画布像素采样在繁忙 UI 背景下不可行）
+  gameStartHint: () => GameStartHintState;
   select: (cell: Cell | null) => void;
   enterBattle: () => void;
   openCodex: () => void;
@@ -2789,6 +2805,7 @@ const hook: GameHook = {
   drag: (from, to) => battle.dragUnit(from, to),
   placeFromTray: (index, to) => battle.placeFromTray(index, to),
   autoPlace: () => battle.autoPlaceTray(),
+  gameStartHint: () => gameStartHint,
   select: (cell: Cell | null) => {
     ui.selectedMonster = null;
     ui.selected = cell;
