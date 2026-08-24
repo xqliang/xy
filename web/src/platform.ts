@@ -16,11 +16,20 @@ export function getGameCanvas(): HTMLCanvasElement {
     const c = wx.createCanvas() as {
       style?: Record<string, string>; width: number; height: number;
       getBoundingClientRect?: () => DOMRect;
+      addEventListener?: () => void; removeEventListener?: () => void;
+      setPointerCapture?: () => void; releasePointerCapture?: () => void;
     };
     if (!c.style) c.style = {};
     if (typeof c.getBoundingClientRect !== 'function') {
       c.getBoundingClientRect = () => ({ left: 0, top: 0, right: c.width, bottom: c.height, width: c.width, height: c.height, x: 0, y: 0, toJSON() { return this; } } as DOMRect);
     }
+    // wx 画布无 DOM 事件/指针捕获 API：补 no-op，让 web 侧 canvas.addEventListener('pointer…')/setPointerCapture
+    // 调用不崩（小游戏输入实际走 platform.onWxTouch → 合成 PointerEvent）。
+    const noop = () => { /* wx canvas 无此 DOM API */ };
+    if (typeof c.addEventListener !== 'function') c.addEventListener = noop;
+    if (typeof c.removeEventListener !== 'function') c.removeEventListener = noop;
+    if (typeof c.setPointerCapture !== 'function') c.setPointerCapture = noop;
+    if (typeof c.releasePointerCapture !== 'function') c.releasePointerCapture = noop;
     return c as unknown as HTMLCanvasElement;
   }
   return document.getElementById('game') as HTMLCanvasElement;
