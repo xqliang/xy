@@ -162,9 +162,22 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   ctx.textBaseline = 'middle';
   ctx.fillText('个人信息', PANEL.x + PANEL.w / 2, PANEL.y + 32);
 
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 28px sans-serif';
-  ctx.fillText('✕', CLOSE.x + CLOSE.w / 2, CLOSE.y + CLOSE.h / 2);
+  // × 用两条对角线描出（几何居中），不依赖字体基线——微信真机 'middle' 基线偏上。
+  {
+    const cx = CLOSE.x + CLOSE.w / 2;
+    const cy = CLOSE.y + CLOSE.h / 2;
+    const r = Math.min(CLOSE.w, CLOSE.h) * 0.28;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r);
+    ctx.lineTo(cx + r, cy + r);
+    ctx.moveTo(cx - r, cy + r);
+    ctx.lineTo(cx + r, cy - r);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
 
   // 卷轴纸底
   roundRect(ctx, SCROLL.x - 8, SCROLL.y - 8, SCROLL.w + 16, SCROLL.h + 16, 12);

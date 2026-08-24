@@ -20,9 +20,6 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
 /** 弹窗标题栏高度（关闭钮在此区域内垂直居中） */
 export const INK_POPUP_HEAD_H = 46;
 
-/** × 在按钮框内视觉上略偏下，仅上移字形不改按钮位置 */
-const INK_POPUP_CLOSE_GLYPH_Y = -1;
-
 export function inkPopupCloseRect(
   popX: number,
   popY: number,
@@ -83,11 +80,22 @@ export function drawInkPopupFrame(
   ctx.strokeStyle = 'rgba(255,220,160,0.45)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  ctx.fillStyle = '#ffe8c0';
-  ctx.font = 'bold 22px "PingFang SC", serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('×', closeR.x + closeR.w / 2, closeR.y + closeR.h / 2 + INK_POPUP_CLOSE_GLYPH_Y);
+  // × 用两条对角线描出（几何居中），不依赖字体 textBaseline——微信真机 'middle' 基线与浏览器不一致会让字形偏上。
+  {
+    const cx = closeR.x + closeR.w / 2;
+    const cy = closeR.y + closeR.h / 2;
+    const r = Math.min(closeR.w, closeR.h) * 0.26;
+    ctx.strokeStyle = '#ffe8c0';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r);
+    ctx.lineTo(cx + r, cy + r);
+    ctx.moveTo(cx - r, cy + r);
+    ctx.lineTo(cx + r, cy - r);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
 
   return y + headH + 12;
 }
