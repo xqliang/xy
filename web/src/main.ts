@@ -1626,9 +1626,13 @@ function resize() {
     canvas.height = Math.round(h * dpr);
     viewOffsetX = Math.round((w - VIEW_W * fit) / 2);
     viewOffsetY = Math.round((h - VIEW_H * fit) / 2);
-    // ① 先用背景色铺满整块画布（含上下/左右 letterbox 区），消除黑边空洞（device 坐标）
+    // ① 先用背景铺满整块画布（含上下/左右 letterbox 区）：暖调竖向渐变，读作「画框/卷轴」而非黑边空洞（device 坐标）
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#0e0b07';
+    const barBg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    barBg.addColorStop(0, '#3a2614'); // 顶部暖褐
+    barBg.addColorStop(0.5, '#160f08'); // 中段近黑（会被居中的 VIEW 覆盖）
+    barBg.addColorStop(1, '#3a2614'); // 底部暖褐，与顶部对称
+    ctx.fillStyle = barBg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     // ② VIEW 变换 + 裁剪到 VIEW：内容只画在 VIEW 内 → 图鉴滚动等溢出不再渗进黑边（修拖动残影）。
     //    clip 与 transform 同属 ctx 基态，随后每帧 draw 的平衡 save/restore 不会丢（与 transform 持久化同机制）。
