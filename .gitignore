@@ -50,3 +50,4 @@ web/vite.log
 .worktrees/
 .superpowers/
 .claude/
+node_modules
