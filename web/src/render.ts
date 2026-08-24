@@ -7861,6 +7861,43 @@ function drawUnits(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
+// —— 武将信息面板高度布局（纯函数，单测见 tests/general-panel-layout.test.ts）——
+// 内容栈（相对面板顶 y）：标题18 / 副行34 / 技能名52 / 描述68+descExtra；羁绊详情占 84/98
+// 两行、属性行起点 statTop 随之推后 24；神兵行再推后 16。高度必须盖住最后一行（芯片半高 8px）
+// 并留出底边距——旧实现基础余量仅 ~3px、羁绊只给 ph 补 18（statTop 却 +24，净溢出 3px），
+// 增益行（炼丹/仙丹/风火轮）一多底部就贴边甚至超出面板边框。
+export const GENERAL_PANEL_STAT_TOP_BASE = 90;
+export interface GeneralPanelOpts {
+  active: boolean;
+  /** 增益/羁绊文字行数（battleBuffLines） */
+  buffCount?: number;
+  /** 仙丹/风火轮芯片行数（pillBuffEntries） */
+  pillCount?: number;
+  /** 技能描述折行多出的高度（每多一行 15px） */
+  descExtra?: number;
+  showBondDetail?: boolean;
+  equippedWeapon?: boolean;
+  /** 未激活：可搭子数量（>1 时加宽面板放提示） */
+  inactivePartners?: number;
+  /** 未激活：底部提示文案所需最小面板宽 */
+  hintMinW?: number;
+}
+export function generalPanelMetrics(o: GeneralPanelOpts): { pw: number; ph: number; statTop: number } {
+  const pills = o.pillCount ?? 0;
+  const buffs = o.buffCount ?? 0;
+  const descExtra = o.descExtra ?? 0;
+  const statTop = GENERAL_PANEL_STAT_TOP_BASE
+    + (o.showBondDetail ? 24 : 0) + (o.equippedWeapon ? 16 : 0) + descExtra;
+  const rowN = (o.active ? 7 : 5) + buffs + pills;
+  const rowsEnd = statTop + rowN * 16;
+  // 激活：底边距 10（保证末行芯片底距面板底 ≥18px）；未激活：底部还要画一行橙色提示，再多留一行高
+  const ph = rowsEnd + (o.active ? 10 : 22);
+  const pw = o.active
+    ? (pills > 0 ? 210 : 194)
+    : Math.max(194, (o.inactivePartners ?? 0) > 1 ? 248 : 194, o.hintMinW ?? 0);
+  return { pw, ph, statTop };
+}
+
 // 选中单位：攻击范围高亮 + 信息面板（点击某武器才显示，参考竞品单位面板）
 // 点击字牌：高亮该字牌；若已激活则双字同时选中，并画攻击范围与武将信息面板
 // panelHalf: tips 放哪半场（选中玩家单位→ai 半场；选中 AI 单位→player 半场，避免挡范围环）
@@ -7923,15 +7960,17 @@ function drawWordSelection(
   const inactiveHint = !active ? inactivePartnerHint(w.char, fromTray) : '';
   ctx.font = '12px "PingFang SC", sans-serif';
   const hintMinW = inactiveHint ? ctx.measureText(inactiveHint).width + 24 : 0;
-  const pw = active
-    ? (pills.length > 0 ? 210 : 194)
-    : Math.max(194, inactivePartners.length > 1 ? 248 : 194, hintMinW);
+  // 面板宽度先算（描述折行依赖可用宽），再算高度/属性行起点（见 generalPanelMetrics 注释）
+  const { pw } = generalPanelMetrics({ active: !!active, pillCount: pills.length, inactivePartners: inactivePartners.length, hintMinW });
   // 技能描述按面板可用宽度自动换行（如文殊「缩短其他武将大招与兵器攻击剩余冷却」超一行），
   // 多出的行高 descExtra 要顺移下方所有行并计入面板高度 ph，避免溢出弹窗。
   const skillDescLines = wrapText(ctx, def.skillDesc, pw - 24);
   const descExtra = (skillDescLines.length - 1) * 15;
   // 激活多「大招」+「经验」；未激活也展示配置 CD
-  const ph = (active ? 196 : 176) + descExtra + buffLines.length * 16 + pills.length * 16 + (pills.length > 0 ? 6 : 0) + (showBondDetail ? 18 : 0) + (equippedWeapon ? 16 : 0);
+  const { ph, statTop } = generalPanelMetrics({
+    active: !!active, pillCount: pills.length, buffCount: buffLines.length, descExtra,
+    showBondDetail, equippedWeapon: !!equippedWeapon,
+  });
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
   ctx.save();
@@ -7969,7 +8008,8 @@ function drawWordSelection(
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
     ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98 + descExtra);
   }
-  let weaponRowY = (showBondDetail ? 114 : 90) + descExtra;
+  // 神兵行画在属性行起点上方 16px（有神兵时 statTop 已含这 16px，见 generalPanelMetrics）
+  let weaponRowY = statTop - 16;
   if (equippedWeapon) {
     const { def: wdef, tier } = equippedWeapon;
     ctx.textAlign = 'left';
@@ -7983,7 +8023,7 @@ function drawWordSelection(
   }
   // 属性（激活时计入等级/神兵；AI 侧用基础数值）
   // 「范围」= 普攻与对怪大招共用的射程环；「大招CD」= skillCd（激活时附剩余）
-  const statTop = equippedWeapon ? weaponRowY : ((showBondDetail ? 114 : 90) + descExtra);
+  // statTop 由 generalPanelMetrics 统一给出（含羁绊/神兵/描述折行的顺移）
   const skillCdText = (() => {
     if (def.skill === 'none' || def.skillCd <= 0) return '无';
     if (!active) return `${def.skillCd}s`;
@@ -8055,7 +8095,7 @@ function drawWordSelection(
   if (!active) {
     ctx.fillStyle = '#ff9a6a';
     ctx.font = '12px "PingFang SC", sans-serif';
-    ctx.fillText(inactivePartnerHint(w.char, fromTray), px + 12, py + ph - 12);
+    ctx.fillText(inactivePartnerHint(w.char, fromTray), px + 12, py + ph - 10);
   }
   ctx.restore();
 }
@@ -9728,6 +9768,7 @@ const ENDLESS_TIPS: string[] = [
   '第5波起妖王不定期来袭——攒好如来神掌应急',
   '后期怪成堆，靠范围技/陨石清场',
   '每 10 波一个难度台阶，提前囤高阶兵',
+  '打腻了？回首页「真人对战」可与好友/路人 1v1',
 ];
 
 // 无尽历史最高波数：渲染路径每帧读 localStorage 偏重，节流缓存 ~1s（一局内该值不变）。
