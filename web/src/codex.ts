@@ -24,7 +24,7 @@ import { HERO_LORE, UNIT_LORE, ACTIVE_LORE, PASSIVE_LORE, MONSTER_TYPE_LORE, MIN
 const LORE_FONT = 'italic 11px "PingFang SC", serif';
 const LORE_COLOR = 'rgba(255,236,196,0.58)';
 
-export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill' | 'rank';
+export type CodexTab = 'unit' | 'hero' | 'monster' | 'skill' | 'rank' | 'versus';
 
 const BACK = { x: 24, y: 40, w: 92, h: 44 };
 const CONTENT_TOP = 136;
@@ -33,12 +33,13 @@ const TAB_W = 82;
 const TAB_H = 36;
 const TAB_GAP = 6;
 const TAB_Y = 92;
-const TAB_X0 = (VIEW_W - (TAB_W * 5 + TAB_GAP * 4)) / 2;
+const TAB_X0 = (VIEW_W - (TAB_W * 6 + TAB_GAP * 5)) / 2;
 const TAB_UNIT = { x: TAB_X0, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_HERO = { x: TAB_X0 + TAB_W + TAB_GAP, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_MONSTER = { x: TAB_X0 + (TAB_W + TAB_GAP) * 2, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_SKILL = { x: TAB_X0 + (TAB_W + TAB_GAP) * 3, y: TAB_Y, w: TAB_W, h: TAB_H };
 const TAB_RANK = { x: TAB_X0 + (TAB_W + TAB_GAP) * 4, y: TAB_Y, w: TAB_W, h: TAB_H };
+const TAB_VERSUS = { x: TAB_X0 + (TAB_W + TAB_GAP) * 5, y: TAB_Y, w: TAB_W, h: TAB_H };
 
 const UNIT_ORDER: UnitType[] = ['dao', 'spear', 'cavalry', 'archer'];
 const UNIT_COLOR: Record<UnitType, string> = { dao: '#ff9a3c', spear: '#5bd1ff', cavalry: '#7dff8a', archer: '#c79bff' };
@@ -249,6 +250,8 @@ function codexContentHeight(tab: CodexTab): number {
       return skillContentHeight();
     case 'rank':
       return rankContentHeight();
+    case 'versus':
+      return versusContentHeight();
     default: {
       const _exhaustive: never = tab;
       return _exhaustive;
@@ -288,6 +291,7 @@ function codexTabAt(x: number, y: number): CodexTab | null {
   if (inRect(x, y, TAB_MONSTER)) return 'monster';
   if (inRect(x, y, TAB_SKILL)) return 'skill';
   if (inRect(x, y, TAB_RANK)) return 'rank';
+  if (inRect(x, y, TAB_VERSUS)) return 'versus';
   return null;
 }
 
@@ -427,6 +431,7 @@ function drawCodexTabs(ctx: CanvasRenderingContext2D): void {
   drawInkActionButton(ctx, TAB_MONSTER, '妖怪', false, codexTab === 'monster' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_SKILL, '技能', false, codexTab === 'skill' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_RANK, '境界', false, codexTab === 'rank' ? 'primary' : 'secondary');
+  drawInkActionButton(ctx, TAB_VERSUS, '对战', false, codexTab === 'versus' ? 'primary' : 'secondary');
 }
 
 function drawScrollFade(ctx: CanvasRenderingContext2D): void {
@@ -1189,6 +1194,50 @@ function drawRankTab(ctx: CanvasRenderingContext2D, scrollY: number, rank: RankS
   }
 }
 
+// 对战 Tab：真人 1v1 玩法说明（复用妖怪种类卡样式，纯图文，无数值联动）。
+function versusCards(): MonsterTypeCard[] {
+  return [
+    {
+      name: '真人 1v1',
+      color: '#ff9a3c',
+      lines: ['首页「真人对战」随机匹配真实玩家', '或用「邀请好友」生成口令邀好友同房', '匹配成功后双方同时开战'],
+    },
+    {
+      name: '同图对称',
+      color: '#5bd1ff',
+      lines: ['你守下半场，对手守上半场', '双方面对同一地图、同一波妖怪', '先让唐僧倒下的一方判负'],
+    },
+    {
+      name: '实时同步',
+      color: '#7dff8a',
+      lines: ['对手的出招 / 掉血 / 加桃实时映到上半场', '你看到的上半场即对手真实战况', '断线过久判负，留意网络'],
+    },
+    {
+      name: '结算与段位',
+      color: '#ffd76a',
+      lines: ['按胜负升降境界 ★（与单人共用段位）', '但不影响单人 / 无尽的难度系数', '切磋为主，输赢不伤单人进度'],
+    },
+  ];
+}
+
+function versusContentHeight(): number {
+  return 28 + versusCards().length * (TYPE_CARD_H + TYPE_CARD_GAP) + 8;
+}
+
+function drawVersusTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
+  const y0 = CONTENT_TOP - scrollY;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,240,210,0.72)';
+  ctx.font = '12px "PingFang SC", sans-serif';
+  ctx.fillText('真人对战 · 与真实玩家同图 1v1，比拼谁守得更久', GRID_LEFT, y0 + 4);
+  let y = y0 + 28;
+  for (const card of versusCards()) {
+    drawMonsterTypeCard(ctx, card, GRID_LEFT, y, GRID_W, TYPE_CARD_H);
+    y += TYPE_CARD_H + TYPE_CARD_GAP;
+  }
+}
+
 function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState, rankState: RankState): void {
   switch (codexTab) {
     case 'unit':
@@ -1205,6 +1254,9 @@ function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadou
       break;
     case 'rank':
       drawRankTab(ctx, scrollY, rankState);
+      break;
+    case 'versus':
+      drawVersusTab(ctx, scrollY);
       break;
     default: {
       const _exhaustive: never = codexTab;

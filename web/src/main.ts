@@ -700,6 +700,9 @@ function openHelpLink(id: HelpLinkId): void {
     case 'codex-rank':
       enterCodex('rank');
       return;
+    case 'codex-versus':
+      enterCodex('versus');
+      return;
     case 'bag':
       enterBag();
       return;

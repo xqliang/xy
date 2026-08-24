@@ -49,7 +49,7 @@ type HelpBlock =
   | { kind: 'gap'; h: number };
 
 /** 说明内跳转目标：图鉴 Tab / 神兵背包 */
-export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'codex-rank' | 'bag' | 'stamina';
+export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'codex-rank' | 'codex-versus' | 'bag' | 'stamina';
 
 /** 新手操作说明正文（固定文案，便于排版与单测） */
 export const HELP_BLOCKS: HelpBlock[] = [
@@ -204,6 +204,13 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'body', text: '· 勾选「无尽模式」可挑战不限波次、难度渐增的持久战。' },
   { kind: 'gap', h: 10 },
 
+  { kind: 'title', text: '真人对战' },
+  { kind: 'body', text: '首页「真人对战」与真实玩家 1v1：系统随机匹配，或用「邀请好友」生成口令邀好友同房。' },
+  { kind: 'body', text: '上下半场同图对称——你守下半场、对手守上半场，双方面对同一波妖怪，先让唐僧倒下的一方判负。' },
+  { kind: 'body', text: '对手的出招 / 掉血 / 加桃会实时同步到你的上半场；断线过久判负。结算按胜负升降境界 ★，但不影响单人 / 无尽难度。' },
+  { kind: 'link', id: 'codex-versus', text: '打开对战图鉴 ›' },
+  { kind: 'gap', h: 14 },
+
   { kind: 'title', text: '相关页面' },
   { kind: 'link', id: 'codex-unit', text: '兵器图鉴 ›' },
   { kind: 'link', id: 'codex-hero', text: '英雄图鉴 ›' },
@@ -211,6 +218,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'link', id: 'codex-monster', text: '妖怪图鉴 ›' },
   { kind: 'link', id: 'codex-skill', text: '技能图鉴 ›' },
   { kind: 'link', id: 'codex-rank', text: '境界图鉴 ›' },
+  { kind: 'link', id: 'codex-versus', text: '对战玩法 ›' },
   { kind: 'link', id: 'stamina', text: '获取体力 ›' },
 ];
 
