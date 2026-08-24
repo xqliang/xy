@@ -789,3 +789,45 @@ def test_snap_announces_wave1_and_dedups_nextwave():
         assert a.recv(timeout=0.5) is None
         a.close(); b.close()
 
+
+
+# ============================================================================
+#  弱网优化①：TCP_NODELAY
+# ============================================================================
+def test_ws_handshake_sets_tcp_nodelay():
+    """WS 握手前后必须对连接 socket 开 TCP_NODELAY（禁 Nagle 攒包）。
+
+    对局是 100ms 级小帧双向实时同步：Nagle 攒包与对端延迟 ACK 叠加可凭空多出
+    40~200ms 延迟，实时性直接受损。用假 handler 直调 handle_versus_ws 全链路
+    （rfile 恒空 = 两轮读超时判死，hello_ok=False → _mark_gone 空转，天然干净退出），
+    断言 setsockopt 恰为 (IPPROTO_TCP, TCP_NODELAY, 1)，且 101 握手响应确已写出。
+    """
+    from api_versus import handle_versus_ws
+
+    set_calls: list = []
+    sent: list = []
+
+    class _Conn:
+        def setsockopt(self, *args):
+            set_calls.append(args)
+
+        def sendall(self, b):
+            sent.append(b)
+
+    class _RFile:
+        def read1(self, _n):
+            return b""   # 永远无数据：idle_timeouts 两轮即判死退出帧循环
+
+    class _Handler:
+        path = "/api/versus/ws?matchId=M1&uid=A1"
+        headers = {"Upgrade": "websocket",
+                   "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
+
+        def __init__(self):
+            self.connection = _Conn()
+            self.rfile = _RFile()
+            self.close_connection = False
+
+    handle_versus_ws(_Handler(), _fake_hub())
+    assert set_calls == [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
+    assert any(b"101" in b for b in sent)   # 握手响应确已写出（选项在真升级路径上设置）

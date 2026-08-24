@@ -84,7 +84,7 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onWxTouch, type WxTouchEvent } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent } from './platform';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
   cloudLogin,
@@ -197,7 +197,7 @@ let fxQualityLevel = 1;
 // 切后台暂停：停 rAF 循环与背景音，回前台再唤醒（pauseLoop/resumeLoop 见游戏循环处，函数声明已提升）。
 // 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
 onAppHide(() => pauseLoop());
-onAppShow(() => resumeLoop());
+onAppShow(() => { resumeLoop(); pvpSock?.reconnectNow(); }); // 回前台：若 PvP 断线等退避，跳过等待立即重连（弱网优化③）
 
 let loadProgress: AssetLoadProgress = { loaded: 0, total: 1, phase: 'images' };
 /** 资源已在加载，但进度页延迟显示，避免本地缓存命中时闪一下 */
@@ -2627,9 +2627,12 @@ function resumeLoop(): void {
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) pauseLoop();
-    else resumeLoop();
+    else { resumeLoop(); pvpSock?.reconnectNow(); } // 回前台：PvP 断线时跳过退避立即重连（弱网优化③）
   });
 }
+// 网络恢复（飞行模式关闭/切网）→ 立即重连 PvP 断线中的 WS，不等退避计时器（弱网优化③）。
+// reconnectNow 只在 reconnecting 态动作，open/closed 态空转，故无条件调用是安全的。
+onNetworkOnline(() => pvpSock?.reconnectNow());
 
 // —— 自测钩子：供 headless Chrome 确定性驱动与快照 —— //
 interface GameHook {

@@ -177,31 +177,34 @@ describe('PvpSocket 指数退避重连', () => {
     FakeWebSocket.last().close();
   }
 
-  it('close 后指数退避：1s→2s→4s→封顶 5s；成功 open 后重置为 1s', async () => {
+  it('close 后重连退避：首试 300ms 快试，随后 1s→2s→4s→封顶 5s；成功 open 重置回 300ms', async () => {
     const calls: Array<{ fn: () => void; ms: number }> = [];
     const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
     const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
     sock.connect();
     dropLast(); // 首连未 open 即断
-    expect(calls.map((c) => c.ms)).toEqual([1000]);
+    expect(calls.map((c) => c.ms)).toEqual([300]);   // 弱网优化③：首次重连快试 300ms
 
     calls[0]!.fn(); dropLast();
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000]);
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000]);
 
     calls[1]!.fn(); dropLast();
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000]);
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000]);
 
     calls[2]!.fn(); dropLast();
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000]); // 8000 封顶 5s
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000]);
 
-    // 第 5 次重连：让它真正 open 成功（冲刷微任务），backoff 应重置为 1s。
-    calls[3]!.fn();
+    calls[3]!.fn(); dropLast();
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000, 5000]); // 8000 封顶 5s
+
+    // 第 6 次重连：让它真正 open 成功（冲刷微任务），退避应重置回首试 300ms。
+    calls[4]!.fn();
     await tick();
     expect(FakeWebSocket.last().readyState).toBe(OPEN);
     // open 成功会顺带排一次心跳 ping（2000ms）—— captured scheduler 里多这一条。
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000, 2000]); // 前 4 条重连退避 + 末条心跳 ping
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000, 5000, 2000]); // 5 条重连退避 + 心跳 ping
     dropLast(); // open 成功后再断
-    expect(calls.map((c) => c.ms)).toEqual([1000, 2000, 4000, 5000, 2000, 1000]); // 重连回 1s
+    expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000, 5000, 2000, 300]); // 重连回快试 300ms
   });
 
   it('重连每次都建一个全新 WebSocket', () => {
@@ -216,6 +219,39 @@ describe('PvpSocket 指数退避重连', () => {
     dropLast();
     calls[1]!.fn(); // 第 3 个 socket
     expect(FakeWebSocket.instances.length).toBe(3);
+  });
+
+  // —— 弱网优化③：reconnectNow 供 online / 回前台 / wx.onAppShow 主动触发 —— //
+  it('reconnectNow：reconnecting 态跳过退避立即建新 socket；被跳过的旧计时器触发不重复建', () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    FakeWebSocket.last().close();                // 未 open 即断 → reconnecting，挂起 300ms 重连计时器
+    expect(sock.state).toBe('reconnecting');
+    sock.reconnectNow();                         // 立即重连
+    expect(sock.state).toBe('connecting');
+    expect(FakeWebSocket.instances.length).toBe(2); // 新 socket 已建
+    const stale = calls.find((c) => c.ms === 300)!;
+    stale.fn();                                  // 被跳过的旧计时器到点：空转，不建第 3 个
+    expect(FakeWebSocket.instances.length).toBe(2);
+    sock.close();
+  });
+
+  it('reconnectNow：open / connecting / closed 态空转（不建新 socket）', async () => {
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory,
+      scheduler: (fn, ms) => { void fn; void ms; } });
+    sock.connect();
+    sock.reconnectNow();                         // connecting 态：空转
+    expect(FakeWebSocket.instances.length).toBe(1);
+    await tick();                                // open
+    sock.reconnectNow();                         // open 态：空转（连接好好的，别折腾）
+    expect(FakeWebSocket.instances.length).toBe(1);
+    expect(sock.state).toBe('open');
+    sock.close();
+    sock.reconnectNow();                         // closed 态：空转（手动关闭永不复活）
+    expect(FakeWebSocket.instances.length).toBe(1);
+    expect(sock.state).toBe('closed');
   });
 });
 
@@ -324,4 +360,96 @@ describe('PvpSocket 应用层心跳 ping / RTT / 入站时间戳', () => {
     expect(pings().length).toBe(1); // 也未重排下一个
     expect(sock.state).toBe('closed');
   });
+});
+
+// ============================================================================
+//  弱网优化②：断线期间事件补发队列
+//  waveCleared（清波下降沿）与 status（认输/唐僧死终局）是「事件」而非「状态」——
+//  断线窗口恰好跨过清波/终局时静默丢弃会导致服务端判定错误。改为未 open 时入队，
+//  重连 open 后紧跟 hello 按序补发；snap 是状态量（新快照覆盖旧值）不入队。
+// ============================================================================
+describe('PvpSocket 弱网事件补发队列', () => {
+  // 便捷：open 成功 → 服务器断开（进入 reconnecting，挂起一个重连计时器）。
+  function dropAfterOpen(sock: PvpSocket, calls: Array<{ fn: () => void; ms: number }>): void {
+    FakeWebSocket.last().close();          // 服务器断 → handleClose → 调度重连（calls 尾部）
+    expect(sock.state).toBe('reconnecting');
+    void calls;
+  }
+
+  it('未 open 时 waveCleared/status 入队；重连 open 后先 hello、再按序补发', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => { calls.push({ fn, ms }); };
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();                          // open + hello
+    dropAfterOpen(sock, calls);            // 断线，进入 reconnecting
+    const dead = FakeWebSocket.last();
+    sock.sendWaveCleared(3);               // 断线期间清了一波
+    sock.sendStatus('surrender');          // 随后认输
+    expect(dead.sent.some((m) => m.includes('waveCleared'))).toBe(false); // 旧 socket 未再发
+
+    calls[calls.length - 1]!.fn();         // 触发重连计时器 → 新 socket
+    await tick();                          // open 成功
+    const s = FakeWebSocket.last();
+    const sent = s.sent.map((m) => JSON.parse(m) as { type: string });
+    expect(sent.map((m) => m.type)).toEqual(['hello', 'waveCleared', 'status']); // hello 先行
+    expect(sent[1]).toEqual({ type: 'waveCleared', wave: 3 });
+    expect(sent[2]).toEqual({ type: 'status', v: 'surrender' });
+    sock.close();
+  });
+
+  it('补发后队列清空：同一连接不再重复发（ping 计时器触发不重发）', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => { calls.push({ fn, ms }); };
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();
+    dropAfterOpen(sock, calls);
+    sock.sendWaveCleared(2);
+    calls[calls.length - 1]!.fn();
+    await tick();                          // open + hello + 补发 waveCleared
+    const s = FakeWebSocket.last();
+    expect(s.sent.filter((m) => m.includes('waveCleared'))).toHaveLength(1);
+    // 触发一次 ping 计时器（新连接 open 后排的 2000ms 那条——取最后一条，
+    // 因为断掉的旧连接也留有一条同延时的过期 ping 计时器在 calls 里）：只发 ping，不重发队列。
+    const pingCall = calls.filter((c) => c.ms === 2000).pop()!;
+    pingCall.fn();
+    expect(s.sent.filter((m) => m.includes('waveCleared'))).toHaveLength(1);
+    expect(s.sent.some((m) => m.includes('"ping"'))).toBe(true);
+    sock.close();
+  });
+
+  it('sendSnap 不入队：状态量由新快照覆盖，重连 open 后只发 hello', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => { calls.push({ fn, ms }); };
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();
+    dropAfterOpen(sock, calls);
+    expect(sock.sendSnap({ wave: 1 })).toBe(false);   // 未 open：丢弃（不入队）
+    calls[calls.length - 1]!.fn();
+    await tick();
+    const sent = FakeWebSocket.last().sent.map((m) => JSON.parse(m) as { type: string });
+    expect(sent).toEqual([{ type: 'hello', matchId: 'm', uid: 'u' }]);  // 无补发
+    sock.close();
+  });
+
+  it('队列封顶 16：超出丢最旧，重连后只补发最近 16 条', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => { calls.push({ fn, ms }); };
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();
+    dropAfterOpen(sock, calls);
+    for (let w = 1; w <= 20; w++) sock.sendWaveCleared(w);   // 20 条：丢最旧 4 条
+    calls[calls.length - 1]!.fn();
+    await tick();
+    const waves = FakeWebSocket.last().sent
+      .map((m) => JSON.parse(m) as { type: string; wave?: number })
+      .filter((m) => m.type === 'waveCleared')
+      .map((m) => m.wave);
+    expect(waves).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    sock.close();
+  });
+
 });

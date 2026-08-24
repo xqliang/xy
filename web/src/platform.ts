@@ -72,6 +72,16 @@ export function onAppShow(cb: () => void): void {
   if (isWeChat && typeof wx.onShow === 'function') wx.onShow(cb);
 }
 
+// 网络恢复通知（弱网优化③用）：微信用 wx.onNetworkStatusChange 的 isConnected=true，
+// Web 用 window 'online' 事件。供 PvP 断线等退避时立即重连；不可用环境下 no-op。
+export function onNetworkOnline(cb: () => void): void {
+  if (isWeChat && typeof wx.onNetworkStatusChange === 'function') {
+    wx.onNetworkStatusChange((res: { isConnected: boolean }) => { if (res.isConnected) cb(); });
+  } else if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('online', cb);
+  }
+}
+
 // —— 触摸输入（小游戏）——
 // Web 用 canvas 的 pointer 事件；小游戏无 pointer，改用 wx.onTouch* 全局事件。此处仅在微信下把四类
 // 触摸交给上层（main.ts 合成 PointerEvent 复用同一套指针逻辑）；Web 下 no-op 返回 false（走原 pointer 绑定）。

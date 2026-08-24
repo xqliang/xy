@@ -2,7 +2,9 @@
 // Plan C Task 3：PvP 对局期 WebSocket 连接层。
 //
 // 职责单一：建立 WS 连接、握手发 hello、按 type 分发下行消息到回调、提供上行发送（snap/waveCleared/status），
-// 并在非手动断开时按指数退避自动重连。本类不碰确定性 sim——网络层允许用 Date.now()（见下方注释）。
+// 并在非手动断开时自动重连（弱网优化③：首试 300ms 快试 + 1s→5s 指数退避，另供 reconnectNow 供
+// 网络恢复/回前台立即重连）。弱网优化②：waveCleared/status 断线期间入队、重连后紧跟 hello 补发。
+// 本类不碰确定性 sim——网络层允许用 Date.now()（见下方注释）。
 //
 // 上层接线见 main.ts（Task 5）：onOppSnap→对手插值视图 ingest、nextWave→开波排程、result→结算、oppGone→提示；
 // 每 100ms 由主循环 sendSnap(battle.pvpOwnSnapshot(nowMs, pvpSock.rttMs))——rtt 随快照透传给对手供其 HUD 显示；
@@ -51,7 +53,9 @@ interface PvpWsLike {
 
 /** readyState=OPEN 的字面值（浏览器 WebSocket.OPEN===1；FakeWebSocket 同）。避免引用全局 WebSocket（node 无）。 */
 const WS_OPEN = 1;
-/** 指数退避初值（首次重连等 1s）。 */
+/** 首次重连快试延时（弱网优化③：切基站/瞬断多为秒级可恢复，首试等太久白白加延迟）。 */
+const FIRST_RETRY_MS = 300;
+/** 指数退避初值（首试失败后从 1s 起步）。 */
 const BACKOFF_BASE_MS = 1_000;
 /** 指数退避上限（最长等 5s）。 */
 const BACKOFF_CAP_MS = 5_000;
@@ -59,6 +63,8 @@ const BACKOFF_CAP_MS = 5_000;
 const PING_INTERVAL_MS = 2_000;
 /** RTT 指数移动平均系数 α=0.25（越小越平滑，越大越跟手）。 */
 const RTT_EWMA_ALPHA = 0.25;
+/** 补发队列封顶：超出门槛丢最旧。正常一局事件远少于 16 条，封顶只防极端场景无界增长。 */
+const PENDING_MAX = 16;
 /** 默认重连调度器：真实 setTimeout（返回句柄，close 时可 clearTimeout 兜底）。 */
 const defaultScheduler = (fn: () => void, ms: number): unknown => setTimeout(fn, ms);
 
@@ -77,8 +83,13 @@ export class PvpSocket {
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly wsUrl: string;
   private sock: PvpWsLike | null = null;
+  /** 断线期间积压的事件类上行（waveCleared/status 信封）。弱网优化②：
+   *  清波下降沿与终局是「事件」而非「状态」，断线窗口跨过它们时静默丢弃会让服务端判定
+   *  错误，故入队、重连 open 后紧跟 hello 补发。snap 不入队——状态量由新快照自然覆盖。 */
+  private pending: Array<Record<string, unknown>> = [];
   private closed = false; // 手动 close() 置真：之后永不重连、永不建新 socket
-  private backoff = BACKOFF_BASE_MS; // 当前退避基数（成功 open 后重置为 BASE）
+  /** 重连失败计数（成功 open 后清零）：0 → 首试 300ms 快试；n → min(1s·2^(n-1), 5s)。 */
+  private retryCount = 0;
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
   private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
@@ -107,11 +118,20 @@ export class PvpSocket {
   /** open：握手成功，退避重置、发 hello，状态置 open。 */
   private handleOpen(): void {
     if (this.closed) return; // 握手完成前已被手动关：丢弃，不 hello、不标 open
-    this.backoff = BACKOFF_BASE_MS; // 成功 open → 退避序列重置为 1s
+    this.retryCount = 0; // 成功 open → 重连序列重置（下次断线再从 300ms 快试起）
     this.state = 'open';
     this.lastInboundAt = Date.now(); // 连上即视为刚收到（避免刚 open 就被看门狗误判）
     this.sendRaw({ type: 'hello', matchId: this.matchId, uid: this.uid });
+    this.flushPending(); // 补发断线期间积压的事件（hello 必须先行——服务端在 hello 前忽略一切消息）
     this.schedulePing(); // 启动应用层心跳（每 2s 一次，算 RTT）
+  }
+
+  /** 补发积压事件：按序发送，成功一条出队一条；发不出去（理论不会——刚 open）则留待下次。 */
+  private flushPending(): void {
+    while (this.pending.length > 0) {
+      if (!this.sendRaw(this.pending[0]!)) break;
+      this.pending.shift();
+    }
   }
 
   /** 调度一次 ping：代数 +1 防过期；open 态每 PING_INTERVAL_MS 发一次应用层 ping。 */
@@ -201,11 +221,13 @@ export class PvpSocket {
     this.pingTimer = null;
   }
 
-  /** 指数退避重连：delay=min(当前退避, 上限)，随后退避翻倍封顶；用代数让过期计时器失效。 */
+  /** 重连退避：首试 300ms 快试，之后 1s→2s→4s→封顶 5s；用代数让过期计时器失效。 */
   private scheduleReconnect(): void {
     if (this.closed) return;
-    const delay = Math.min(this.backoff, BACKOFF_CAP_MS);
-    this.backoff = Math.min(this.backoff * 2, BACKOFF_CAP_MS);
+    const delay = this.retryCount === 0
+      ? FIRST_RETRY_MS
+      : Math.min(BACKOFF_BASE_MS * 2 ** (this.retryCount - 1), BACKOFF_CAP_MS);
+    this.retryCount++;
     this.reconnectGen++;
     const gen = this.reconnectGen;
     this.timer = this.schedule(() => {
@@ -214,6 +236,19 @@ export class PvpSocket {
       this.timer = null;
       this.connect();
     }, delay);
+  }
+
+  /** 立即重连：跳过挂起的退避等待（仅 reconnecting 态生效）。供 online 事件 / 回前台 /
+   *  wx.onAppShow 主动触发——切后台被杀的 socket 不必干等退避计时器。其余态空转：
+   *  open=连接活着别折腾、connecting=已在连、closed=手动关永不复活。 */
+  reconnectNow(): void {
+    if (this.closed || this.state !== 'reconnecting') return;
+    this.reconnectGen++; // 让挂起的退避计时器过期（到点空转）
+    if (this.timer !== null && this.timer !== undefined) {
+      clearTimeout(this.timer as ReturnType<typeof setTimeout>);
+    }
+    this.timer = null;
+    this.connect();
   }
 
   /** 上行发送通用门：仅 OPEN 态真正发出，否则静默丢弃返回 false。 */
@@ -228,19 +263,31 @@ export class PvpSocket {
     return this.sendRaw({ type: 'snap', t: Date.now(), s });
   }
 
-  /** 本方清波下降沿上报。 */
+  /** 本方清波下降沿上报。事件类上行：未 open 时入队、重连后补发（见 pending 注释）。 */
   sendWaveCleared(wave: number): boolean {
-    return this.sendRaw({ type: 'waveCleared', wave });
+    return this.sendOrQueue({ type: 'waveCleared', wave });
   }
 
-  /** 认输 / 唐僧死 状态上报。 */
+  /** 认输 / 唐僧死 状态上报。事件类上行：未 open 时入队、重连后补发（见 pending 注释）。 */
   sendStatus(v: 'surrender' | 'tangsengDead'): boolean {
-    return this.sendRaw({ type: 'status', v });
+    return this.sendOrQueue({ type: 'status', v });
   }
 
-  /** 手动关闭：置 closed、递增代数让挂起计时器过期、尽力 clearTimeout 兜底、关底层 socket。之后永不重连。 */
+  /** 事件类上行通用门：open 态立即发出；否则入队（封顶丢最旧）等重连补发。手动关闭后一律丢弃。 */
+  private sendOrQueue(env: Record<string, unknown>): boolean {
+    if (this.closed) return false;
+    const sent = this.sendRaw(env);
+    if (!sent) {
+      this.pending.push(env);
+      if (this.pending.length > PENDING_MAX) this.pending.shift();
+    }
+    return sent;
+  }
+
+  /** 手动关闭：置 closed、清队列与挂起计时器、关底层 socket。之后永不重连、入队一律丢弃。 */
   close(): void {
     this.closed = true;
+    this.pending = [];
     this.reconnectGen++; // 让任何挂起的重连计时器失效
     this.clearPingTimer(); // 让任何挂起的心跳计时器过期（onclose→handleClose 因 closed 早退，这里兜底清）
     if (this.timer !== null && this.timer !== undefined) {

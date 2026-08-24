@@ -761,6 +761,14 @@ def handle_versus_ws(handler, hub) -> None:
                                            "msg": "need Upgrade: websocket + Sec-WebSocket-Key"}})
         return
 
+    # 弱网优化①：开 TCP_NODELAY（禁 Nagle）。本连接是 100ms 级小帧双向实时同步，
+    # Nagle 攒包与对端延迟 ACK 叠加可凭空多出 40~200ms 延迟。放在握手写出之前，
+    # 让 101 响应本身也不被攒；平台不支持时降级（仅多潜在延迟，不影响正确性）。
+    try:
+        handler.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+
     # 3) 101 握手：裸字节一次性写出 socket（HTTP 部分到此结束）。
     try:
         handler.connection.sendall(handshake_response(key).encode("ascii"))
