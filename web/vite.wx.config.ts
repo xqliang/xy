@@ -4,6 +4,12 @@ import { fileURLToPath, URL } from 'node:url';
 // 微信小游戏专用构建：把 src/main.ts 打成单文件 IIFE bundle → ../wechat/game.bundle.js。
 // 与 web 的 dev/build/deploy 完全分离（不同 config、不同 outDir），保证本地/服务器路径零影响。
 export default defineConfig({
+  // API base：小游戏无同源，apiFetch 需绝对地址（相对路径会被 wx.request 判为 invalid url）。
+  // 默认用联调 IP（仅开发者工具「不校验合法域名」下可用；真机 wx.request 强制 https + 备案域名，不能用 IP/http）。
+  // 上线构建改用 https 域名：`WX_API_BASE=https://你的域名 ./start.sh wx`
+  define: {
+    __API_BASE__: JSON.stringify(process.env.WX_API_BASE || 'http://124.221.105.4:8082'),
+  },
   // 不拷贝 web 的 public/（避免把 server.py 等泄漏进小游戏包）；素材已改走 CDN，不再打进包体
   publicDir: false,
   resolve: {
