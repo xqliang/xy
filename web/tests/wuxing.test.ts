@@ -5,7 +5,7 @@ import { GENERALS } from '../src/generals';
 import { ELEMENTS } from '@core';
 import { Battle } from '../src/battle';
 import { MAP_ELEMENT } from '../src/battle';
-import { mapById } from '../src/board';
+import { mapById, MAPS, pickDailyMap } from '../src/board';
 
 describe('GENERALS.element（武将五行）', () => {
   const VALID = new Set(ELEMENTS.map((e) => e.id));
@@ -44,7 +44,7 @@ describe('MAP_ELEMENT（地图五行）', () => {
     expect(MAP_ELEMENT.liushahe).toBe('water');
     expect(MAP_ELEMENT.baiguling).toBe('metal');
     expect(MAP_ELEMENT.pansidong).toBe('wood');
-    // 黄风岭在 Task 7 补齐后此断言放开为 earth
+    expect(MAP_ELEMENT.huangfengling).toBe('earth'); // 黄风岭（土）——Task 7
   });
 });
 
@@ -56,6 +56,11 @@ describe('怪物 element（按地图统一继承）', () => {
     for (let i = 0; i < 300 && monsters().length === 0; i++) b.step(1 / 30);
     expect(monsters().length).toBeGreaterThan(0);
     for (const m of monsters()) expect(m.element).toBe('fire');
+  });
+
+  // T4 审查遗留：未登记 MAP_ELEMENT 的图 id → makeOne 出的怪 element 为 null（表层面语义）
+  it('未登记 MAP_ELEMENT 的图 id → 该图怪 element 回退 null', () => {
+    expect(MAP_ELEMENT['no-such-map']).toBeUndefined();
   });
 });
 
@@ -87,5 +92,53 @@ describe('hurtMonster 五行注入（统一落点）', () => {
   it('白骨岭（金）：火克金 ×1.25', () => {
     const { hurt } = firstMonster('baiguling');
     expect(hurt('fire')).toBe(125);
+  });
+});
+
+describe('黄风岭（土）新图', () => {
+  it('MAPS 共 5 张，黄风岭在册且 element=earth', () => {
+    expect(MAPS).toHaveLength(5);
+    expect(MAPS.find((m) => m.id === 'huangfengling')!.name).toBe('黄风岭');
+    expect(MAP_ELEMENT.huangfengling).toBe('earth');
+  });
+
+  it('所有地图路径合法：相邻步正交连续、末点=唐僧、initialBlock 不压路径', () => {
+    for (const map of MAPS) {
+      const pathKeys = new Set(map.path.slice(1).map((p) => `${p.c},${p.r}`));
+      expect(map.path[0]!.c, `${map.id} 入场点应在左缘或界外（c<=0）`).toBeLessThanOrEqual(0);
+      expect(map.path[map.path.length - 1]!, `${map.id} 末点应=唐僧`).toEqual(map.tangseng);
+      for (let i = 1; i < map.path.length; i++) {
+        const a = map.path[i - 1]!;
+        const b = map.path[i]!;
+        const d = Math.abs(a.c - b.c) + Math.abs(b.r - a.r);
+        expect(d, `${map.id} 路径第${i}步不连续`).toBe(1);
+      }
+      for (const c of map.initialBlock ?? []) {
+        expect(pathKeys.has(`${c.c},${c.r}`), `${map.id} 初始块(${c.c},${c.r})压住路径`).toBe(false);
+      }
+    }
+  });
+
+  it('pickDailyMap 轮换覆盖全部 5 图', () => {
+    const seen = new Set<string>();
+    for (let d = 0; d < 10; d++) {
+      const date = new Date(2026, 0, 1 + d);
+      seen.add(pickDailyMap(date).id);
+    }
+    expect(seen.size).toBe(5);
+  });
+
+  it('黄风岭可开局出怪并产生击杀（脚本玩家速通冒烟）', () => {
+    const b = new Battle(1, 1, mapById('huangfengling'));
+    const CAP = 120 * 30;
+    let t = 0;
+    while (b.status !== 'won' && b.status !== 'lost' && t < CAP && b.wave < 12) {
+      if (b.status === 'ready') b.startNextWave();
+      if (b.peach >= b.snapshot().summonCost) { b.summon(); b.autoPlaceTray(); }
+      b.step(1 / 30);
+      t++;
+      if (b.snapshot().kills > 0) break;
+    }
+    expect(b.snapshot().kills).toBeGreaterThan(0);
   });
 });

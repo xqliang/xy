@@ -434,6 +434,7 @@ export const MAP_SKILL: Record<string, MonsterSkill> = {
   liushahe: 'slow', // 流沙河：流沙裹足，出手变慢
   baiguling: 'stun', // 白骨岭：白骨魅惑，无法出手
   pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
+  huangfengling: 'slow', // 黄风岭：三昧神风裹足，出手变慢（复用流沙河技能类型，不新增）
 };
 
 /** 地图五行：该图全部妖怪（小怪/精英/骑兵/小Boss/妖王）统一继承此属性 */
@@ -442,6 +443,7 @@ export const MAP_ELEMENT: Record<string, Element> = {
   liushahe: 'water', // 流沙河：流沙
   baiguling: 'metal', // 白骨岭：白骨肃杀
   pansidong: 'wood', // 盘丝洞：蛛网藤蔓
+  huangfengling: 'earth', // 黄风岭：黄沙
 };
 
 // 候选区令牌：兵种 / 铲子 / 武将字牌 / 桃树（字牌不可互相合并，升阶靠激活继承/喂字/战斗）

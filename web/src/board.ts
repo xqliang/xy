@@ -309,6 +309,24 @@ export const MAPS: GameMap[] = [
     ],
     fenceGaps: [], // 中带连续分隔，无开口
   },
+  {
+    id: 'huangfengling',
+    name: '黄风岭',
+    theme: { bg0: '#eee4c8', bg1: '#d8c294', cellUnlocked: '#f8f2df', cellLocked: '#bda37a', path: '#c2a15c', hud: '#dcc99a', accent: '#9a7b32' },
+    // 黄风岭（土）：左缘 r7 入场 → 上行至第5行 → 沿栅栏南侧长直行（火力走廊）→ 右缘下行至唐僧
+    path: [
+      { c: -1, r: 7 }, { c: 0, r: 7 }, // 左缘入场（出界首点）
+      { c: 0, r: 6 }, { c: 0, r: 5 }, // 左缘上行
+      { c: 1, r: 5 }, { c: 2, r: 5 }, { c: 3, r: 5 }, { c: 4, r: 5 }, { c: 5, r: 5 }, { c: 6, r: 5 }, { c: 7, r: 5 }, // 第5行长直行（贴中线栅栏我方侧）
+      { c: 7, r: 6 }, { c: 7, r: 7 }, { c: 7, r: 8 }, { c: 7, r: 9 }, // 右缘下行至唐僧
+    ],
+    tangseng: { c: 7, r: 9 },
+    initialBlock: [
+      { c: 2, r: 6 }, { c: 3, r: 6 }, { c: 4, r: 6 },
+      { c: 2, r: 7 }, { c: 3, r: 7 }, { c: 4, r: 7 },
+    ],
+    fenceGaps: [], // 中线连续栅栏，无开口
+  },
 ];
 
 export function mapById(id: string): GameMap {

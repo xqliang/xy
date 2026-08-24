@@ -558,6 +558,7 @@ const MAP_MINIBOSS_REP: Record<string, MiniBossKind> = {
   liushahe: 'frost', // 流沙河：霜魄（水寒）
   baiguling: 'blight', // 白骨岭：蚀甲（腐朽）
   pansidong: 'gale', // 盘丝洞：疾风
+  huangfengling: 'quake', // 黄风岭：撼地（土系）
 };
 function drawMiniBossRowSprite(ctx: CanvasRenderingContext2D, mapId: string, kind: MiniBossKind, cx: number, cy: number, box: number): void {
   const spr = miniBossSprite(kind, mapId);
