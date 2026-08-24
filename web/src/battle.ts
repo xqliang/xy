@@ -5688,10 +5688,13 @@ export class Battle {
     const wordKeys = new Set(this.words.keys());
     const freeCells = this.unlockedCells().filter((c) => !wordKeys.has(cellKey(c.c, c.r)));
     const units = [...this.units.values()].map((u) => ({ type: u.type, tier: u.tier }));
+    const mapEl = MAP_ELEMENT[this.map.id] ?? null; // 本图五行（Boss 血量预算需感知克制）
     const generals = this.activeGenerals().map((g) => {
       const base = generalStat(g.def, g.tier);
       const wb = this.weaponBonuses[g.def.id];
-      const atk = base.atk * (1 + (wb?.atk ?? 0)) * atkMul;
+      // 五行：该将对本图怪的克制倍率（克 1.25 / 被克 0.75 / 其他 1）
+      const wmul = elementMul(g.def.element, mapEl, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+      const atk = base.atk * (1 + (wb?.atk ?? 0)) * atkMul * wmul;
       return {
         atk,
         frq: base.frq * (1 + (wb?.frq ?? 0)) * frqMul,

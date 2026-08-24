@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Battle, TUNING } from '../src/battle';
+import { elementMul } from '@core';
+import { Battle, MAP_ELEMENT, TUNING } from '../src/battle';
 import { GENERALS, CRIT_MULT } from '../src/generals';
 
 /** 找一对左右相邻的已解锁格 */
@@ -28,7 +29,10 @@ describe('武将大招专注秒伤并入 Boss 压力估算（二郎暴击「游�
     expect(power.coverageTotal).toBeGreaterThan(0);
 
     const g = b.activeGenerals()[0]!;
-    const atk = b.generalAtk(g); // 白阶 tier=1，无武器/羁绊加成时与估算口径一致
+    // 估算器 atk = generalAtk × 五行对本图怪的克制倍率（见 estimateOptimalPower）
+    const mapEl = MAP_ELEMENT[b.map.id] ?? null;
+    const wmul = elementMul(def.element, mapEl, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    const atk = b.generalAtk(g) * wmul;
     const frq = b.generalFrq(g);
     const spd = 0.5;
     const focusTargets = Math.min(1, def.targets);
@@ -51,7 +55,9 @@ describe('武将大招专注秒伤并入 Boss 压力估算（二郎暴击「游�
 
     const power = b.estimateOptimalPower();
     const g = b.activeGenerals()[0]!;
-    const atk = b.generalAtk(g);
+    const mapEl = MAP_ELEMENT[b.map.id] ?? null;
+    const wmul = elementMul(def.element, mapEl, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    const atk = b.generalAtk(g) * wmul;
     const frq = b.generalFrq(g);
     const spd = 0.5;
     const focusTargets = Math.min(1, def.targets);
