@@ -1,10 +1,10 @@
-// 程序化音效：用 Web Audio API 实时合成短音效。地图氛围音默认也为程序化合成；
-// 个别地图（如盘丝洞）改用真实音频文件循环播放（见 MAP_BGM）——Web 端 fetch+decodeAudioData，
-// 微信端暂无本地文件 fetch，回退到程序化氛围。
-// 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器要求用户手势后才能出声。
+// 音效：用 Web Audio API 实时合成短音效（程序化，无文件）。背景音乐：各地图/首页各一首真实音频循环
+// （见 MAP_BGM / MENU_BGM_KEY），资源走 CDN——Web 端原生 fetch+decodeAudioData，微信小游戏端经 polyfill 的
+// fetch→wx.request(arraybuffer) 拉取后同样 decodeAudioData 播放（真机需把 CDN 域名加入 request 合法域名）。
+// 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器/小游戏均要求用户手势后才能出声。
 // 静音状态持久化（跨平台存储）。
 import { storeGet, storeSet } from './storage';
-import { createAudioContext, isWeChat } from './platform';
+import { createAudioContext } from './platform';
 import { ASSET_URLS } from '@asset-manifest';
 
 const MUTE_KEY = 'dasheng.mute';
@@ -228,22 +228,22 @@ export function stopAmbient(): void {
   ambientMap = '';
 }
 
-// 启动某地图的背景音乐（幂等：同图不重启）。各地图一首真实音频循环；Web 端 fetch 播放，
-// 微信端无本地 fetch 则静音（合成氛围音已移除）。
+// 启动某地图的背景音乐（幂等：同图不重启）。各地图一首真实音频循环；资源走 CDN，
+// Web 用原生 fetch、微信小游戏用 polyfill 的 fetch→wx.request(arraybuffer) 拉取后 decodeAudioData 播放。
 export function startAmbient(mapId: string): void {
   if (!ctx || !master || !musicEnabled || musicVolume <= 0) return; // 背景音乐关闭时不播放（音效仍正常）
   if (ambientMap === mapId && ambientNodes.length) return;
   stopAmbient();
   ambientMap = mapId;
   const bgmKey = MAP_BGM[mapId];
-  if (bgmKey && !isWeChat && ASSET_URLS[bgmKey]) startFileBgm(mapId, ASSET_URLS[bgmKey]!);
+  if (bgmKey && ASSET_URLS[bgmKey]) startFileBgm(mapId, ASSET_URLS[bgmKey]!);
 }
 
-// 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。Web 端可 fetch；微信端无本地
-// fetch，首页保持静音（原本也无首页音乐）。循环音量渐变由文件烘焙的淡入/淡出保证。
+// 首页背景音乐（真实音频循环）。幂等：同一 id 且已有节点时不重启。资源走 CDN（Web fetch / 微信 polyfill fetch→wx.request）。
+// 循环音量渐变由文件烘焙的淡入/淡出保证。
 export function startMenuMusic(): void {
   if (!ctx || !master || !musicEnabled || musicVolume <= 0) return;
-  if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return;
+  if (!ASSET_URLS[MENU_BGM_KEY]) return;
   if (ambientMap === MENU_ID && ambientNodes.length) return;
   stopAmbient();
   ambientMap = MENU_ID;
@@ -252,7 +252,7 @@ export function startMenuMusic(): void {
 
 /** 预载首页 BGM；需在 initAudio 之后调用 */
 export function prefetchMenuBgm(): Promise<void> {
-  if (isWeChat || !ASSET_URLS[MENU_BGM_KEY]) return Promise.resolve();
+  if (!ASSET_URLS[MENU_BGM_KEY]) return Promise.resolve();
   initAudio();
   if (!ctx) return Promise.resolve();
   return decodeBgm(ASSET_URLS[MENU_BGM_KEY]!).then(() => undefined);
