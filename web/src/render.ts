@@ -900,7 +900,9 @@ export function drawScreenBackdrop(
   if (screen === 'rank') return fillVGrad('#22283a', '#2e3550');
   if (screen === 'bag') return fillVGrad('#2b2418', '#3b3324');
   if (screen === 'pvpMatching') { ctx.fillStyle = '#efe3c6'; ctx.fillRect(x, y, w, h); return; }
-  if (screen === 'loading') { ctx.fillStyle = '#160f08'; ctx.fillRect(x, y, w, h); return; }
+  // 加载页：黑边续 loading-screen drawPaper 的纸色首尾（PAPER_TOP #f0e4c8 / PAPER_BOTTOM #c8a068）。
+  // VIEW 区随后由 drawLoadingScreen 覆盖，故此处只需让上下黑边接上纸色即无缝（参考主页铺满做法）。
+  if (screen === 'loading') return fillVGrad('#f0e4c8', '#c8a068');
   // 图片页：menu 用首页大图、其余(battle)用当前地图场景，均 cover 扩展矩形 + 宣纸薄纱
   const key = screen === 'menu' ? 'menu-home' : `map-${b.map.id}`;
   const bgImg = sprite(key as Parameters<typeof sprite>[0]);
