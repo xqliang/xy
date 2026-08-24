@@ -143,7 +143,7 @@ export const TUNING = {
   cavalryRatioRampEnd: 0.55, // 第 20 波 55%
   cavalryRatioLateLo: 0.56, // 第 21 波起每波在 [lateLo, lateHi] 随机
   cavalryRatioLateHi: 0.7,
-  cavalrySpdMul: 1.25, // 骑兵移速倍率：比普通妖快 25%
+  cavalrySpdMul: 1.2, // 骑兵移速倍率：比普通妖快 20%
   cavalryHpMul: 0.8, // 骑兵血量倍率：比普通妖低 1/5（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
   // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
   lateWaveFrom: 6, // 第 6 波起开始额外堆量
@@ -184,11 +184,11 @@ export const TUNING = {
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
   eliteFromWave: 4, // 第 4 波起可能刷出精英妖（略推迟控场，降低开局秒杀感）
   eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
-  eliteMinGap: 2, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
+  eliteMinGap: 5, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 2, // 控制技能作用半径（格）
   skillTargetMin: 0, // 单次施法最少命中兵器数（0=可落空/空放）
   skillTargetMax: 2, // 单次施法最多命中兵器数（在半径内按距离取最近 N 把）
-  skillInterval: 6, // 两次施法间隔（秒）
+  skillInterval: 8, // 两次施法间隔（秒）
   skillFirstDelay: 2.5, // 入场后首次施法延迟（秒）
   stunDur: 3, // 眩晕（怪物精英/小Boss）：武器暂停攻击（秒）
   slowDur: 4, // 减速（霜缚）：武器攻击间隔拉长（秒；怪物小Boss霜缚，时长×2）
@@ -202,11 +202,11 @@ export const TUNING = {
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.5, // 非 BOSS 波出现小 Boss 的概率
   miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
-  miniBossSpdMul: 0.82, // 移速略慢，给玩家反应窗口（blight/blood 等未特指种类用此默认）
+  miniBossSpdMul: 0.8, // 移速略慢，给玩家反应窗口（blight/blood 等未特指种类用此默认）
   miniBossSpdMulSlow: 0.75, // 霜魄/撼地小 Boss 本体移速倍率（偏慢，给玩家反应）
   miniBossSpdMulFast: 1.05, // 疾风小 Boss 本体移速倍率（本身很快）
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
-  miniBossInterval: 6, // 两次施法间隔（秒）
+  miniBossInterval: 8, // 两次施法间隔（秒）
   miniBossFirstDelay: 2.0, // 入场后首次施法延迟（秒）
   miniBossStealRadius: 3, // 黄狮精「卷走」作用半径（格）
   miniBossStealDelayMin: 1, // 出场后首次触发最短延时（秒）
