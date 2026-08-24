@@ -1201,22 +1201,32 @@ function drawRankTab(ctx: CanvasRenderingContext2D, scrollY: number, rank: RankS
   }
 }
 
-// 对战 Tab：真人 1v1 玩法说明（复用妖怪种类卡样式，纯图文，无数值联动）。
-function versusCards(): MonsterTypeCard[] {
+// 对战 Tab：上半场对手玩法说明——分「AI 对战（默认）」与「真人对战」两节（复用妖怪种类卡样式，纯图文）。
+function versusAiCards(): MonsterTypeCard[] {
+  return [
+    {
+      name: '和 AI 同场',
+      color: '#7dff8a',
+      lines: ['点「开始游戏」，上半场即 AI 对手', 'AI 会自动征兵、布阵、合成、放技能', '对方唐僧先被妖怪吃你赢，你的先倒你负'],
+    },
+    {
+      name: '难度自适应',
+      color: '#ffd76a',
+      lines: ['AI 与出怪强度随境界、胜负动态调节', '连胜转强、连败转松，长期约七成胜率', '无尽模式不判对手胜负，只拼波数'],
+    },
+  ];
+}
+
+function versusPvpCards(): MonsterTypeCard[] {
   return [
     {
       name: '真人 1v1',
       color: '#ff9a3c',
-      lines: ['首页「真人对战」随机匹配真实玩家', '或用「邀请好友」生成口令邀好友同房', '匹配成功后双方同时开战'],
-    },
-    {
-      name: '同图对称',
-      color: '#5bd1ff',
-      lines: ['你守下半场，对手守上半场', '双方面对同一地图、同一波妖怪', '先让唐僧倒下的一方判负'],
+      lines: ['「真人对战」把上半场 AI 换成真实玩家', '随机匹配，或「邀请好友」生成口令同房', '匹配成功后双方同时开战'],
     },
     {
       name: '实时同步',
-      color: '#7dff8a',
+      color: '#5bd1ff',
       lines: ['对手的出招 / 掉血 / 加桃实时映到上半场', '你看到的上半场即对手真实战况', '断线过久判负，留意网络'],
     },
     {
@@ -1228,7 +1238,14 @@ function versusCards(): MonsterTypeCard[] {
 }
 
 function versusContentHeight(): number {
-  return 28 + versusCards().length * (TYPE_CARD_H + TYPE_CARD_GAP) + 8;
+  const ai = versusAiCards().length;
+  const pvp = versusPvpCards().length;
+  return (
+    28
+    + 22 + ai * (TYPE_CARD_H + TYPE_CARD_GAP)
+    + 12 + 22 + pvp * (TYPE_CARD_H + TYPE_CARD_GAP)
+    + 8
+  );
 }
 
 function drawVersusTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
@@ -1237,12 +1254,28 @@ function drawVersusTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(255,240,210,0.72)';
   ctx.font = '12px "PingFang SC", sans-serif';
-  ctx.fillText('真人对战 · 与真实玩家同图 1v1，比拼谁守得更久', GRID_LEFT, y0 + 4);
+  ctx.fillText('对战 = 与上半场对手同图比拼，谁的唐僧先被妖怪吃谁负', GRID_LEFT, y0 + 4);
+
+  const section = (title: string, yy: number): number => {
+    ctx.fillStyle = '#ffe08a';
+    ctx.font = 'bold 15px "PingFang SC", sans-serif';
+    ctx.fillText(title, GRID_LEFT, yy);
+    return yy + 22;
+  };
+  const drawCards = (cards: MonsterTypeCard[], yy: number): number => {
+    for (const card of cards) {
+      drawMonsterTypeCard(ctx, card, GRID_LEFT, yy, GRID_W, TYPE_CARD_H);
+      yy += TYPE_CARD_H + TYPE_CARD_GAP;
+    }
+    return yy;
+  };
+
   let y = y0 + 28;
-  for (const card of versusCards()) {
-    drawMonsterTypeCard(ctx, card, GRID_LEFT, y, GRID_W, TYPE_CARD_H);
-    y += TYPE_CARD_H + TYPE_CARD_GAP;
-  }
+  y = section('AI 对战 · 默认', y);
+  y = drawCards(versusAiCards(), y);
+  y += 12;
+  y = section('真人对战', y);
+  drawCards(versusPvpCards(), y);
 }
 
 function drawCodexContent(ctx: CanvasRenderingContext2D, scrollY: number, loadout: LoadoutState, rankState: RankState): void {
