@@ -334,6 +334,7 @@ export function drawTutorialOverlay(ctx: CanvasRenderingContext2D, overlay: Tuto
     const h = layout.hole;
     ctx.save();
     ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000'; // 必须不透明：destination-out 按源 alpha 抠除遮罩，沿用 0.62 只抠掉 62% → 高亮区仍发暗
     roundRect(ctx, h.x, h.y, h.w, h.h, HOLE_RADIUS);
     ctx.fill();
     ctx.restore();
