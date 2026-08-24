@@ -552,9 +552,15 @@ function drawMonsterSprite(
   ctx.fillText(label, cx + box / 2, cy + box + 2);
 }
 
-/** 地图行小 Boss 立绘：跨地图通用光环怪，立绘取代表 kind（5 种详见小 Boss 栏目） */
-function drawMiniBossRowSprite(ctx: CanvasRenderingContext2D, mapId: string, cx: number, cy: number, box: number): void {
-  const spr = miniBossSprite(MINI_BOSS_KINDS[0]!, mapId);
+/** 地图行小 Boss 立绘：小 Boss 跨地图通用，这里给每张图选一个「代表」kind 作展示（仅区分立绘、非该图专属；6 种详见小 Boss 栏目）。 */
+const MAP_MINIBOSS_REP: Record<string, MiniBossKind> = {
+  huoyanshan: 'lion', // 火焰山：黄狮（暖金）
+  liushahe: 'frost', // 流沙河：霜魄（水寒）
+  baiguling: 'blight', // 白骨岭：蚀甲（腐朽）
+  pansidong: 'gale', // 盘丝洞：疾风
+};
+function drawMiniBossRowSprite(ctx: CanvasRenderingContext2D, mapId: string, kind: MiniBossKind, cx: number, cy: number, box: number): void {
+  const spr = miniBossSprite(kind, mapId);
   if (spr) {
     const s = Math.min(box / spr.width, box / spr.height);
     ctx.drawImage(spr, cx, cy + (box - spr.height * s) / 2, spr.width * s, spr.height * s);
@@ -566,7 +572,7 @@ function drawMiniBossRowSprite(ctx: CanvasRenderingContext2D, mapId: string, cx:
   ctx.fillText('小Boss', cx + box / 2, cy + box + 2);
 }
 
-function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName: string, x: number, y: number, w: number): void {
+function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName: string, x: number, y: number, w: number, miniBossKind: MiniBossKind): void {
   roundRect(ctx, x, y, w, MAP_ROW_H, 10);
   ctx.fillStyle = '#241f16';
   ctx.fill();
@@ -612,7 +618,7 @@ function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName
   const minionX = cavalryX - step;   // 小妖
   drawMonsterSprite(ctx, mapId, 'minion', minionX, spriteY, spriteBox, '小妖');
   drawMonsterSprite(ctx, mapId, 'cavalry', cavalryX, spriteY, spriteBox, '骑兵', '#7dff8a');
-  drawMiniBossRowSprite(ctx, mapId, miniBossX, spriteY, spriteBox);
+  drawMiniBossRowSprite(ctx, mapId, miniBossKind, miniBossX, spriteY, spriteBox);
   drawMonsterSprite(ctx, mapId, 'boss', bossX, spriteY, spriteBox, '妖王', '#ff9ab0');
 }
 
@@ -658,8 +664,9 @@ function drawMonsterTab(ctx: CanvasRenderingContext2D, scrollY: number): void {
   ctx.fillText('各地图', GRID_LEFT, y);
   y += 22;
 
-  MAPS.forEach((map) => {
-    drawMapMonsterRow(ctx, map.id, map.name, GRID_LEFT, y, GRID_W);
+  MAPS.forEach((map, i) => {
+    const mbKind = MAP_MINIBOSS_REP[map.id] ?? MINI_BOSS_KINDS[i % MINI_BOSS_KINDS.length]!;
+    drawMapMonsterRow(ctx, map.id, map.name, GRID_LEFT, y, GRID_W, mbKind);
     y += MAP_ROW_H + 10;
   });
 
