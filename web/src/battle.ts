@@ -811,6 +811,7 @@ export interface DamageFloat {
   peakY: number;
   age: number;
   crit: boolean;
+  wuxing?: 'adv' | 'dis'; // 五行克制标记：adv=克制（金色放大）dis=被克（灰色弱化）；undefined=普通
 }
 
 export function peachFloatInitialVy(gravity = PEACH_FLOAT_GRAVITY, rise = PEACH_FLOAT_RISE): number {
@@ -4127,21 +4128,42 @@ export class Battle {
     );
   }
 
-  /** 对妖怪扣血并触发受击反馈（闪白 + 可选伤害飘字） */
-  private hurtMonster(m: Monster, dmg: number, pos: { c: number; r: number }, hitFlash = 0.12, crit = false): void {
-    m.hp -= dmg;
+  /** 对妖怪扣血并触发受击反馈（闪白 + 可选伤害飘字）
+   *  atkEl=攻击方五行：武将传 def.element；兵种/环境伤害不传（null=不吃克制）。
+   *  扣血按 elementMul 倍率 Math.round 取整，并把克制标记传 spawnDamageFloat 供表现层上色。 */
+  private hurtMonster(
+    m: Monster,
+    dmg: number,
+    pos: { c: number; r: number },
+    hitFlash = 0.12,
+    crit = false,
+    atkEl: Element | null = null,
+  ): void {
+    const mul = elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    const final = Math.round(dmg * mul);
+    m.hp -= final;
     m.hitFlash = hitFlash;
-    this.spawnDamageFloat(pos.c, pos.r, dmg, crit);
+    this.spawnDamageFloat(pos.c, pos.r, final, crit, mul > 1 ? 'adv' : mul < 1 ? 'dis' : undefined);
   }
 
-  /** 对 AI 半场妖怪扣血并触发受击反馈 */
-  private hurtAiMonster(m: Monster, dmg: number, pos: { c: number; r: number }, hitFlash = 0.12, crit = false): void {
-    m.hp -= dmg;
+  /** 对 AI 半场妖怪扣血并触发受击反馈（AI 半场英雄对等吃克制，注入方式与 hurtMonster 一致） */
+  private hurtAiMonster(
+    m: Monster,
+    dmg: number,
+    pos: { c: number; r: number },
+    hitFlash = 0.12,
+    crit = false,
+    atkEl: Element | null = null,
+  ): void {
+    const mul = elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    const final = Math.round(dmg * mul);
+    m.hp -= final;
     m.hitFlash = hitFlash;
-    this.spawnDamageFloat(pos.c, pos.r, dmg, crit);
+    this.spawnDamageFloat(pos.c, pos.r, final, crit, mul > 1 ? 'adv' : mul < 1 ? 'dis' : undefined);
   }
 
-  private spawnDamageFloat(c: number, r: number, amount: number, crit = false): void {
+  /** 生成伤害飘字。wuxing 五行克制标记（adv=克制金色放大 / dis=被克灰色弱化），undefined=普通。 */
+  private spawnDamageFloat(c: number, r: number, amount: number, crit = false, wuxing?: 'adv' | 'dis'): void {
     if (!getSettings().showDamageNumbers || amount <= 0) return;
     const gravity = crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY;
     const rise = crit ? DAMAGE_FLOAT_RISE_CRIT : DAMAGE_FLOAT_RISE;
@@ -4159,6 +4181,7 @@ export class Battle {
       peakY: DAMAGE_FLOAT_HEAD_Y,
       age: 0,
       crit,
+      wuxing,
     });
   }
 
@@ -6016,7 +6039,7 @@ export class Battle {
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
-        this.hurtAiMonster(t.m, dmg, t.p, 0.12);
+        this.hurtAiMonster(t.m, dmg, t.p, 0.12, false, g.def.element);
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
@@ -6572,7 +6595,7 @@ export class Battle {
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
-        this.hurtMonster(t.m, dmg, t.p, 0.12);
+        this.hurtMonster(t.m, dmg, t.p, 0.12, false, g.def.element);
         this.pushGeneralAttackFx(g, t.p);
         hit++;
       }
@@ -6595,8 +6618,8 @@ export class Battle {
     const rgeCells = ai ? this.aiGeneralRge(g) : this.generalRge(g);
     const entranceDist = ai ? this.aiEntranceDist : this.entranceDist;
     const hurt = (m: Monster, dmg: number, p: { c: number; r: number }, flash: number, crit = false) => {
-      if (ai) this.hurtAiMonster(m, dmg, p, flash, crit);
-      else this.hurtMonster(m, dmg, p, flash, crit);
+      if (ai) this.hurtAiMonster(m, dmg, p, flash, crit, g.def.element);
+      else this.hurtMonster(m, dmg, p, flash, crit, g.def.element);
     };
     g.state.skillFlash = 1;
     const gAx = (g.cells[0].c + g.cells[1].c) / 2;

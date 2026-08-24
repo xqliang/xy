@@ -49,12 +49,43 @@ describe('MAP_ELEMENT（地图五行）', () => {
 });
 
 describe('怪物 element（按地图统一继承）', () => {
-  it('火焰山开波后怪物 element 为 fire（小怪/妖王同图统一）', () => {
+  it('火焰山开波后小怪 element 为 fire（boss/护卫走同一 makeOne，由对称性覆盖）', () => {
     const b = new Battle(1, 1, mapById('huoyanshan'));
     b.startNextWave();
     const monsters = () => (b as unknown as { monsters: { element: string | null }[] }).monsters;
     for (let i = 0; i < 300 && monsters().length === 0; i++) b.step(1 / 30);
     expect(monsters().length).toBeGreaterThan(0);
     for (const m of monsters()) expect(m.element).toBe('fire');
+  });
+});
+
+describe('hurtMonster 五行注入（统一落点）', () => {
+  function firstMonster(mapId: string) {
+    const b = new Battle(1, 1, mapById(mapId));
+    b.startNextWave();
+    const get = () => (b as unknown as { monsters: { hp: number; element: string | null }[] }).monsters;
+    for (let i = 0; i < 300 && get().length === 0; i++) b.step(1 / 30);
+    const m = get()[0]!;
+    m.hp = 100000; // 防止被打死干扰扣血断言
+    const hurt = (el: string | null) => {
+      const before = m.hp;
+      (b as unknown as { hurtMonster: (m2: unknown, dmg: number, p: { c: number; r: number }, f: number, c2: boolean, el2: string | null) => void })
+        .hurtMonster(m, 100, { c: 0, r: 5 }, 0.12, false, el);
+      return before - m.hp;
+    };
+    return { hurt };
+  }
+
+  it('火焰山（火）：水克火 ×1.25、金被火克 ×0.75、同行 ×1.0、无属性 ×1.0，均取整', () => {
+    const { hurt } = firstMonster('huoyanshan');
+    expect(hurt('water')).toBe(125); // 水克火
+    expect(hurt('metal')).toBe(75); // 火克金 → 攻击方金被克
+    expect(hurt('fire')).toBe(100); // 同行
+    expect(hurt(null)).toBe(100); // 兵种/环境伤害不吃克制
+  });
+
+  it('白骨岭（金）：火克金 ×1.25', () => {
+    const { hurt } = firstMonster('baiguling');
+    expect(hurt('fire')).toBe(125);
   });
 });
