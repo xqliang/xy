@@ -1,13 +1,37 @@
 {
-  "appid": "touristappid",
-  "projectname": "dasheng-yu-tangseng",
+  "appid": "wx699d9de9ba7d0f27",
+  "projectname": "yaoguailaixi",
   "compileType": "game",
   "setting": {
     "es6": false,
     "minified": false,
     "postcss": false,
-    "urlCheck": false
+    "urlCheck": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "enhance": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "libVersion": "3.7.0",
-  "description": "《妖怪来袭》微信小游戏（IAA）。appid 请替换为在 mp.weixin.qq.com 注册的小游戏 AppID。"
+  "description": "妖怪来袭，唐僧高喊救命！召西游群英征兵布阵、放大招御妖，还能真人对战，从凡人打到齐天大圣，快来护师取经！",
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "isGameTourist": false,
+  "editorSetting": {}
 }
