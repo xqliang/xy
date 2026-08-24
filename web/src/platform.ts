@@ -82,6 +82,44 @@ export function onNetworkOnline(cb: () => void): void {
   }
 }
 
+// —— 好友邀请（PvP 深链/分享）——
+// Web：好友邀请走 URL ?versus=<房号>，发起方复制链接、好友打开链接即加入。
+// 小游戏：无 URL——发起方用 wx.shareAppMessage 弹分享卡片(query 带房号)，好友点卡片启动小游戏，
+//         启动参数 query.versus 里带房号；已在前台则由 wx.onShow 的 query 收到。
+
+/** 读取邀请房号：Web 取 URL ?versus=；小游戏取启动参数 query.versus。无则 null。 */
+export function getVersusInviteCode(): string | null {
+  if (isWeChat) {
+    try {
+      const opts = typeof wx.getLaunchOptionsSync === 'function' ? wx.getLaunchOptionsSync() : null;
+      const v = opts?.query?.versus;
+      return typeof v === 'string' && v ? v : null;
+    } catch { return null; }
+  }
+  try { return new URLSearchParams(location.search).get('versus'); } catch { return null; }
+}
+
+/** 分享邀请：小游戏弹微信分享卡片(query 带房号，好友点开即进)，返回 true；Web/无 wx 返回 false（由调用方复制链接）。 */
+export function shareVersusInvite(code: string, title: string): boolean {
+  if (isWeChat && typeof wx.shareAppMessage === 'function') {
+    try {
+      wx.shareAppMessage({ title, query: 'versus=' + encodeURIComponent(code) });
+      return true;
+    } catch { return false; }
+  }
+  return false;
+}
+
+/** 小游戏温启动（已在前台）收到分享卡片点击：onShow 带 query.versus 时回调房号。Web/无 wx 为 no-op。 */
+export function onWxShowVersus(cb: (code: string) => void): void {
+  if (isWeChat && typeof wx.onShow === 'function') {
+    wx.onShow((res: { query?: Record<string, string> }) => {
+      const v = res?.query?.versus;
+      if (typeof v === 'string' && v) cb(v);
+    });
+  }
+}
+
 // —— 触摸输入（小游戏）——
 // Web 用 canvas 的 pointer 事件；小游戏无 pointer，改用 wx.onTouch* 全局事件。此处仅在微信下把四类
 // 触摸交给上层（main.ts 合成 PointerEvent 复用同一套指针逻辑）；Web 下 no-op 返回 false（走原 pointer 绑定）。

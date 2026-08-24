@@ -90,7 +90,7 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, onWxShowVersus } from './platform';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
   cloudLogin,
@@ -212,7 +212,7 @@ let loadingUiVisible = false;
 const LOADING_UI_DELAY_MS = 200;
 
 const params = new URLSearchParams(location.search);
-const versusCode = params.get('versus'); // 好友邀请深链 ?versus=<code>
+const versusCode = getVersusInviteCode(); // 好友邀请：Web 取 URL ?versus=，小游戏取启动参数 query.versus
 // ?seed= 固定种子(可复现/自测)；否则每局随机种子，保证征兵等每局都不同
 const fixedSeed = params.get('seed');
 const seed = Number(fixedSeed ?? '1') || 1;
@@ -1871,10 +1871,16 @@ function onPointerDown(e: PointerEvent) {
     } else if (hit === 'ok') {
       pvpController = null; screen = 'menu'; scheduleFrame();
     } else if (hit === 'copy' && pvpController.state.code) {
-      // 客户端构造深链（location.origin+pathname 自适应 /xy 子路径）；复制成功才置「已复制」，
-      // 失败也无妨——房号已显示在屏上，可口头/手动分享。
-      const link = sc.versusShareLink(pvpController.state.code);
-      try { void navigator.clipboard?.writeText(link).then(() => { pvpCopied = true; scheduleFrame(); }).catch(() => {}); } catch { /* 剪贴板不可用则忽略（房号已显示） */ }
+      const code = pvpController.state.code;
+      if (isWeChat) {
+        // 小游戏：弹微信分享卡片(query 带房号)，好友点卡片启动小游戏即加入；无链接可复制。
+        shareVersusInvite(code, '来和我 1v1！——妖怪来袭');
+        pvpCopied = true; // 复用该态作「已分享」反馈（文案在 pvp-screen 按平台区分）
+      } else {
+        // 网页：复制深链（location.origin+pathname 自适应 /xy 子路径），好友打开链接即加入。
+        const link = sc.versusShareLink(code);
+        try { void navigator.clipboard?.writeText(link).then(() => { pvpCopied = true; scheduleFrame(); }).catch(() => {}); } catch { /* 剪贴板不可用则忽略 */ }
+      }
       scheduleFrame();
     }
     return;
@@ -2708,6 +2714,8 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 // 网络恢复（飞行模式关闭/切网）→ 立即重连 PvP 断线中的 WS，不等退避计时器（弱网优化③）。
 // reconnectNow 只在 reconnecting 态动作，open/closed 态空转，故无条件调用是安全的。
 onNetworkOnline(() => pvpSock?.reconnectNow());
+// 小游戏温启动：已在首页时好友点了邀请分享卡片 → 直接进「加入」匹配（仅首页触发，避免打断对局/其他界面）。
+onWxShowVersus((code) => { if (screen === 'menu') enterPvpMatching('join', code); });
 
 // —— 自测钩子：供 headless Chrome 确定性驱动与快照 —— //
 interface GameHook {

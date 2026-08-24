@@ -1,6 +1,7 @@
 // PvP 匹配/等待界面：搜索标题 + 2 分钟倒计时环 + 退出匹配；邀请模式额外画分享链接与复制按钮。纯渲染 + 命中。
 import { VIEW_W, VIEW_H } from './render';
 import { drawInkActionButton } from './menu-ui';
+import { isWeChat } from './platform';
 
 // PvP 匹配视图状态：外部（pvp-match 等逻辑层）把当前态灌进来，本文件只负责把它画出来并做命中检测。
 export interface PvpMatchingView {
@@ -81,16 +82,20 @@ export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatching
     ctx.fillText(`已匹配到对手：${view.opponent.nickname ?? '无名侠'}`, VIEW_W / 2, RING_C.y + RING_C.r + 40);
   }
 
-  // 邀请模式（未匹配时）：突出显示房号（本局随机唯一地址）+ 复制邀请链接按钮。
-  // 房号供好友识别/口头分享；「复制邀请链接」复制客户端 versusShareLink 构造的深链（自适应部署子路径如 /xy）。
+  // 邀请模式（未匹配时）：网页复制邀请链接 / 小游戏原生分享给好友。均不需房号手输——好友打开链接或点分享卡片即加入。
   if (view.mode === 'invite' && view.code && view.phase !== 'matched') {
     ctx.fillStyle = '#6a4a1a';
-    ctx.font = '14px "PingFang SC", serif';
-    ctx.fillText('房号（把邀请链接发给好友，对方打开即加入）', VIEW_W / 2, 500);
-    ctx.fillStyle = '#b3541e';
-    ctx.font = 'bold 40px ui-monospace, "PingFang SC", monospace';
-    ctx.fillText(view.code, VIEW_W / 2, 543);
-    drawInkActionButton(ctx, COPY_RECT, view.copied ? '已复制链接 ✓' : '复制邀请链接', false, 'secondary');
+    ctx.font = '15px "PingFang SC", serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      isWeChat ? '点下方「分享给好友」，对方点开卡片即加入' : '把邀请链接发给好友，对方打开即加入',
+      VIEW_W / 2,
+      540,
+    );
+    const label = isWeChat
+      ? (view.copied ? '已分享 ✓' : '分享给好友')
+      : (view.copied ? '已复制链接 ✓' : '复制邀请链接');
+    drawInkActionButton(ctx, COPY_RECT, label, false, 'secondary');
   }
 
   // 底部退出按钮：所有非失败阶段都有。
