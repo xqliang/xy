@@ -2,6 +2,8 @@
 import { isWeChat } from './platform';
 import { clampNickname, NICKNAME_MAX_WEIGHT, nicknameWeight } from './nickname';
 
+declare const wx: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
 const ROOT_ID = 'xy-nick-editor';
 
 let open = false;
@@ -56,18 +58,35 @@ function inkButton(label: string, tone: 'primary' | 'secondary'): HTMLButtonElem
 export function openNicknameEditor(current: string, onDone: (next: string | null) => void): void {
   if (open) return;
 
-  if (isWeChat || typeof document === 'undefined') {
+  // 微信小游戏：无 DOM 浮层，用 wx.showModal 的可编辑输入框（editable:true 显示文本框，content 预填当前昵称）。
+  if (isWeChat) {
     open = true;
+    if (typeof wx !== 'undefined' && typeof wx.showModal === 'function') {
+      wx.showModal({
+        title: '修改昵称',
+        editable: true,
+        placeholderText: `可留空，最多约 ${NICKNAME_MAX_WEIGHT / 2} 个汉字`,
+        content: current,
+        success: (res: { confirm?: boolean; content?: string }) => {
+          open = false;
+          onDone(res && res.confirm ? clampNickname((res.content ?? '').trim()) : null);
+        },
+        fail: () => { open = false; onDone(null); },
+      });
+    } else {
+      open = false;
+      onDone(null);
+    }
+    return;
+  }
+
+  // 非浏览器环境（测试/SSR，无 wx 无 document）：回退 prompt
+  if (typeof document === 'undefined') {
     const raw =
       typeof window !== 'undefined' && typeof window.prompt === 'function'
         ? window.prompt(`设置昵称（可留空，最多约 ${NICKNAME_MAX_WEIGHT / 2} 个汉字）`, current)
         : current;
-    open = false;
-    if (raw === null) {
-      onDone(null);
-      return;
-    }
-    onDone(clampNickname(raw.trim()));
+    onDone(raw === null ? null : clampNickname(raw.trim()));
     return;
   }
 

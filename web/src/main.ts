@@ -1620,13 +1620,22 @@ function resize() {
   const fit = Math.min(w / VIEW_W, h / VIEW_H);
   cssScale = fit;
   if (isWeChat) {
-    // 小游戏：主画布即全屏，位图=屏幕像素；把 VIEW 居中等比 letterbox 画进去（黑边），
+    // 小游戏：主画布即全屏，位图=屏幕像素；把 VIEW 居中等比 letterbox 画进去。
     // 触摸坐标据 viewOffset/fit 反算（见 toLogical）。无 CSS，故不设 canvas.style。
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     viewOffsetX = Math.round((w - VIEW_W * fit) / 2);
     viewOffsetY = Math.round((h - VIEW_H * fit) / 2);
+    // ① 先用背景色铺满整块画布（含上下/左右 letterbox 区），消除黑边空洞（device 坐标）
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#0e0b07';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // ② VIEW 变换 + 裁剪到 VIEW：内容只画在 VIEW 内 → 图鉴滚动等溢出不再渗进黑边（修拖动残影）。
+    //    clip 与 transform 同属 ctx 基态，随后每帧 draw 的平衡 save/restore 不会丢（与 transform 持久化同机制）。
     ctx.setTransform(fit * dpr, 0, 0, fit * dpr, viewOffsetX * dpr, viewOffsetY * dpr);
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.clip();
     scheduleFrame();
     return;
   }
