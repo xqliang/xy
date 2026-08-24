@@ -149,6 +149,7 @@ export const TUNING_SKILL_KEYS = new Set([
   'palmPushCells', 'meteorDmgMul', 'meteorRadius', 'meteorPassiveDmgMul', 'jingguDmgMul',
   'bombDmgMul', 'bombExplodeRadius', 'bombContactRadius',
   'atkBuffMul', 'frqBuffMul', 'freezeStunDur',
+  'wuxingAdvMul', 'wuxingDisMul',
   'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
   'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',

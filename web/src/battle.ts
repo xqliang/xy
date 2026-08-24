@@ -195,6 +195,8 @@ export const TUNING = {
   slowCooldownMul: 1.6, // 减速期间冷却倍率（≈攻速×0.63）
   weakenDur: 3, // 降攻：攻击力削弱（秒）
   weakenAtkMul: 0.65, // 降攻期间攻击倍率
+  wuxingAdvMul: 1.25, // 五行克制方伤害倍率（克 ×1.25）
+  wuxingDisMul: 0.75, // 五行被克方伤害倍率（被克 ×0.75）
   webbindDur: 3.5, // 缠丝：攻击范围削减持续（秒）
   webbindRangeCut: 0.5, // 缠丝：有效射程 -0.5 格（见 updateUnits）
   debuffImmuneDur: 6, // 兵器对同一种 debuff 的免疫时间（秒，含效果期内）
