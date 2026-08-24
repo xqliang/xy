@@ -7,10 +7,10 @@
 
 - `game.json` — 小游戏窗口配置（竖屏）
 - `project.config.json` — 项目配置（**appid 需替换为你在 mp.weixin.qq.com 注册的小游戏 AppID**）
-- `game.js` — 入口：先加载 `weapp-adapter.js`，再加载构建产物 `game.bundle.js`
+- `game.js` — 入口：先加载 `polyfill.js`（全局适配），再加载构建产物 `game.bundle.js`
 - `game.bundle.js` — 由 `./start.sh wx` 从 `web/src/main.ts` 打包生成（**勿手改**）
+- `polyfill.js` — 自足轻量适配层（**替代 weapp-adapter**）：把 `window/document/navigator/location/URLSearchParams/performance/Headers/fetch/WebSocket` 挂到 `GameGlobal`；`fetch→wx.request`、`WebSocket→wx.connectSocket`、`createElement('canvas')→wx.createCanvas`
 - `assets/` — 历史遗留目录，现已不用（素材改走 CDN，见下）
-- `weapp-adapter.js` — **需自行放置**（见下）
 
 ## 素材：CDN 加载（不再打进包体）
 
@@ -38,13 +38,12 @@ open -a wechatwebdevtools                  # 启动，微信扫码登录
 ./start.sh wx      # 构建 game.bundle.js 并同步 assets/ 到本目录
 ```
 
-## 放置 weapp-adapter（一次性）
+## 适配层：`polyfill.js`（无需 weapp-adapter）
 
-小游戏运行时没有 DOM，需要适配器提供 `document/window/canvas/Image/AudioContext` 等垫片。
-从微信官方 minigame demo 或社区包获取 `weapp-adapter.js` 放到本目录：
-
-- 官方 demo：微信开发者工具「新建小游戏项目」会生成含 `weapp-adapter.js` 的模板，拷过来即可
-- 或社区包 `@wechat-minigame/weapp-adapter`
+小游戏运行时没有 DOM。本工程**不用** npm 的 `weapp-adapter`——它是 `module.exports=webpack(...)` 的
+「被 import 进构建包」形态，作为独立脚本 `require` 加载时不往全局挂 `window/document`（实测 `navigator`/
+`window` 均 undefined）。改用自足的 `polyfill.js`（`game.js` 里先于 bundle 加载），把非渲染全局挂到
+`GameGlobal`；画布/图片/音频本就走 `platform.ts` 的 `wx.*`，故 polyfill 够用、遇缺再往里加一行即可。
 
 ## 联调（需人工，在本机已装的「微信开发者工具」中进行）
 
@@ -54,8 +53,8 @@ open -a wechatwebdevtools                  # 启动，微信扫码登录
 
 ## 待联调验证的适配点（当前为「盲写」，需在 devtools 迭代）
 
-- **输入**：`web/src/main.ts` 用 `canvas.addEventListener('pointerdown/move/up')`。weapp-adapter 通常把
-  触摸事件转成 canvas 事件；若未触发，需要在 main.ts 增加 `wx.onTouchStart/Move/End` → 逻辑坐标的桥接。
+- **输入**（已接）：小游戏下 `main.ts` 用 `platform.onWxTouch`（`wx.onTouchStart/Move/End/Cancel`）合成
+  PointerEvent，复用同一套 `onPointerDown/Move/Up`；`toLogical` 按 letterbox 偏移反算坐标。
 - **音频**：`sfx.ts` 用 `platform.createAudioContext()`（微信=`wx.createWebAudioContext()`）。若合成音异常，
   退化为预渲染短 buffer。
 - **资源**：`asset-manifest.wx.ts` 指向 CDN 完整 URL；启动走与 Web 相同的**加载页**（`loading-screen.ts`），预载图片后再进首页。若图片加载不出，先查是否已把 CDN 域名加入 downloadFile 合法域名（见上）。

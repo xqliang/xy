@@ -349,7 +349,7 @@ case "$CMD" in
     echo "🔨 构建微信小游戏 bundle（wechat/game.bundle.js）…"
     (cd "$ROOT/web" && npx vite build --config vite.wx.config.ts)
     echo "✅ 微信构建完成：wechat/game.bundle.js"
-    echo "   下一步：把 weapp-adapter.js 放到 wechat/（见 wechat/README.md），用「微信开发者工具」打开 wechat/ 联调"
+    echo "   下一步：用「微信开发者工具」打开 wechat/ 目录（小游戏）编译运行——适配已内置 wechat/polyfill.js，无需 weapp-adapter"
     echo "   ⚠️  首次联调前需在小程序后台「开发管理→开发设置→服务器域名」把 CDN 域名加入 downloadFile 合法域名"
     ;;
   deploy)
