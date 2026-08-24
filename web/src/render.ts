@@ -27,6 +27,7 @@ import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQual
 import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
 import { showAutoplaceBtn } from './dev-flags';
+import { isWeChat } from './platform';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
 export const PEACH_UI_ICON_SIZE = Math.round(26 * 1.5 * 0.7);
@@ -879,35 +880,62 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
 
 /** 小游戏全屏无缝底：当前地图场景 cover 铺满整块画布(device 坐标)，作 letterbox 黑边的背景延伸。
  *  静态图（不随帧变），故不会像「采样 VIEW 边缘」那样跟着 HUD/候选区动画闪；由 main 帧首在 device 坐标调。 */
-export function drawWxFullscreenBg(ctx: CanvasRenderingContext2D, b: Battle, cw: number, ch: number): void {
-  const bgImg = sprite(`map-${b.map.id}` as Parameters<typeof sprite>[0]);
+// 小游戏无缝全屏底：把「当前页自己的背景」铺满整块设备画布（含上下 letterbox 黑边区）。
+// 约定：在 letterbox 变换(逻辑坐标)下调用，(x,y,w,h) 为覆盖整屏的扩展矩形(含黑边)。
+// 渐变页锚定 VIEW(0..VIEW_H)→VIEW 区与各页 inline 背景逐像素一致，黑边落在 VIEW 外→canvas 渐变 clamp 到端点色，天然无缝。
+// 图片页(首页/战斗)按扩展矩形 cover 铺满(其 inline 背景在 wx 下跳过，避免两套不同缩放的图在 VIEW 边界接缝)。
+// 各页颜色需与对应模块 inline 背景保持一致：codex/leaderboard/bag 的渐变、pvp-screen 的米色、menu 的 menu-home+薄纱。
+export function drawScreenBackdrop(
+  ctx: CanvasRenderingContext2D, screen: string, b: Battle,
+  x: number, y: number, w: number, h: number,
+): void {
+  const fillVGrad = (c0: string, c1: string) => {
+    const g = ctx.createLinearGradient(0, 0, 0, VIEW_H); // 锚定 VIEW，与各页 inline 渐变一致
+    g.addColorStop(0, c0);
+    g.addColorStop(1, c1);
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+  };
+  if (screen === 'codex') return fillVGrad('#2a2418', '#3a3222');
+  if (screen === 'rank') return fillVGrad('#22283a', '#2e3550');
+  if (screen === 'bag') return fillVGrad('#2b2418', '#3b3324');
+  if (screen === 'pvpMatching') { ctx.fillStyle = '#efe3c6'; ctx.fillRect(x, y, w, h); return; }
+  if (screen === 'loading') { ctx.fillStyle = '#160f08'; ctx.fillRect(x, y, w, h); return; }
+  // 图片页：menu 用首页大图、其余(battle)用当前地图场景，均 cover 扩展矩形 + 宣纸薄纱
+  const key = screen === 'menu' ? 'menu-home' : `map-${b.map.id}`;
+  const bgImg = sprite(key as Parameters<typeof sprite>[0]);
   if (bgImg) {
-    const scale = Math.max(cw / bgImg.width, ch / bgImg.height);
+    const scale = Math.max(w / bgImg.width, h / bgImg.height);
     const dw = bgImg.width * scale;
     const dh = bgImg.height * scale;
-    ctx.drawImage(bgImg, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
-    ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 与 draw() 同款宣纸薄纱，压成柔和底
-    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(bgImg, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 宣纸薄纱：压成柔和底，突出扁平内容
+    ctx.fillRect(x, y, w, h);
+  } else if (screen === 'menu') {
+    fillVGrad('#efe3c8', '#d8c39a'); // 首页大图缺失时的暖宣纸回退
   } else {
-    ctx.fillStyle = b.map.theme.bg1 || '#160f08';
-    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = themeBgGradient(ctx, b.map.theme.bg0, b.map.theme.bg1);
+    ctx.fillRect(x, y, w, h);
   }
 }
 
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
-  // 背景：优先用当地图生成的场景大图(cover铺满)，叠一层同色系薄纱使网格清晰；无图时回退主题渐变
-  const bgKey = `map-${b.map.id}` as Parameters<typeof sprite>[0];
-  const bgImg = sprite(bgKey);
-  if (bgImg) {
-    const scale = Math.max(VIEW_W / bgImg.width, VIEW_H / bgImg.height);
-    const dw = bgImg.width * scale;
-    const dh = bgImg.height * scale;
-    ctx.drawImage(bgImg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
-    ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 淡宣纸薄纱：把写实场景压成柔和氛围底，突出扁平格子
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-  } else {
-    ctx.fillStyle = themeBgGradient(ctx, b.map.theme.bg0, b.map.theme.bg1);
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  // 背景：优先用当地图生成的场景大图(cover铺满)，叠一层同色系薄纱使网格清晰；无图时回退主题渐变。
+  // 小游戏下背景改由 drawScreenBackdrop 铺满整屏(含黑边)，此处跳过，避免 VIEW 内外两套不同缩放的图接缝/双重底。
+  if (!isWeChat) {
+    const bgKey = `map-${b.map.id}` as Parameters<typeof sprite>[0];
+    const bgImg = sprite(bgKey);
+    if (bgImg) {
+      const scale = Math.max(VIEW_W / bgImg.width, VIEW_H / bgImg.height);
+      const dw = bgImg.width * scale;
+      const dh = bgImg.height * scale;
+      ctx.drawImage(bgImg, (VIEW_W - dw) / 2, (VIEW_H - dh) / 2, dw, dh);
+      ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 淡宣纸薄纱：把写实场景压成柔和氛围底，突出扁平格子
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    } else {
+      ctx.fillStyle = themeBgGradient(ctx, b.map.theme.bg0, b.map.theme.bg1);
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    }
   }
 
   drawBoard(ctx, b, ui);

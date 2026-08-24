@@ -35,7 +35,7 @@ import {
   activeSlotRect,
   drawGameStartHint,
   setFxQuality,
-  drawWxFullscreenBg,
+  drawScreenBackdrop,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -2377,12 +2377,12 @@ function frame(now: number): void {
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
-  // 小游戏：清整块画布(device) → 裁剪到 VIEW 画游戏（内容不外溢黑边，修图鉴拖动残影）；帧尾再把 VIEW 边缘拉进黑边(无缝)。
+  // 小游戏无缝全屏：在 letterbox 变换下把「当前页自己的背景」铺满整屏(含上下黑边)，再裁剪到 VIEW 画内容
+  // （内容不外溢黑边→修图鉴拖动残影）。各页 inline 背景在 wx 下跳过 → 全屏只此一层、随页切换的背景，无双重/固定底。
   if (isWeChat) {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    drawWxFullscreenBg(ctx, battle, canvas.width, canvas.height); // 当前地图场景铺满整屏(静态图，不闪)作无缝底
-    ctx.restore();
+    const bleedX = viewOffsetX / cssScale; // 左右黑边的逻辑宽(竖屏一般为 0)
+    const bleedY = viewOffsetY / cssScale; // 上下黑边的逻辑高
+    drawScreenBackdrop(ctx, screen, battle, -bleedX, -bleedY, VIEW_W + bleedX * 2, VIEW_H + bleedY * 2);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, VIEW_W, VIEW_H);
@@ -2647,7 +2647,7 @@ function frame(now: number): void {
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
   }
   if (isWeChat) {
-    ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与之配对）；黑边底已在帧首用地图场景铺满，无需再采样边缘
+    ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与帧首 save/clip 配对）；黑边区已在帧首由 drawScreenBackdrop 用当前页背景铺满
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();

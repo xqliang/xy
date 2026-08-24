@@ -1,6 +1,7 @@
 // 主菜单渲染 + 按钮命中。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
+import { isWeChat } from './platform';
 import { STAMINA_MAX, STAMINA_COST } from './stamina';
 import { MERIT_MAX } from './merit';
 import { STARS_PER_TIER } from './rank';
@@ -225,7 +226,8 @@ export function drawMenuTitle(ctx: CanvasRenderingContext2D, text: string, cx: n
 }
 
 export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
-  drawMenuBackground(ctx);
+  // 小游戏下首页背景改由 drawScreenBackdrop 铺满整屏(含黑边)，此处跳过，避免 VIEW 内外两套缩放接缝/双重底。
+  if (!isWeChat) drawMenuBackground(ctx);
 
   roundRect(ctx, AVATAR.x, AVATAR.y, AVATAR.w, AVATAR.h, 12);
   // 暖玉色底板，贴合首页宣纸/金色调（避免冷灰）
