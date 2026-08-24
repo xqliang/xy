@@ -2,7 +2,7 @@
 //  1) 征兵产出字牌；左右紧邻且匹配某武将 chars 序对 → 激活
 //  2) 品质阶上限按武将 maxTier（3 或 5）；单字不可互相合并
 //  3) 同门派共享一字，便于激活时继承对齐
-import { TIER_COEFFICIENTS, MAX_TIER } from '@core';
+import { TIER_COEFFICIENTS, MAX_TIER, type Element } from '@core';
 
 export type GeneralRole = '输出' | '控制' | '辅助' | '过渡';
 export type GeneralTierRank = 'T0' | 'T1' | 'T2';
@@ -40,6 +40,7 @@ export interface GeneralDef {
   maxTier: 3 | 5;
   atkStyle: string;
   family: string; // 门派共享字
+  element: Element; // 五行：对克制地图怪 ×advMul / 被克 ×disMul（兵种无属性不参与）
   /** 升阶经验需求倍率覆盖；缺省时按 `generalExpCostMul`（输出 1.3 / 控制 1.15 / 观音 1.05） */
   expCostMul?: number;
 }
@@ -60,98 +61,98 @@ export const GENERALS: GeneralDef[] = [
   // ——— 大：快攻贯穿 ———
   { id: 'dasheng', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',
     skillName: '七十二变·横扫', skillDesc: '直线贯穿爆发，命中约3×攻', atk: 4.22, frq: 1.6, rge: 2.5, targets: 2, skillCd: 8, weight: 1, asset: 'hero-wukong',
-    maxTier: 5, atkStyle: '快攻贯穿', family: '大' },
+    maxTier: 5, atkStyle: '快攻贯穿', family: '大', element: 'metal' },
   { id: 'damang', name: '大蟒', chars: ['大', '蟒'], role: '过渡', rank: 'T2', skill: 'burst',
     skillName: '蟒影横扫', skillDesc: '小范围贯穿爆发，约3×攻（过渡）', atk: 5.40, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-damang',
-    maxTier: 3, atkStyle: '快攻贯穿', family: '大' },
+    maxTier: 3, atkStyle: '快攻贯穿', family: '大', element: 'wood' },
 
   // ——— 郎：远程暴击 ———
   { id: 'erlang', name: '二郎', chars: ['二', '郎'], role: '输出', rank: 'T0', skill: 'ranged',
     skillName: '天眼诛邪', skillDesc: '远距穿透暴击，重击约5×攻', atk: 5.58, frq: 1.5, rge: 3, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-erlang',
-    maxTier: 5, atkStyle: '远程暴击', family: '郎' },
+    maxTier: 5, atkStyle: '远程暴击', family: '郎', element: 'metal' },
   { id: 'niulang', name: '牛郎', chars: ['牛', '郎'], role: '过渡', rank: 'T2', skill: 'ranged',
     skillName: '织云箭', skillDesc: '单体远距暴击，约5×攻（过渡）', atk: 7.0, frq: 1.3, rge: 2.5, targets: 1, skillCd: 11, weight: 3, asset: 'hero-niulang',
-    maxTier: 3, atkStyle: '远程暴击', family: '郎' },
+    maxTier: 3, atkStyle: '远程暴击', family: '郎', element: 'earth' },
 
   // ——— 吒：远程清场 ———
   { id: 'nezha', name: '哪吒', chars: ['哪', '吒'], role: '输出', rank: 'T0', skill: 'burst',
     skillName: '火尖枪·万火齐发', skillDesc: '超远范围爆发，命中约3×攻', atk: 5.97, frq: 1.5, rge: 3.0, targets: 1.5, skillCd: 10, weight: 1, asset: 'hero-nezha',
-    maxTier: 5, atkStyle: '远程清场', family: '吒' },
+    maxTier: 5, atkStyle: '远程清场', family: '吒', element: 'fire' },
   { id: 'jinzha', name: '金吒', chars: ['金', '吒'], role: '过渡', rank: 'T2', skill: 'burst',
     skillName: '砍妖刀', skillDesc: '小范围火焰爆发，约3×攻（过渡）', atk: 4.65, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-jinzha',
-    maxTier: 3, atkStyle: '远程清场', family: '吒' },
+    maxTier: 3, atkStyle: '远程清场', family: '吒', element: 'metal' },
 
   // ——— 红：范围灼烧 ———
   { id: 'honghaier', name: '红孩', chars: ['红', '孩'], role: '输出', rank: 'T1', skill: 'burn',
     skillName: '三昧真火', skillDesc: '命中1.6×攻，灼烧3秒（每秒0.6×攻）', atk: 4.22, frq: 1.6, rge: 2.5, targets: 2, skillCd: 9, weight: 1, asset: 'hero-honghaier',
-    maxTier: 5, atkStyle: '范围灼烧', family: '红' },
+    maxTier: 5, atkStyle: '范围灼烧', family: '红', element: 'fire' },
   { id: 'hongpao', name: '红袍', chars: ['红', '袍'], role: '过渡', rank: 'T2', skill: 'burn',
     skillName: '赤焰', skillDesc: '命中并灼烧3秒（每秒0.6×攻·过渡）', atk: 4.59, frq: 1.4, rge: 2, targets: 1.5, skillCd: 10, weight: 3, asset: 'hero-hongpao',
-    maxTier: 3, atkStyle: '范围灼烧', family: '红' },
+    maxTier: 3, atkStyle: '范围灼烧', family: '红', element: 'fire' },
 
   // ——— 八：定身控制 ———
   { id: 'bajie', name: '八戒', chars: ['八', '戒'], role: '控制', rank: 'T0', skill: 'stun',
     skillName: '钉耙震地', skillDesc: '群体定身1.5秒，附带0.8×攻轻伤', atk: 3.86, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
-    maxTier: 5, atkStyle: '定身控制', family: '八' },
+    maxTier: 5, atkStyle: '定身控制', family: '八', element: 'water' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
     skillName: '仙缘定身', skillDesc: '小范围定身1.0秒＋0.8×攻（过渡）', atk: 4.55, frq: 1.25, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
-    maxTier: 3, atkStyle: '定身控制', family: '八' },
+    maxTier: 3, atkStyle: '定身控制', family: '八', element: 'water' },
 
   // ——— 牛：冲撞击晕 ———
   { id: 'niumowang', name: '牛魔', chars: ['牛', '魔'], role: '控制', rank: 'T1', skill: 'stun',
     skillName: '蛮牛冲撞', skillDesc: '冲撞重创2.0×攻，击晕1.5秒', atk: 5.65, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
-    maxTier: 5, atkStyle: '冲撞击晕', family: '牛' },
+    maxTier: 5, atkStyle: '冲撞击晕', family: '牛', element: 'earth' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
     skillName: '牛角顶', skillDesc: '撞击2.0×攻，击晕1.0秒（过渡）', atk: 6.6, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
-    maxTier: 3, atkStyle: '冲撞击晕', family: '牛' },
+    maxTier: 3, atkStyle: '冲撞击晕', family: '牛', element: 'wood' },
 
   // ——— 铁：狂风击退 ———
   { id: 'tieshan', name: '铁扇', chars: ['铁', '扇'], role: '控制', rank: 'T1', skill: 'knock',
     skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退1.5格，附带1.2×攻', atk: 4.11, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
-    maxTier: 5, atkStyle: '狂风击退', family: '铁' },
+    maxTier: 5, atkStyle: '狂风击退', family: '铁', element: 'wood' },
   { id: 'tiebei', name: '铁背', chars: ['铁', '背'], role: '过渡', rank: 'T2', skill: 'knock',
     skillName: '铁背开山', skillDesc: '击退1.0格＋1.2×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tiebei',
-    maxTier: 3, atkStyle: '狂风击退', family: '铁' },
+    maxTier: 3, atkStyle: '狂风击退', family: '铁', element: 'earth' },
 
   // ——— 沙：杖扫击退 ———
   { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
     skillName: '降妖宝杖', skillDesc: '横扫击退1.5格，附带1.2×攻', atk: 4.42, frq: 1.3, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-shaseng',
-    maxTier: 5, atkStyle: '杖扫击退', family: '沙' },
+    maxTier: 5, atkStyle: '杖扫击退', family: '沙', element: 'water' },
   { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
     skillName: '流沙涌', skillDesc: '短距击退1.0格＋1.2×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-liusha',
-    maxTier: 3, atkStyle: '杖扫击退', family: '沙' },
+    maxTier: 3, atkStyle: '杖扫击退', family: '沙', element: 'earth' },
 
   // ——— 白：单体突进 ———
   { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
     skillName: '龙牙突进', skillDesc: '突进撕咬2.8×攻，减速3秒', atk: 5.31, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
-    maxTier: 5, atkStyle: '单体突进', family: '白' },
+    maxTier: 5, atkStyle: '单体突进', family: '白', element: 'water' },
   { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
     skillName: '骨雾', skillDesc: '骨雾减速3秒＋1.5×攻（过渡）', atk: 7.41, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
-    maxTier: 3, atkStyle: '单体突进', family: '白' },
+    maxTier: 3, atkStyle: '单体突进', family: '白', element: 'metal' },
 
   // ——— 音：辅助治疗 ———
   { id: 'guanyin', name: '观音', chars: ['观', '音'], role: '辅助', rank: 'T1', skill: 'heal',
     skillName: '甘露·净瓶', skillDesc: '唐僧回1血/波，减速来敌2.5秒', atk: 3.11, frq: 1.5, rge: 3, targets: 2, skillCd: 12, weight: 1, asset: 'hero-guanyin',
-    maxTier: 5, atkStyle: '辅助治疗', family: '音' },
+    maxTier: 5, atkStyle: '辅助治疗', family: '音', element: 'water' },
   { id: 'fanyin', name: '梵音', chars: ['梵', '音'], role: '过渡', rank: 'T2', skill: 'heal',
     skillName: '梵音浅润', skillDesc: '唐僧回1血/波＋弱减速（过渡）', atk: 2.8, frq: 1.3, rge: 2.5, targets: 1.5, skillCd: 14, weight: 3, asset: 'hero-fanyin',
-    maxTier: 3, atkStyle: '辅助治疗', family: '音' },
+    maxTier: 3, atkStyle: '辅助治疗', family: '音', element: 'wood' },
 
   // ——— 君：炼丹增攻 ———
   { id: 'laojun', name: '老君', chars: ['老', '君'], role: '辅助', rank: 'T1', skill: 'buff',
     skillName: '炼丹·金丹', skillDesc: '全体武将/兵器攻击×1.35，持续5秒', atk: 3.33, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-laojun',
-    maxTier: 5, atkStyle: '炼丹增攻', family: '君' },
+    maxTier: 5, atkStyle: '炼丹增攻', family: '君', element: 'fire' },
   { id: 'danjun', name: '丹君', chars: ['丹', '君'], role: '过渡', rank: 'T2', skill: 'buff',
     skillName: '小还丹', skillDesc: '友军武将/兵器攻击×1.2，持续3.5秒（过渡）', atk: 3.8, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-danjun',
-    maxTier: 3, atkStyle: '炼丹增攻', family: '君' },
+    maxTier: 3, atkStyle: '炼丹增攻', family: '君', element: 'fire' },
 
   // ——— 殊：般若减 CD ———
   { id: 'wenshu', name: '文殊', chars: ['文', '殊'], role: '辅助', rank: 'T1', skill: 'cdr',
     skillName: '般若·慧剑', skillDesc: '其他武将大招/兵器冷却减4秒', atk: 3.33, frq: 1.4, rge: 2.5, targets: 2, skillCd: 13, weight: 1, asset: 'hero-wenshu',
-    maxTier: 5, atkStyle: '般若减CD', family: '殊' },
+    maxTier: 5, atkStyle: '般若减CD', family: '殊', element: 'metal' },
   { id: 'huishu', name: '慧殊', chars: ['慧', '殊'], role: '过渡', rank: 'T2', skill: 'cdr',
     skillName: '慧光浅照', skillDesc: '友军大招/兵器冷却减2.5秒（过渡）', atk: 3.8, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
-    maxTier: 3, atkStyle: '般若减CD', family: '殊' },
+    maxTier: 3, atkStyle: '般若减CD', family: '殊', element: 'wood' },
 ];
 
 export function generalById(id: string): GeneralDef | undefined {
