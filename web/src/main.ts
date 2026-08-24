@@ -35,6 +35,7 @@ import {
   activeSlotRect,
   drawGameStartHint,
   setFxQuality,
+  drawWxFullscreenBg,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -1688,27 +1689,6 @@ window.visualViewport?.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('scroll', resize);
 resize();
 
-// 小游戏黑边无缝填充：把已画好的 VIEW 边缘像素拉伸进上下/左右 letterbox 黑边（device 坐标，帧尾调用）。
-// 效果=当前界面背景无缝延伸到全屏，而非黑边/画框。VIEW 居中，取其 1px 边缘行/列拉满对应黑边条。
-function extendLetterboxEdges(): void {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const vx = Math.round(viewOffsetX * dpr);
-  const vy = Math.round(viewOffsetY * dpr);
-  const vw = Math.round(VIEW_W * cssScale * dpr);
-  const vh = Math.round(VIEW_H * cssScale * dpr);
-  const cw = canvas.width, ch = canvas.height;
-  if (vw <= 0 || vh <= 0) return;
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (vy > 0) ctx.drawImage(canvas, vx, vy, vw, 1, vx, 0, vw, vy); // 上边条
-  const by = vy + vh;
-  if (by < ch) ctx.drawImage(canvas, vx, by - 1, vw, 1, vx, by, vw, ch - by); // 下边条
-  if (vx > 0) ctx.drawImage(canvas, vx, vy, 1, vh, 0, vy, vx, vh); // 左边条
-  const rx = vx + vw;
-  if (rx < cw) ctx.drawImage(canvas, rx - 1, vy, 1, vh, rx, vy, cw - rx, vh); // 右边条
-  ctx.restore();
-}
-
 // —— 指针坐标 → 逻辑坐标 —— //
 function toLogical(clientX: number, clientY: number): { x: number; y: number } {
   if (isWeChat) {
@@ -2401,8 +2381,7 @@ function frame(now: number): void {
   if (isWeChat) {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawWxFullscreenBg(ctx, battle, canvas.width, canvas.height); // 当前地图场景铺满整屏(静态图，不闪)作无缝底
     ctx.restore();
     ctx.save();
     ctx.beginPath();
@@ -2668,8 +2647,7 @@ function frame(now: number): void {
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
   }
   if (isWeChat) {
-    ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与之配对）
-    extendLetterboxEdges(); // 把 VIEW 边缘拉伸进黑边 → 当前界面背景无缝延伸到全屏
+    ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与之配对）；黑边底已在帧首用地图场景铺满，无需再采样边缘
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();

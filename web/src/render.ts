@@ -877,6 +877,23 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
   }
 }
 
+/** 小游戏全屏无缝底：当前地图场景 cover 铺满整块画布(device 坐标)，作 letterbox 黑边的背景延伸。
+ *  静态图（不随帧变），故不会像「采样 VIEW 边缘」那样跟着 HUD/候选区动画闪；由 main 帧首在 device 坐标调。 */
+export function drawWxFullscreenBg(ctx: CanvasRenderingContext2D, b: Battle, cw: number, ch: number): void {
+  const bgImg = sprite(`map-${b.map.id}` as Parameters<typeof sprite>[0]);
+  if (bgImg) {
+    const scale = Math.max(cw / bgImg.width, ch / bgImg.height);
+    const dw = bgImg.width * scale;
+    const dh = bgImg.height * scale;
+    ctx.drawImage(bgImg, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    ctx.fillStyle = 'rgba(240,233,220,0.5)'; // 与 draw() 同款宣纸薄纱，压成柔和底
+    ctx.fillRect(0, 0, cw, ch);
+  } else {
+    ctx.fillStyle = b.map.theme.bg1 || '#160f08';
+    ctx.fillRect(0, 0, cw, ch);
+  }
+}
+
 export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): void {
   // 背景：优先用当地图生成的场景大图(cover铺满)，叠一层同色系薄纱使网格清晰；无图时回退主题渐变
   const bgKey = `map-${b.map.id}` as Parameters<typeof sprite>[0];
