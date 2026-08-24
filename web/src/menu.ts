@@ -48,7 +48,7 @@ const BAR_H = 34;
 const BAR_GAP = 8;
 const HEADER_BLOCK_H = BAR_H * 2 + BAR_GAP;
 const AVATAR_SIZE = 70;
-const AVATAR = { x: 16, y: TOP + (HEADER_BLOCK_H - AVATAR_SIZE) / 2, w: AVATAR_SIZE, h: AVATAR_SIZE };
+const AVATAR = { x: 20, y: TOP + (HEADER_BLOCK_H - AVATAR_SIZE) / 2, w: AVATAR_SIZE, h: AVATAR_SIZE }; // x:16→20 右移与设置按钮左对齐
 const BAR_X = AVATAR.x + AVATAR_SIZE + 10;
 const BAR_W = 150; // 功德/体力条宽度（原 228）
 const MERIT_BAR = { x: BAR_X, y: TOP, w: BAR_W, h: BAR_H };
@@ -65,14 +65,14 @@ const MAP_PICK_W = 264;
 const MAP_PICK_H = 40;
 export const MAP_PICK_BTN = {
   x: VIEW_W / 2 - MAP_PICK_W / 2,
-  y: 528,
+  y: 538,
   w: MAP_PICK_W,
   h: MAP_PICK_H,
 };
 
 const SIDE = 96;
 const SIDE_X = 16;
-const SIDE_Y0 = 108;
+const SIDE_Y0 = 123;
 const SIDE_GAP = 8;
 const SIDE_BTN = { x: SIDE_X, w: SIDE, h: SIDE };
 const START_W = 372;
@@ -119,7 +119,7 @@ const BOTTOM_Y = 866;
 const BAG_SIZE = 92;
 const RANK_BTN = { x: 16, y: BOTTOM_Y, w: BOTTOM_W, h: BOTTOM_H };
 const BAG_BTN = {
-  x: RANK_BTN.x + RANK_BTN.w + 16 + 60,
+  x: RANK_BTN.x + RANK_BTN.w + 16 + 60 + 15,
   y: BOTTOM_Y + (BOTTOM_H - BAG_SIZE) / 2 + 10,
   w: BAG_SIZE,
   h: BAG_SIZE,
@@ -261,10 +261,10 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   );
   drawInkPlusButton(ctx, STAMINA_PLUS_BTN, menuInteract(info.pressedId, info.hoverId, 'staminaPlus'), 'inset');
 
-  const titleY = 153;
+  const titleY = 168; // 153→168 标题下移 15px
   const rankBlockDy = 15;
   const rankTitleGap = 8;
-  const rankY = 182 + rankBlockDy + rankTitleGap;
+  const rankY = 182 + rankBlockDy + rankTitleGap + 10; // 境界再下移 10px（星星随 starsY 同步下移）
   const starsY = rankY + 30;
 
   drawMenuTitle(ctx, '妖怪来袭', VIEW_W / 2, titleY);
@@ -274,7 +274,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.fillText(`境界 · ${info.rankName}`, VIEW_W / 2, rankY);
   drawRankStars(ctx, VIEW_W / 2, starsY, Math.min(STARS_PER_TIER, info.rankStars));
 
-  const platY = 350 + rankBlockDy;
+  const platY = 350 + rankBlockDy + 20; // 中间头像再下移 20px
   const bob = Math.sin(performance.now() / 1000 * 2.1) * 5;
   const heroSpr = sprite(info.avatarArt || 'hero-wukong');
   let heroFootY = platY + 118;
