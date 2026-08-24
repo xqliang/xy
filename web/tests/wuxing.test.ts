@@ -2,7 +2,10 @@
 // 各段由对应任务追加；本文件随功能分阶段成长。
 import { describe, it, expect } from 'vitest';
 import { GENERALS } from '../src/generals';
-import { ELEMENTS, type Element } from '@core';
+import { ELEMENTS } from '@core';
+import { Battle } from '../src/battle';
+import { MAP_ELEMENT } from '../src/battle';
+import { mapById } from '../src/board';
 
 describe('GENERALS.element（武将五行）', () => {
   const VALID = new Set(ELEMENTS.map((e) => e.id));
@@ -32,5 +35,26 @@ describe('GENERALS.element（武将五行）', () => {
     expect(GENERALS.find((g) => g.id === 'nezha')!.element).toBe('fire');
     // 盘丝洞=木，需金系：大圣应在金行
     expect(GENERALS.find((g) => g.id === 'dasheng')!.element).toBe('metal');
+  });
+});
+
+describe('MAP_ELEMENT（地图五行）', () => {
+  it('现有四图各配一行，与 MAP_SKILL 同范式', () => {
+    expect(MAP_ELEMENT.huoyanshan).toBe('fire');
+    expect(MAP_ELEMENT.liushahe).toBe('water');
+    expect(MAP_ELEMENT.baiguling).toBe('metal');
+    expect(MAP_ELEMENT.pansidong).toBe('wood');
+    // 黄风岭在 Task 7 补齐后此断言放开为 earth
+  });
+});
+
+describe('怪物 element（按地图统一继承）', () => {
+  it('火焰山开波后怪物 element 为 fire（小怪/妖王同图统一）', () => {
+    const b = new Battle(1, 1, mapById('huoyanshan'));
+    b.startNextWave();
+    const monsters = () => (b as unknown as { monsters: { element: string | null }[] }).monsters;
+    for (let i = 0; i < 300 && monsters().length === 0; i++) b.step(1 / 30);
+    expect(monsters().length).toBeGreaterThan(0);
+    for (const m of monsters()) expect(m.element).toBe('fire');
   });
 });

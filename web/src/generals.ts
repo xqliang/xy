@@ -57,6 +57,9 @@ export function generalExpCostMul(
   return 1;
 }
 
+// 五行分布：金5（大圣/二郎/金吒/白骨/文殊）·木5（铁扇/青牛/大蟒/慧殊/梵音）
+//         水5（八戒/白龙/沙僧/观音/八仙）·火5（哪吒/红孩/红袍/老君/丹君）·土4（牛魔/铁背/流沙/牛郎）
+// 分配原则：贴合人设；每行至少 1 个非「过渡」主力，保证任一地图都有可用克图阵容。
 export const GENERALS: GeneralDef[] = [
   // ——— 大：快攻贯穿 ———
   { id: 'dasheng', name: '大圣', chars: ['大', '圣'], role: '输出', rank: 'T0', skill: 'burst',

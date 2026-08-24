@@ -10,6 +10,8 @@ import {
   ECONOMY,
   monstersInWave,
   monsterPOW,
+  elementMul,
+  type Element,
 } from '@core';
 import type { UnitType } from '@core';
 import { RNG } from './rng';
@@ -434,6 +436,14 @@ export const MAP_SKILL: Record<string, MonsterSkill> = {
   pansidong: 'webbind', // 盘丝洞：蛛网黏附，攻击范围骤减
 };
 
+/** 地图五行：该图全部妖怪（小怪/精英/骑兵/小Boss/妖王）统一继承此属性 */
+export const MAP_ELEMENT: Record<string, Element> = {
+  huoyanshan: 'fire', // 火焰山：烈焰
+  liushahe: 'water', // 流沙河：流沙
+  baiguling: 'metal', // 白骨岭：白骨肃杀
+  pansidong: 'wood', // 盘丝洞：蛛网藤蔓
+};
+
 // 候选区令牌：兵种 / 铲子 / 武将字牌 / 桃树（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
 export type TrayToken =
   | { kind: 'unit'; type: UnitType; tier: number; /** 地图挤回候选区，布阵待换低阶上板 */ displaced?: boolean }
@@ -700,6 +710,7 @@ export interface Monster {
   burnT: number; // 灼烧剩余(秒)：>0 时每秒按 burnDps 掉血（红孩/红袍大招）
   burnDps: number; // 灼烧每秒伤害（施法时写入，刷新取更高值）
   miniBossCasted: boolean; // 黄狮精「卷走」一次性开关：偷到一次后置 true，本局不再施法
+  element: Element | null; // 五行：makeOne 按地图统一赋值（MAP_ELEMENT），未知图回退 null
 }
 
 /** 弹道/命中特效种类：四兵种 + 英雄悟空金箍棒（原棍兵特效迁至此） */
@@ -5848,6 +5859,7 @@ export class Battle {
       burnT: 0,
       burnDps: 0,
       miniBossCasted: false,
+      element: MAP_ELEMENT[this.map.id] ?? null,
     });
     const bossSpec: MonsterSpec = {
       hp,
