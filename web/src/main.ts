@@ -1620,26 +1620,13 @@ function resize() {
   const fit = Math.min(w / VIEW_W, h / VIEW_H);
   cssScale = fit;
   if (isWeChat) {
-    // 小游戏：主画布即全屏，位图=屏幕像素；把 VIEW 居中等比 letterbox 画进去。
-    // 触摸坐标据 viewOffset/fit 反算（见 toLogical）。无 CSS，故不设 canvas.style。
+    // 小游戏：主画布即全屏，位图=屏幕像素；VIEW 居中等比 letterbox。裁剪与「黑边无缝填充」改到 frame() 每帧做
+    // （裁剪到 VIEW 画游戏，再把 VIEW 边缘像素拉伸进上下/左右黑边 → 无缝全屏）。无 CSS，故不设 canvas.style。
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     viewOffsetX = Math.round((w - VIEW_W * fit) / 2);
     viewOffsetY = Math.round((h - VIEW_H * fit) / 2);
-    // ① 先用背景铺满整块画布（含上下/左右 letterbox 区）：暖调竖向渐变，读作「画框/卷轴」而非黑边空洞（device 坐标）
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const barBg = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    barBg.addColorStop(0, '#3a2614'); // 顶部暖褐
-    barBg.addColorStop(0.5, '#160f08'); // 中段近黑（会被居中的 VIEW 覆盖）
-    barBg.addColorStop(1, '#3a2614'); // 底部暖褐，与顶部对称
-    ctx.fillStyle = barBg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // ② VIEW 变换 + 裁剪到 VIEW：内容只画在 VIEW 内 → 图鉴滚动等溢出不再渗进黑边（修拖动残影）。
-    //    clip 与 transform 同属 ctx 基态，随后每帧 draw 的平衡 save/restore 不会丢（与 transform 持久化同机制）。
     ctx.setTransform(fit * dpr, 0, 0, fit * dpr, viewOffsetX * dpr, viewOffsetY * dpr);
-    ctx.beginPath();
-    ctx.rect(0, 0, VIEW_W, VIEW_H);
-    ctx.clip();
     scheduleFrame();
     return;
   }
@@ -1665,6 +1652,27 @@ window.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('scroll', resize);
 resize();
+
+// 小游戏黑边无缝填充：把已画好的 VIEW 边缘像素拉伸进上下/左右 letterbox 黑边（device 坐标，帧尾调用）。
+// 效果=当前界面背景无缝延伸到全屏，而非黑边/画框。VIEW 居中，取其 1px 边缘行/列拉满对应黑边条。
+function extendLetterboxEdges(): void {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const vx = Math.round(viewOffsetX * dpr);
+  const vy = Math.round(viewOffsetY * dpr);
+  const vw = Math.round(VIEW_W * cssScale * dpr);
+  const vh = Math.round(VIEW_H * cssScale * dpr);
+  const cw = canvas.width, ch = canvas.height;
+  if (vw <= 0 || vh <= 0) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (vy > 0) ctx.drawImage(canvas, vx, vy, vw, 1, vx, 0, vw, vy); // 上边条
+  const by = vy + vh;
+  if (by < ch) ctx.drawImage(canvas, vx, by - 1, vw, 1, vx, by, vw, ch - by); // 下边条
+  if (vx > 0) ctx.drawImage(canvas, vx, vy, 1, vh, 0, vy, vx, vh); // 左边条
+  const rx = vx + vw;
+  if (rx < cw) ctx.drawImage(canvas, rx - 1, vy, 1, vh, rx, vy, cw - rx, vh); // 右边条
+  ctx.restore();
+}
 
 // —— 指针坐标 → 逻辑坐标 —— //
 function toLogical(clientX: number, clientY: number): { x: number; y: number } {
@@ -2354,6 +2362,18 @@ function frame(now: number): void {
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
   else if (screen !== 'battle') stopAmbient();
+  // 小游戏：清整块画布(device) → 裁剪到 VIEW 画游戏（内容不外溢黑边，修图鉴拖动残影）；帧尾再把 VIEW 边缘拉进黑边(无缝)。
+  if (isWeChat) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.clip();
+  }
   if (screen === 'loading') {
     // 仅当资源确实还在加载（超过 LOADING_UI_DELAY_MS 仍未就绪）才画加载页；
     // 缓存秒进时不画任何内容，保留 index.html 画布底色，直接切首页，避免刷新时闪一下加载页再跳变。
@@ -2607,6 +2627,10 @@ function frame(now: number): void {
     const label = guidePhase === 'summon' ? '点击征兵' : '把兵器拖到战场部署';
     drawGuideArrow(ctx, target, label, now);
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
+  }
+  if (isWeChat) {
+    ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与之配对）
+    extendLetterboxEdges(); // 把 VIEW 边缘拉伸进黑边 → 当前界面背景无缝延伸到全屏
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   if (needsContinuousLoop()) scheduleFrame();

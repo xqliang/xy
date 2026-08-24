@@ -327,17 +327,21 @@ export function drawTutorialOverlay(ctx: CanvasRenderingContext2D, overlay: Tuto
   if (!step) return;
   const layout = layoutTutorialStep(ctx, step);
 
-  ctx.fillStyle = 'rgba(10,8,4,0.62)';
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-
   if (layout.hole) {
     const h = layout.hole;
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = '#000'; // 必须不透明：destination-out 按源 alpha 抠除遮罩，沿用 0.62 只抠掉 62% → 高亮区仍发暗
-    roundRect(ctx, h.x, h.y, h.w, h.h, HOLE_RADIUS);
-    ctx.fill();
-    ctx.restore();
+    const r = HOLE_RADIUS;
+    // 压暗「全屏矩形 − 圆角高亮洞」(evenodd 填充规则)：洞内不填 → 保留其下已画好的游戏画面原亮度，其余压暗。
+    // 不能用 destination-out——它会把洞内已画的游戏像素一并擦成透明(→露出更暗的底)，正是「高亮区发黑、越弄越黑」的根因。
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW_W, VIEW_H);
+    ctx.moveTo(h.x + r, h.y);
+    ctx.arcTo(h.x + h.w, h.y, h.x + h.w, h.y + h.h, r);
+    ctx.arcTo(h.x + h.w, h.y + h.h, h.x, h.y + h.h, r);
+    ctx.arcTo(h.x, h.y + h.h, h.x, h.y, r);
+    ctx.arcTo(h.x, h.y, h.x + h.w, h.y, r);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(10,8,4,0.62)';
+    ctx.fill('evenodd');
 
     const pulse = 0.5 + 0.5 * Math.sin(now / 260);
     ctx.save();
@@ -348,6 +352,9 @@ export function drawTutorialOverlay(ctx: CanvasRenderingContext2D, overlay: Tuto
     ctx.shadowBlur = 8 + pulse * 10;
     ctx.stroke();
     ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(10,8,4,0.62)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
   if (layout.arrowFrom && layout.arrowTo) drawBounceArrow(ctx, layout.arrowFrom, layout.arrowTo, now);
