@@ -75,7 +75,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'title', text: '常用操作' },
   {
     kind: 'body',
-    text: '· 拖：候选区 → 棋盘摆放；棋盘上拖动可换位或合成；拖回空候选格可收回。',
+    text: '· 拖：候选区 → 棋盘摆放；棋盘上拖动可换位或合成；拖回候选格可收回，落在同型同级上会合并升阶。',
   },
   {
     kind: 'body',

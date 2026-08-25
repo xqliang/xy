@@ -105,6 +105,62 @@ describe('棋盘拖回候选区', () => {
     expect(b.units.has(`${cell.c},${cell.r}`)).toBe(true);
     expect(b.tray[0]).toEqual({ kind: 'shovel' });
   });
+
+  it('拖到同型同级槽合并升阶（不交换，棋盘清空）', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, {
+      type: 'dao', tier: 2, cell, cooldown: 0, firePulse: 0, combo: 0,
+      stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0, knockdownT: 0,
+      stunImmuneT: 0, slowImmuneT: 0, weakenImmuneT: 0, rangeCutImmuneT: 0, knockdownImmuneT: 0,
+    });
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 2 }, { kind: 'unit', type: 'spear', tier: 1 }];
+    expect(b.recallToTray(cell, 0)).toBe(true);
+    expect(b.units.has(`${cell.c},${cell.r}`)).toBe(false); // 棋盘件被合并掉
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'dao', tier: 3 }); // 合并结果留在候选槽
+    expect(b.tray[1]).toEqual({ kind: 'unit', type: 'spear', tier: 1 }); // 其它槽不受影响
+    expect(b.message).toContain('3 阶');
+  });
+
+  it('同型不同级仍走交换（不误合并）', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, {
+      type: 'dao', tier: 2, cell, cooldown: 0, firePulse: 0, combo: 0,
+      stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0, knockdownT: 0,
+      stunImmuneT: 0, slowImmuneT: 0, weakenImmuneT: 0, rangeCutImmuneT: 0, knockdownImmuneT: 0,
+    });
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 1 }];
+    expect(b.recallToTray(cell, 0)).toBe(true);
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'dao', tier: 2 }); // 棋盘件回到候选槽
+    expect(b.units.get(`${cell.c},${cell.r}`)!.tier).toBe(1); // 候选件落到棋盘
+  });
+
+  it('满级同型同级不合并，走交换', () => {
+    const b = new Battle(1);
+    const cell = b.unlockedCells()[0]!;
+    b.units.set(`${cell.c},${cell.r}`, {
+      type: 'dao', tier: 5, cell, cooldown: 0, firePulse: 0, combo: 0,
+      stunT: 0, slowT: 0, weakenT: 0, rangeCutT: 0, knockdownT: 0,
+      stunImmuneT: 0, slowImmuneT: 0, weakenImmuneT: 0, rangeCutImmuneT: 0, knockdownImmuneT: 0,
+    });
+    b.tray = [{ kind: 'unit', type: 'dao', tier: 5 }];
+    expect(b.recallToTray(cell, 0)).toBe(true);
+    expect(b.tray[0]).toEqual({ kind: 'unit', type: 'dao', tier: 5 }); // 交换后棋盘件进槽
+    expect(b.units.get(`${cell.c},${cell.r}`)).toMatchObject({ type: 'dao', tier: 5 }); // 候选件落到棋盘（满级不合并）
+    expect(b.message).toContain('交换');
+  });
+
+  it('棋盘桃树拖到同级桃树槽合并升级', () => {
+    const b = new Battle(1);
+    const cell = b.lockedCells()[0]!;
+    b.trees.set(`${cell.c},${cell.r}`, { level: 1, cell, growT: 5 });
+    b.tray = [{ kind: 'tree', level: 1, growT: 0 }];
+    expect(b.recallToTray(cell, 0)).toBe(true);
+    expect(b.trees.has(`${cell.c},${cell.r}`)).toBe(false);
+    expect(b.tray[0]).toEqual({ kind: 'tree', level: 2, growT: 0 });
+    expect(b.message).toContain('2 级');
+  });
 });
 
 describe('桃树候选区暂停/恢复产桃', () => {

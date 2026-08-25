@@ -3056,6 +3056,27 @@ export class Battle {
       return false;
     }
 
+    // —— 同型同级合并升阶（参考候选区 mergeTrayTokens / 棋盘落子合成）：
+    //    棋盘件拖到候选区同型同级槽位时优先合并而非交换，合并结果留在候选槽。
+    const mergeTree = this.trees.get(k);
+    if (mergeTree && occupy.kind === 'tree' && occupy.level === mergeTree.level && mergeTree.level < PEACH_TREE.maxLevel) {
+      this.trees.delete(k);
+      this.tray[slot] = { kind: 'tree', level: mergeTree.level + 1, growT: 0 };
+      this.message = `候选区桃树升为 ${mergeTree.level + 1} 级`;
+      this.emit('merge');
+      this.clearAutoPlaceLayoutMemory();
+      return true;
+    }
+    const mergeUnit = this.units.get(k);
+    if (mergeUnit && occupy.kind === 'unit' && occupy.type === mergeUnit.type && occupy.tier === mergeUnit.tier && mergeUnit.tier < MAX_TIER) {
+      this.units.delete(k);
+      this.tray[slot] = { kind: 'unit', type: mergeUnit.type, tier: mergeUnit.tier + 1 };
+      this.message = `候选区合成 ${UNITS[mergeUnit.type].name} ${mergeUnit.tier + 1} 阶`;
+      this.emit('merge');
+      this.clearAutoPlaceLayoutMemory();
+      return true;
+    }
+
     // —— 与候选槽交换：仅 unit / word（铲子、桃树无法落到已占用解锁格）——
     if (occupy.kind !== 'unit' && occupy.kind !== 'word') {
       this.message = occupy.kind === 'shovel' ? '铲子不能与棋盘单位交换' : '该候选槽不能与棋盘交换';

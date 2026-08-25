@@ -1013,8 +1013,8 @@ const CAMP_SCALE = 1.2; // 营帐屋身+屋顶整体缩放
 const CAMP_X = 12;
 const CAMP_W = 48 * CAMP_SCALE;
 const CAMP_RIBBON_SRC_X = CAMP_X + CAMP_W / 2;
-const TRAY_LEFT = 80; // 左侧留给"宫"标（与候选槽拉开更大间距）
-const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）
+export const TRAY_LEFT = 80; // 左侧留给"宫"标（与候选槽拉开更大间距）；导出供冒烟脚本换算槽位坐标
+export const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）；导出供冒烟脚本换算槽位坐标
 export function trayIndexAt(x: number, y: number): number | null {
   if (y < TRAY_Y || y > TRAY_Y + TRAY_H) return null;
   const i = Math.floor((x - TRAY_LEFT) / TRAY_SLOT);
@@ -11255,15 +11255,32 @@ function drawDragGhost(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   // 托盘拖拽：先画全部可落点瞄准标记（在 ghost 之下）
   if (ui.dragTrayIndex !== null) drawTrayDropHints(ctx, b, ui);
 
-  // 棋盘拖回候选区：标出空槽
+  // 棋盘拖回候选区：空槽标「+」；已占槽若与棋盘件同型同级（可合并升阶）标淡黄底（与托盘拖拽提示同款）
   if (ui.dragFrom && ui.dragTrayIndex === null) {
+    // 合成候选件：优先单位，其次桃树（字牌单字不可合并，只走空槽/交换）
+    const dragUnit = b.units.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
+    const dragTree = b.trees.get(`${ui.dragFrom.c},${ui.dragFrom.r}`);
     for (let i = 0; i < TUNING.traySize; i++) {
-      if (b.tray[i]) continue;
       const cx = TRAY_LEFT + i * TRAY_SLOT;
-      drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
-        plus: true,
-        fill: true,
-      });
+      if (!b.tray[i]) {
+        drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
+          plus: true,
+          fill: true,
+        });
+        continue;
+      }
+      const occupy = b.tray[i]!;
+      const mergeOk = dragUnit && occupy.kind === 'unit'
+        ? canMerge({ type: dragUnit.type, tier: dragUnit.tier }, { type: occupy.type, tier: occupy.tier })
+        : dragTree && occupy.kind === 'tree'
+          ? occupy.level === dragTree.level && dragTree.level < PEACH_TREE.maxLevel
+          : false;
+      if (mergeOk) {
+        drawAimReticle(ctx, cx + 3, TRAY_Y + 5, TRAY_SLOT - 6, TRAY_H - 10, {
+          plus: false,
+          fill: true,
+        });
+      }
     }
   }
 

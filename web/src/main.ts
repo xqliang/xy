@@ -2371,7 +2371,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
-      // 棋盘→候选区：空槽放入；槽内有武器/字牌则交换（见 Battle.recallToTray）
+      // 棋盘→候选区：空槽放入；同型同级槽位合并升阶；其它武器/字牌槽则交换（见 Battle.recallToTray）
       if (trayTarget !== null) {
         if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); }
       } else if (target) {
