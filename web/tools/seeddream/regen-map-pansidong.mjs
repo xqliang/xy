@@ -15,14 +15,19 @@ const MODEL = 'doubao-seedream-4-0-250828';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/game-assets');
 
-const MAP_STYLE = '，中国风工笔游戏关卡背景插画，俯视视角，柔和低饱和配色，无任何文字，无人物角色，竖版构图，氛围感，画面中下部是大片平坦开阔的林间苔藓地，无格子，无瓷砖，无几何图案花纹，无重复平铺纹理';
+const MAP_STYLE = '，中国风工笔游戏关卡背景插画，俯视视角，柔和低饱和配色，无任何文字，无人物角色，竖版构图，氛围感，画面中下部是自然无序的苔藓林地——树根盘错走向各不相同、蕨草高矮疏密随势生长、枯叶蘑菇随机散落，无石板，无砖块，无整齐排列的物体，无规律重复图案，无格子，无瓷砖';
 
-// 木属性主视觉：上古密林/巨木藤蔓/垂落蛛丝/幽绿苔藓，整体森绿冷调（区别于旧版粉紫）
+// 木属性主视觉：洞口是盘丝洞主题必需（用户反馈第一版没洞口）——巨大蛛网洞窟 + 幽绿密林。
+// 第一版「苔藓平铺」被模型画成了方块砖纹：改成「连绵起伏、树根蕨草枯叶随机散布」等
+// 高密度无序元素，让模型没有空间画规则平铺。
 const PROMPT =
-  '西游《盘丝洞》关卡：画面上半部是幽暗上古密林、参天古木与粗壮藤蔓交错缠绕、' +
-  '枝叶间垂挂着缕缕半透明蛛丝、树干上覆满青苔、林间弥漫淡绿色雾气，' +
-  '画面中下部渐渐过渡为开阔的林间苔藓地：嫩绿苔藓平铺、散布树根盘节、几株蘑菇与蕨草、零星落叶，' +
-  '幽绿冷色调森林氛围' + MAP_STYLE;
+  '西游《盘丝洞》关卡：画面上半部中央是一座幽暗黑石山崖，崖壁上张开一个巨大的洞窟口，' +
+  '洞口被层层乳白色蛛网封住、缕缕蛛丝从洞口垂挂而下、洞内透出幽绿微光，' +
+  '洞口两侧参天古木与粗壮藤蔓交错缠绕、树干覆满青苔、林间弥漫淡绿色雾气，' +
+  '画面中下部渐渐过渡为连绵起伏的林间苔藓地：粗大树根盘错延伸、蕨草丛生高矮不一、' +
+  '枯叶与蘑菇随机散落、几处露出深色泥土，幽绿冷色调森林氛围' + MAP_STYLE;
+
+const OUT_NAME = process.argv[2] || 'map-pansidong.jpg'; // 可传候选名（如 /tmp/pansidong-cand2.jpg）对比挑选
 
 const res = await fetch(API, {
   method: 'POST',
@@ -49,8 +54,8 @@ try {
     return cv.toDataURL('image/jpeg', 0.72).split(',')[1];
   }, buf.toString('base64'));
   const out = Buffer.from(outB64, 'base64');
-  writeFileSync(path.join(OUT, 'map-pansidong.jpg'), out);
-  console.log(`✅ map-pansidong.jpg 已重生成：${(out.length / 1024).toFixed(0)}KB（824×1536 q0.72）`);
+  writeFileSync(OUT_NAME.startsWith('/') ? OUT_NAME : path.join(OUT, OUT_NAME), out);
+  console.log(`✅ ${OUT_NAME} 已重生成：${(out.length / 1024).toFixed(0)}KB（824×1536 q0.72）`);
   console.log('下一步：node tools/tos-upload.mjs → 色彩断言 → 提交');
 } finally {
   await browser.close();
