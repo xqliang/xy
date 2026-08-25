@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   HELP_BLOCKS,
+  visibleHelpBlocks,
   helpContentHeight,
   helpMaxScroll,
   helpPopupHitAt,
@@ -66,6 +67,23 @@ describe('操作说明弹窗', () => {
     const auto = HELP_BLOCKS.find((b) => b.kind === 'body' && b.text.includes('布阵'));
     expect(auto && auto.kind === 'body' ? auto.text : '').toMatch(/先点布阵/);
     expect(auto && auto.kind === 'body' ? auto.text : '').toMatch(/手动微调/);
+  });
+
+  it('布阵按钮未开（默认）→ 说明里不出现「布阵」条目；开了才出现', () => {
+    const off = visibleHelpBlocks(false, true).filter((b) => b.kind === 'body' && b.text.includes('布阵'));
+    expect(off).toHaveLength(0); // 未开功能不介绍不存在的按钮
+    const on = visibleHelpBlocks(true, true).find((b) => b.kind === 'body' && b.text.includes('布阵'));
+    expect(on && on.kind === 'body' ? on.text : '').toMatch(/先点布阵/);
+  });
+
+  it('五行关闭 → 「五行相克」整节（标题+正文+收尾间距）隐藏', () => {
+    const off = visibleHelpBlocks(true, false);
+    expect(off.filter((b) => b.flag === 'wuxing')).toHaveLength(0);
+    expect(off.filter((b) => b.kind === 'title').map((t) => t.text)).not.toContain('五行相克');
+    // 相邻节之间仍保留一个 gap（局外成长 → 真人对战），不出现连续两个 gap
+    const on = visibleHelpBlocks(true, true);
+    expect(on.filter((b) => b.flag === 'wuxing').length).toBe(5); // 标题 + 3 正文 + 收尾 gap
+    expect(on.filter((b) => b.kind === 'title').map((t) => t.text)).toContain('五行相克');
   });
 
   it('武将介绍包含字牌激活、满级差、继承与分类', () => {

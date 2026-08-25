@@ -4,6 +4,7 @@ import { drawInkPopupFrame, inkPopupCloseRect, roundRect } from './menu-ui';
 import { STAMINA_COST } from './stamina';
 import { MAX_EQUIPPED_ACTIVES } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
+import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -41,12 +42,17 @@ const HELP_BODY_BOTTOM = HELP_PY + HELP_PH - 18;
 const HELP_VIEW_H = HELP_BODY_BOTTOM - HELP_BODY_TOP;
 const HELP_TEXT_W = HELP_PW - HELP_PAD * 2;
 
+/** 条目归属的开发者开关：对应功能没开时，该条目（或整节）从说明里隐藏 */
+type HelpBlockFlag = 'autoplace' | 'wuxing';
+
+type HelpBlockBase = { flag?: HelpBlockFlag };
+
 type HelpBlock =
-  | { kind: 'title'; text: string }
-  | { kind: 'body'; text: string }
-  | { kind: 'step'; n: number; text: string }
-  | { kind: 'link'; id: HelpLinkId; text: string }
-  | { kind: 'gap'; h: number };
+  | (HelpBlockBase & { kind: 'title'; text: string })
+  | (HelpBlockBase & { kind: 'body'; text: string })
+  | (HelpBlockBase & { kind: 'step'; n: number; text: string })
+  | (HelpBlockBase & { kind: 'link'; id: HelpLinkId; text: string })
+  | (HelpBlockBase & { kind: 'gap'; h: number });
 
 /** 说明内跳转目标：图鉴 Tab / 神兵背包 */
 export type HelpLinkId = 'codex-unit' | 'codex-hero' | 'codex-monster' | 'codex-skill' | 'codex-rank' | 'codex-versus' | 'bag' | 'stamina';
@@ -73,6 +79,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   },
   {
     kind: 'body',
+    flag: 'autoplace',
     text: '· 「布阵」：一键把候选区自动摆到合适位置，省去逐个拖放。建议先点布阵，再手动微调站位与合成。',
   },
   { kind: 'body', text: '· 轻点单位 / 妖怪 / 唐僧：查看信息与攻击范围。' },
@@ -204,11 +211,11 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'body', text: '· 勾选「无尽模式」可挑战不限波次、难度渐增的持久战。' },
   { kind: 'gap', h: 10 },
 
-  { kind: 'title', text: '五行相克' },
-  { kind: 'body', text: '神将与各地图妖怪各属五行：金克木、木克土、土克水、水克火、火克金。' },
-  { kind: 'body', text: '克制时伤害×1.25（金色「克」字飘字），被克×0.75。看地图属性选将：如火焰山属火，宜多带水系神将（八戒、白龙、观音等）。' },
-  { kind: 'body', text: '基础兵种（刀/枪/骑/弓）无五行，不受克制影响。' },
-  { kind: 'gap', h: 10 },
+  { kind: 'title', flag: 'wuxing', text: '五行相克' },
+  { kind: 'body', flag: 'wuxing', text: '神将与各地图妖怪各属五行：金克木、木克土、土克水、水克火、火克金。' },
+  { kind: 'body', flag: 'wuxing', text: '克制时伤害×1.25（金色「克」字飘字），被克×0.75。看地图属性选将：如火焰山属火，宜多带水系神将（八戒、白龙、观音等）。' },
+  { kind: 'body', flag: 'wuxing', text: '基础兵种（刀/枪/骑/弓）无五行，不受克制影响。' },
+  { kind: 'gap', h: 10, flag: 'wuxing' },
 
   { kind: 'title', text: '真人对战' },
   { kind: 'body', text: '首页「真人对战」与真实玩家 1v1：系统随机匹配，或用「邀请好友」生成口令邀好友同房。' },
@@ -237,6 +244,20 @@ type LaidLine =
 // 不做跨帧缓存：若首次测量时自定义字体尚未加载完成，缓存会永久锁死一份用回退字体量出的
 // 错误高度，导致后续可视区与实际渲染错位、滚到底也显示不全（"滚不动"）。文案是静态的一小段
 // 文本，每次重排的开销可忽略，直接按当前 ctx 字体状态重新量取即可保证与实际渲染一致。
+/**
+ * 按开发者开关过滤后的说明条目（排版 / 绘制 / 点击命中共用，保证三者一致）：
+ *   - 布阵按钮未开（默认）→ 隐藏「布阵」操作条目，避免介绍一个不存在的按钮；
+ *   - 五行相克关闭 → 隐藏「五行相克」整节，避免介绍未生效的机制。
+ * 参数可注入是给单测用的（node 环境无 localStorage，无法通过 set 开关改变读值）。
+ */
+export function visibleHelpBlocks(showAutoplace = showAutoplaceBtn(), wuxing = wuxingEnabled()): HelpBlock[] {
+  return HELP_BLOCKS.filter((b) => {
+    if (b.flag === 'autoplace') return showAutoplace;
+    if (b.flag === 'wuxing') return wuxing;
+    return true;
+  });
+}
+
 function measureLayout(ctx: CanvasRenderingContext2D): { lines: LaidLine[]; contentH: number } {
   const lines: LaidLine[] = [];
   let y = 0;
@@ -245,7 +266,7 @@ function measureLayout(ctx: CanvasRenderingContext2D): { lines: LaidLine[]; cont
   const stepLh = 22;
   const linkLh = 26;
 
-  for (const block of HELP_BLOCKS) {
+  for (const block of visibleHelpBlocks()) {
     if (block.kind === 'gap') {
       y += block.h;
       continue;
