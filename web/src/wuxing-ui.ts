@@ -36,6 +36,29 @@ export function drawElementBadge(ctx: CanvasRenderingContext2D, cx: number, cy: 
 /** 武将 vs 地图的克制关系：'adv'=克图、'dis'=被图克、null=同行/任一方无属性（不画徽章） */
 export type CounterRelation = 'adv' | 'dis' | null;
 
+/** #rrggbb → [r,g,b]（Element 色/主题色都是这种格式） */
+function hexRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * 锁定格（未挖开格）底色柔化：把五行主题色向地图主题的锁定色混合。
+ * 纯五行色（如火 #f4511e）大面积平铺太艳太突兀；按 t 权重混入主题 cellLocked
+ * （每图自带的中性暗调色）后降饱和降亮，色相仍可辨识，与棋盘整体更协调。
+ * 例：火焰山火色混白骨岭外山岩色 → 柔和陶土色，而不是整片亮橙红。
+ *
+ * @param el 地图五行（HUD 徽章同款 ELEMENT_COLOR）
+ * @param baseLocked 该图主题的 cellLocked 色（#rrggbb）
+ * @param t 五行色权重（0~1），默认 0.38——留六成主题色，只「染」一点属性色
+ */
+export function softenElementColor(el: Element, baseLocked: string, t = 0.38): string {
+  const [er, eg, eb] = hexRgb(ELEMENT_COLOR[el]);
+  const [br, bg, bb] = hexRgb(baseLocked);
+  const mix = (a: number, b: number) => Math.round(a * t + b * (1 - t));
+  return `rgb(${mix(er, br)},${mix(eg, bg)},${mix(eb, bb)})`;
+}
+
 /**
  * 推导武将五行对地图五行的克制关系（复用 elementMul，保证与实际伤害倍率同口径）：
  * 倍率 >1 → 'adv'（克图），<1 → 'dis'（被图克），=1（同行或任一方 null）→ null。

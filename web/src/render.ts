@@ -18,7 +18,7 @@ import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
-import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY, ELEMENT_COLOR } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite, cavalrySprite, miniBossSprite } from './assets';
 import { getBestWave } from './endless';
@@ -26,7 +26,7 @@ import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
 import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
-import { drawElementBadge, drawCounterBadge, counterRelation } from './wuxing-ui';
+import { drawElementBadge, drawCounterBadge, counterRelation, softenElementColor } from './wuxing-ui';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 import { isWeChat } from './platform';
 
@@ -1650,13 +1650,14 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       } else if (cellOpen) {
         drawUnlockedCellFace(ctx, ix, iy, iw, ih, c, r, th.cellUnlocked);
       } else {
-        // 不可放置格（未开垦）：底色用地图五行主题色（与 HUD 徽章同色系，一眼看出本图属性行），
-        // 再叠深棕压暗保持「未开垦」的暗档观感；五行关闭时回退原主题 cellLocked。
+        // 不可放置格（未开垦）：底色 = 五行色向主题锁定色柔化混合（纯五行原色太艳太突兀，
+        // 混入主题色只「染」一点属性色相）；五行关闭时回退原主题 cellLocked。
         const wuxingEl = wuxingEnabled() ? MAP_ELEMENT[b.map.id] : undefined;
         roundRect(ctx, ix, iy, iw, ih, 2);
-        ctx.fillStyle = wuxingEl ? ELEMENT_COLOR[wuxingEl] : th.cellLocked;
+        ctx.fillStyle = wuxingEl ? softenElementColor(wuxingEl, th.cellLocked) : th.cellLocked;
         ctx.fill();
-        ctx.fillStyle = 'rgba(28,20,10,0.34)';
+        // 压暗叠层：柔化混色后本身已是暗档，叠层比旧版减淡（0.34→0.2），避免闷成泥色
+        ctx.fillStyle = 'rgba(28,20,10,0.2)';
         ctx.fill();
         // 内边阴影
         ctx.save();

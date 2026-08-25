@@ -133,7 +133,8 @@ export function playSfx(name: string): void {
 // —— 背景音乐（每张地图各一首真实音频循环）——
 // 程序化合成的氛围旋律已移除；各地图 BGM 一律走文件（见 MAP_BGM）。音效仍为实时合成（见上）。
 
-let ambientNodes: { stop?: () => void; node: AudioNode }[] = [];
+// node 多数是 WebAudio 节点；Web 端 CORS 兜底时是 HTMLAudioElement（无 disconnect，stop 里已单独处理）
+let ambientNodes: { stop?: () => void; node: AudioNode | HTMLAudioElement }[] = [];
 let ambientTimers: number[] = [];
 let ambientMap = '';
 
@@ -254,7 +255,10 @@ function startAudioElBgm(url: string): void {
 export function stopAmbient(): void {
   for (const id of ambientTimers) clearInterval(id);
   ambientTimers = [];
-  for (const a of ambientNodes) { try { a.stop?.(); a.node.disconnect(); } catch { /* ignore */ } }
+  for (const a of ambientNodes) {
+    try { a.stop?.(); } catch { /* ignore */ }
+    if (a.node instanceof AudioNode) a.node.disconnect(); // HTMLAudioElement 兜底节点无 disconnect
+  }
   ambientNodes = [];
   ambientMap = '';
 }

@@ -8,7 +8,7 @@ import { MAP_ELEMENT } from '../src/battle';
 import { mapById, MAPS, pickDailyMap } from '../src/board';
 import { pathEntranceDir } from '../src/render';
 import { setWuxingEnabled } from '../src/dev-flags';
-import { counterRelation } from '../src/wuxing-ui';
+import { counterRelation, softenElementColor } from '../src/wuxing-ui';
 
 describe('GENERALS.element（武将五行）', () => {
   const VALID = new Set(ELEMENTS.map((e) => e.id));
@@ -175,6 +175,19 @@ describe('counterRelation（武将 vs 地图克制徽章）', () => {
   it('倍率参数可注入：DevTools 调成 1/1 后关系全部归 null', () => {
     expect(counterRelation('water', 'fire', 1, 1)).toBe(null);
     expect(counterRelation('metal', 'fire', 1, 1)).toBe(null);
+  });
+});
+
+describe('softenElementColor（锁定格底色柔化）', () => {
+  // 火 #f4511e 向火焰山主题锁定色 #bda284 以默认权重 0.38 混合：
+  // r=244*.38+189*.62≈210、g=81*.38+162*.62≈131、b=30*.38+132*.62≈93 → 柔和陶土色
+  it('默认权重 0.38：五行色向主题锁定色线性混合，输出 rgb() 字符串', () => {
+    expect(softenElementColor('fire', '#bda284')).toBe('rgb(210,131,93)');
+  });
+
+  it('权重可调：t=1 退化为纯五行原色、t=0 退化为主题锁定色', () => {
+    expect(softenElementColor('water', '#c2b184', 1)).toBe('rgb(61,139,255)'); // 纯水色 #3d8bff
+    expect(softenElementColor('water', '#c2b184', 0)).toBe('rgb(194,177,132)'); // 纯主题色
   });
 });
 
