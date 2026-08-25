@@ -3994,7 +3994,7 @@ function drawHeroUltFxList(
       case 'guanyin': drawUltGuanyin(ctx, x, y, prog, fade, f.tier, R); break;
       case 'laojun': drawUltLaojun(ctx, x, y, prog, fade, f.tier, R); break;
       case 'wenshu': drawUltWenshu(ctx, x, y, prog, fade, f.tier, R); break;
-      case 'baigujing': drawUltBaigujing(ctx, x, y, prog, fade, f.tier, R); break;
+      case 'taibai': drawUltTaibai(ctx, x, y, prog, fade, f.tier, R); break;
       case 'tangseng': drawUltTangseng(ctx, x, y, prog, fade, f.tier, R); break;
       // —— 过渡满3 ——
       case 'damang': drawUltDamang(ctx, x, y, prog, fade, f.tier, R); break;
@@ -6260,20 +6260,129 @@ function drawUltHuishu(ctx: CanvasRenderingContext2D, x: number, y: number, p: n
   }
 }
 
-// 白骨 骨雾灰白扩散云
-function drawUltBaigujing(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
-  ctx.globalAlpha = fade * 0.9;
-  const rad = easeOut(p) * R * 0.8;
-  for (let i = 0; i < 6 + tier; i++) {
-    const a = (i / (6 + tier)) * Math.PI * 2 + p;
-    const rr = rad * (0.4 + (i % 3) * 0.25);
-    const cx = x + Math.cos(a) * rr * 0.6, cy = y + Math.sin(a) * rr * 0.6;
-    const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, rr * 0.6);
-    grad.addColorStop(0, 'rgba(230,226,216,0.5)');
-    grad.addColorStop(1, 'rgba(210,205,195,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(cx, cy, rr * 0.6, 0, Math.PI * 2); ctx.fill();
+// 太白 金星拂尘·长庚星现：四层递进——①拂尘月牙扫击 ②长庚星爆（十字光芒）
+// ③星环扩散 ④星尘余韵。过渡位英雄，整体亮度克制、以暖金白为主色。
+function drawUltTaibai(ctx: CanvasRenderingContext2D, x: number, y: number, p: number, fade: number, tier: number, R: number) {
+  const life = Math.sin(Math.min(1, p / 0.95) * Math.PI); // 整体生命曲线：中段最亮
+  const vis = Math.max(fade, life * 0.85);
+  const sweep = easeOut(Math.min(1, p / 0.42)); // ①扫击：前 42% 完成
+  const flare = easeOut(Math.max(0, Math.min(1, (p - 0.16) / 0.36))); // ②星爆：16%~52%
+  const ringT = Math.max(0, Math.min(1, (p - 0.3) / 0.7)); // ③星环：30% 起
+  const dustT = Math.max(0, (p - 0.5) / 0.5); // ④星尘：后半程余韵
+
+  // ① 拂尘扫击：上下两道反向扫出的月牙弧光（粗弧带头、渐隐尾迹，像尘丝束甩过）
+  for (let k = 0; k < 2; k++) {
+    const dir = k === 0 ? 1 : -1;
+    const base = -Math.PI / 2 + k * Math.PI; // 上弧从正上起、下弧从正下起
+    const swung = base + dir * Math.PI * 0.85 * sweep; // 弧头扫过的角度
+    const span = Math.PI * 0.5 * (1 - sweep * 0.4); // 弧身随扫出略收窄
+    ctx.save();
+    ctx.globalAlpha = vis * (1 - sweep * 0.55) * 0.9; // 扫出后淡出
+    // 尾迹：3 段递减的细弧跟在弧头后面
+    for (let t = 0; t < 3; t++) {
+      ctx.globalAlpha = vis * (1 - sweep * 0.55) * (0.5 - t * 0.14);
+      ctx.strokeStyle = t === 0 ? 'rgba(255,240,200,0.9)' : 'rgba(255,214,110,0.75)';
+      ctx.lineWidth = (4.5 + tier * 0.5) * (1 - t * 0.26);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(x, y, R * (0.5 + t * 0.05), swung - dir * span, swung);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
+
+  // ② 长庚星爆：白热核心 + 四角星 + 十字衍射光芒（横向长、竖向短，星体质感）
+  if (flare > 0) {
+    const coreR = CELL * 0.3 * flare;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, coreR * 2.2);
+    g.addColorStop(0, 'rgba(255,252,238,0.95)');
+    g.addColorStop(0.35, 'rgba(255,232,160,0.6)');
+    g.addColorStop(1, 'rgba(255,214,110,0)');
+    ctx.globalAlpha = vis;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, coreR * 2.2, 0, Math.PI * 2); ctx.fill();
+
+    // 十字光芒：横竖两道细长菱形透镜（横向更长，模拟星体衍射）
+    for (let ax = 0; ax < 2; ax++) {
+      const long = R * (ax === 0 ? 0.85 : 0.6) * flare;
+      const wide = (ax === 0 ? CELL * 0.07 : CELL * 0.05) * flare;
+      ctx.save();
+      ctx.translate(x, y);
+      if (ax === 1) ctx.rotate(Math.PI / 2);
+      ctx.globalAlpha = vis * 0.8 * (1 - ringT * 0.5);
+      const lg = ctx.createLinearGradient(-long, 0, long, 0);
+      lg.addColorStop(0, 'rgba(255,226,138,0)');
+      lg.addColorStop(0.5, 'rgba(255,250,225,0.95)');
+      lg.addColorStop(1, 'rgba(255,226,138,0)');
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.moveTo(-long, 0); ctx.quadraticCurveTo(0, -wide, long, 0);
+      ctx.quadraticCurveTo(0, wide, -long, 0);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 四角星本体：星爆最亮的一瞬放大再缓收
+    const starS = CELL * (0.2 + 0.08 * tier) * (0.6 + flare * 0.6) * (1 - ringT * 0.35);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(p * 0.4);
+    ctx.globalAlpha = vis * 0.95;
+    ctx.fillStyle = '#fff8dc';
+    ctx.shadowColor = 'rgba(255,214,110,0.9)';
+    ctx.shadowBlur = 8 + tier * 2;
+    ctx.beginPath(); // 四角星（凹边菱形）
+    ctx.moveTo(0, -starS); ctx.quadraticCurveTo(starS * 0.16, -starS * 0.16, starS, 0);
+    ctx.quadraticCurveTo(starS * 0.16, starS * 0.16, 0, starS);
+    ctx.quadraticCurveTo(-starS * 0.16, starS * 0.16, -starS, 0);
+    ctx.quadraticCurveTo(-starS * 0.16, -starS * 0.16, 0, -starS);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ③ 星环扩散：1~2 圈金色圆环从星体荡开，外圈带缺口更有星轨感
+  const rings = 1 + Math.min(1, Math.floor((tier - 1) / 2)); // T1 一圈、T3 两圈
+  for (let ri = 0; ri < rings; ri++) {
+    const rt = Math.max(0, Math.min(1, ringT - ri * 0.18));
+    if (rt <= 0) continue;
+    const rr = easeOut(rt) * R * (0.78 + ri * 0.22);
+    ctx.globalAlpha = vis * (1 - rt) * 0.75;
+    ctx.strokeStyle = ri === 0 ? 'rgba(255,232,160,0.9)' : 'rgba(255,214,110,0.65)';
+    ctx.lineWidth = (2 + tier * 0.25) * (1 - rt * 0.5);
+    ctx.beginPath();
+    if (ri === 0) {
+      ctx.arc(x, y, rr, 0, Math.PI * 2); // 内圈整环
+    } else {
+      const a0 = p * 1.6; // 外圈两段弧：像旋转的星轨
+      ctx.arc(x, y, rr, a0, a0 + Math.PI * 0.72);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, rr, a0 + Math.PI, a0 + Math.PI * 1.72);
+    }
+    ctx.stroke();
+  }
+
+  // ④ 星尘余韵：数粒小星向外飘散、边飘边闪；亮度下限保证中后段仍清晰可辨（收尾才隐没）
+  if (dustT > 0) {
+    const n = 6 + tier;
+    const dustVis = Math.max(0.35, vis) * Math.sin(Math.PI * Math.min(1, dustT)) * (1 - Math.max(0, dustT - 0.8) / 0.2); // 0.8 后收尾
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + i * 0.7; // 错开角度避免排成规整圆
+      const dr = R * (0.35 + easeOut(dustT) * 0.75);
+      const dx = x + Math.cos(a) * dr, dy = y + Math.sin(a) * dr * 0.82;
+      const tw = 0.5 + 0.5 * Math.sin(p * Math.PI * 5 + i * 2.1); // 闪烁相位错开
+      ctx.globalAlpha = Math.min(1, dustVis * (0.55 + tw * 0.55));
+      const s = (CELL * 0.06 + tier * 0.45) * (0.7 + tw * 0.5);
+      ctx.fillStyle = i % 3 === 0 ? '#fff3c4' : '#ffe28a';
+      ctx.beginPath(); // 小四角星
+      ctx.moveTo(dx, dy - s); ctx.quadraticCurveTo(dx + s * 0.2, dy - s * 0.2, dx + s, dy);
+      ctx.quadraticCurveTo(dx + s * 0.2, dy + s * 0.2, dx, dy + s);
+      ctx.quadraticCurveTo(dx - s * 0.2, dy + s * 0.2, dx - s, dy);
+      ctx.quadraticCurveTo(dx - s * 0.2, dy - s * 0.2, dx, dy - s);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 // 御弟 诵经·金色经文字环逐层扩散
@@ -9415,7 +9524,8 @@ function drawHeroAttackFx(
       ctx.restore();
       break;
     }
-    case 'baigujing': {
+    case 'taibai': {
+      // 普攻弹道：金色星芒拖尾（拂尘掷出的星光）
       const x = ax + (tx - ax) * prog;
       const y = ay + (ty - ay) * prog;
       const n = 2 + tier;
@@ -9423,7 +9533,7 @@ function drawHeroAttackFx(
         const a = ang + (i - (n - 1) / 2) * 0.35 + prog * 1.5;
         const r = CELL * (0.08 + sc * 0.06) * (1 + i * 0.15);
         ctx.globalAlpha = fade * (0.35 + sc * 0.35);
-        ctx.fillStyle = i % 2 === 0 ? 'rgba(220,210,240,0.7)' : 'rgba(180,160,200,0.55)';
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(255,226,138,0.8)' : 'rgba(255,243,196,0.6)';
         ctx.beginPath();
         ctx.ellipse(x + Math.cos(a) * r * 3, y + Math.sin(a) * r * 3, r * 1.2, r * 0.6, a, 0, Math.PI * 2);
         ctx.fill();

@@ -9,7 +9,7 @@
 // tray 有放不下的武器/字时优先棋盘同级合并，再放入 tray，尽量清空候选区。
 // 武将：单字远离路径、靠唐僧；满5远距将落中部覆盖全图，其余按出口优先级贴怪口，可挪开普通武器。
 // 有空格时 tray 不得留字/兵（铲子除外）；字优先于兵，满盘可顶回普通武器腾位。
-// 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+白骨）；
+// 满盘凑对：贴路行可整行左移后插入 tray 字（保留已有激活将，如 牛郎+金吒+太白）；
 // 仅当无法左移时才与占位交换（place）。
 // 未激活孤儿字不占前线：与兵器换高覆盖座，或迁到远离路径/靠唐僧的空位。
 // 字牌回收：配对优先最高阶孤儿；同字高阶可换上棋盘；重复同字只留最高阶，低阶用 tray 异字换回。
@@ -913,7 +913,7 @@ function forEachTrayWordForActivation(
   return false;
 }
 
-/** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 白骨 在场时 skip 吒/金 组 金吒） */
+/** 已有同级/更强激活武将时，勿在其邻格重组满3过渡将（如 太白 在场时 skip 吒/金 组 金吒） */
 function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken, { kind: 'word' }>): boolean {
   const mate = pickBestBoardMateView(view, t.char, t.general);
   if (mate) {
@@ -941,7 +941,7 @@ function shouldSkipTrayWordActivation(view: AutoPlaceView, t: Extract<PlaceToken
       sameCell(p.left.cell, leftCell) || sameCell(p.right.cell, leftCell)
       || sameCell(p.left.cell, rightCell) || sameCell(p.right.cell, rightCell);
     if (!overlap || p.def.maxTier < forming.maxTier) continue;
-    // tray 字落伴侣右侧且会拆散其它激活将 → skip（如 吒+金 拆 白骨）
+    // tray 字落伴侣右侧且会拆散其它激活将 → skip（如 吒+金 拆 太白）
     // tray 字落伴侣左侧可拆散占位将 → allow（如 白+骨 拆 金吒）
     return mateIsLeft;
   }

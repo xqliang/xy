@@ -49,7 +49,7 @@ export const ASSET_FILENAMES: Record<string, string> = {
   'hero-tangseng-hero': 'hero-tangseng-hero.png',
   'hero-honghaier': 'hero-honghaier.png',
   'hero-tieshan': 'hero-tieshan.png',
-  'hero-baigujing': 'hero-baigujing.png',
+  'hero-taibai': 'hero-taibai.png',
   'hero-niumowang': 'hero-niumowang.png',
   'hero-mile': 'hero-mile.png',
   'hero-damang': 'hero-damang.png',

@@ -52,7 +52,7 @@ const TARGET = {
   'hero-tangseng-hero.png': 780,
   'hero-honghaier.png': 780,
   'hero-tieshan.png': 780,
-  'hero-baigujing.png': 780,
+  'hero-taibai.png': 780,
   'hero-niumowang.png': 780,
   'hero-mile.png': 780,
   // 首页 UI（menu.ts / menu-popups.ts / menu-ui.ts 绘制尺寸 ×3）

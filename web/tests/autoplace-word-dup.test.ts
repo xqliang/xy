@@ -18,8 +18,8 @@ describe('布阵字牌不复制', () => {
     const a = cells[0]!;
     const dup = cells[1]!;
 
-    b.tray = [{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }];
-    const token = { kind: 'word' as const, char: '白', general: 'baigujing', tier: 1 };
+    b.tray = [{ kind: 'word', char: '太', general: 'taibai', tier: 1 }];
+    const token = { kind: 'word' as const, char: '太', general: 'taibai', tier: 1 };
     const ok = (b as unknown as {
       queueAutoPlaceDrag: (
         i: number,
@@ -36,11 +36,11 @@ describe('布阵字牌不复制', () => {
     const queued = b.autoPlaceDragFx[0]!;
     (b as unknown as { commitAutoPlaceDrag: (d: DragFx) => void }).commitAutoPlaceDrag(queued);
     b.autoPlaceDragFx = [];
-    expect(b.words.get(cellKey(a.c, a.r))?.char).toBe('白');
+    expect(b.words.get(cellKey(a.c, a.r))?.char).toBe('太');
 
     const stale = { ...queued, c: dup.c, r: dup.r };
     (b as unknown as { commitAutoPlaceDrag: (d: DragFx) => void }).commitAutoPlaceDrag(stale);
-    expect([...b.words.values()].filter((w) => w.char === '白')).toHaveLength(1);
+    expect([...b.words.values()].filter((w) => w.char === '太')).toHaveLength(1);
     expect(b.words.has(cellKey(dup.c, dup.r))).toBe(false);
   });
 
@@ -52,11 +52,11 @@ describe('布阵字牌不复制', () => {
     }
     const onBoard = b.unlockedCells()[0]!;
     b.words.set(cellKey(onBoard.c, onBoard.r), {
-      char: '白', general: 'baigujing', tier: 1, cell: { ...onBoard },
+      char: '太', general: 'taibai', tier: 1, cell: { ...onBoard },
     });
-    b.tray = [{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }];
+    b.tray = [{ kind: 'word', char: '太', general: 'taibai', tier: 1 }];
 
-    const countBai = () => [...b.words.values()].filter((w) => w.char === '白').length;
+    const countBai = () => [...b.words.values()].filter((w) => w.char === '太').length;
     expect(countBai()).toBe(1);
 
     for (let i = 0; i < 3; i++) {
@@ -64,6 +64,6 @@ describe('布阵字牌不复制', () => {
       (b as unknown as { flushAutoPlacePlaybackForTest: () => void }).flushAutoPlacePlaybackForTest();
     }
     expect(countBai()).toBe(1);
-    expect(b.tray.some((t) => t?.kind === 'word' && t.char === '白')).toBe(true);
+    expect(b.tray.some((t) => t?.kind === 'word' && t.char === '太')).toBe(true);
   });
 });

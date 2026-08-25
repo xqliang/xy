@@ -3,6 +3,7 @@
 // 跨平台 KV 走 storage.ts（Web=localStorage / 微信=wx），本存档不进云同步。
 import { Battle, type BattleCoreState, type BattleSaveConfig } from './battle';
 import { mapById } from './board';
+import { GENERAL_ID_MIGRATIONS } from './generals';
 import { storeGet, storeSet, storeRemove } from './storage';
 import { APP_VERSION } from './version';
 
@@ -60,7 +61,20 @@ export function readBattleSave(): BattleSaveV1 | null {
   }
   if (!save || save.v !== SAVE_VERSION || save.gameVersion !== APP_VERSION) return null;
   if (!save.core || save.core.status !== 'ready') return null; // 仅接受波次检查点(ready)存档；playing/won/lost 皆不可续（serialize 在非 ready 时别名飞行中实体，续玩不安全）
+  migrateCoreGeneralIds(save.core);
   return save;
+}
+
+// 武将改版迁移（白骨→太白）：续玩存档里的棋盘字牌与候选区令牌按旧 id 换新 id，
+// 不迁移的话 generalById 查不到、字牌在恢复局里失效。
+function migrateCoreGeneralIds(core: BattleCoreState): void {
+  const map = (g: string) => GENERAL_ID_MIGRATIONS[g] ?? g;
+  for (const w of core.words) if (w && w[1]) w[1].general = map(w[1].general);
+  for (const tray of [core.tray, core.aiTray]) {
+    for (const t of tray) {
+      if (t && t.kind === 'word') t.general = map(t.general);
+    }
+  }
 }
 
 /** 清除存档并重置去重键。 */

@@ -24,7 +24,7 @@ describe('兵落字格不丢字（始终与 tray 交换）', () => {
 
     // 棋盘上一个单字（英雄单字）
     b.words.set(cellKey(wordCell.c, wordCell.r), {
-      char: '白', general: 'baigujing', tier: 1, cell: { ...wordCell },
+      char: '太', general: 'taibai', tier: 1, cell: { ...wordCell },
     });
     const wordsBefore = b.words.size;
     // tray 里一个兵（武器）
@@ -39,7 +39,7 @@ describe('兵落字格不丢字（始终与 tray 交换）', () => {
     expect(b.words.get(cellKey(wordCell.c, wordCell.r))).toBeUndefined();
     const trayWord = b.tray[0];
     expect(trayWord?.kind).toBe('word');
-    if (trayWord?.kind === 'word') expect(trayWord.char).toBe('白');
+    if (trayWord?.kind === 'word') expect(trayWord.char).toBe('太');
     // 棋盘字牌被换走（减少 1），且字牌未凭空消失（进了 tray）
     expect(b.words.size).toBe(wordsBefore - 1);
   });
@@ -54,7 +54,7 @@ describe('兵落字格不丢字（始终与 tray 交换）', () => {
     const unitType = Object.keys(UNITS)[0] as UnitType;
 
     b.words.set(cellKey(wordCell.c, wordCell.r), {
-      char: '白', general: 'baigujing', tier: 1, cell: { ...wordCell },
+      char: '太', general: 'taibai', tier: 1, cell: { ...wordCell },
     });
     b.tray = [{ kind: 'unit', type: unitType, tier: 1 }];
 
@@ -70,7 +70,7 @@ describe('兵落字格不丢字（始终与 tray 交换）', () => {
       // 占格字牌被换回 tray，而非被吞掉
       const trayWord = b.tray[0];
       expect(trayWord?.kind).toBe('word');
-      if (trayWord?.kind === 'word') expect(trayWord.char).toBe('白');
+      if (trayWord?.kind === 'word') expect(trayWord.char).toBe('太');
       // 棋盘上该字牌已离开
       expect(b.words.has(cellKey(wordCell.c, wordCell.r))).toBe(false);
     } finally {

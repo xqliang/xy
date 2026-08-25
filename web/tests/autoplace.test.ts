@@ -257,8 +257,8 @@ it('布阵局面重复时立即停止（防武将来回挪占满 guard）', () =
   }
   const cells = [{ c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }];
   const v = new OscView([], cells);
-  v.wordsMap.set('0,0', { char: '白', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
-  v.wordsMap.set('1,0', { char: '骨', general: 'baigujing', cell: { c: 1, r: 0 }, tier: 1 });
+  v.wordsMap.set('0,0', { char: '太', general: 'taibai', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '白', general: 'taibai', cell: { c: 1, r: 0 }, tier: 1 });
   v.generalRgeVal = 2;
   const steps = planAutoPlaceSteps(v, { rng, maxSteps: 100, maxGuard: 100 });
   expect(steps).toBeLessThan(10);
@@ -1233,13 +1233,13 @@ it('tray 同型更高阶与棋盘低阶兵器互换', () => {
     ],
     cells,
   );
-  v.wordChars = (g: string) => (g === 'baigujing' ? (['白', '骨'] as const) : undefined);
+  v.wordChars = (g: string) => (g === 'taibai' ? (['太', '白'] as const) : undefined);
   v.unitsMap.set('0,0', { type: 'archer', tier: 1, cell: { c: 0, r: 0 } });
   v.unitsMap.set('1,1', { type: 'cavalry', tier: 2, cell: { c: 1, r: 1 } });
   v.unitsMap.set('2,1', { type: 'spear', tier: 2, cell: { c: 2, r: 1 } });
   v.unitsMap.set('3,1', { type: 'spear', tier: 3, cell: { c: 3, r: 1 } });
-  v.wordsMap.set('1,2', { char: '白', general: 'baigujing', cell: { c: 1, r: 2 }, tier: 1 });
-  v.wordsMap.set('2,2', { char: '骨', general: 'baigujing', cell: { c: 2, r: 2 }, tier: 1 });
+  v.wordsMap.set('1,2', { char: '太', general: 'taibai', cell: { c: 1, r: 2 }, tier: 1 });
+  v.wordsMap.set('2,2', { char: '白', general: 'taibai', cell: { c: 2, r: 2 }, tier: 1 });
   v.unitsMap.set('3,2', { type: 'dao', tier: 2, cell: { c: 3, r: 2 } });
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
   const archer = v.placedUnits().find((u) => u.type === 'archer');
@@ -1399,19 +1399,19 @@ it('金吒已激活时 tray「哪」布阵替换「金」组成哪吒', () => {
   expect(v.tray()).toHaveLength(0);
 });
 
-it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
+it('贴路行满槽：tray太左移腾位保留金吒并激活太白', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 }, { c: 6, r: 0 },
   ];
   const v = new FakeView(
-    [{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }],
+    [{ kind: 'word', char: '太', general: 'taibai', tier: 1 }],
     cells,
   );
   v.wordChars = (g: string) => {
     if (g === 'niulang') return ['牛', '郎'] as const;
     if (g === 'jinzha') return ['金', '吒'] as const;
-    if (g === 'baigujing') return ['白', '骨'] as const;
+    if (g === 'taibai') return ['太', '白'] as const;
     return undefined;
   };
   v.unitsMap.set('0,0', { type: 'cavalry', tier: 5, cell: { c: 0, r: 0 } });
@@ -1419,17 +1419,17 @@ it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
   v.wordsMap.set('2,0', { char: '郎', general: 'niulang', cell: { c: 2, r: 0 }, tier: 3 });
   v.wordsMap.set('3,0', { char: '金', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
   v.wordsMap.set('4,0', { char: '吒', general: 'jinzha', cell: { c: 4, r: 0 }, tier: 1 });
-  v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '白', general: 'taibai', cell: { c: 5, r: 0 }, tier: 1 });
   v.unitsMap.set('6,0', { type: 'archer', tier: 3, cell: { c: 6, r: 0 } });
   planAutoPlace(v, { rng });
+  const tai = v.placedWords().find((w) => w.char === '太');
   const bai = v.placedWords().find((w) => w.char === '白');
-  const gu = v.placedWords().find((w) => w.char === '骨');
   const jin = v.placedWords().find((w) => w.char === '金');
   const zha = v.placedWords().find((w) => w.char === '吒');
   const niu = v.placedWords().find((w) => w.char === '牛');
-  expect(bai?.cell).toEqual({ c: 4, r: 0 });
-  expect(gu?.cell).toEqual({ c: 5, r: 0 });
-  expect(matchGeneral(bai!.char, gu!.char)?.id).toBe('baigujing');
+  expect(bai?.cell).toEqual({ c: 5, r: 0 });
+  expect(tai?.cell).toEqual({ c: 4, r: 0 });
+  expect(matchGeneral(tai!.char, bai!.char)?.id).toBe('taibai');
   expect(matchGeneral(jin!.char, zha!.char)?.id).toBe('jinzha');
   expect(v.isActiveHeroCell(jin!.cell)).toBe(true);
   expect(v.isActiveHeroCell(niu!.cell)).toBe(true);
@@ -1440,18 +1440,18 @@ it('贴路行满槽：tray白左移腾位保留金吒并激活白骨', () => {
   expect(cavOnBoard || cavInTray).toBe(true);
 });
 
-it('仅 tray 白时左移金吒一格后激活白骨', () => {
+it('仅 tray 太时左移金吒一格后激活太白', () => {
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 4, r: 0 }, { c: 5, r: 0 },
   ];
-  const v = new FakeView([{ kind: 'word', char: '白', general: 'baigujing', tier: 1 }], cells);
+  const v = new FakeView([{ kind: 'word', char: '太', general: 'taibai', tier: 1 }], cells);
   v.waveNum = 4;
   v.wordsMap.set('2,0', { char: '金', general: 'jinzha', cell: { c: 2, r: 0 }, tier: 1 });
   v.wordsMap.set('3,0', { char: '吒', general: 'jinzha', cell: { c: 3, r: 0 }, tier: 1 });
-  v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '白', general: 'taibai', cell: { c: 5, r: 0 }, tier: 1 });
   planAutoPlaceSteps(v, { rng, maxSteps: 1 });
-  expect(v.placedWords().find((w) => w.char === '白')?.cell).toEqual({ c: 4, r: 0 });
+  expect(v.placedWords().find((w) => w.char === '太')?.cell).toEqual({ c: 4, r: 0 });
   expect(v.isActiveHeroCell({ c: 4, r: 0 })).toBe(true);
 });
 
@@ -1477,19 +1477,19 @@ it('满级牛郎在前时布阵将未升满金吒前移', () => {
   expect(jin!.cell.c).toBeLessThan(niu!.cell.c);
 });
 
-it('「骨」贴已激活英雄时，tray「白」可与邻格兵交换激活白骨', () => {
-  // 截图1：大蟒已激活，骨在其右（左邻不可用）；无空位且无同阶可合兵 → 白与邻格兵交换后组成白骨
+it('「白」贴已激活英雄时，tray「太」可与邻格兵交换激活太白', () => {
+  // 截图1：大蟒已激活，白在其右（左邻不可用）；无空位且无同阶可合兵 → 太与邻格兵交换后组成太白
   const cells = [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 2, r: 0 }, { c: 3, r: 0 },
     { c: 0, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 },
   ];
   const v = new FakeView(
-    [{ kind: 'word', char: '白', general: 'bailong', tier: 1 }],
+    [{ kind: 'word', char: '太', general: 'taibai', tier: 1 }],
     cells,
   );
   v.wordChars = (g: string) => {
     if (g === 'damang') return ['大', '蟒'] as const;
-    if (g === 'baigujing') return ['白', '骨'] as const;
+    if (g === 'taibai') return ['太', '白'] as const;
     if (g === 'bailong') return ['白', '龙'] as const;
     return undefined;
   };
@@ -1507,11 +1507,11 @@ it('「骨」贴已激活英雄时，tray「白」可与邻格兵交换激活白
   v.unitsMap.delete('2,0');
   v.wordsMap.set('0,0', { char: '大', general: 'damang', cell: { c: 0, r: 0 }, tier: 3 });
   v.wordsMap.set('1,0', { char: '蟒', general: 'damang', cell: { c: 1, r: 0 }, tier: 3 });
-  v.wordsMap.set('2,0', { char: '骨', general: 'baigujing', cell: { c: 2, r: 0 }, tier: 1 });
+  v.wordsMap.set('2,0', { char: '白', general: 'taibai', cell: { c: 2, r: 0 }, tier: 1 });
   expect(v.freeCells()).toHaveLength(0);
   planAutoPlace(v, { rng });
-  const gu = v.placedWords().find((w) => w.char === '骨');
-  const bai = v.placedWords().find((w) => w.char === '白');
+  const gu = v.placedWords().find((w) => w.char === '白');
+  const bai = v.placedWords().find((w) => w.char === '太');
   expect(gu).toBeDefined();
   expect(bai).toBeDefined();
   expect(bai!.cell.c + 1).toBe(gu!.cell.c);
@@ -1705,11 +1705,11 @@ it('未激活孤儿字让出高覆盖攻位给兵器', () => {
   const v = new FakeView([], [
     { c: 0, r: 0 }, { c: 1, r: 0 }, { c: 0, r: 3 }, { c: 1, r: 3 },
   ]);
-  v.wordsMap.set('0,0', { char: '骨', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('0,0', { char: '白', general: 'taibai', cell: { c: 0, r: 0 }, tier: 1 });
   v.unitsMap.set('0,3', { type: 'archer', tier: 1, cell: { c: 0, r: 3 } });
   planAutoPlace(v, { rng });
   expect(v.unitsMap.get('0,0')?.type).toBe('archer');
-  const gu = v.placedWords().find((w) => w.char === '骨');
+  const gu = v.placedWords().find((w) => w.char === '白');
   expect(gu).toBeDefined();
   expect(gu!.cell.r).toBeGreaterThan(0); // 不再贴路
   expect(v.wordsMap.has('0,0')).toBe(false);
@@ -1729,11 +1729,11 @@ it('战中调位：兵与孤儿字互换以提升威胁/座位', () => {
   const v = new FakeRepositionView();
   // 射手在差位；骨占能打怪的好位
   v.unitsMap.set('0,3', { type: 'archer', tier: 1, cell: { c: 0, r: 3 } });
-  v.wordsMap.set('5,0', { char: '骨', general: 'baigujing', cell: { c: 5, r: 0 }, tier: 1 });
+  v.wordsMap.set('5,0', { char: '白', general: 'taibai', cell: { c: 5, r: 0 }, tier: 1 });
   v.monsterCells = [{ c: 5, r: 0 }];
   expect(planBattleReposition(v).ok).toBe(true);
   expect(v.unitsMap.get('5,0')?.type).toBe('archer');
-  expect(v.wordsMap.get('0,3')?.char).toBe('骨');
+  expect(v.wordsMap.get('0,3')?.char).toBe('白');
 });
 
 it('战中调位：前排高阶够不着时与后方低阶互换', () => {
@@ -2011,15 +2011,15 @@ it('危险时：已激活武将整体挪位以打到残血怪', () => {
   v.monsterEngage = [{ dist: 5, hp: 6, maxHp: 100 }];
   v.heroRge = 2;
   v.heroAtk = 12;
-  v.wordsMap.set('0,0', { char: '白', general: 'baigujing', cell: { c: 0, r: 0 }, tier: 1 });
-  v.wordsMap.set('1,0', { char: '骨', general: 'baigujing', cell: { c: 1, r: 0 }, tier: 1 });
+  v.wordsMap.set('0,0', { char: '太', general: 'taibai', cell: { c: 0, r: 0 }, tier: 1 });
+  v.wordsMap.set('1,0', { char: '白', general: 'taibai', cell: { c: 1, r: 0 }, tier: 1 });
   v.heroCells.add('0,0');
   v.heroCells.add('1,0');
-  v.heroPairs = [{ left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'baigujing', tier: 1 }];
+  v.heroPairs = [{ left: { c: 0, r: 0 }, right: { c: 1, r: 0 }, general: 'taibai', tier: 1 }];
   v.free = [{ c: 4, r: 0 }, { c: 5, r: 0 }];
   expect(planBattleReposition(v).ok).toBe(true);
-  expect(v.wordsMap.get('4,0')?.char).toBe('白');
-  expect(v.wordsMap.get('5,0')?.char).toBe('骨');
+  expect(v.wordsMap.get('4,0')?.char).toBe('太');
+  expect(v.wordsMap.get('5,0')?.char).toBe('白');
 });
 
 it('AI 练级轮换：怪物口满5控制将让位给未封顶满5将', () => {

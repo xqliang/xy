@@ -57,7 +57,7 @@ function setupScreenshotBoard(b: Battle) {
   putUnit(b, 'cavalry', 2, 1, 5);
   putUnit(b, 'cavalry', 2, 2, 5);
   putUnit(b, 'cavalry', 3, 3, 5);
-  putWord(b, '白', 'baigujing', 1, SCREENSHOT_BAI.c, SCREENSHOT_BAI.r);
+  putWord(b, '太', 'taibai', 1, SCREENSHOT_BAI.c, SCREENSHOT_BAI.r);
 
   putUnit(b, 'dao', 1, 0, 6);
   putWord(b, '郎', 'erlang', 1, 4, 6);
@@ -178,8 +178,8 @@ describe('截图复现：白字左下空位 + tray 满兵', () => {
     putUnit(b, 'cavalry', 2, 1, 6);
     putUnit(b, 'cavalry', 2, 2, 6);
     putUnit(b, 'cavalry', 3, 3, 6);
-    putWord(b, '白', 'baigujing', 1, 6, 5);
-    putWord(b, '骨', 'baigujing', 1, 6, 8);
+    putWord(b, '太', 'taibai', 1, 6, 5);
+    putWord(b, '白', 'taibai', 1, 6, 8);
     putWord(b, '八', 'baxian', 1, 1, 5);
     putWord(b, '仙', 'baxian', 1, 2, 5);
     putWord(b, '郎', 'erlang', 1, 6, 6);

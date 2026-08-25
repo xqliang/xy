@@ -112,7 +112,7 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'jiangyaozhang', name: '降妖宝杖', general: 'shaseng', stat: 'atk' },
   { id: 'liushazhang', name: '流沙杖', general: 'liusha', stat: 'rge' },
   { id: 'longyajian', name: '龙牙剑', general: 'bailong', stat: 'atk' },
-  { id: 'baiguzhang', name: '白骨爪', general: 'baigujing', stat: 'frq' },
+  { id: 'taibaifuchen', name: '太白拂尘', general: 'taibai', stat: 'frq' },
   { id: 'jingping', name: '净瓶玉露', general: 'guanyin', stat: 'frq' },
   { id: 'fanyinzhu', name: '梵音珠', general: 'fanyin', stat: 'rge' },
   { id: 'bagualu', name: '八卦炉', general: 'laojun', stat: 'atk' },
@@ -171,18 +171,29 @@ export interface BagState {
 
 const DEFAULT_BAG: BagState = { owned: {}, fragments: {}, equipped: [] };
 
+// 神兵改版迁移：旧 id → 新 id（白骨→太白金星改名，老存档里的白骨爪自动换成太白拂尘）
+const WEAPON_ID_MIGRATIONS: Record<string, string> = {
+  baiguzhang: 'taibaifuchen',
+};
+
+function migrateWeaponId(id: string): string {
+  return WEAPON_ID_MIGRATIONS[id] ?? id;
+}
+
 function normalizeBag(raw: unknown): BagState | null {
   if (!raw || typeof raw !== 'object') return null;
   const s = raw as Record<string, unknown>;
   if (!s.owned || typeof s.owned !== 'object' || !Array.isArray(s.equipped)) return null;
   const owned: Record<string, number> = {};
-  for (const [id, tier] of Object.entries(s.owned as Record<string, unknown>)) {
+  for (const [rawId, tier] of Object.entries(s.owned as Record<string, unknown>)) {
+    const id = migrateWeaponId(rawId);
     if (!weaponById(id) || typeof tier !== 'number' || !Number.isFinite(tier)) continue;
     owned[id] = Math.max(1, Math.min(MAX_WEAPON_TIER, Math.floor(tier)));
   }
   const fragments: Record<string, number> = {};
   if (s.fragments && typeof s.fragments === 'object') {
-    for (const [id, n] of Object.entries(s.fragments as Record<string, unknown>)) {
+    for (const [rawId, n] of Object.entries(s.fragments as Record<string, unknown>)) {
+      const id = migrateWeaponId(rawId);
       if (!weaponById(id) || typeof n !== 'number' || !Number.isFinite(n)) continue;
       const req = weaponFragmentsRequired(id);
       fragments[id] = Math.max(0, Math.min(req, Math.floor(n)));
@@ -192,7 +203,7 @@ function normalizeBag(raw: unknown): BagState | null {
   for (const id of Object.keys(owned)) {
     fragments[id] = weaponFragmentsRequired(id);
   }
-  const equipped = safeStringArray(s.equipped)
+  const equipped = safeStringArray(s.equipped).map(migrateWeaponId)
     .filter((id) => id in owned)
     .slice(0, MAX_EQUIPPED);
   return { owned, fragments, equipped };

@@ -57,7 +57,7 @@ export function generalExpCostMul(
   return 1;
 }
 
-// 五行分布：金5（大圣/二郎/金吒/白骨/文殊）·木5（铁扇/青牛/大蟒/慧殊/梵音）
+// 五行分布：金5（大圣/二郎/金吒/太白/文殊）·木5（铁扇/青牛/大蟒/慧殊/梵音）
 //         水5（八戒/白龙/沙僧/观音/八仙）·火5（哪吒/红孩/红袍/老君/丹君）·土4（牛魔/铁背/流沙/牛郎）
 // 分配原则：贴合人设；每行至少 1 个非「过渡」主力，保证任一地图都有可用克图阵容。
 export const GENERALS: GeneralDef[] = [
@@ -129,9 +129,9 @@ export const GENERALS: GeneralDef[] = [
   { id: 'bailong', name: '白龙', chars: ['白', '龙'], role: '输出', rank: 'T1', skill: 'slow',
     skillName: '龙牙突进', skillDesc: '突进撕咬2.8×攻，减速3秒', atk: 5.31, frq: 1.4, rge: 2.5, targets: 1.5, skillCd: 9, weight: 1, asset: 'hero-bailong',
     maxTier: 5, atkStyle: '单体突进', family: '白', element: 'water' },
-  { id: 'baigujing', name: '白骨', chars: ['白', '骨'], role: '过渡', rank: 'T2', skill: 'slow',
-    skillName: '骨雾', skillDesc: '骨雾减速3秒＋1.5×攻（过渡）', atk: 7.41, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-baigujing',
-    maxTier: 3, atkStyle: '单体突进', family: '白', element: 'metal' },
+  { id: 'taibai', name: '太白', chars: ['太', '白'], role: '过渡', rank: 'T2', skill: 'slow',
+    skillName: '金星拂尘', skillDesc: '星芒减速3秒＋1.5×攻（过渡）', atk: 7.41, frq: 1.3, rge: 2, targets: 1, skillCd: 11, weight: 3, asset: 'hero-taibai',
+    maxTier: 3, atkStyle: '拂尘缚敌', family: '白', element: 'metal' },
 
   // ——— 音：辅助治疗 ———
   { id: 'guanyin', name: '观音', chars: ['观', '音'], role: '辅助', rank: 'T1', skill: 'heal',
@@ -157,6 +157,11 @@ export const GENERALS: GeneralDef[] = [
     skillName: '慧光浅照', skillDesc: '友军大招/兵器冷却减2.5秒（过渡）', atk: 3.8, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 15, weight: 3, asset: 'hero-huishu',
     maxTier: 3, atkStyle: '般若减CD', family: '殊', element: 'wood' },
 ];
+
+// 武将改版迁移：旧 id → 新 id（白骨→太白金星改名，老存档/续玩局里的字牌自动跟随）
+export const GENERAL_ID_MIGRATIONS: Record<string, string> = {
+  baigujing: 'taibai',
+};
 
 export function generalById(id: string): GeneralDef | undefined {
   return GENERALS.find((g) => g.id === id);

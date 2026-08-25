@@ -17,9 +17,9 @@ const MAPS = ['huoyanshan', 'baiguling', 'liushahe', 'pansidong'];
 const HERO_PAIRS: [string, string, string][] = [
   ['二', '郎', 'erlang'], ['哪', '吒', 'nezha'], ['大', '圣', 'dasheng'],
   ['八', '戒', 'bajie'], ['铁', '扇', 'tieshan'], ['沙', '僧', 'shaseng'],
-  ['观', '音', 'guanyin'], ['白', '骨', 'baigujing'], ['牛', '魔', 'niumowang'],
+  ['观', '音', 'guanyin'], ['太', '白', 'taibai'], ['牛', '魔', 'niumowang'],
 ];
-const HERO_CHARS = ['哪', '吒', '大', '圣', '二', '郎', '八', '戒', '铁', '扇', '沙', '僧', '观', '音', '白', '骨', '牛', '魔', '金', '红', '孩'];
+const HERO_CHARS = ['哪', '吒', '大', '圣', '二', '郎', '八', '戒', '铁', '扇', '沙', '僧', '观', '音', '太', '白', '牛', '魔', '金', '红', '孩'];
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; }
 
 function randomBoard(b: Battle, seed: number, fillRatio: number, trayN: number) {

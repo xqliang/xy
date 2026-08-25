@@ -49,11 +49,11 @@ describe('门派配置', () => {
     expect(matchGeneral('大', '圣')?.id).toBe('dasheng');
     expect(matchGeneral('大', '蟒')?.id).toBe('damang');
     expect(matchGeneral('圣', '大')).toBeUndefined();
-    expect(partnerChars('白').sort()).toEqual(['骨', '龙'].sort());
-    expect(sortedPartnerChars('白')).toEqual(['龙', '骨']);
+    expect(partnerChars('白').sort()).toEqual(['太', '龙'].sort());
+    expect(sortedPartnerChars('白')).toEqual(['龙', '太']);
     expect(primaryGeneralForChar('白')?.id).toBe('bailong');
-    expect(inactivePartnerHint('白')).toBe('未激活：需与「龙」或「骨」字左右相邻');
-    expect(inactivePartnerHint('白', true)).toBe('候选区：需与「龙」或「骨」字左右相邻');
+    expect(inactivePartnerHint('白')).toBe('未激活：需与「龙」或「太」字左右相邻');
+    expect(inactivePartnerHint('白', true)).toBe('候选区：需与「龙」或「太」字左右相邻');
     expect(generalsWithChar('牛').map((g) => g.id).sort()).toEqual(['niumowang', 'niulang', 'qingniu'].sort());
     expect(sortedPartnerChars('牛')[0]).toBe('魔');
   });
@@ -76,10 +76,10 @@ describe('门派配置', () => {
 describe('激活继承与满级', () => {
   it('高阶字激活满3武将时低阶对齐且不超3；高阶字本身不降', () => {
     const b = new Battle(1);
-    // 白=5（来自白龙线练度）+ 骨=1 → 白骨满3，骨升到3，白保持5
-    const { a, right } = placePair(b, '白', '骨', 5, 1);
+    // 太=5（来自太白线练度）+ 白=1 → 太白满3，白升到3，太保持5
+    const { a, right } = placePair(b, '太', '白', 5, 1);
     const g = b.activeGenerals()[0]!;
-    expect(g.def.id).toBe('baigujing');
+    expect(g.def.id).toBe('taibai');
     expect(g.def.maxTier).toBe(3);
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(5);
     expect(b.words.get(`${right.c},${right.r}`)?.tier).toBe(3);
@@ -98,7 +98,7 @@ describe('激活继承与满级', () => {
 
   it('满3武将战斗升阶不超过3', () => {
     const b = new Battle(1);
-    const { a, right } = placePair(b, '白', '骨', 3, 3);
+    const { a, right } = placePair(b, '太', '白', 3, 3);
     const g = b.activeGenerals()[0]!;
     b.addGeneralCombatExp(g, 9999);
     expect(b.words.get(`${a.c},${a.r}`)?.tier).toBe(3);

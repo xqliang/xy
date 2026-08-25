@@ -5,7 +5,7 @@ import { GENERALS, ultTypeOf, CRIT_MULT } from '../src/generals';
 const HERO_ULT_IDS = new Set([
   'nezha', 'erlang', 'niulang',
   'dasheng', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu',
-  'baigujing', 'tangseng',
+  'taibai', 'tangseng',
   'damang', 'jinzha', 'hongpao', 'baxian', 'qingniu', 'tiebei', 'liusha', 'fanyin', 'danjun', 'huishu',
   'bailong',
 ]);
@@ -19,7 +19,7 @@ describe('大招类型派生 ultTypeOf', () => {
   });
 
   it('其余技能类型 = 群攻 aoe', () => {
-    for (const id of ['dasheng', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu', 'baigujing', 'bailong']) {
+    for (const id of ['dasheng', 'nezha', 'honghaier', 'bajie', 'tieshan', 'shaseng', 'niumowang', 'guanyin', 'laojun', 'wenshu', 'taibai', 'bailong']) {
       const def = GENERALS.find((g) => g.id === id)!;
       expect(ultTypeOf(def)).toBe('aoe');
     }

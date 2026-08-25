@@ -23,7 +23,7 @@ export const HERO_LORE: Record<string, string> = {
   shaseng: '卷帘大将谪世，降妖宝杖',
   liusha: '流沙河水怪，随沙僧',
   bailong: '西海三太子，化作龙马',
-  baigujing: '白骨岭尸魔，三变惑人',
+  taibai: '太白金星，长庚星君，拂尘点化',
   guanyin: '南海观世音，甘露普度',
   fanyin: '潮音侍者，颂经浅愈',
   laojun: '太上老君，炉炼仙丹',

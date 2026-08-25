@@ -20,7 +20,7 @@ function pairFirstEngage(b: Battle, left: { c: number; r: number }, right: { c: 
   return pathFirstEngageDist(b.map, b.entranceDist, b.pathLen, ax, ay, 2);
 }
 
-describe('白骨岭 · 已激活白骨布阵覆盖', () => {
+describe('白骨岭 · 已激活太白布阵覆盖', () => {
   it('孤儿凑对后微调 coverage（偏右散字 → 左移贴路）', () => {
     const b = new Battle(20260809, 1, mapById('baiguling'));
     const unlocked = (b as unknown as { unlocked: Set<string> }).unlocked;
@@ -32,8 +32,8 @@ describe('白骨岭 · 已激活白骨布阵覆盖', () => {
       ],
     );
     // 两字未相邻：凑对属于武将布局变更，才触发 coverage 微调
-    b.words.set(cellKey(5, 6), { char: '白', general: 'baigujing', tier: 1, cell: { c: 5, r: 6 } });
-    b.words.set(cellKey(7, 6), { char: '骨', general: 'baigujing', tier: 1, cell: { c: 7, r: 6 } });
+    b.words.set(cellKey(5, 6), { char: '太', general: 'taibai', tier: 1, cell: { c: 5, r: 6 } });
+    b.words.set(cellKey(7, 6), { char: '白', general: 'taibai', tier: 1, cell: { c: 7, r: 6 } });
     b.status = 'playing';
 
     const beforeEngage = pairFirstEngage(b, { c: 6, r: 6 }, { c: 7, r: 6 });
@@ -43,8 +43,8 @@ describe('白骨岭 · 已激活白骨布阵覆盖', () => {
     const view = (b as unknown as { buildPlayerAutoView(): AutoPlaceView }).buildPlayerAutoView();
     planAutoPlaceSteps(view, { rng: () => 0, maxSteps: 30 });
 
-    const bai = [...b.words.values()].find((w) => w.char === '白' && w.general === 'baigujing');
-    const gu = [...b.words.values()].find((w) => w.char === '骨' && w.general === 'baigujing');
+    const bai = [...b.words.values()].find((w) => w.char === '太' && w.general === 'taibai');
+    const gu = [...b.words.values()].find((w) => w.char === '白' && w.general === 'taibai');
     expect(bai!.cell).toEqual({ c: 5, r: 6 });
     expect(gu!.cell).toEqual({ c: 6, r: 6 });
     expect(pairFirstEngage(b, bai!.cell, gu!.cell)).toBeLessThan(beforeEngage);
@@ -53,14 +53,14 @@ describe('白骨岭 · 已激活白骨布阵覆盖', () => {
   it('已激活且布局未变：纯布阵不无条件左移', () => {
     const b = new Battle(20260809, 1, mapById('baiguling'));
     unlockCells(b, [{ c: 5, r: 6 }, { c: 6, r: 6 }, { c: 7, r: 6 }]);
-    b.words.set(cellKey(6, 6), { char: '白', general: 'baigujing', tier: 1, cell: { c: 6, r: 6 } });
-    b.words.set(cellKey(7, 6), { char: '骨', general: 'baigujing', tier: 1, cell: { c: 7, r: 6 } });
+    b.words.set(cellKey(6, 6), { char: '太', general: 'taibai', tier: 1, cell: { c: 6, r: 6 } });
+    b.words.set(cellKey(7, 6), { char: '白', general: 'taibai', tier: 1, cell: { c: 7, r: 6 } });
     b.status = 'playing';
 
     const view = (b as unknown as { buildPlayerAutoView(): AutoPlaceView }).buildPlayerAutoView();
     planAutoPlaceSteps(view, { rng: () => 0, maxSteps: 30 });
 
-    expect(b.words.get(cellKey(6, 6))?.char).toBe('白');
-    expect(b.words.get(cellKey(7, 6))?.char).toBe('骨');
+    expect(b.words.get(cellKey(6, 6))?.char).toBe('太');
+    expect(b.words.get(cellKey(7, 6))?.char).toBe('白');
   });
 });

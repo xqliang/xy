@@ -249,7 +249,7 @@ export const TUNING = {
   heroChargeStunDmgMul: 2.0, // 牛魔/青牛定身附带重创
   heroKnockDmgMul: 1.2, // 击退附带轻伤
   heroSlowDmgMulMain: 2.8, // 白龙减速附带撕咬（再加强，弥补其单体定位的总量短板）
-  heroSlowDmgMulTransit: 1.5, // 白骨减速附带轻伤
+  heroSlowDmgMulTransit: 1.5, // 太白减速附带轻伤
   heroSlowDur: 3,
   heroHealSlowDur: 2.5,
   heroBurnHitMul: 1.6, // 红孩/红袍：大招瞬时命中倍率（低于纯爆发系，余量转入灼烧 DoT）
