@@ -1995,7 +1995,8 @@ function onPointerDown(e: PointerEvent) {
     playSfx('click');
     resumePopup = false;
     if (hit === 'home') abortBattleToMenu(); // 回到首页：清续玩存档 + 回主界面
-    scheduleFrame(); // 继续：关弹窗、恢复仿真步进
+    else if (battle.status === 'ready') battle.startNextWave(); // 继续即开打：跳过恢复后的开波等待(waveGap 倒计时/入场)，不必再点一次页面
+    scheduleFrame();
     return;
   }
   // —— 局内暂停/退出弹窗：继续 / 终止（二次确认·单人） / 认输（PvP 一步到位） —— //
