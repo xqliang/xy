@@ -24,7 +24,7 @@ describe('操作说明弹窗', () => {
       '三步上手',
       '常用操作',
       '兵器',
-      '武将（英雄）',
+      '神将',
       '神兵（武器）',
       '主动与被动技能',
       '蟠桃从哪来',
@@ -39,7 +39,7 @@ describe('操作说明弹窗', () => {
 
   it('兵器说明在武将之前，并介绍四类兵种', () => {
     const titles = HELP_BLOCKS.filter((b) => b.kind === 'title').map((b) => b.text);
-    expect(titles.indexOf('兵器')).toBeLessThan(titles.indexOf('武将（英雄）'));
+    expect(titles.indexOf('兵器')).toBeLessThan(titles.indexOf('神将'));
     const unit = HELP_BLOCKS.find((b) => b.kind === 'body' && b.text.includes('棍猴'));
     expect(unit && unit.kind === 'body' ? unit.text : '').toMatch(/枪|骑|弓/);
   });
@@ -143,7 +143,7 @@ describe('操作说明弹窗', () => {
   it('可命中章节内的跳转链接', () => {
     const ctx = makeCtx();
     const layoutH = helpContentHeight(ctx);
-    // 滚到接近底部，命中「相关页面」里的英雄图鉴链接附近
+    // 滚到接近底部，命中「相关页面」里的神将图鉴链接附近
     const scrollY = Math.max(0, layoutH - 200);
     const area = helpScrollArea();
     // 在内容区左侧扫一遍，至少应能命中某个 link

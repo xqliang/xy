@@ -41,7 +41,7 @@ export const BOARD_Y = HUD_H + 12;
 export const BOARD_H = CELL * ROWS;
 export const TRAY_Y = BOARD_Y + BOARD_H + 8; // 候选区行
 export const TRAY_H = 78; // 候选区行高（放大：候选槽≈地图格子大小）
-export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「营」拖令牌部署时误点征兵）
+export const CTRL_Y = TRAY_Y + TRAY_H + 26; // 控制按钮行（与候选区拉开间距，避免从「宫」拖令牌部署时误点征兵）
 export const CTRL_H = 80; // 行高预留：容纳更大的征兵按钮，下方 PAS 行据此下移不重叠
 export const PAS_Y = CTRL_Y + CTRL_H + 8; // 被动/强化技能图标行
 export const PAS_H = 46;
@@ -101,7 +101,7 @@ export function getButtons(b: Battle): Button[] {
   if (showAutoplaceBtn()) {
     btns.push({ id: 'autoplace', label: '布阵', x: trayRightX, y: TRAY_Y + 6, w: VIEW_W - trayRightX - 10, h: TRAY_H - 12, enabled: true });
   }
-  // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免从「营」拖令牌部署时误点
+  // 征兵：主 CTA，加大(200×78)且比两翼按钮更靠下，配合上移的行间距，避免从「宫」拖令牌部署时误点
   btns.push({ id: 'summon', label: summonLabel, x: 180, y, w: 200, h: 78, enabled: canSummon });
   // 两翼主动技能圆形图标：紧贴「征兵」两侧、与之垂直居中（对齐竞品）。仅渲染已装备的槽。
   const ACT_D = 60; // 圆直径
@@ -1013,7 +1013,7 @@ const CAMP_SCALE = 1.2; // 营帐屋身+屋顶整体缩放
 const CAMP_X = 12;
 const CAMP_W = 48 * CAMP_SCALE;
 const CAMP_RIBBON_SRC_X = CAMP_X + CAMP_W / 2;
-const TRAY_LEFT = 80; // 左侧留给"营"标（与候选槽拉开更大间距）
+const TRAY_LEFT = 80; // 左侧留给"宫"标（与候选槽拉开更大间距）
 const TRAY_SLOT = 74; // 候选槽间距（可见槽 ≈ TRAY_SLOT-6 = 68，与地图格子同宽）
 export function trayIndexAt(x: number, y: number): number | null {
   if (y < TRAY_Y || y > TRAY_Y + TRAY_H) return null;
@@ -1397,7 +1397,7 @@ export function summonAnimDone(b: Battle): boolean {
   return traySlotAnimDone(b, Math.max(0, TUNING.traySize - 1));
 }
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 营帐：棕色屋身(带「营」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
+  // 营帐：棕色屋身(带「宫」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
   const campX = CAMP_X, campY = TRAY_Y + 4, campW = CAMP_W, campH = TRAY_H - 8;
   const roofH = 16 * CAMP_SCALE; // 屋顶高
   const BODY_SHRINK = 6 * CAMP_SCALE; // 棕色屋身减矮量
@@ -1407,7 +1407,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const stackH = bodyH + roofH;
   const stackTop = campY + (campH - stackH) / 2;
   const bodyY = stackTop + roofH; // 屋身顶沿 = 屋顶铰链；屋顶向上画 roofH
-  // —— 屋身（棕色木屋身 + 「营」字）——
+  // —— 屋身（棕色木屋身 + 「宫」字）——
   const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
   wood.addColorStop(0, '#8a5626');
   wood.addColorStop(1, '#6d431d');
@@ -1421,7 +1421,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.font = `bold ${Math.round(22 * CAMP_SCALE)}px "PingFang SC", sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('营', campX + campW / 2, bodyY + bodyH / 2 + 1);
+  ctx.fillText('宫', campX + campW / 2, bodyY + bodyH / 2 + 1);
   // —— 屋顶（手绘红顶，以底左角为铰链，逆时针=负角）——
   const roofAng = campRoofAngle(b.summonAnimT);
   ctx.save();
@@ -1464,7 +1464,7 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.moveTo(RIDGE_INSET, -roofH + 2); ctx.lineTo(campW - RIDGE_INSET, -roofH + 2);
   ctx.stroke();
   ctx.restore();
-  // 5 个候选槽：丝带从「营」左→右错开伸出，短暂满长后从营端收回，再出图标
+  // 5 个候选槽：丝带从「宫」左→右错开伸出，短暂满长后从营端收回，再出图标
   const EXTEND_STAGGER = SUMMON_EXTEND_STAGGER; // 相邻槽伸出起点延迟（左→右）
   const EXTEND_DUR = SUMMON_EXTEND_DUR;
   const HOLD = SUMMON_HOLD;

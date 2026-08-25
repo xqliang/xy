@@ -950,8 +950,8 @@ function firstHeroWordSequence(): TutorialSequence {
     steps: [
       {
         id: 'heroWord',
-        title: '什么是英雄',
-        text: '这是英雄字牌，未激活的英雄字没有攻击力，需要部两个左右连着的字才能激活英雄（比如"大圣"）。英雄比普通兵攻击高，有各自的大招。',
+        title: '什么是神将',
+        text: '这是神将字牌，未激活的神将字没有攻击力，需要部两个左右连着的字才能激活神将（比如"大圣"）。神将比普通兵攻击高，有各自的大招。',
         getAnchor: firstHeroWordAnchor,
       },
     ],
@@ -1033,8 +1033,8 @@ function firstHeroComboSequence(): TutorialSequence {
     steps: [
       {
         id: 'heroCombo',
-        title: '怎么激活英雄',
-        text: '把同一位英雄的两张字牌拼到左右相邻，就能激活英雄并获得强力效果。',
+        title: '怎么激活神将',
+        text: '把同一位神将的两张字牌拼到左右相邻，就能激活神将并获得强力效果。',
         getAnchor: firstHeroComboAnchor,
       },
     ],
@@ -1086,7 +1086,7 @@ function firstFragmentDropSequence(): TutorialSequence {
       {
         id: 'fragmentInfo',
         title: '武器碎片是什么',
-        text: '击杀怪物时有机会掉落神兵碎片，武器碎片可以兑换武器，加强对应英雄的攻击，点这张卡片即可领取。',
+        text: '击杀怪物时有机会掉落神兵碎片，武器碎片可以兑换武器，加强对应神将的攻击，点这张卡片即可领取。',
         getAnchor: () => weaponPickupRect(0),
       },
       {

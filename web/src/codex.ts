@@ -428,7 +428,7 @@ export function codexWheel(deltaY: number): void {
 
 function drawCodexTabs(ctx: CanvasRenderingContext2D): void {
   drawInkActionButton(ctx, TAB_UNIT, '兵器', false, codexTab === 'unit' ? 'primary' : 'secondary');
-  drawInkActionButton(ctx, TAB_HERO, '英雄', false, codexTab === 'hero' ? 'primary' : 'secondary');
+  drawInkActionButton(ctx, TAB_HERO, '神将', false, codexTab === 'hero' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_MONSTER, '妖怪', false, codexTab === 'monster' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_SKILL, '技能', false, codexTab === 'skill' ? 'primary' : 'secondary');
   drawInkActionButton(ctx, TAB_RANK, '境界', false, codexTab === 'rank' ? 'primary' : 'secondary');
