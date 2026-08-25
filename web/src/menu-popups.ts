@@ -337,7 +337,9 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
 
 // —— 选择关卡弹窗 —— //
 const MAP_PW = 420;
-const MAP_PH = 560;
+// 面板加高：5 图 2 列 = 3 行卡片（112 顶栏 + 3×160-12 = 596），560 放不下第 3 行；
+// 加高到 700 默认全可见，行数更多时卡片区可拖拽滚动（见 mapMaxScroll/mapScrollArea）。
+const MAP_PH = 700;
 const MAP_PX = (VIEW_W - MAP_PW) / 2;
 const MAP_PY = (VIEW_H - MAP_PH) / 2 - 8;
 const MAP_CLOSE = inkPopupCloseRect(MAP_PX, MAP_PY);
@@ -347,13 +349,38 @@ const MAP_CARD_H = 148;
 const MAP_CARD_GAP = 12;
 const MAP_GRID_TOP = MAP_PY + 112;
 const MAP_LABEL_H = 24;
+// 卡片滚动视区：网格内容超出面板时在此区域内拖拽滚动（同帮助弹窗范式）
+const MAP_SCROLL_PAD = 8; // 视区上下各留的呼吸边
+const MAP_SCROLL = {
+  x: MAP_PX + 24 - MAP_SCROLL_PAD,
+  y: MAP_GRID_TOP - MAP_SCROLL_PAD,
+  w: MAP_PW - 48 + MAP_SCROLL_PAD * 2,
+  h: MAP_PH - 112 - 16 + MAP_SCROLL_PAD, // 面板底距 16
+};
 
-function mapCardRect(index: number): { x: number; y: number; w: number; h: number } {
+/** 网格内容总高（2 列 × N 行卡片，含行间距） */
+export function mapGridContentHeight(): number {
+  const rows = Math.ceil(MAPS.length / 2);
+  return rows * (MAP_CARD_H + MAP_CARD_GAP) - MAP_CARD_GAP;
+}
+
+/** 卡片区最大滚动量：内容不超高时为 0（当前 5 图 3 行默认全可见，滚动为更多图预留） */
+export function mapMaxScroll(): number {
+  return Math.max(0, mapGridContentHeight() - MAP_SCROLL.h);
+}
+
+/** 卡片区滚动视区（拖拽滚动命中判定用） */
+export function mapScrollArea(): { x: number; y: number; w: number; h: number } {
+  return MAP_SCROLL;
+}
+
+/** 第 index 张地图卡的矩形（scrollY 为卡片区滚动偏移）。导出供布局测试断言。 */
+export function mapCardRect(index: number, scrollY = 0): { x: number; y: number; w: number; h: number } {
   const col = index % 2;
   const row = Math.floor(index / 2);
   return {
     x: MAP_PX + 24 + col * (MAP_CARD_W + MAP_CARD_GAP),
-    y: MAP_GRID_TOP + row * (MAP_CARD_H + MAP_CARD_GAP),
+    y: MAP_GRID_TOP - scrollY + row * (MAP_CARD_H + MAP_CARD_GAP),
     w: MAP_CARD_W,
     h: MAP_CARD_H,
   };
@@ -362,16 +389,18 @@ function mapCardRect(index: number): { x: number; y: number; w: number; h: numbe
 export type MapPopupHit =
   | { kind: 'close' }
   | { kind: 'daily' }
+  | { kind: 'scroll' } // 卡片滚动视区：按下进入拖拽滚动状态（未拖动抬起=点选卡片）
   | { kind: 'map'; mapId: string }
   | null;
 
-export function mapPopupHitAt(x: number, y: number): MapPopupHit {
+export function mapPopupHitAt(x: number, y: number, scrollY = 0): MapPopupHit {
   if (inRect(x, y, MAP_CLOSE)) return { kind: 'close' };
   if (inRect(x, y, MAP_DAILY)) return { kind: 'daily' };
   for (let i = 0; i < MAPS.length; i++) {
-    const r = mapCardRect(i);
+    const r = mapCardRect(i, scrollY);
     if (inRect(x, y, r)) return { kind: 'map', mapId: MAPS[i]!.id };
   }
+  if (inRect(x, y, MAP_SCROLL)) return { kind: 'scroll' };
   if (x >= MAP_PX && x <= MAP_PX + MAP_PW && y >= MAP_PY && y <= MAP_PY + MAP_PH) return null;
   return { kind: 'close' };
 }
@@ -521,6 +550,7 @@ export function drawMapPopup(
   ctx: CanvasRenderingContext2D,
   selection: MapSelection,
   dailyMapName: string,
+  scrollY = 0,
 ): void {
   drawInkPopupFrame(ctx, MAP_PX, MAP_PY, MAP_PW, MAP_PH, '选择关卡', MAP_CLOSE);
 
@@ -540,9 +570,15 @@ export function drawMapPopup(
   ctx.fillStyle = '#7a5830';
   ctx.fillText(`今日：${dailyMapName}`, MAP_DAILY.x + 14, MAP_DAILY.y + MAP_DAILY.h / 2 + 10);
 
+  // 卡片区裁剪到滚动视区内再画（行数超出面板时随 scrollY 上移，超出部分不外溢）
+  const sy = Math.max(0, Math.min(mapMaxScroll(), scrollY));
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(MAP_SCROLL.x, MAP_SCROLL.y, MAP_SCROLL.w, MAP_SCROLL.h);
+  ctx.clip();
   for (let i = 0; i < MAPS.length; i++) {
     const map = MAPS[i]!;
-    const r = mapCardRect(i);
+    const r = mapCardRect(i, sy);
     const picked = selection.mode === 'fixed' && selection.mapId === map.id;
     drawMapThumb(ctx, map.id, r);
     roundRect(ctx, r.x, r.y, r.w, r.h, 8);
@@ -553,5 +589,17 @@ export function drawMapPopup(
     ctx.font = 'bold 14px "PingFang SC", serif';
     ctx.textAlign = 'center';
     ctx.fillText(map.name, r.x + r.w / 2, r.y + r.h - MAP_LABEL_H / 2 + 1);
+  }
+  ctx.restore();
+
+  // 滚动条：内容不超高时不画（当前 5 图默认全可见，无滚动条）
+  const max = mapMaxScroll();
+  if (max > 0) {
+    const trackH = MAP_SCROLL.h - 8;
+    const thumbH = Math.max(24, (MAP_SCROLL.h / mapGridContentHeight()) * trackH);
+    const thumbY = MAP_SCROLL.y + 4 + (sy / max) * (trackH - thumbH);
+    ctx.fillStyle = 'rgba(90,60,30,0.22)';
+    roundRect(ctx, MAP_SCROLL.x + MAP_SCROLL.w - 5, thumbY, 4, thumbH, 2);
+    ctx.fill();
   }
 }

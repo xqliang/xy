@@ -300,7 +300,7 @@ function openStaminaPopup(): void {
   menuPopupsLazy.ensure(() => { staminaPopupToast = ''; menuPopup = 'stamina'; scheduleFrame(); });
 }
 function openMapPopup(): void {
-  menuPopupsLazy.ensure(() => { menuPopup = 'map'; scheduleFrame(); });
+  menuPopupsLazy.ensure(() => { menuPopup = 'map'; mapScrollY = 0; scheduleFrame(); });
 }
 
 // PvP 网络适配：把 pvp-client 的五个函数组成 PvpMatchNet 对象喂给状态机。
@@ -715,6 +715,13 @@ let helpDragged = false;
 let helpDownX = 0;
 let helpDownY = 0;
 let helpDownScroll = 0;
+// 地图选择弹窗：卡片区拖拽滚动（同帮助弹窗范式；当前 5 图全可见，滚动为更多图预留）
+let mapScrollY = 0;
+let mapPointerActive = false;
+let mapDragged = false;
+let mapDownX = 0;
+let mapDownY = 0;
+let mapDownScroll = 0;
 
 function openHelpLink(id: HelpLinkId): void {
   menuPopup = 'none';
@@ -1524,7 +1531,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     return true;
   }
   if (menuPopup === 'map') {
-    const hit = menuPopupsLazy.get()!.mapPopupHitAt(x, y);
+    const hit = menuPopupsLazy.get()!.mapPopupHitAt(x, y, mapScrollY);
     if (hit === null) return true;
     playSfx('click');
     if (hit.kind === 'close') {
@@ -1538,13 +1545,12 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
       menuPopup = 'none';
       return true;
     }
-    if (hit.kind === 'map') {
-      mapSelection = saveMapSelection({ mode: 'fixed', mapId: hit.mapId });
-      currentMap = resolveMap(mapSelection);
-      menuToast = `已切换：${currentMap.name}`;
-      menuPopup = 'none';
-      return true;
-    }
+    // 点卡片/滚动视区：先进拖拽态，未拖动抬起才算点选（拖动=滚动卡片区）
+    mapPointerActive = true;
+    mapDragged = false;
+    mapDownX = x;
+    mapDownY = y;
+    mapDownScroll = mapScrollY;
     return true;
   }
   const hit = menuPopupsLazy.get()!.staminaPopupHitAt(x, y);
@@ -1886,7 +1892,7 @@ function onPointerDown(e: PointerEvent) {
       return;
     }
     if (handleMenuPopupPointer(x, y)) {
-      if (menuSliderDrag || helpPointerActive || profileScrollDrag) canvas.setPointerCapture(e.pointerId);
+      if (menuSliderDrag || helpPointerActive || mapPointerActive || profileScrollDrag) canvas.setPointerCapture(e.pointerId);
       return;
     }
     if (menuPopup === 'none' && !merchant.open && menuVersionHitAt(x, y)) {
@@ -2162,6 +2168,13 @@ function onPointerMove(e: PointerEvent) {
       scheduleFrame();
       return;
     }
+    if (mapPointerActive && menuPopup === 'map') {
+      const dy = y - mapDownY;
+      if (Math.abs(dy) > 6) mapDragged = true;
+      mapScrollY = Math.max(0, Math.min(menuPopupsLazy.get()!.mapMaxScroll(), mapDownScroll - dy));
+      scheduleFrame();
+      return;
+    }
     if (menuDownId) {
       const next = menuButtonAt(x, y) === menuDownId ? menuDownId : null;
       if (next !== menuPressedId) {
@@ -2245,6 +2258,25 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       if (!cancelled && !wasDrag) {
         const hit = menuHelpLazy.get()!.helpPopupHitAt(upX, upY, helpScrollY, ctx);
         if (hit?.kind === 'link') openHelpLink(hit.id);
+      }
+      return;
+    }
+    if (mapPointerActive) {
+      const upX = e && !cancelled ? toLogical(e.clientX, e.clientY).x : mapDownX;
+      const upY = e && !cancelled ? toLogical(e.clientX, e.clientY).y : mapDownY;
+      const wasDrag = mapDragged;
+      mapPointerActive = false;
+      mapDragged = false;
+      // 未拖动（=点选）且未取消：按抬起位置重新命中，命中卡片才切换关卡
+      if (!cancelled && !wasDrag && menuPopup === 'map') {
+        const hit = menuPopupsLazy.get()!.mapPopupHitAt(upX, upY, mapScrollY);
+        if (hit?.kind === 'map') {
+          mapSelection = saveMapSelection({ mode: 'fixed', mapId: hit.mapId });
+          currentMap = resolveMap(mapSelection);
+          menuToast = `已切换：${currentMap.name}`;
+          menuPopup = 'none';
+          scheduleFrame();
+        }
       }
       return;
     }
@@ -2481,7 +2513,7 @@ function frame(now: number): void {
     }
     if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings);
     else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
-    else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name);
+    else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name, mapScrollY);
     else if (menuPopup === 'help') menuHelpLazy.get()!.drawHelpPopup(ctx, helpScrollY);
     else if (menuPopup === 'profile' && profilePopup) drawProfilePopup(ctx, profilePopup);
     if (merchant.open) {
