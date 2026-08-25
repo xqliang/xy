@@ -1816,6 +1816,9 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   } else if (id === 'liushahe') {
     // 流沙河：砂石闸门贴图左右半扇开合
     drawLiushaheSandGate(ctx, x, y, off);
+  } else if (id === 'huangfengling') {
+    // 黄风岭：风蚀岩闸门贴图左右半扇开合
+    drawHuangfenglingRockGate(ctx, x, y, off);
   } else {
     // 兜底：两扇素色闸门
     const w = CELL * 0.4, h = CELL * 0.52;
@@ -1833,19 +1836,27 @@ function drawGateAt(ctx: CanvasRenderingContext2D, cell: { c: number; r: number 
   ctx.restore();
 }
 
-/** 流沙河出怪口：Seedream 砂石闸门左右对开 */
-function drawLiushaheSandGate(ctx: CanvasRenderingContext2D, x: number, y: number, off: number) {
-  const spr = sprite('gate-liushahe');
+/** 贴图闸门（左右半扇对开）：流沙河砂石门 / 黄风岭风蚀岩门共用 */
+function drawSpriteSplitGate(
+  ctx: CanvasRenderingContext2D,
+  key: 'gate-liushahe' | 'gate-huangfengling',
+  x: number,
+  y: number,
+  off: number,
+  fallbackFill: string,
+  fallbackStroke: string,
+) {
+  const spr = sprite(key);
   const h = CELL * 0.72;
   const w = CELL * 0.78;
   if (!spr || !spr.width) {
     const lw = CELL * 0.42, lh = CELL * 0.55;
     const leaf = (lx: number) => {
       roundRect(ctx, lx, y - lh / 2, lw, lh, 5);
-      ctx.fillStyle = 'rgba(196,158,92,0.9)';
+      ctx.fillStyle = fallbackFill;
       ctx.fill();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(90,60,30,0.75)';
+      ctx.strokeStyle = fallbackStroke;
       ctx.stroke();
     };
     leaf(x - off - lw);
@@ -1856,6 +1867,16 @@ function drawLiushaheSandGate(ctx: CanvasRenderingContext2D, x: number, y: numbe
   // 左半扇 / 右半扇：从贴图中线切开，随 off 左右拉开
   ctx.drawImage(spr, 0, 0, spr.width / 2, spr.height, x - half - off, y - h / 2, half, h);
   ctx.drawImage(spr, spr.width / 2, 0, spr.width / 2, spr.height, x + off, y - h / 2, half, h);
+}
+
+/** 流沙河出怪口：Seedream 砂石闸门左右对开 */
+function drawLiushaheSandGate(ctx: CanvasRenderingContext2D, x: number, y: number, off: number) {
+  drawSpriteSplitGate(ctx, 'gate-liushahe', x, y, off, 'rgba(196,158,92,0.9)', 'rgba(90,60,30,0.75)');
+}
+
+/** 黄风岭出怪口：Seedream 风蚀岩闸门左右对开 */
+function drawHuangfenglingRockGate(ctx: CanvasRenderingContext2D, x: number, y: number, off: number) {
+  drawSpriteSplitGate(ctx, 'gate-huangfengling', x, y, off, 'rgba(196,166,106,0.9)', 'rgba(110,84,40,0.75)');
 }
 
 /** 出怪指引：从路径「出口后第 2 个在网格内的点」起画，避免与闸门重叠 */
@@ -2097,6 +2118,10 @@ function drawFence(ctx: CanvasRenderingContext2D, b: Battle) {
     drawLiushaheWaterFence(ctx, b);
     return;
   }
+  if (b.map.id === 'huangfengling') {
+    drawHuangfenglingSandFence(ctx, b);
+    return;
+  }
   const y = BOARD_Y + FENCE_ROW * CELL; // 玩家半场顶边 = 栅栏线
   const gaps = new Set(b.map.fenceGaps);
   ctx.save();
@@ -2120,6 +2145,15 @@ function drawLiushaheWaterFence(ctx: CanvasRenderingContext2D, _b: Battle) {
   const y = BOARD_Y + FENCE_ROW * CELL;
   drawTiledHFence(ctx, 'fence-liushahe', y, CELL * 0.26, () => {
     ctx.fillStyle = 'rgba(180,150,70,0.9)';
+    ctx.fillRect(BOARD_X, y - CELL * 0.08, COLS * CELL, CELL * 0.16);
+  });
+}
+
+// 黄风岭：Seedream 风沙岩壁带横向无缝平铺，严格隔断上下半场
+function drawHuangfenglingSandFence(ctx: CanvasRenderingContext2D, _b: Battle) {
+  const y = BOARD_Y + FENCE_ROW * CELL;
+  drawTiledHFence(ctx, 'fence-huangfengling', y, CELL * 0.26, () => {
+    ctx.fillStyle = 'rgba(154,123,50,0.9)';
     ctx.fillRect(BOARD_X, y - CELL * 0.08, COLS * CELL, CELL * 0.16);
   });
 }
@@ -2178,7 +2212,7 @@ function drawPansidongSilkFence(ctx: CanvasRenderingContext2D, b: Battle) {
 /** 横向栅栏条：优先整条拉伸铺满（宽幅 Seedream 条更稳），必要时再循环平铺 */
 function drawTiledHFence(
   ctx: CanvasRenderingContext2D,
-  key: 'fence-liushahe' | 'fence-pansidong',
+  key: 'fence-liushahe' | 'fence-pansidong' | 'fence-huangfengling',
   y: number,
   drawH: number,
   fallback: () => void,

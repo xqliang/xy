@@ -37,7 +37,7 @@ try {
   await page.waitForFunction('window.__game.assetsReady?.() === true', { timeout: 20000 }).catch(() => {});
   await new Promise((r) => setTimeout(r, 1500)); // 等懒加载图片 decode
 
-  const need = ['map-huangfengling', 'monster-minion-huangfengling', 'monster-boss-huangfengling', 'monster-cavalry-huangfengling'];
+  const need = ['map-huangfengling', 'monster-minion-huangfengling', 'monster-boss-huangfengling', 'monster-cavalry-huangfengling', 'fence-huangfengling', 'gate-huangfengling'];
   const hit = need.map((k) => [...fetched].some((u) => u.includes(k)));
   console.log('新资源网络请求命中：', JSON.stringify(Object.fromEntries(need.map((k, i) => [k, hit[i]]))));
   for (let i = 0; i < need.length; i++) if (!hit[i]) fail(`${need[i]} 未被请求（资源键未接线或未上传）`);
@@ -64,6 +64,35 @@ try {
 
   // 像素级验证：地图背景非纯色（土黄渐变+山岭纹理 → 色彩多样性高）
   const anaPage = await browser.newPage();
+  // 栅栏带渲染验证：中线 y≈BOARD_Y+FENCE_ROW*CELL 处一条水平带，贴图平铺应出现
+  // 明显的横向纹理起伏（逐列亮度方差远大于纯色回退条）；同时出怪口应有岩门贴图内容。
+  const fenceStats = await anaPage.evaluate(async (b64) => {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('load fail')); img.src = 'data:image/png;base64,' + b64; });
+    const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    // 画布在页面上可能缩放，找游戏视口内实际位置：按截图原样全幅扫一条中线附近的水平带
+    // （VIEW 560 宽居中；BOARD_Y=84, FENCE_ROW=5, CELL=68 → 视口内 y=424；等比定位）
+    const x0 = Math.round((cv.width - 560 * (cv.height / 1044)) / 2); // 视口左缘（等高比）
+    const scale = cv.height / 1044;
+    const fy = Math.round(424 * scale);
+    const lums = [];
+    for (let dx = 20; dx < 540; dx += 4) {
+      const d = ctx.getImageData(x0 + Math.round(dx * scale), fy, 1, 1).data;
+      lums.push(0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2]);
+    }
+    const mean = lums.reduce((a, b) => a + b, 0) / lums.length;
+    const varr = lums.reduce((a, b) => a + (b - mean) ** 2, 0) / lums.length;
+    const bins = new Set();
+    for (let i = 0; i < 540; i += 5) {
+      const d = ctx.getImageData(x0 + Math.round(i * scale), fy, 1, 1).data;
+      bins.add(`${d[0] >> 4},${d[1] >> 4},${d[2] >> 4}`);
+    }
+    return { lumStd: Math.sqrt(varr), bins: bins.size };
+  }, Buffer.from(await page.screenshot({ type: 'png' })).toString('base64'));
+  console.log('栅栏带纹理统计：', JSON.stringify(fenceStats));
+  if (fenceStats.bins < 8) fail('栅栏带色彩单一——贴图疑似未渲染（走了矢量回退？）：' + JSON.stringify(fenceStats));
   const stats = await anaPage.evaluate(async (b64) => {
     const img = new Image();
     await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('load fail')); img.src = 'data:image/png;base64,' + b64; });
