@@ -26,6 +26,7 @@ import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
 import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
+import { drawElementBadge } from './wuxing-ui';
 import { showAutoplaceBtn } from './dev-flags';
 import { isWeChat } from './platform';
 
@@ -2911,6 +2912,8 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
     const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
     drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
+    // 怪物头顶右上角挂五行徽章（兵种/未知元素为 null 时不画）
+    drawElementBadge(ctx, x + rad0 * 0.95, y - rad0 * 0.95, Math.max(6, CELL * 0.15), m.element);
   }
 }
 
@@ -4016,9 +4019,9 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
     const fallProgress = d.y >= d.peakY ? (d.y - d.peakY) / DAMAGE_FLOAT_FALL : 0;
     const alpha = 1 - Math.min(1, Math.max(0, fallProgress));
     const popT = Math.min(1, d.age / 0.1);
-    const popScale = 1 + (1 - popT) * (d.crit ? 0.32 : 0.22);
-    const text = d.crit ? `暴击! ${Math.round(d.amount)}` : `${Math.round(d.amount)}`;
-    const basePx = d.crit ? 17 : 14;
+    const popScale = 1 + (1 - popT) * (d.crit ? 0.32 : d.wuxing === 'adv' ? 0.28 : 0.22);
+    const text = d.crit ? `暴击! ${Math.round(d.amount)}` : `${d.wuxing === 'adv' ? '克 ' : ''}${Math.round(d.amount)}`;
+    const basePx = d.crit ? 17 : d.wuxing === 'adv' ? 16 : 14;
     const fontPx = Math.round(basePx * popScale);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -4027,7 +4030,7 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillStyle = d.crit ? '#ff5a3c' : '#fff8e8';
+    ctx.fillStyle = d.crit ? '#ff5a3c' : d.wuxing === 'adv' ? '#ffd84d' : d.wuxing === 'dis' ? '#9aa0a6' : '#fff8e8';
     ctx.strokeText(text, px, py);
     ctx.fillText(text, px, py);
     ctx.restore();
@@ -8664,6 +8667,8 @@ function drawActiveGeneralGroup(
   }
   drawHeroWordWeapon(ctx, g);
   ctx.restore();
+  // 武将头顶右上角挂五行徽章（a/z 是两格中心，徽章挂在右侧格上方一点）
+  drawElementBadge(ctx, z.x + CELL * 0.3, z.y - CELL * 0.36, CELL * 0.17, g.def.element);
 }
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号

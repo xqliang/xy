@@ -1,15 +1,16 @@
 // 图鉴：兵器 / 英雄 / 妖怪 / 技能 / 境界 五 Tab。从主菜单进入，返回主菜单。
 import { VIEW_W, VIEW_H } from './render';
-import { UNITS, getUnitStat, towerPOW, MAX_TIER, monsterPOW, type UnitType } from '@core';
+import { UNITS, getUnitStat, towerPOW, MAX_TIER, monsterPOW, type UnitType, type Element } from '@core';
 import { sprite, unitAsset, miniBossSprite, type AssetKey } from './assets';
 import { MAPS, type GameMap } from './board';
 import { GENERALS, generalStat, generalPOW, type GeneralDef } from './generals';
-import { TUNING, Battle, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS, type MiniBossKind, type MonsterSkill } from './battle';
+import { TUNING, Battle, SKILL_META, MAP_SKILL, MINI_BOSS_META, MINI_BOSS_KINDS, MAP_ELEMENT, type MiniBossKind, type MonsterSkill } from './battle';
 import { enabledActives, MAX_EQUIPPED_ACTIVES } from './actives';
 import { enabledPassives, MAX_EQUIPPED_PASSIVES } from './passives';
 import { skillRarityColor } from './merchant';
 import { drawInkActionButton, drawRankStarsAnimated, roundRect } from './menu-ui';
 import { drawSkillGlyph } from './skill-icon';
+import { drawElementBadge } from './wuxing-ui';
 import { STARS_PER_TIER, LADDER_LEN, rankName, type RankState } from './rank';
 import {
   isEquipped,
@@ -590,6 +591,8 @@ function drawMapMonsterRow(ctx: CanvasRenderingContext2D, mapId: string, mapName
   ctx.fillStyle = '#ff9ab0';
   ctx.font = 'bold 15px "PingFang SC", sans-serif';
   ctx.fillText(mapName, x + 12, y + 12);
+  // 地图行右上角五行徽章（避开左侧地图名，贴行顶右缘；MAP_ELEMENT 未收录的图不画）
+  drawElementBadge(ctx, x + w - 16, y + 15, 8, MAP_ELEMENT[mapId] ?? null);
 
   ctx.strokeStyle = 'rgba(162,74,106,0.25)';
   ctx.lineWidth = 1;
@@ -861,6 +864,8 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
     const s = Math.min(box / heroSpr.width, box / heroSpr.height);
     ctx.drawImage(heroSpr, x + 10, y + 10, heroSpr.width * s, heroSpr.height * s);
   }
+  // 武将卡左上角五行徽章（武将必有属性，直接画）
+  drawElementBadge(ctx, x + 16, y + 16, 8, g.element);
 
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
