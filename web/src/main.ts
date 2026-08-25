@@ -421,6 +421,44 @@ function drawDisconnectOverlay(ctx: CanvasRenderingContext2D, title: string, bod
   ctx.fillText('可点右上 × 提前结束', NET_POP_X + NET_POP_W / 2, bodyTop + 116);
 }
 
+// —— 续玩选择弹窗：中途恢复对局时弹出，让玩家选「继续」或「回到首页」（替代原 toast 提示）——
+let resumePopup = false;
+const RESUME_POP_W = 320;
+const RESUME_POP_H = 190;
+const RESUME_POP_X = (VIEW_W - RESUME_POP_W) / 2;
+const RESUME_POP_Y = Math.round((VIEW_H - RESUME_POP_H) / 2);
+const RESUME_BTN_W = 132;
+const RESUME_BTN_H = 46;
+const RESUME_BTN_GAP = 16;
+const RESUME_CONTINUE_BTN = {
+  x: RESUME_POP_X + (RESUME_POP_W - RESUME_BTN_W * 2 - RESUME_BTN_GAP) / 2,
+  y: RESUME_POP_Y + RESUME_POP_H - RESUME_BTN_H - 22,
+  w: RESUME_BTN_W,
+  h: RESUME_BTN_H,
+};
+const RESUME_HOME_BTN = { x: RESUME_CONTINUE_BTN.x + RESUME_BTN_W + RESUME_BTN_GAP, y: RESUME_CONTINUE_BTN.y, w: RESUME_BTN_W, h: RESUME_BTN_H };
+
+function drawResumePopup(ctx: CanvasRenderingContext2D): void {
+  const closeR = inkPopupCloseRect(RESUME_POP_X, RESUME_POP_Y);
+  const bodyTop = drawInkPopupFrame(ctx, RESUME_POP_X, RESUME_POP_Y, RESUME_POP_W, RESUME_POP_H, '继续上次对局？', closeR);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = '15px "PingFang SC", serif';
+  const msg = battle.wave >= 1 ? `检测到未完成的对局（第 ${battle.wave} 波）` : '检测到未完成的对局';
+  ctx.fillText(msg, RESUME_POP_X + RESUME_POP_W / 2, bodyTop + 26);
+  drawInkActionButton(ctx, RESUME_CONTINUE_BTN, '继续', false, 'primary');
+  drawInkActionButton(ctx, RESUME_HOME_BTN, '回到首页', false, 'secondary');
+}
+
+function resumePopupHitAt(x: number, y: number): 'continue' | 'home' | null {
+  const inR = (r: { x: number; y: number; w: number; h: number }) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  if (inR(inkPopupCloseRect(RESUME_POP_X, RESUME_POP_Y))) return 'continue'; // × = 继续（关掉「是否继续」弹窗即继续玩）
+  if (inR(RESUME_CONTINUE_BTN)) return 'continue';
+  if (inR(RESUME_HOME_BTN)) return 'home';
+  return null; // 模态：点其他处不关闭，必须二选一
+}
+
 /** 我方断线弹窗：上半区「我方连不上服务器」+ 10s 倒计时，结束自动退出。
  *  Task 9.4 注：旧 drawNetLatencyHud（右上角单侧延迟）已删除——双方延迟现改由 render.drawHud 画到
  *  顶部中块「波次/境界」左右两侧（见 render.ts drawNetLatencyFlanks，main.ts 每帧 setPvpNetLatency 注入态）。 */
@@ -1219,8 +1257,8 @@ function tryResumeLocalBattle(): boolean {
   pvpExitPopup = false;
   pausePhase = 'main';
   screen = 'battle';
-  // 续玩提示：弹一条 toast 告知从上次进行到的波次恢复（wave 为该 ready 检查点已进行到的波次）。
-  pushBattleToast(battle.wave >= 1 ? `已恢复对局 · 上次进行到第 ${battle.wave} 波` : '已恢复上次对局');
+  // 中途恢复：弹「继续 / 回到首页」选择弹窗（模态、冻结仿真），替代原 toast 提示。
+  resumePopup = true;
   scheduleFrame();
   return true;
 }
@@ -1231,6 +1269,7 @@ function abortBattleToMenu(): void {
   clearBattleToasts(); // 清残留续玩 toast
   ui.paused = false;
   pvpExitPopup = false;
+  resumePopup = false; // 退出对局：清续玩选择弹窗态
   pausePhase = 'main';
   ui.passivePopup = null;
   ui.passivePopupUntil = 0;
@@ -1949,6 +1988,16 @@ function onPointerDown(e: PointerEvent) {
     }
     return;
   }
+  // —— 续玩选择弹窗（中途恢复）：模态，必须选「继续」或「回到首页」，点窗外不关闭 —— //
+  if (resumePopup) {
+    const hit = resumePopupHitAt(x, y);
+    if (hit === null) return;
+    playSfx('click');
+    resumePopup = false;
+    if (hit === 'home') abortBattleToMenu(); // 回到首页：清续玩存档 + 回主界面
+    scheduleFrame(); // 继续：关弹窗、恢复仿真步进
+    return;
+  }
   // —— 局内暂停/退出弹窗：继续 / 终止（二次确认·单人） / 认输（PvP 一步到位） —— //
   // 用纯函数 isPausePopupOpenPure(ui.paused, pvpExitPopup) 同时覆盖单人暂停(ui.paused) 与 PvP 退出弹窗(pvpExitPopup)：
   // 两者都把指针锁进弹窗（模态输入），差别只在仿真是否停（由下方步进门控的 ui.paused 决定）。
@@ -2472,7 +2521,7 @@ function frame(now: number): void {
     // Task 9.5：步进门控用 shouldStepSim()——入参只有 paused/tutorial/settleOpen/netDead，
     // **不含** pvpExitPopup。故 PvP 退出弹窗开着时(pvpExitPopup=true、ui.paused=false) 仿真照常步进，
     // 实现「弹窗不暂停对局」。单人暂停(paused=true)则仍冻结。
-    if (shouldStepSim({ paused: ui.paused, tutorial: !!tutorialOverlay, settleOpen: isSettleOpen(), netDead: pvpNetDead || pvpOppGone })) {
+    if (!resumePopup && shouldStepSim({ paused: ui.paused, tutorial: !!tutorialOverlay, settleOpen: isSettleOpen(), netDead: pvpNetDead || pvpOppGone })) {
       try {
         if (pvpSock && !pvpResult) {
           // PvP（Model C）：本方半场本地权威。累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
@@ -2659,6 +2708,7 @@ function frame(now: number): void {
     if (pvpOppGone && !pvpResult && !pvpSettleResult) drawOppGoneOverlay(ctx, (DISCONNECT_COUNTDOWN_MS - (now - pvpOppGoneStart)) / 1000);
     // 暂停/退出弹窗：与结算、断线互斥（ settle > net-dead > pause 的视觉优先级靠下面的 !isSettleOpen()/!pvpNetDead 保证）。
     if (isPausePopupOpenPure(ui.paused, pvpExitPopup) && !isSettleOpen() && !pvpNetDead) drawPausePopup(ctx, pausePhase, pausePopupContext(!!pvpSock));
+    if (resumePopup) drawResumePopup(ctx); // 中途恢复的「继续/回到首页」选择弹窗（最顶层）
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // Task 10 首局动态引导：非模态箭头 + 「跳过」。仅 battle 屏、引导活跃、且无 modal 教程时画
