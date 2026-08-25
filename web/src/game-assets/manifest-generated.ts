@@ -46,7 +46,7 @@ export const HASHED_URLS: Record<string, string> = {
   "icon-stamina.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/icon-stamina-c5ed6fd4.png",
   "item-shovel.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/item-shovel-b46306bf.png",
   "loading-tangseng.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/loading-tangseng-0e9a2ed9.png",
-  "map-baiguling.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/map-baiguling-ab55fe18.jpg",
+  "map-baiguling.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/map-baiguling-ce4c4be5.jpg",
   "map-huangfengling.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/map-huangfengling-3bec8a1c.jpg",
   "map-huoyanshan.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/map-huoyanshan-4de4e60f.jpg",
   "map-liushahe.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/map-liushahe-981fdc9c.jpg",
