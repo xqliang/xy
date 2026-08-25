@@ -2913,7 +2913,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
     drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
     // 怪物头顶右上角挂五行徽章（兵种/未知元素为 null 时不画）
-    drawElementBadge(ctx, x + rad0 * 0.95, y - rad0 * 0.95, Math.max(6, CELL * 0.15), m.element);
+    drawElementBadge(ctx, x + rad0 * 0.95, y - rad0 * 0.95, Math.max(6, CELL * 0.13), m.element);
   }
 }
 
@@ -8668,7 +8668,7 @@ function drawActiveGeneralGroup(
   drawHeroWordWeapon(ctx, g);
   ctx.restore();
   // 武将头顶右上角挂五行徽章（a/z 是两格中心，徽章挂在右侧格上方一点）
-  drawElementBadge(ctx, z.x + CELL * 0.3, z.y - CELL * 0.36, CELL * 0.17, g.def.element);
+  drawElementBadge(ctx, z.x + CELL * 0.3, z.y - CELL * 0.36, CELL * 0.15, g.def.element);
 }
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
