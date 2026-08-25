@@ -1879,8 +1879,8 @@ function drawHuangfenglingRockGate(ctx: CanvasRenderingContext2D, x: number, y: 
   drawSpriteSplitGate(ctx, 'gate-huangfengling', x, y, off, 'rgba(196,166,106,0.9)', 'rgba(110,84,40,0.75)');
 }
 
-/** 出怪指引：从路径「出口后第 2 个在网格内的点」起画，避免与闸门重叠 */
-function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: number; dc: number; dr: number } | null {
+/** 出怪指引：从路径「出口后第 2 个在网格内的点」起画，避免与闸门重叠；导出供单测校验朝向 */
+export function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: number; dc: number; dr: number } | null {
   let firstInGrid = -1;
   for (let i = 0; i < path.length; i++) {
     const p = path[i]!;
@@ -1893,16 +1893,13 @@ function pathEntranceDir(path: { c: number; r: number }[]): { c: number; r: numb
   // 第 2 格：出口下一格；若路径过短则退回出口格
   const startIdx = firstInGrid + 1 < path.length ? firstInGrid + 1 : firstInGrid;
   const p = path[startIdx]!;
-  const next = path[startIdx + 1];
-  if (!next) {
-    // 已是末点：用「上一格→本格」方向兜底
-    const prev = path[startIdx - 1];
-    if (!prev) return { c: p.c, r: p.r, dc: 1, dr: 0 };
-    const len = Math.hypot(p.c - prev.c, p.r - prev.r) || 1;
-    return { c: p.c, r: p.r, dc: (p.c - prev.c) / len, dr: (p.r - prev.r) / len };
-  }
-  const len = Math.hypot(next.c - p.c, next.r - p.r) || 1;
-  return { c: p.c, r: p.r, dc: (next.c - p.c) / len, dr: (next.r - p.r) / len };
+  // 朝向 = 入场行进方向（上一格 → 本格），不能用「本格 → 下一格」：
+  // 黄风岭这类入场后立刻拐弯的图，拐向会提前画在还没拐的格上，箭头看起来指错方向。
+  // 其它图入场前 3 格共线，两种取法结果一致。
+  const prev = path[startIdx - 1];
+  if (!prev) return { c: p.c, r: p.r, dc: 1, dr: 0 };
+  const len = Math.hypot(p.c - prev.c, p.r - prev.r) || 1;
+  return { c: p.c, r: p.r, dc: (p.c - prev.c) / len, dr: (p.r - prev.r) / len };
 }
 
 /** 沿行程位置的透明度：入口淡入、出口淡出 */

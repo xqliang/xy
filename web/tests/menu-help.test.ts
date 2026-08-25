@@ -41,7 +41,7 @@ describe('操作说明弹窗', () => {
   it('兵器说明在武将之前，并介绍四类兵种', () => {
     const titles = HELP_BLOCKS.filter((b) => b.kind === 'title').map((b) => b.text);
     expect(titles.indexOf('兵器')).toBeLessThan(titles.indexOf('神将'));
-    const unit = HELP_BLOCKS.find((b) => b.kind === 'body' && b.text.includes('棍猴'));
+    const unit = HELP_BLOCKS.find((b) => b.kind === 'body' && b.text.includes('刀兵'));
     expect(unit && unit.kind === 'body' ? unit.text : '').toMatch(/枪|骑|弓/);
   });
 

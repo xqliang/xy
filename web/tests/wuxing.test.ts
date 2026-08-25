@@ -6,6 +6,7 @@ import { ELEMENTS } from '@core';
 import { Battle } from '../src/battle';
 import { MAP_ELEMENT } from '../src/battle';
 import { mapById, MAPS, pickDailyMap } from '../src/board';
+import { pathEntranceDir } from '../src/render';
 import { setWuxingEnabled } from '../src/dev-flags';
 
 describe('GENERALS.element（武将五行）', () => {
@@ -101,6 +102,22 @@ describe('黄风岭（土）新图', () => {
     expect(MAPS).toHaveLength(5);
     expect(MAPS.find((m) => m.id === 'huangfengling')!.name).toBe('黄风岭');
     expect(MAP_ELEMENT.huangfengling).toBe('earth');
+  });
+
+  it('黄风岭板内路径 16 格（原 14 格全场最短、不好打），入场沿底边向右', () => {
+    const path = mapById('huangfengling').path;
+    expect(path.filter((p) => p.c >= 0)).toHaveLength(16);
+    // 入口箭头朝向 = 入场行进方向（右），不能提前画成入场后的拐向（上）
+    const dir = pathEntranceDir(path)!;
+    expect({ dc: dir.dc, dr: dir.dr }).toEqual({ dc: 1, dr: 0 });
+  });
+
+  it('各图入场箭头朝向 = 入场行进方向（首段共线的图不回归）', () => {
+    // 白骨岭/盘丝洞竖直入场 → 箭头朝上；火焰山/流沙河竖直入场向下 → 箭头朝下
+    for (const [id, want] of [['baiguling', { dc: 0, dr: -1 }], ['pansidong', { dc: 0, dr: -1 }], ['huoyanshan', { dc: 0, dr: 1 }], ['liushahe', { dc: 0, dr: 1 }]] as const) {
+      const dir = pathEntranceDir(mapById(id).path)!;
+      expect({ dc: dir.dc, dr: dir.dr }, id).toEqual({ dc: want.dc, dr: want.dr });
+    }
   });
 
   it('所有地图路径合法：相邻步正交连续、末点=唐僧、initialBlock 不压路径', () => {
