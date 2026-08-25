@@ -3665,6 +3665,7 @@ function drawDigFx(ctx: CanvasRenderingContext2D, fxList: { c: number; r: number
 // 金色警示框持续脉冲提示位置，立绘/字块/桃树残影按方波亮暗交替（约 3.3 次/秒），
 // 闪烁期满由 updateFx 爆金色粒子环真正消失。让玩家看清「是哪件被卷走了」。
 function drawStealFx(ctx: CanvasRenderingContext2D, b: Battle) {
+  const th = b.map.theme; // 'cell' 残影要画一块「已挖」格面，取主题的解锁格色
   for (const s of b.stealFx) {
     const { x, y } = cellCenterPx(s.c, s.r);
     const elapsed = s.maxTtl - s.ttl;
@@ -3688,6 +3689,19 @@ function drawStealFx(ctx: CanvasRenderingContext2D, b: Battle) {
       drawWordTile(ctx, s.char, s.wordTier ?? 1, x, y, CELL * 0.78, true, 0);
     } else if (s.kind === 'tree') {
       drawPeachTree(ctx, x, y, CELL * 0.7, s.treeLevel ?? 1);
+    } else if (s.kind === 'bomb') {
+      // 被偷的埋雷：t=0 复画（引信静态亮一档，仅闪烁 ~1s 的残影，不必复刻火花脉动）
+      drawArmedBomb(ctx, { c: s.c, r: s.r, t: 0 });
+    } else if (s.kind === 'cell') {
+      // 被偷的空白阵位：画一块浅色「已挖」格面 + 铲子图标，示意这块地要重新开垦
+      const ix = BOARD_X + s.c * CELL;
+      const iy = BOARD_Y + s.r * CELL;
+      drawUnlockedCellFace(ctx, ix, iy, CELL, CELL, s.c, s.r, th.cellUnlocked);
+      ctx.fillStyle = 'rgba(90,70,40,0.85)';
+      ctx.font = `${Math.round(CELL * 0.42)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🥄', x, y);
     }
     ctx.restore();
   }

@@ -54,6 +54,9 @@ function lionOnPath(map: GameMap, pathCell: { c: number; r: number }, skillCd: n
   };
   b.monsters.push(lion);
   (b as unknown as { tangsengHP: number }).tangsengHP = 99; // 防漏怪判负
+  // 黄狮精现在也会偷「空白阵位」：清空已解锁集合，让既有用例只面对自己摆的目标（确定性）。
+  // 需要空阵位候选的用例在拿到 b 后再单独 add。
+  b.unlocked.clear();
   return { b, lion };
 }
 
@@ -127,6 +130,32 @@ describe('黄狮精 卷走目标', () => {
     (b as unknown as { status: string }).status = 'playing';
     b.step(0.05);
     expect(b.trees.has(`${tcell.c},${tcell.r}`)).toBe(false);
+  });
+
+  it('卷走埋在路径上的炸药：bombs 整颗删除、幽灵 kind=bomb', () => {
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
+    const { b } = lionOnPath(map, { c: 4, r: 6 }, 0);
+    // (4,5) 是白骨岭路径格（贴竖段栅栏我方侧），距狮 (4,6) 恰 1 格：在偷取半径内、超出接触引爆半径
+    b.bombs.push({ c: 4, r: 5, t: 0 });
+    (b as unknown as { status: string }).status = 'playing';
+    b.step(0.05);
+    expect(b.bombs.length).toBe(0); // 整颗被卷走（引信与后续引爆一并消失）
+    expect(b.stealFx[0]?.kind).toBe('bomb');
+    expect(b.message).toContain('炸药');
+  });
+
+  it('卷走空白阵位：unlocked 移除该格（变回未挖开，铲子可重挖）', () => {
+    const map = MAPS.find((m) => m.id === 'baiguling') ?? MAPS[0]!;
+    const { b } = lionOnPath(map, { c: 4, r: 6 }, 0);
+    b.unlocked.add('3,7'); // 白骨岭初始块格，距狮 √2：唯一的空白候选
+    (b as unknown as { status: string }).status = 'playing';
+    b.step(0.05);
+    expect(b.unlocked.has('3,7')).toBe(false); // 格子变回未挖开
+    expect(b.stealFx[0]?.kind).toBe('cell');
+    expect(b.message).toContain('空阵位');
+    // 变回未挖开后，铲子能重新开挖该格（lockedCells 重新包含它）
+    const diggable = (b as unknown as { lockedCells: () => { c: number; r: number }[] }).lockedCells();
+    expect(diggable.some((x) => x.c === 3 && x.r === 7)).toBe(true);
   });
 });
 

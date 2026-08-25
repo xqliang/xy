@@ -406,7 +406,7 @@ export const MINI_BOSS_META: Record<
   quake: { name: '撼地妖', skillName: '震地', color: '#e0a060', icon: '震', desc: '范围内兵器倒下' },
   gale: { name: '疾风妖', skillName: '疾风', color: '#7dffb0', icon: '风', desc: '周围妖怪加速' },
   blood: { name: '血泉妖', skillName: '血泉', color: '#ff6a7a', icon: '血', desc: '周围妖怪少量回血' },
-  lion: { name: '黄狮精', skillName: '卷走', color: '#e8c24a', icon: '偷', desc: '随机卷走3格内一件兵器/英雄/桃树' },
+  lion: { name: '黄狮精', skillName: '卷走', color: '#e8c24a', icon: '偷', desc: '随机卷走3格内一件兵器/英雄/桃树/炸药/空白阵位' },
 };
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
@@ -742,11 +742,11 @@ export interface Burst {
 }
 
 // 黄狮精「卷走」预演幽灵：目标在逻辑上已被立即删除（不再攻击/不可交互），
-// 但先以残影形态在被偷格原地闪烁 miniBossStealFlashDur 秒（金色警示框 + 原样重画的立绘/字块/桃树），
+// 但先以残影形态在被偷格原地闪烁 miniBossStealFlashDur 秒（金色警示框 + 原样重画的立绘/字块/桃树/炸药/阵位），
 // 期满那一刻才爆开金色粒子环——即玩家看到的「真正消失」。目的是让玩家看清被卷走的是哪件。
 // 纯视觉状态：不入序列化快照、清波不清（时长仅 ~1s，且信息量重要，宁可跨波播完）。
 export interface StealFx {
-  kind: 'unit' | 'word' | 'tree';
+  kind: 'unit' | 'word' | 'tree' | 'bomb' | 'cell';
   c: number;
   r: number;
   ttl: number;
@@ -756,6 +756,7 @@ export interface StealFx {
   char?: string; // kind='word'：幽灵字块
   wordTier?: number;
   treeLevel?: number; // kind='tree'：幽灵桃树等级
+  // kind='cell'：被偷的空白阵位不需要额外数据（残影画一块浅色已挖格面 + 铲子图标示意「要重挖」）
 }
 
 // 武将大招专属特效（每英雄一套动画，渲染于格坐标；与主动技能的 ultFlash 无关）
@@ -6935,11 +6936,12 @@ export class Battle {
         break;
       }
       case 'lion': {
-        // 黄狮精「卷走」：半径内随机取 1 件（兵器/英雄字块/桃树），永久删除。
+        // 黄狮精「卷走」：半径内随机取 1 件（兵器/英雄字块/桃树/埋在路径上的炸药/空白阵位），永久删除。
         // 配对英雄只拆一格：words.delete 只删这一格，activeGenerals 下帧自动解散该对、
-        // pruneHeroStates 清掉对应武将状态。无目标时不置位，由上层按 miniBossInterval 重试。
+        // pruneHeroStates 清掉对应武将状态。偷空白阵位 = unlocked.delete 该格（变回未挖开，需重新用铲子开垦）。
+        // 无目标时不置位，由上层按 miniBossInterval 重试。
         const R = TUNING.miniBossStealRadius;
-        type Cand = { kind: 'unit' | 'word' | 'tree'; key: string; c: number; r: number; name: string };
+        type Cand = { kind: 'unit' | 'word' | 'tree' | 'bomb' | 'cell'; key: string; c: number; r: number; name: string };
         const cands: Cand[] = [];
         for (const u of this.units.values()) {
           if (Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r) <= R) {
@@ -6954,6 +6956,21 @@ export class Battle {
         for (const t of this.trees.values()) {
           if (Math.hypot(mp.c - t.cell.c, mp.r - t.cell.r) <= R) {
             cands.push({ kind: 'tree', key: cellKey(t.cell.c, t.cell.r), c: t.cell.c, r: t.cell.r, name: '蟠桃树' });
+          }
+        }
+        // 路径上已埋的炸药（轰天雷等）：整颗卷走，引信与后续引爆一并消失
+        for (const bm of this.bombs) {
+          if (Math.hypot(mp.c - bm.c, mp.r - bm.r) <= R) {
+            cands.push({ kind: 'bomb', key: cellKey(bm.c, bm.r), c: bm.c, r: bm.r, name: '炸药' });
+          }
+        }
+        // 空白阵位：已解锁且当前无占用（单位/字牌/桃树/落子预占都不算空白）。
+        // cellFree 不查桃树（桃树种在格上但不算占用），这里补 trees.has 排除，避免偷到「有树的格」双重结算
+        for (const cell of this.unlockedCells()) {
+          if (this.trees.has(cellKey(cell.c, cell.r))) continue;
+          if (!this.cellFree(cell.c, cell.r)) continue;
+          if (Math.hypot(mp.c - cell.c, mp.r - cell.r) <= R) {
+            cands.push({ kind: 'cell', key: cellKey(cell.c, cell.r), c: cell.c, r: cell.r, name: '空阵位' });
           }
         }
         if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
@@ -6982,6 +6999,12 @@ export class Battle {
             ghost.wordTier = w.tier;
           }
           this.words.delete(pick.key);
+        } else if (pick.kind === 'bomb') {
+          const idx = this.bombs.findIndex((b) => b.c === pick.c && b.r === pick.r);
+          if (idx >= 0) this.bombs.splice(idx, 1);
+        } else if (pick.kind === 'cell') {
+          // 空白格被偷：从已解锁集合移除 → 该格变回未挖开（渲染回锁定色，铲子可重新开垦）
+          this.unlocked.delete(pick.key);
         } else {
           const t = this.trees.get(pick.key);
           if (t) ghost.treeLevel = t.level;
@@ -7088,12 +7111,12 @@ export class Battle {
         break;
       }
       case 'lion': {
-        // 黄狮精「卷走」AI 半场版：半径内随机取 1 件（AI 兵器/字牌；AI 侧无桃树），永久删除 +
-        // 原地闪现幽灵残影（共享 stealFx 按原始坐标渲染，AI 格即镜像格 → 落在上半场）。
+        // 黄狮精「卷走」AI 半场版：半径内随机取 1 件（AI 兵器/字牌/埋雷炸药/空白阵位；AI 侧无桃树），
+        // 永久删除 + 原地闪现幽灵残影（共享 stealFx 按原始坐标渲染，AI 格即镜像格 → 落在上半场）。
         // 字牌只拆一格：aiWords.delete 后 aiActiveGenerals 下帧自动解散该对。偷到置
         // miniBossCasted 本局不再触发；清 AI 自动布阵记忆防引用失效格（对齐玩家侧）。
         const R = TUNING.miniBossStealRadius;
-        type AiCand = { kind: 'unit' | 'word'; key: string; c: number; r: number; name: string };
+        type AiCand = { kind: 'unit' | 'word' | 'bomb' | 'cell'; key: string; c: number; r: number; name: string };
         const cands: AiCand[] = [];
         for (const u of this.aiUnits) {
           if (Math.hypot(mp.c - u.cell.c, mp.r - u.cell.r) <= R) {
@@ -7103,6 +7126,18 @@ export class Battle {
         for (const w of this.aiWords.values()) {
           if (Math.hypot(mp.c - w.cell.c, mp.r - w.cell.r) <= R) {
             cands.push({ kind: 'word', key: cellKey(w.cell.c, w.cell.r), c: w.cell.c, r: w.cell.r, name: w.char });
+          }
+        }
+        for (const bm of this.aiBombs) {
+          if (Math.hypot(mp.c - bm.c, mp.r - bm.r) <= R) {
+            cands.push({ kind: 'bomb', key: cellKey(bm.c, bm.r), c: bm.c, r: bm.r, name: '炸药' });
+          }
+        }
+        // AI 空白阵位：已解锁且无占用（aiCellFree 查 aiUnits/aiWords/aiPendingPlace）
+        for (const cell of this.aiUnlockedCells()) {
+          if (!this.aiCellFree(cell.c, cell.r)) continue;
+          if (Math.hypot(mp.c - cell.c, mp.r - cell.r) <= R) {
+            cands.push({ kind: 'cell', key: cellKey(cell.c, cell.r), c: cell.c, r: cell.r, name: '空阵位' });
           }
         }
         if (cands.length === 0) break; // 半径内无目标：不消耗机会，skillCd 已被上层置为 miniBossInterval，下轮重试
@@ -7121,13 +7156,19 @@ export class Battle {
             ghost.unitTier = u.tier;
             this.aiUnits.splice(this.aiUnits.indexOf(u), 1);
           }
-        } else {
+        } else if (pick.kind === 'word') {
           const w = this.aiWords.get(pick.key);
           if (w) {
             ghost.char = w.char;
             ghost.wordTier = w.tier;
             this.aiWords.delete(pick.key);
           }
+        } else if (pick.kind === 'bomb') {
+          const idx = this.aiBombs.findIndex((b) => b.c === pick.c && b.r === pick.r);
+          if (idx >= 0) this.aiBombs.splice(idx, 1);
+        } else {
+          // AI 空白格被偷：变回未挖开，AI 后续用铲子重挖（aiShovels 循环天然支持）
+          this.aiUnlocked.delete(pick.key);
         }
         this.stealFx.push(ghost);
         this.clearAiAutoPlaceLayoutMemory(); // 移除后清 AI 自动布阵记忆，避免 AI 引用失效格

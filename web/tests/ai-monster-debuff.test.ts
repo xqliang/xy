@@ -5,7 +5,7 @@
 //   施法（AI 精英 → aiUnits 状态写入）→ 消费（定身停手 / 迟滞拉长间隔 / 弱身减攻 / 缠丝缩圈）。
 import { describe, it, expect } from 'vitest';
 import { Battle, TUNING, type Monster } from '../src/battle';
-import { MAPS } from '../src/board';
+import { MAPS, mirrorCell } from '../src/board';
 
 // 最小 AI 怪：skill=定身、skillCd≈0 → 首帧即施法
 function aiMon(p: Partial<Monster> & { id: number }): Monster {
@@ -82,6 +82,7 @@ describe('AI 半场怪物施法（updateAiMonsterSkills）', () => {
 
   it('黄狮精（lion）在 AI 半场卷走：半径内兵器被删 + 幽灵残影 + 本局只偷一次', () => {
     const b = mkB();
+    (b as any).aiUnlocked.clear(); // lion 现在也偷 AI 空白阵位：清掉初始 6 格，保证随机池里只有兵器
     const lion = aiMon({ id: 1, isMiniBoss: true, miniBossKind: 'lion' as any, skill: null, skillCd: 0.01 });
     const p = b.aiMonsterPos(lion);
     const u = aiUnit({ c: p.c, r: p.r }); // 贴脚：必在偷取半径内
@@ -98,6 +99,36 @@ describe('AI 半场怪物施法（updateAiMonsterSkills）', () => {
     b.aiMonsters[0]!.skillCd = 0.01;
     for (let t = 0; t < 2.0; t += 1 / 30) b.step(1 / 30);
     expect(b.aiUnits.length).toBe(1);
+  });
+
+  it('黄狮精（lion）AI 半场也卷走埋雷与空白阵位：aiBombs 删除、aiUnlocked 回锁定', () => {
+    // 炸药：埋在 AI 路径上、离狮 ≥1 格（避开接触引爆半径 0.55，保证是被偷走而非先炸）
+    const b1 = mkB();
+    (b1 as any).aiUnlocked.clear();
+    const lion1 = aiMon({ id: 1, isMiniBoss: true, miniBossKind: 'lion' as any, skill: null, skillCd: 0.01, spd: 0 });
+    const p1 = b1.aiMonsterPos(lion1);
+    const aiPath = MAPS[0]!.path.map(mirrorCell);
+    const bombCell = aiPath.find((q) => {
+      const d = Math.hypot(q.c - p1.c, q.r - p1.r);
+      return d >= 1 && d <= 3;
+    })!;
+    b1.aiMonsters = [lion1];
+    b1.aiBombs.push({ c: bombCell.c, r: bombCell.r, t: 0 });
+    for (let t = 0; t < 0.5; t += 1 / 30) b1.step(1 / 30);
+    expect(b1.aiBombs.length).toBe(0);
+    expect(b1.stealFx[0]!.kind).toBe('bomb');
+
+    // 空白阵位：解锁一块 AI 格 → 被偷后变回未挖开
+    const b2 = mkB();
+    const lion2 = aiMon({ id: 2, isMiniBoss: true, miniBossKind: 'lion' as any, skill: null, skillCd: 0.01, spd: 0 });
+    const p2 = b2.aiMonsterPos(lion2);
+    b2.aiMonsters = [lion2];
+    (b2 as any).aiUnlocked.clear();
+    const cell = b2.aiCells.find((q) => Math.hypot(q.c - p2.c, q.r - p2.r) <= 3)!;
+    (b2 as any).aiUnlocked.add(`${cell.c},${cell.r}`);
+    for (let t = 0; t < 0.5; t += 1 / 30) b2.step(1 / 30);
+    expect((b2 as any).aiUnlocked.has(`${cell.c},${cell.r}`)).toBe(false);
+    expect(b2.stealFx[0]!.kind).toBe('cell');
   });
 
   it('PvP 下不本地施法（对手半场由对手权威 sim 负责，快照携带状态）', () => {
