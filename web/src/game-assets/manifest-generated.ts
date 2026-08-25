@@ -4,6 +4,7 @@
 import { CDN_BASE } from '../asset-manifest.names';
 export const HASHED_URLS: Record<string, string> = {
   "bgm-baiguling.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-baiguling-cecf7b63.mp3",
+  "bgm-huangfengling.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-huangfengling-9f900751.mp3",
   "bgm-huoyanshan.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-huoyanshan-63a4dd03.mp3",
   "bgm-liushahe.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-liushahe-29d5a467.mp3",
   "bgm-menu.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-menu-f12ea1f1.mp3",

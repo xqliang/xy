@@ -1,6 +1,7 @@
 // 音效：用 Web Audio API 实时合成短音效（程序化，无文件）。背景音乐：各地图/首页各一首真实音频循环
 // （见 MAP_BGM / MENU_BGM_KEY），资源走 CDN——Web 端原生 fetch+decodeAudioData，微信小游戏端经 polyfill 的
 // fetch→wx.request(arraybuffer) 拉取后同样 decodeAudioData 播放（真机需把 CDN 域名加入 request 合法域名）。
+// Web 端注意：素材 CDN（TOS）未配 CORS，fetch 会被拦——解码失败自动退回 HTMLAudioElement 循环（见 startAudioElBgm）。
 // 设计：引擎(battle)只发语义事件名，本模块把事件映射为合成声音；浏览器/小游戏均要求用户手势后才能出声。
 // 静音状态持久化（跨平台存储）。
 import { storeGet, storeSet } from './storage';
@@ -144,6 +145,7 @@ const MAP_BGM: Record<string, string> = {
   liushahe: 'bgm-liushahe',
   baiguling: 'bgm-baiguling',
   pansidong: 'bgm-pansidong',
+  huangfengling: 'bgm-huangfengling',
 };
 const MENU_BGM_KEY = 'bgm-menu'; // 首页背景音乐
 const MENU_ID = '__menu'; // ambientMap 的首页占位 id（区别于地图 id）
@@ -207,6 +209,10 @@ function startBgmLoop(buffer: AudioBuffer, out: GainNode): void {
 
 // 文件 BGM 启动：先放占位增益节点（使 startAmbient 幂等守卫在异步解码期间命中，避免每帧重复触发），
 // 解码完成后若仍停留在该地图且音乐未关，再挂上循环源。
+// Web 端兜底：素材 CDN（TOS）未配 CORS，fetch+decodeAudioData 会被浏览器拦截（图片走 <img> 不受影响）。
+// 解码失败时退回 HTMLAudioElement 循环播放——<audio> 不做 CORS 校验，能正常出声；音量用元素自身
+// volume 控制（进不了 WebAudio 图，但 BGM 本来就只受音乐开关/音量影响，行为等价）。微信端走
+// polyfill 的 wx.request（无 CORS 概念），解码恒成功，不会进兜底分支。
 function startFileBgm(mapId: string, url: string): void {
   if (!ctx || !master) return;
   const g = ctx.createGain();
@@ -216,8 +222,33 @@ function startFileBgm(mapId: string, url: string): void {
   const cached = bgmBuffers[url];
   if (cached) { startBgmLoop(cached, g); return; }
   void decodeBgm(url).then((buf) => {
-    if (buf && ctx && musicEnabled && ambientMap === mapId) startBgmLoop(buf, g);
+    if (ambientMap !== mapId || !musicEnabled) return; // 已切走/关音乐：什么都不挂
+    if (buf && ctx) startBgmLoop(buf, g);
+    else startAudioElBgm(url);
   });
+}
+
+/** HTMLAudioElement 兜底循环（Web 端 CORS 拦截 fetch 时）。微信端无 Audio 构造器，不会走到这里。 */
+function startAudioElBgm(url: string): void {
+  if (typeof Audio === 'undefined') return; // 非浏览器环境（wx）直接放弃
+  const el = new Audio(url);
+  el.loop = true;
+  el.volume = Math.max(0, Math.min(1, 0.5 * musicVolume));
+  // 自动播放策略：无手势时 play() 被拒——挂一次性页面手势监听重试（与 initAudio 的手势恢复同思路）
+  const tryPlay = () => { void el.play().catch(() => undefined); };
+  tryPlay();
+  const onGesture = () => { tryPlay(); };
+  if (typeof document !== 'undefined') {
+    document.addEventListener('pointerdown', onGesture, { once: true });
+    document.addEventListener('keydown', onGesture, { once: true });
+  }
+  ambientNodes.push({ node: el, stop: () => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('pointerdown', onGesture);
+      document.removeEventListener('keydown', onGesture);
+    }
+    try { el.pause(); el.src = ''; } catch { /* ignore */ }
+  } });
 }
 
 export function stopAmbient(): void {

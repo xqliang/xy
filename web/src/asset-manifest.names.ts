@@ -118,4 +118,5 @@ export const ASSET_FILENAMES: Record<string, string> = {
   'bgm-huoyanshan': 'bgm-huoyanshan.mp3',
   'bgm-baiguling': 'bgm-baiguling.mp3',
   'bgm-liushahe': 'bgm-liushahe.mp3',
+  'bgm-huangfengling': 'bgm-huangfengling.mp3',
 };
