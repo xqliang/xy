@@ -52,7 +52,7 @@ import { LADDER_LEN, STARS_PER_TIER } from '../rank';
 import { STAMINA_MAX } from '../stamina';
 import { MERIT_MAX } from '../merit';
 import { playDevFxPreview, type DevFxPreviewSpec } from '../render';
-import { showAutoplaceBtn, setShowAutoplaceBtn } from '../dev-flags';
+import { showAutoplaceBtn, setShowAutoplaceBtn, wuxingEnabled, setWuxingEnabled } from '../dev-flags';
 import {
   AI_TARGET_WINRATE,
   DEFAULT_AI_SKILL,
@@ -839,6 +839,26 @@ export class DevToolsPanel {
       actions.appendChild(btn(`重置 ${id}`, () => { resetBag(id); this.renderBody(); }));
     }
     body.appendChild(actions);
+
+    // 五行相克总开关：与下方 TUNING 里的 wuxingAdvMul/wuxingDisMul 滑条互补——
+    // 滑条调倍率大小，这里整体开/关（关=倍率一律按 1 + 全部徽章/「克」飘字隐藏）
+    body.appendChild(section('五行相克'));
+    const wuxingLabel = document.createElement('label');
+    wuxingLabel.className = 'xy-dt-check';
+    const wuxingCb = document.createElement('input');
+    wuxingCb.type = 'checkbox';
+    wuxingCb.checked = wuxingEnabled();
+    wuxingCb.addEventListener('change', () => {
+      setWuxingEnabled(wuxingCb.checked);
+      this.host.onUserApplied(applyUserSnapshot({})); // 重同步一帧，暂停中也能立刻重绘
+    });
+    wuxingLabel.appendChild(wuxingCb);
+    wuxingLabel.appendChild(document.createTextNode('启用五行相克'));
+    body.appendChild(wuxingLabel);
+    const wuxingHint = document.createElement('p');
+    wuxingHint.className = 'xy-dt-hint';
+    wuxingHint.textContent = '默认开启。关闭后克制/被克伤害加减益不生效（倍率一律按 1，Boss 血量预算同步不感知），棋盘与图鉴的五行徽章、「克」飘字样式全部隐藏——用于对比有无五行的手感与平衡。';
+    body.appendChild(wuxingHint);
 
     body.appendChild(section('英雄全局 GENERAL_TUNING'));
     body.appendChild(objectFields(GENERAL_TUNING as unknown as Record<string, unknown>));

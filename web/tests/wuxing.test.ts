@@ -6,6 +6,7 @@ import { ELEMENTS } from '@core';
 import { Battle } from '../src/battle';
 import { MAP_ELEMENT } from '../src/battle';
 import { mapById, MAPS, pickDailyMap } from '../src/board';
+import { setWuxingEnabled } from '../src/dev-flags';
 
 describe('GENERALS.element（武将五行）', () => {
   const VALID = new Set(ELEMENTS.map((e) => e.id));
@@ -140,5 +141,36 @@ describe('黄风岭（土）新图', () => {
       if (b.snapshot().kills > 0) break;
     }
     expect(b.snapshot().kills).toBeGreaterThan(0);
+  });
+});
+
+describe('五行总开关（DevTools）', () => {
+  // 开关是 localStorage 级（dev-flags），用例内开关、finally 里务必还原，避免污染其他用例
+  it('关闭后 hurtMonster 不吃克制/被克，飘字无「克」标记；重开恢复正常倍率', () => {
+    setWuxingEnabled(false);
+    try {
+      const b = new Battle(1, 1, mapById('pansidong')); // 木图：金系攻击方应克制
+      b.startNextWave();
+      const monsters = () => (b as unknown as { monsters: { hp: number; element: string | null }[] }).monsters;
+      for (let i = 0; i < 300 && monsters().length === 0; i++) b.step(1 / 30);
+      expect(monsters().length).toBeGreaterThan(0);
+      const m = monsters()[0]!;
+      m.hp = 1000;
+      const hurt = (b as unknown as {
+        hurtMonster: (m: { hp: number }, dmg: number, pos: { c: number; r: number }, hf: number, crit: boolean, el: string) => void;
+      }).hurtMonster.bind(b);
+      const floats = () => (b as unknown as { damageFloats: { wuxing?: string }[] }).damageFloats;
+
+      hurt(m, 100, { c: 0, r: 0 }, 0.12, false, 'metal');
+      expect(m.hp).toBe(900); // 关闭：金克木不生效，按原伤害
+      expect(floats()[floats().length - 1]!.wuxing).toBeUndefined();
+
+      setWuxingEnabled(true);
+      hurt(m, 100, { c: 0, r: 0 }, 0.12, false, 'metal');
+      expect(m.hp).toBe(775); // 重开：克 ×1.25 → 125
+      expect(floats()[floats().length - 1]!.wuxing).toBe('adv');
+    } finally {
+      setWuxingEnabled(true);
+    }
   });
 });

@@ -16,6 +16,7 @@ import {
 import type { UnitType } from '@core';
 import { RNG } from './rng';
 import { getSettings } from './settings';
+import { wuxingEnabled } from './dev-flags';
 import {
   generalById,
   generalStat,
@@ -4141,7 +4142,8 @@ export class Battle {
     crit = false,
     atkEl: Element | null = null,
   ): void {
-    const mul = elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    // 五行总开关（DevTools）关闭时一律按 1：不吃克制/被克加减益，飘字也不带「克」标记
+    const mul = wuxingEnabled() ? elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul) : 1;
     const final = Math.round(dmg * mul);
     m.hp -= final;
     m.hitFlash = hitFlash;
@@ -4157,7 +4159,7 @@ export class Battle {
     crit = false,
     atkEl: Element | null = null,
   ): void {
-    const mul = elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    const mul = wuxingEnabled() ? elementMul(atkEl, m.element, TUNING.wuxingAdvMul, TUNING.wuxingDisMul) : 1;
     const final = Math.round(dmg * mul);
     m.hp -= final;
     m.hitFlash = hitFlash;
@@ -5694,8 +5696,9 @@ export class Battle {
     const generals = this.activeGenerals().map((g) => {
       const base = generalStat(g.def, g.tier);
       const wb = this.weaponBonuses[g.def.id];
-      // 五行：该将对本图怪的克制倍率（克 1.25 / 被克 0.75 / 其他 1）
-      const wmul = elementMul(g.def.element, mapEl, TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+      // 五行：该将对本图怪的克制倍率（克 1.25 / 被克 0.75 / 其他 1）；总开关关闭时按 1，
+      // Boss 血量预算与实战口径一致（都不感知克制）
+      const wmul = wuxingEnabled() ? elementMul(g.def.element, mapEl, TUNING.wuxingAdvMul, TUNING.wuxingDisMul) : 1;
       const atk = base.atk * (1 + (wb?.atk ?? 0)) * atkMul * wmul;
       return {
         atk,

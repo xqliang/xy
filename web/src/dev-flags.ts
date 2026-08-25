@@ -22,3 +22,25 @@ export function showAutoplaceBtn(): boolean {
 export function setShowAutoplaceBtn(on: boolean): void {
   storeSet(KEY_SHOW_AUTOPLACE, on ? '1' : '0');
 }
+
+const KEY_WUXING = 'dasheng.dev.wuxing';
+
+/** 五行开关缓存：render 每帧画徽章、battle 每次命中算倍率都要读，避免高频 localStorage 同步 IO。 */
+let wuxingCache: boolean | null = null;
+
+/**
+ * 五行相克总开关（默认开）。
+ * 关闭后：克制/被克伤害倍率一律按 1（hurtMonster / estimateOptimalPower 等全部生效点），
+ * 伤害飘字不再出现「克」前缀与金/灰样式，棋盘武将与怪物头顶、图鉴的五行徽章全部隐藏。
+ * 供 DevTools 对比「有无五行」的手感与平衡差异。
+ */
+export function wuxingEnabled(): boolean {
+  if (wuxingCache === null) wuxingCache = storeGet(KEY_WUXING) !== '0';
+  return wuxingCache;
+}
+
+/** DevTools 面板写：切换「五行相克」。 */
+export function setWuxingEnabled(on: boolean): void {
+  storeSet(KEY_WUXING, on ? '1' : '0');
+  wuxingCache = on;
+}
