@@ -14,11 +14,11 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
+import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
-import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY, ELEMENT_COLOR } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite, cavalrySprite, miniBossSprite } from './assets';
 import { getBestWave } from './endless';
@@ -26,7 +26,7 @@ import { getSettings } from './settings';
 import { generalEquippedWeapon, weaponBonusLabel, weaponQualityColor, weaponQualityName } from './weapons';
 import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
-import { drawElementBadge } from './wuxing-ui';
+import { drawElementBadge, drawCounterBadge, counterRelation } from './wuxing-ui';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 import { isWeChat } from './platform';
 
@@ -1650,9 +1650,11 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       } else if (cellOpen) {
         drawUnlockedCellFace(ctx, ix, iy, iw, ih, c, r, th.cellUnlocked);
       } else {
-        // 不可放置格（未开垦）：主题深色调 + 强压深棕 → 全图最暗档，与浅色路径拉开对比
+        // 不可放置格（未开垦）：底色用地图五行主题色（与 HUD 徽章同色系，一眼看出本图属性行），
+        // 再叠深棕压暗保持「未开垦」的暗档观感；五行关闭时回退原主题 cellLocked。
+        const wuxingEl = wuxingEnabled() ? MAP_ELEMENT[b.map.id] : undefined;
         roundRect(ctx, ix, iy, iw, ih, 2);
-        ctx.fillStyle = th.cellLocked;
+        ctx.fillStyle = wuxingEl ? ELEMENT_COLOR[wuxingEl] : th.cellLocked;
         ctx.fill();
         ctx.fillStyle = 'rgba(28,20,10,0.34)';
         ctx.fill();
@@ -2943,8 +2945,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, b: Battle) {
     const trailDir = cellCenterPx(np.c, np.r).x - x >= 0 ? 1 : -1;
     const rad0 = m.isBoss ? CELL * 0.42 : m.isMiniBoss ? CELL * 0.36 : CELL * 0.28;
     drawMonsterAt(ctx, x, y, rad0, m, b.map.id, trailDir);
-    // 怪物头顶右上角挂五行徽章（兵种/未知元素为 null 时不画；DevTools 五行总开关关闭时整体隐藏）
-    if (wuxingEnabled()) drawElementBadge(ctx, x + rad0 * 0.95, y - rad0 * 0.95, Math.max(6, CELL * 0.13), m.element);
+    // 怪物不再逐个挂五行徽章：地图五行统一改到 HUD 地图名后一枚徽章表达（小怪与地图同属性，逐个挂是冗余噪音）
   }
 }
 
@@ -8807,8 +8808,13 @@ function drawActiveGeneralGroup(
   }
   drawHeroWordWeapon(ctx, g);
   ctx.restore();
-  // 武将头顶右上角挂五行徽章（a/z 是两格中心，徽章挂在右侧格上方一点；五行总开关关闭时隐藏）
-  if (wuxingEnabled()) drawElementBadge(ctx, z.x + CELL * 0.3, z.y - CELL * 0.36, CELL * 0.15, g.def.element);
+  // 武将右下角挂「克/被」小徽章：直接表达与地图的克制关系（不再显示五行字面）。
+  // 位置在右侧格右下、避开金框上方的整体 Lv 与顶部 buff 图标；同行/无属性（null）不画；
+  // 五行总开关关闭时隐藏。
+  if (wuxingEnabled()) {
+    const rel = counterRelation(g.def.element, MAP_ELEMENT[b.map.id], TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    drawCounterBadge(ctx, z.x + CELL * 0.34, z.y + CELL * 0.32, CELL * 0.11, rel);
+  }
 }
 
 // 棋盘上的武将字牌（各占一格）+ 已激活武将的金色边框与名号
@@ -10468,6 +10474,17 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillStyle = '#4a3a1a';
   const waveStr = `${b.map.name} · 第 ${b.wave} 波`; // 复用：下方两侧延迟布局要据此量中块半宽
   ctx.fillText(waveStr, VIEW_W / 2, HUD_H / 2 - 12);
+  // 地图名后挂一枚地图五行徽章（替代原来逐个怪物头顶徽章：小怪与地图同属性，一枚即可表达）
+  {
+    const mapEl = MAP_ELEMENT[b.map.id];
+    if (mapEl && wuxingEnabled()) {
+      const waveW = ctx.measureText(waveStr).width;
+      const nameW = ctx.measureText(b.map.name).width;
+      const textL = VIEW_W / 2 - waveW / 2; // 居中文字左缘
+      const gap = 6; // 与地图名拉开一点，别贴字
+      drawElementBadge(ctx, textL + nameW + gap + 8, HUD_H / 2 - 12, 8, mapEl);
+    }
+  }
   const rankStr = hudRankLabel ? `境界·${hudRankLabel}` : null; // 复用：同上（无境界则 null）
   if (rankStr) {
     ctx.font = '14px "PingFang SC", sans-serif';

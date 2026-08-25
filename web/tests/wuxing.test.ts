@@ -8,6 +8,7 @@ import { MAP_ELEMENT } from '../src/battle';
 import { mapById, MAPS, pickDailyMap } from '../src/board';
 import { pathEntranceDir } from '../src/render';
 import { setWuxingEnabled } from '../src/dev-flags';
+import { counterRelation } from '../src/wuxing-ui';
 
 describe('GENERALS.element（武将五行）', () => {
   const VALID = new Set(ELEMENTS.map((e) => e.id));
@@ -158,6 +159,22 @@ describe('黄风岭（土）新图', () => {
       if (b.snapshot().kills > 0) break;
     }
     expect(b.snapshot().kills).toBeGreaterThan(0);
+  });
+});
+
+describe('counterRelation（武将 vs 地图克制徽章）', () => {
+  // 与 hurtMonster 的倍率口径一致（elementMul 同源）：>1 克、<1 被克、=1 不画
+  it('克图 → adv、被图克 → dis、同行/无属性 → null', () => {
+    expect(counterRelation('water', 'fire')).toBe('adv'); // 水克火（八戒打火焰山）
+    expect(counterRelation('metal', 'fire')).toBe('dis'); // 火克金 → 金系被火焰山克
+    expect(counterRelation('fire', 'fire')).toBe(null); // 同行
+    expect(counterRelation(null, 'fire')).toBe(null); // 兵种无属性
+    expect(counterRelation('fire', null)).toBe(null); // 未登记五行 的图
+  });
+
+  it('倍率参数可注入：DevTools 调成 1/1 后关系全部归 null', () => {
+    expect(counterRelation('water', 'fire', 1, 1)).toBe(null);
+    expect(counterRelation('metal', 'fire', 1, 1)).toBe(null);
   });
 });
 

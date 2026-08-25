@@ -81,10 +81,24 @@ try {
   // 像素级徽章验证：游戏画布被 CDN 跨域立绘污染，getImageData 会抛 SecurityError——
   // 改为截屏 PNG 塞进干净画布（data URL 无污染）再数元素主题色像素（±30 容差，阈值 30）。
   // 注意：游戏页可能有 CSP 拦 data: 图，分析放在独立 about:blank 页做。
+  // UI 重设计后徽章只有两处：HUD 地图名后的地图五行徽章 + 武将右下角「克/被」小徽章
+  //（怪物头顶徽章已删）。全局数色容易被金框/路径等其他暖色误伤，改为限定 view 坐标区域采样：
+  // 先在游戏页量画布 rect + 动态 import 拿 VIEW 尺寸，把 view 区域换算成页面坐标再数色。
+  const geo = await page.evaluate(async () => {
+    const cv = document.querySelector('canvas');
+    const r = cv.getBoundingClientRect();
+    const m = await import('/src/render.ts');
+    return { x: r.x, y: r.y, w: r.width, h: r.height, W: m.VIEW_W, H: m.VIEW_H, CELL: m.CELL, BOARD_X: m.BOARD_X, BOARD_Y: m.BOARD_Y };
+  });
+  // view 坐标矩形 → 页面坐标矩形（画布等比居中，直接线性映射）
+  const vRect = (vx, vy, vw, vh) => ({
+    x: geo.x + vx * geo.w / geo.W, y: geo.y + vy * geo.h / geo.H,
+    w: vw * geo.w / geo.W, h: vh * geo.h / geo.H,
+  });
   const anaPage = await browser.newPage();
-  const countColors = async (rgb) => {
+  const countColors = async (rgb, clip) => {
     const buf = await page.screenshot({ type: 'png' });
-    return anaPage.evaluate(async (dataUrl, [r, g, b]) => {
+    return anaPage.evaluate(async (dataUrl, [r, g, b], clipPx) => {
       const img = new Image();
       await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('img load fail')); img.src = dataUrl; });
       const cv = document.createElement('canvas');
@@ -93,18 +107,31 @@ try {
       ctx.drawImage(img, 0, 0);
       const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
       let n = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        if (Math.abs(d[i] - r) <= 30 && Math.abs(d[i + 1] - g) <= 30 && Math.abs(d[i + 2] - b) <= 30) n++;
+      const x0 = clipPx ? Math.max(0, Math.floor(clipPx.x)) : 0;
+      const y0 = clipPx ? Math.max(0, Math.floor(clipPx.y)) : 0;
+      const x1 = clipPx ? Math.min(cv.width, Math.ceil(clipPx.x + clipPx.w)) : cv.width;
+      const y1 = clipPx ? Math.min(cv.height, Math.ceil(clipPx.y + clipPx.h)) : cv.height;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * cv.width + x) * 4;
+          if (Math.abs(d[i] - r) <= 30 && Math.abs(d[i + 1] - g) <= 30 && Math.abs(d[i + 2] - b) <= 30) n++;
+        }
       }
       return n;
-    }, 'data:image/png;base64,' + Buffer.from(buf).toString('base64'), rgb); // 截屏是 Uint8Array，直接 .toString('base64') 会退化成 toString(radix)
+    }, 'data:image/png;base64,' + Buffer.from(buf).toString('base64'), rgb, clip ?? null); // 截屏是 Uint8Array，直接 .toString('base64') 会退化成 toString(radix)
   };
-  const firePx = await countColors([244, 81, 30]);   // 火 #f4511e（怪头顶徽章）
-  const waterPx = await countColors([61, 139, 255]); // 水 #3d8bff（八戒头顶徽章）
-  console.log('徽章像素扫描：', JSON.stringify({ fire: firePx, water: waterPx }));
-  if (firePx < 30) fail('火焰山画面未见火元素徽章色像素（怪物头顶徽章未渲染？）');
-  if (waterPx < 30) fail('画面未见水元素徽章色像素（八戒头顶徽章未渲染？）');
-  console.log('✅ A2 通过：火/水徽章像素级渲染确认（fire=' + firePx + ', water=' + waterPx + '）');
+  // ① HUD 地图徽章（火）：只在 HUD 横条内数火色，火焰山主题本身是暖棕但不偏这么红
+  const hudClip = vRect(0, 0, geo.W, 72);
+  const firePx = await countColors([244, 81, 30], hudClip); // 火 #f4511e
+  // ② 八戒（水，克火）右下角「克」徽章：金底 #d8a018，只扫 (3,7) 格右下 ±26px 小窗
+  const badgeCx = geo.x + (geo.BOARD_X + 3.5 * geo.CELL + geo.CELL * 0.34) * geo.w / geo.W;
+  const badgeCy = geo.y + (geo.BOARD_Y + 7.5 * geo.CELL + geo.CELL * 0.32) * geo.h / geo.H;
+  const advClip = { x: badgeCx - 26, y: badgeCy - 26, w: 52, h: 52 };
+  const advPx = await countColors([216, 160, 24], advClip);
+  console.log('徽章像素扫描：', JSON.stringify({ hudFire: firePx, bajieAdv: advPx }));
+  if (firePx < 20) fail('HUD 地图名后未见火元素徽章色像素（地图徽章未渲染？）：' + firePx);
+  if (advPx < 10) fail('八戒右下角未见金底「克」徽章像素（克徽章未渲染？）：' + advPx);
+  console.log('✅ A2 通过：HUD 火徽章 + 八戒「克」徽章像素级渲染确认（fire=' + firePx + ', adv=' + advPx + '）');
   console.log('✅ A+B 通过：fire 继承 + 克制飘字（adv' + (sawDis ? '/dis' : '') + '）已观测，截图 /tmp/wuxing-huoyanshan.png');
 
   // ── C：黄风岭（earth）可开局可推进 ──
@@ -129,9 +156,9 @@ try {
   if (!hflEls.has('earth')) fail('黄风岭怪物未继承 earth 五行：' + JSON.stringify([...hflEls]));
   if (hfl.kills <= 0) fail('黄风岭 30 秒内零击杀（不可推进）');
   await page.screenshot({ path: '/tmp/wuxing-huangfengling.png' });
-  // 像素级徽章验证（同 A2 的 countColors）：黄风岭怪为土系，扫土元素色 #a1743c
-  const earthPx = await countColors([161, 116, 60]);
-  if (earthPx < 30) fail('黄风岭画面未见土元素徽章色像素（怪物头顶徽章未渲染？）：' + earthPx);
+  // 像素级徽章验证（同 A2 的 countColors）：黄风岭 HUD 徽章为土 #a1743c，只在 HUD 横条内数
+  const earthPx = await countColors([161, 116, 60], hudClip);
+  if (earthPx < 20) fail('黄风岭 HUD 未见土元素徽章色像素（地图徽章未渲染？）：' + earthPx);
   console.log('✅ C2 通过：土徽章像素级渲染确认（earth=' + earthPx + '）');
   console.log('✅ C 通过：黄风岭 earth 继承 + 可推进（wave=' + hfl.wave + ', kills=' + hfl.kills + '），截图 /tmp/wuxing-huangfengling.png');
 
