@@ -1396,10 +1396,92 @@ export function traySlotAnimDone(b: Battle, slotIndex: number): boolean {
 export function summonAnimDone(b: Battle): boolean {
   return traySlotAnimDone(b, Math.max(0, TUNING.traySize - 1));
 }
+/**
+ * 宫阙檐顶（飞檐）——矢量绘制，任意宽度自适应：弹窗标题栏顶饰与征兵「宫」屋顶共用。
+ * 造型：两端上翘的凹曲檐面（中式飞檐）+ 檐口瓦当一排 + 中央葫芦宝顶 + 两端翘角金珠。
+ * 朱红渐变 + 金描边，与水墨 UI（朱红金边）同一配色系，替代 AI 生成横幅（弹窗宽度
+ * 320~504 不一，生成图拉伸会让翘角变形，且精细檐瓦是 Seedream 的高失败模式）。
+ *
+ * @param cx 檐口水平中心
+ * @param baseY 檐口底线 y（屋顶整体画在 baseY 之上，翘角顶约在 baseY - h）
+ * @param w 檐口总宽（含两端出挑）
+ * @param h 屋顶总高（翘角尖到檐口底线）
+ */
+export function drawPalaceRoof(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  baseY: number,
+  w: number,
+  h: number,
+): void {
+  const half = w / 2;
+  const tipY = baseY - h; // 翘角尖（左 右对称）
+  const eaveY = baseY - h * 0.34; // 檐口平段上沿（凹曲最低带）
+  const midTopY = baseY - h * 0.78; // 檐面中央上沿（比翘角尖略低，形成中央下凹的弧线）
+  // —— 檐面（凹曲屋面闭合区域）：左翘角 → 左檐下滑 → 檐口平段 → 右檐上翘 → 沿上沿弧线返回 ——
+  ctx.beginPath();
+  ctx.moveTo(cx - half, tipY);
+  ctx.quadraticCurveTo(cx - half * 0.72, eaveY + h * 0.1, cx - half * 0.52, eaveY); // 左檐下溜
+  ctx.lineTo(cx + half * 0.52, eaveY); // 檐口平段
+  ctx.quadraticCurveTo(cx + half * 0.72, eaveY + h * 0.1, cx + half, tipY); // 右檐上翘
+  ctx.quadraticCurveTo(cx + half * 0.66, midTopY + h * 0.18, cx, midTopY); // 右上沿弧到中央
+  ctx.quadraticCurveTo(cx - half * 0.66, midTopY + h * 0.18, cx - half, tipY); // 左上沿弧回翘角
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, tipY, 0, baseY);
+  grad.addColorStop(0, '#c94a35');
+  grad.addColorStop(1, '#8f2b1e');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // 金色描边勾出飞檐轮廓（上沿弧线是「仙感」的关键）
+  ctx.lineWidth = Math.max(1.4, h * 0.07);
+  ctx.strokeStyle = '#d8a018';
+  ctx.stroke();
+  // —— 檐口横梁（斗拱楣板，深红压底）——
+  const beamH = Math.max(2.5, h * 0.16);
+  ctx.fillStyle = '#5f1d13';
+  ctx.fillRect(cx - half * 0.52, eaveY, w * 0.52, beamH);
+  // 瓦当：檐梁底边一排小金点（半圆瓦钉，间距随宽度自适应）
+  const r = Math.max(0.8, h * 0.055);
+  const n = Math.max(4, Math.floor(w / (r * 5)));
+  ctx.fillStyle = '#e0b04a';
+  for (let i = 0; i <= n; i++) {
+    const px = cx - half * 0.5 + (w * 0.5) * (i / n);
+    ctx.beginPath();
+    ctx.arc(px, eaveY + beamH + r * 0.4, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // —— 中央宝顶（葫芦形：小圆叠尖，仙宫规制）——
+  if (h >= 10) {
+    const bx = cx, by = midTopY - h * 0.08;
+    ctx.fillStyle = '#e0b04a';
+    ctx.beginPath();
+    ctx.arc(bx, by, Math.max(1.6, h * 0.1), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(bx - h * 0.05, by);
+    ctx.lineTo(bx, by - h * 0.22);
+    ctx.lineTo(bx + h * 0.05, by);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // —— 翘角尖金珠（两端点睛）——
+  ctx.fillStyle = '#e0b04a';
+  const tipR = Math.max(1.2, h * 0.075);
+  ctx.beginPath(); ctx.arc(cx - half, tipY, tipR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + half, tipY, tipR, 0, Math.PI * 2); ctx.fill();
+}
+
 function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
-  // 营帐：棕色屋身(带「宫」字) + 红色屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
+  // 营帐：棕色屋身(带「宫」字) + 宫阙飞檐屋顶(左侧铰链，征兵时逆时针掀开至90°再合上)。手绘，无底板 bar。
   const campX = CAMP_X, campY = TRAY_Y + 4, campW = CAMP_W, campH = TRAY_H - 8;
-  const roofH = 16 * CAMP_SCALE; // 屋顶高
+  // 宫阙屋顶：优先用 Seedream 生成的 palace-camp-roof 素材（Q版宫顶，仙感更强），
+  // 按显示宽推算高，让屋身+屋顶的垂直居中布局与实际绘制一致；素材未加载时回退矢量绘制。
+  const roofImg = sprite('palace-camp-roof');
+  const EAVE = 6 * CAMP_SCALE; // 屋檐外挑量(比屋身两侧各宽出)
+  const roofW = campW + 2 * EAVE;
+  const roofH = roofImg && roofImg.naturalWidth
+    ? roofW * (roofImg.naturalHeight / roofImg.naturalWidth)
+    : 16 * CAMP_SCALE * 1.9; // 回退矢量版的总高（含翘角与宝顶）
   const BODY_SHRINK = 6 * CAMP_SCALE; // 棕色屋身减矮量
   const bodyH0 = campH - roofH - BODY_SHRINK;
   const bodyH = bodyH0 * 0.75 * 1.2 * 1.2; // 屋身高度（相对初版再 ×1.2×1.2）
@@ -1422,47 +1504,17 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('宫', campX + campW / 2, bodyY + bodyH / 2 + 1);
-  // —— 屋顶（手绘红顶，以底左角为铰链，逆时针=负角）——
+  // —— 屋顶（宫阙飞檐：檐口比屋身两侧外挑，以底左角为铰链，逆时针=负角掀开）——
   const roofAng = campRoofAngle(b.summonAnimT);
   ctx.save();
   ctx.translate(campX, bodyY);
   ctx.rotate(-roofAng);
-  // 梯形屋顶：檐口(底)最宽并向两侧外挑(比屋身宽)，屋脊(顶)略内收
-  const EAVE = 6 * CAMP_SCALE; // 屋檐外挑量(比屋身两侧各宽出)
-  const RIDGE_INSET = 6 * CAMP_SCALE; // 屋脊比檐口内收
-  ctx.beginPath();
-  ctx.moveTo(-EAVE, 0);
-  ctx.lineTo(campW + EAVE, 0);
-  ctx.lineTo(campW - RIDGE_INSET, -roofH);
-  ctx.lineTo(RIDGE_INSET, -roofH);
-  ctx.closePath();
-  const roofGrad = ctx.createLinearGradient(0, -roofH, 0, 0);
-  roofGrad.addColorStop(0, '#c0402f');
-  roofGrad.addColorStop(1, '#9a2f22');
-  ctx.fillStyle = roofGrad;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#6f1f16';
-  ctx.stroke();
-  // 瓦垄：几条竖向瓦线(屋脊→檐口)
-  ctx.strokeStyle = 'rgba(90,20,15,0.5)';
-  ctx.lineWidth = 1;
-  const TILES = 5;
-  for (let k = 1; k < TILES; k++) {
-    const f = k / TILES;
-    const topX = RIDGE_INSET + (campW - 2 * RIDGE_INSET) * f;
-    const botX = -EAVE + (campW + 2 * EAVE) * f;
-    ctx.beginPath();
-    ctx.moveTo(topX, -roofH + 2);
-    ctx.lineTo(botX, -1);
-    ctx.stroke();
+  if (roofImg && roofImg.naturalWidth) {
+    // 素材底边就是檐口底线：画在铰链线(y=0)上方，横向比屋身两侧各外挑 EAVE
+    ctx.drawImage(roofImg, -EAVE, -roofH, roofW, roofH);
+  } else {
+    drawPalaceRoof(ctx, campW / 2, 0, roofW, roofH);
   }
-  // 屋脊高光
-  ctx.strokeStyle = 'rgba(255,220,180,0.55)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(RIDGE_INSET, -roofH + 2); ctx.lineTo(campW - RIDGE_INSET, -roofH + 2);
-  ctx.stroke();
   ctx.restore();
   // 5 个候选槽：丝带从「宫」左→右错开伸出，短暂满长后从营端收回，再出图标
   const EXTEND_STAGGER = SUMMON_EXTEND_STAGGER; // 相邻槽伸出起点延迟（左→右）

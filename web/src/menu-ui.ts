@@ -1,6 +1,6 @@
 // 首页 / 弹窗共用水墨 UI 组件（朱红金边、宣纸底，无 emoji）。
 import { sprite } from './assets';
-import { VIEW_W, VIEW_H, fillViewScrim } from './render';
+import { VIEW_W, VIEW_H, fillViewScrim, drawPalaceRoof } from './render';
 
 export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -17,8 +17,12 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
   ctx.fillRect(0, 0, w, h);
 }
 
-/** 弹窗标题栏高度（关闭钮在此区域内垂直居中） */
+/** 弹窗标题栏高度（内容区距弹窗顶的偏移；宫檐横带「戴」在弹窗顶上方） */
 export const INK_POPUP_HEAD_H = 46;
+/** 宫檐整体上移量：檐口压到弹窗顶内、盖住弹窗顶部圆角边框（drawInkPopupFrame 用） */
+const BAND_LIFT = 5;
+/** 关闭按钮随宫檐整体上移量（与宫檐同步，压在瓦面上） */
+const CLOSE_LIFT = 0;
 
 export function inkPopupCloseRect(
   popX: number,
@@ -28,7 +32,7 @@ export function inkPopupCloseRect(
 ): { x: number; y: number; w: number; h: number } {
   return {
     x: popX + 10,
-    y: popY + (INK_POPUP_HEAD_H - btnH) / 2,
+    y: popY + (INK_POPUP_HEAD_H - btnH) / 2 - CLOSE_LIFT,
     w: btnW,
     h: btnH,
   };
@@ -62,17 +66,39 @@ export function drawInkPopupFrame(
   ctx.stroke();
 
   const headH = INK_POPUP_HEAD_H;
-  roundRect(ctx, x, y, w, headH, 14);
-  const head = ctx.createLinearGradient(x, y, x, y + headH);
-  head.addColorStop(0, '#8a4020');
-  head.addColorStop(1, '#5a2810');
-  ctx.fillStyle = head;
-  ctx.fill();
-  ctx.fillStyle = '#fff4e0';
+  // 不再画老的朱红渐变标题背景条（用户反馈多余）：标题栏视觉完全由厚重宫檐承担，
+  // 宫檐透明处直接露出弹窗米色体（檐梁底边即标题栏与内容区的分界）。
+  // 厚重宫檐横带（Seedream 生成 palace-roof-band）：正脊+翘角+宝顶高出弹窗上沿（屋顶「戴」在弹窗顶上），
+  // 瓦面与檐梁构成标题栏主体，标题字画在瓦面上。
+  // 弹窗宽度 320~504 不一 → 三段式绘制：左右翘角段按原比例不变形，中间瓦面段横向拉伸补足
+  // （中间段被拉伸 ~2.6 倍会让瓦垄变稀，故显示高给足 72 让整体造型醒目）。
+  // 素材未加载时回退矢量 drawPalaceRoof（同样造型，无细节纹理）。
+  const band = sprite('palace-roof-band');
+  const bandH = 110; // 显示高（正脊顶到檐梁底）
+  const bandLift = BAND_LIFT; // 整体上移量：檐口压进弹窗顶、盖住顶部圆角边框（关闭按钮按 CLOSE_LIFT 同步微调）
+  const bandW = w + 24; // 两端翘角略出挑到弹窗外——标题栏像宫门楼，添仙宫感
+  const bandCx = x + w / 2, bandTop = y + headH - bandLift - bandH; // 檐梁底在 y+headH-30（弹窗顶圆角内）
+  if (band && band.naturalWidth) {
+    const imgW = band.naturalWidth, imgH = band.naturalHeight;
+    const endSrcW = imgW * 0.25; // 源图两端翘角段各占 1/4 宽（生成时要求翘角贴满画幅两端）
+    const endW = bandH * (endSrcW / imgH); // 翘角段显示宽按原图纵横比，保持不变形
+    const midW = Math.max(0, bandW - 2 * endW);
+    ctx.drawImage(band, 0, 0, endSrcW, imgH, bandCx - bandW / 2, bandTop, endW, bandH);
+    ctx.drawImage(band, endSrcW, 0, imgW - 2 * endSrcW, imgH, bandCx - bandW / 2 + endW, bandTop, midW, bandH);
+    ctx.drawImage(band, imgW - endSrcW, 0, endSrcW, imgH, bandCx - bandW / 2 + endW + midW, bandTop, endW, bandH);
+  } else {
+    drawPalaceRoof(ctx, x + w / 2, y + 10, w + 24, 26);
+  }
+  // 标题画在瓦面下带（檐梁上方 ~20px，避开正脊）：米金字 + 深红描边，压在瓦面上保持可读
   ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(title, x + w / 2, y + headH / 2);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = 'rgba(70,26,8,0.85)';
+  ctx.strokeText(title, x + w / 2, bandTop + bandH - 20);
+  ctx.fillStyle = '#ffe9b8';
+  ctx.fillText(title, x + w / 2, bandTop + bandH - 20);
 
   roundRect(ctx, closeR.x, closeR.y, closeR.w, closeR.h, 6);
   ctx.fillStyle = 'rgba(48,28,12,0.55)';
