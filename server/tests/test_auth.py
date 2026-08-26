@@ -186,3 +186,32 @@ def test_resolve_unknown_and_expired_token(db):
         cur.execute("INSERT INTO sessions (token, uid, platform, created_at, expires_at) VALUES (%s,%s,%s,%s,%s)",
                     ("e" * 64, "1000000000000010", "web", now - timedelta(days=2), now - timedelta(days=1)))
     assert auth_session.resolve_token(db, "e" * 64) is None
+
+
+def test_resolve_token_sliding_renewal_throttled(db):
+    from datetime import timedelta
+
+    import auth_session
+
+    now = db.now()
+    # 新鲜 token（剩余≈满窗口）：resolve 不应改写 expires_at（节流跳过）
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO sessions (token, uid, platform, created_at, expires_at) VALUES (%s,%s,%s,%s,%s)",
+                    ("f" * 64, "1000000000000011", "web", now, now + timedelta(days=30)))
+        cur.execute("SELECT expires_at FROM sessions WHERE token=%s", ("f" * 64,))
+        exp0 = cur.fetchone()["expires_at"]
+    assert auth_session.resolve_token(db, "f" * 64, renew_days=30) == "1000000000000011"
+    with db.cursor() as cur:
+        cur.execute("SELECT expires_at FROM sessions WHERE token=%s", ("f" * 64,))
+        assert cur.fetchone()["expires_at"] == exp0  # 未被改写（节流生效）
+
+    # 临近过期 token（剩余 < 满窗口 - 1天）：resolve 应把 expires_at 向前滑动
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO sessions (token, uid, platform, created_at, expires_at) VALUES (%s,%s,%s,%s,%s)",
+                    ("g" * 64, "1000000000000012", "web", now, now + timedelta(hours=1)))
+        cur.execute("SELECT expires_at FROM sessions WHERE token=%s", ("g" * 64,))
+        near0 = cur.fetchone()["expires_at"]
+    assert auth_session.resolve_token(db, "g" * 64, renew_days=30) == "1000000000000012"
+    with db.cursor() as cur:
+        cur.execute("SELECT expires_at FROM sessions WHERE token=%s", ("g" * 64,))
+        assert cur.fetchone()["expires_at"] > near0  # 已滑动前移

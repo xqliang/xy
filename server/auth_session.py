@@ -2,12 +2,14 @@ from __future__ import annotations
 
 # 会话令牌（session token）的签发与校验。
 # 登录成功后给客户端发一个 64 位 hex 令牌，之后每次请求带上它换回 uid；
-# 令牌采用「滑动过期」：只要还没过期，每次校验成功就把有效期顺延，活跃用户不会掉线。
+# 令牌采用「滑动过期」：只要还没过期，校验成功就把有效期顺延（写库有节流，见 RENEW_SLACK），活跃用户不会掉线。
 
 import secrets
 from datetime import timedelta
 
 from db import DB
+
+RENEW_SLACK = timedelta(days=1)  # 滑动续期节流：剩余有效期跌破(满窗口-此值)才写库，避免高频轮询每次都写
 
 
 def issue_token(db: DB, uid: str, platform: str, days: int = 30) -> tuple[str, str]:
@@ -51,9 +53,13 @@ def resolve_token(db: DB, token: str, renew_days: int = 30) -> str | None:
         row = cur.fetchone()
         if not row:
             return None
-        # expires_at 理论上非空（建表时 NOT NULL），这里仍防御性判空，避免脏数据触发比较异常。
-        if row["expires_at"] is not None and row["expires_at"] < now:
+        exp = row["expires_at"]
+        # expires_at 建表为 NOT NULL，仍防御性判空，避免脏数据触发比较异常
+        if exp is not None and exp < now:
             return None
-        # 滑动续期：每次成功校验都把有效期从「现在」重新往后推 renew_days 天。
-        cur.execute("UPDATE sessions SET expires_at=%s WHERE token=%s", (now + timedelta(days=renew_days), token))
+        # 滑动续期（节流）：仅当剩余有效期跌破「满窗口 - RENEW_SLACK」才写库，
+        # 把高频轮询(~1s)下的写放大收敛到每 token 每天至多一次；活跃用户永不掉线。
+        if exp is None or exp <= now + timedelta(days=renew_days) - RENEW_SLACK:
+            cur.execute("UPDATE sessions SET expires_at=%s WHERE token=%s",
+                        (now + timedelta(days=renew_days), token))
         return row["uid"]
