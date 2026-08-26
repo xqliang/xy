@@ -4967,6 +4967,13 @@ export class Battle {
     this.waveActive = true;
     this.healUsedThisWave = false;
     this.aiHealUsedThisWave = false;
+    // 定海针：开局首开 1 阵位（见 applyItem），之后每 5 波自动再开 1（玩家 / 单机 AI 各按是否装备）。
+    // 放在 computeWavePressure 前——新开空位计入本波最优输出与压力规划。
+    if (this.wave % 5 === 0) {
+      if (this.pickedItems.includes('dinghai') && this.openDinghaiSlot(false)) this.flashPassive('dinghai');
+      if (!this.pvp && this.aiPickedItems.includes('dinghai') && this.openDinghaiSlot(true))
+        this.flashPassive('dinghai', 0.45, true);
+    }
     // 按当前地图 + 战场武器最优重排 DPS，规划本波数量/Boss 血（压力比随波次升高）
     this.wavePressure = this.computeWavePressure(this.wave);
     this.spawnRemaining = this.wavePressure.count;
@@ -5147,7 +5154,7 @@ export class Battle {
         if (!this.pvp) this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 2);
         break;
       case 'zhuwang': this.mods.monsterSpdMul = Math.max(0.4, this.mods.monsterSpdMul - 0.10); break;
-      case 'dinghai': { const lc = this.lockedCells(); if (lc[0]) this.unlocked.add(cellKey(lc[0].c, lc[0].r)); break; }
+      case 'dinghai': this.openDinghaiSlot(false); break; // 开局首开 1 阵位；每 5 波再开见 startNextWave
     }
   }
 
@@ -5167,12 +5174,25 @@ export class Battle {
       case 'hushen': this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 1); break;
       case 'tongxin': this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + 3); this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + 2); this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + 2); break;
       case 'zhuwang': this.aiMods.monsterSpdMul = Math.max(0.4, this.aiMods.monsterSpdMul - 0.10); break;
-      case 'dinghai': {
-        const lc = this.aiCells.find((c) => !this.aiUnlocked.has(cellKey(c.c, c.r)));
-        if (lc) this.aiUnlocked.add(cellKey(lc.c, lc.r));
-        break;
-      }
+      case 'dinghai': this.openDinghaiSlot(true); break; // 开局首开；每 5 波再开见 startNextWave
     }
+  }
+
+  /**
+   * 定海针：开启一个当前锁定的阵位（ai=false 玩家侧 / true 单机 AI 侧）。
+   * 开局首开与每 5 波自动开都走此函数。无剩余锁定格时 no-op，返回是否真的开了（用于闪光反馈）。
+   */
+  private openDinghaiSlot(ai: boolean): boolean {
+    if (ai) {
+      const lc = this.aiCells.find((c) => !this.aiUnlocked.has(cellKey(c.c, c.r)));
+      if (!lc) return false;
+      this.aiUnlocked.add(cellKey(lc.c, lc.r));
+      return true;
+    }
+    const lc = this.lockedCells()[0];
+    if (!lc) return false;
+    this.unlocked.add(cellKey(lc.c, lc.r));
+    return true;
   }
 
   // 被动道具的持续效果：洛阳铲到期自动挖一个高评分槽位（无可挖则跳过，计时器重置后下个周期再试）

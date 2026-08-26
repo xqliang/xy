@@ -67,7 +67,7 @@ export const PASSIVE_LORE: Record<string, string> = {
   hushen: '金光护身，唐僧添寿',
   zhuwang: '蛛网横路，绊妖难行',
   tongxin: '同心护法，唐僧添寿',
-  dinghai: '定海神针，即开一阵',
+  dinghai: '定海神针，开局一阵，每五波再拓',
 };
 
 /** 妖怪类型背景（key = codex 类型卡内部标识） */

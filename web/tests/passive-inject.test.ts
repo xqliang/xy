@@ -26,6 +26,19 @@ describe('被动技能开局注入', () => {
     expect(b.unlocked.size).toBe(base.unlocked.size + 1);
   });
 
+  it('自动定海针：开局首开 1，之后每 5 波再自动开 1', () => {
+    const b = make(['dinghai']);
+    const start = b.unlocked.size; // 开局首开后的阵位数
+    // 波 1–4 不是 5 的倍数：不额外开
+    for (let w = 0; w < 4; w++) { b.startNextWave(); b.forceClearWaveForTest(); }
+    expect(b.wave).toBe(4);
+    expect(b.unlocked.size).toBe(start);
+    // 第 5 波：+1
+    b.startNextWave();
+    expect(b.wave).toBe(5);
+    expect(b.unlocked.size).toBe(start + 1);
+  });
+
   it('蟠桃园：走桃树系统(gardenOn)，并进入 pickedItems 以在被动栏展示', () => {
     const b = make(['pas_pantao']);
     expect(b.gardenOn).toBe(true);
