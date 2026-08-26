@@ -253,6 +253,24 @@ describe('PvpSocket 指数退避重连', () => {
     expect(FakeWebSocket.instances.length).toBe(1);
     expect(sock.state).toBe('closed');
   });
+
+  it('reconnectAttempt：open=0；断开进入重连后随次数递增；重连成功归零', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();                       // open 成功
+    expect(sock.reconnectAttempt).toBe(0);
+    FakeWebSocket.last().close();        // 断 → 第 1 次重连排程（retryCount→1）
+    expect(sock.reconnectAttempt).toBe(1);
+    calls.find((c) => c.ms === 300)!.fn(); // 建新 socket
+    FakeWebSocket.last().close();        // 再断 → 第 2 次
+    expect(sock.reconnectAttempt).toBe(2);
+    calls.find((c) => c.ms === 1000)!.fn();
+    await tick();                       // 这次 open 成功 → 归零
+    expect(sock.reconnectAttempt).toBe(0);
+    sock.close();
+  });
 });
 
 describe('PvpSocket 手动关闭', () => {

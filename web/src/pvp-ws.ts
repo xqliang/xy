@@ -79,7 +79,9 @@ export class PvpSocket {
   state: PvpSocketState = 'closed';
   /** 应用层 RTT（ms，EWMA α=0.25）：首个 pong 前为 null，供顶部延迟 HUD 显示。 */
   rttMs: number | null = null;
-  /** 最近一次收到任意下行消息的墙钟 ms（Date.now()）：供断线看门狗判定「>6s 无入站」。 */
+  /** 当前重连尝试次数（0=未在重连或已 open；≥1=第 N 次重连中）。供 UI 显示"正在重连(第 N 次)"。 */
+  get reconnectAttempt(): number { return this.retryCount; }
+  /** 最近一次收到任意下行消息的墙钟 ms（Date.now()）：供断线看门狗判定「>10s 无入站」。 */
   lastInboundAt = 0;
 
   private readonly opts: PvpSocketOpts;
