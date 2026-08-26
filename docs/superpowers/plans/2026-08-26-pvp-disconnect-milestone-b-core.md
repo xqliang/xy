@@ -487,10 +487,14 @@ git commit -m "feat(pvp-server): 撮合成局后双方久不连接则退队回�
 
     # 周期 flush：镜像 start_aggregator 的守护线程形态（daemon、swallow-and-log、sleep 循环）
     import threading, time as _time
+    # 间隔在主线程解析：值非法回退默认 + 夹紧，别让守护线程启动即静默死掉（否则周期落库悄悄消失）
+    try:
+        flush_interval = max(0.5, float(os.environ.get("XY_PVP_FLUSH_INTERVAL", "5")))
+    except (TypeError, ValueError):
+        flush_interval = 5.0
     def _pvp_flush_loop():
-        interval = float(os.environ.get("XY_PVP_FLUSH_INTERVAL", "5"))
         while True:
-            _time.sleep(interval)
+            _time.sleep(flush_interval)
             try:
                 hub.flush_active_matches()
             except Exception:
@@ -504,18 +508,23 @@ git commit -m "feat(pvp-server): 撮合成局后双方久不连接则退队回�
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(f"serving static={static_dir} api+admin on {host}:{port}", flush=True)
         def _graceful(signum, _frame):
+            # 先 SIG_IGN 掉两个信号：信号处理器在主线程执行，若 flush 期间第二个信号到达会嵌套重入本函数，
+            # 再进 flush 的 with self._flush_lock 会对已持有的锁阻塞获取 → 主线程自死锁。忽略重复即可。
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             print(f"signal {signum} → flushing pvp active matches then shutting down", flush=True)
             try:
                 hub.flush_active_matches()        # 关机前刷一次，发版不丢活跃对局
             except Exception:
                 logging.exception("关机 flush 失败")
-            httpd.shutdown()                       # 从信号处理线程打断 serve_forever
+            # shutdown() 必须在 serve_forever 所在的主线程之外调用，否则死锁（信号处理器就在主线程）；起短命线程调它
+            threading.Thread(target=httpd.shutdown, name="pvp-shutdown", daemon=True).start()
         signal.signal(signal.SIGTERM, _graceful)
         signal.signal(signal.SIGINT, _graceful)
         httpd.serve_forever()
 ```
 
-（`ThreadingHTTPServer` 用作上下文管理器，`serve_forever()` 阻塞；`httpd.shutdown()` 从信号处理线程调用是打断它的标准做法。systemd `xy-web.service` 默认 `KillSignal=SIGTERM` + `TimeoutStopSec≈90s`，足够 flush。）
+（`ThreadingHTTPServer` 用作上下文管理器，`serve_forever()` 阻塞在**主线程**；Python 信号处理器也在主线程执行，故 `httpd.shutdown()` **必须**从另起的线程调用，否则 serve_forever 无法推进去观察 shutdown 标志 → 死锁 → 只能等 systemd `TimeoutStopSec≈90s` 后 SIGKILL。`_graceful` 顶部 SIG_IGN 防第二个信号在 flush 期间重入造成 `_flush_lock` 自死锁。systemd `xy-web.service` 默认 `KillSignal=SIGTERM`，flush 时间充裕。）
 
 - [ ] **Step 2: import/语法冒烟**
 
