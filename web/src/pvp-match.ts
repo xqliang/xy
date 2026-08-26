@@ -28,6 +28,8 @@ export interface PvpMatchState {
   code: string | null;
   opponent: MatchStart['opponent'] | null;
   message: string;
+  /** 进入 matched 的时刻（now() 时基）——驱动匹配屏「匹配成功」动画；matched 前恒为 0 */
+  matchedAt: number;
 }
 /** 控制器依赖注入：net 网络层、now 时间源、onMatched/onFailed 回调。 */
 interface Deps {
@@ -46,7 +48,7 @@ export class PvpMatchController {
   constructor(d: Deps) {
     this.d = d;
     // 初始 idle：剩余时间为满额倒计时，其余字段置空。
-    this.state = { phase: 'idle', startedAt: 0, remainMs: MATCH_TIMEOUT_MS, ticket: null, code: null, opponent: null, message: '' };
+    this.state = { phase: 'idle', startedAt: 0, remainMs: MATCH_TIMEOUT_MS, ticket: null, code: null, opponent: null, message: '', matchedAt: 0 };
   }
 
   /** 进入一个新的阶段：刷新阶段/起始时间/剩余时间，并重置轮询计时锚点。 */
@@ -59,6 +61,7 @@ export class PvpMatchController {
     this.state.opponent = null;
     this.state.message = '';
     this.state.code = null;
+    this.state.matchedAt = 0;
     this.lastPollAt = t;
   }
 
@@ -127,10 +130,11 @@ export class PvpMatchController {
     const tk = this.state.ticket;
     if (tk) { try { await this.d.net.cancel(tk); } catch { /* 忽略 */ } }
   }
-  /** 进入 matched：记录对手并触发回调。 */
+  /** 进入 matched：记录对手与时刻（渲染层「匹配成功」动画的起点）并触发回调。 */
   private matched(ms: MatchStart): void {
     this.state.phase = 'matched';
     this.state.opponent = ms.opponent;
+    this.state.matchedAt = this.d.now();
     this.d.onMatched(ms);
   }
   /** 进入 failed：幂等（已 failed/matched 不再重复触发），记录消息并触发回调。 */
@@ -143,8 +147,14 @@ export class PvpMatchController {
   }
 }
 
-/** 把 controller 状态映射成匹配屏 view；idle（未开始/已取消）返回 null，表示不该画 PvP 匹配屏（应回菜单）。 */
-export function toMatchView(state: PvpMatchState, mode: 'random' | 'invite' | 'join', copied: boolean): PvpMatchingView | null {
+/** 把 controller 状态映射成匹配屏 view；idle（未开始/已取消）返回 null，表示不该画 PvP 匹配屏（应回菜单）。
+ *  me 为本方档案（matched 对阵卡用），由调用方从 profile+rank 取；matchedAt 缺省时渲染层按动画已播完处理。 */
+export function toMatchView(
+  state: PvpMatchState,
+  mode: 'random' | 'invite' | 'join',
+  copied: boolean,
+  me?: PvpMatchingView['me'],
+): PvpMatchingView | null {
   if (state.phase === 'idle') return null; // 收窄：其余 4 个 phase 恰好等于 PvpMatchingView.phase 联合
   return {
     mode,
@@ -154,5 +164,7 @@ export function toMatchView(state: PvpMatchState, mode: 'random' | 'invite' | 'j
     code: state.code,
     copied,
     message: state.message,
+    me,
+    matchedAtMs: state.matchedAt > 0 ? state.matchedAt : undefined,
   };
 }

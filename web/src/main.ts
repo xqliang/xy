@@ -504,7 +504,11 @@ function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): vo
     pvpScreenLazy.ensure(() => {
       pvpMode = mode; pvpCopied = false;
       pvpController = new m.PvpMatchController({
-        net: pvpNet, now: () => performance.now(), onMatched: onPvpMatched, onFailed: onPvpFailed,
+        net: pvpNet, now: () => performance.now(),
+        // 匹配成功不立即开局：先留在匹配屏播「匹配成功」对阵卡动画（双方头像/昵称/等级），
+        // 动画播完（MATCHED_SHOW_MS）由 frame() 的 pvpMatching 分支真正调 onPvpMatched 开局。
+        onMatched: (ms) => { pvpPendingMatch = ms; scheduleFrame(); },
+        onFailed: onPvpFailed,
       });
       screen = 'pvpMatching';
       if (mode === 'random') void pvpController.startRandom(rank.level);
@@ -586,6 +590,9 @@ let pvpStatusReported = false;          // 终局 status 已上报一次性标�
 let pvpMatchStartMs = 0;                        // 开局纪元（服务端 startAtServerMs）：波次纪元→tick 的零点
 const pvpWaveStartTicks = new Map<number, number>(); // 波号→该波本地开波 tick（缓存：两端各按自己 wave+1 查表）
 let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波，立即经 WS 上报）
+// matched 后先播「匹配成功」对阵卡动画（双方头像/昵称/等级），动画播完才真正开局——
+// pendingMatch 非空表示动画窗口期（matchedAt 由 pvp-match state 提供，渲染层用它驱动进度）。
+let pvpPendingMatch: import('./api/pvp-client').MatchStart | null = null;
 // —— Task 10：PvP 终局（认输 / 服务端 result 权威结算 / 断线提示）——
 let pvpSurrendered = false;                     // 本方已点「认输」：经 WS 上报 surrender，等服务端 result 驱动终局
 let pvpOpponent: import('./api/pvp-client').OpponentProfile | null = null; // 当前对手档案（结算屏展示头像/昵称）
@@ -2535,8 +2542,19 @@ function frame(now: number): void {
     const mc = pvpMatchLazy.get(); const sc = pvpScreenLazy.get();
     if (mc && sc && pvpController) {
       pvpController.pump(performance.now());
-      const view = mc.toMatchView(pvpController.state, pvpMode, pvpCopied);
+      const view = mc.toMatchView(pvpController.state, pvpMode, pvpCopied, {
+        nickname: loadProfile().nickname,
+        avatarId: loadProfile().avatarId,
+        rankLevel: rank.level,
+      });
       if (view) sc.drawPvpMatching(ctx, view);
+      // matched 动画窗口期：MATCHED_SHOW_MS 播完对阵卡动画后真正开局（onPvpMatched 会切战斗屏并清 controller）
+      if (pvpPendingMatch && pvpController.state.matchedAt > 0
+        && performance.now() - pvpController.state.matchedAt >= sc.MATCHED_SHOW_MS) {
+        const ms = pvpPendingMatch;
+        pvpPendingMatch = null;
+        onPvpMatched(ms);
+      }
     }
   } else {
     // —— 战斗（含局内结算弹层） —— //
@@ -2841,6 +2859,9 @@ interface GameHook {
   // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
   // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
   enterPvp: (seed: number) => void;
+  // 冒烟钩子：不经真实服务端直接摆出匹配屏阶段（queuing 匹配中 / matched 对阵卡动画窗口），
+  // 供 headless 验证匹配屏渲染与「动画播完自动开局」。matched 会走真实开局路径（MATCHED_SHOW_MS 后切战斗屏）。
+  fakePvpMatch: (phase: 'queuing' | 'matched') => void;
   // 自测探针：PvP 对局内部状态（只读，供 headless 冒烟验证快照收发/插值视图/波驱动/终局）。
   pvpProbe: () => {
     active: boolean;             // pvpSock 非空=对局进行中
@@ -2979,6 +3000,37 @@ const hook: GameHook = {
     } as import('./api/pvp-client').MatchStart;
     onPvpMatched(ms);
   },
+  fakePvpMatch: (phase) => {
+    // 复用真实 pvpNet 构造 controller 但不调 startRandom/startInvite（不触发网络）：
+    // queuing 态 ticket 为 null → pump 不轮询；matched 态 pump 直接短路。
+    pvpMatchLazy.ensure((m) => {
+      pvpScreenLazy.ensure(() => {
+        pvpPendingMatch = null;
+        pvpController = new m.PvpMatchController({
+          net: pvpNet, now: () => performance.now(),
+          onMatched: (ms) => { pvpPendingMatch = ms; },
+          onFailed: () => {},
+        });
+        const s = pvpController.state;
+        pvpMode = 'random';
+        if (phase === 'matched') {
+          s.phase = 'matched';
+          s.opponent = { uid: 'opp-smoke', nickname: '烟雾对手', avatarId: 'erlang', rankLevel: 3 };
+          s.matchedAt = performance.now();
+          // 伪装 MatchStart：动画播完 frame() 会用 pvpPendingMatch 走真实开局（连不上服务器则静默重连，可接受）
+          pvpPendingMatch = {
+            matchId: 'smoke-match', seed: 20260826, map: currentMap.id, startAtServerMs: Date.now() - 1000,
+            opponent: s.opponent,
+          } as import('./api/pvp-client').MatchStart;
+        } else {
+          s.phase = 'queuing';
+          s.remainMs = 60_000;
+        }
+        screen = 'pvpMatching';
+        scheduleFrame();
+      });
+    });
+  },
   pvpProbe: () => {
     if (!pvpSock) return null;
     return {
@@ -3003,7 +3055,11 @@ const hook: GameHook = {
   }),
   // Task 7：匹配态只读快照——建房后房号存在 controller.state.code，桥接 page2 深链加入。
   pvpMatchProbe: () => (pvpController
-    ? { code: pvpController.state.code, phase: pvpController.state.phase }
+    ? {
+        code: pvpController.state.code, phase: pvpController.state.phase,
+        matchedAt: pvpController.state.matchedAt, nowMs: performance.now(),
+        pendingMatch: pvpPendingMatch !== null, // matched 动画窗口期（>0ms 未开局）
+      }
     : null),
   // Task 9.5：暂停/退出弹窗当前态探针（供 headless 冒烟验证「PvP 退出弹窗开着但仿真照跑」）。
   pauseState: () => ({ paused: ui.paused, pvpExitPopup, phase: pausePhase, tutorial: !!tutorialOverlay }),

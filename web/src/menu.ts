@@ -225,6 +225,28 @@ export function drawMenuTitle(ctx: CanvasRenderingContext2D, text: string, cx: n
   ctx.restore();
 }
 
+/** PvP 入口按钮的程序化叠字：底图中央留空区画字（Seedream 文字失败率高，同图鉴按钮范式）。
+ *  color 按底图色调传入：朱红底用米金字+深红描边，青灰底用深棕字+浅米描边。 */
+function drawMenuBtnLabel(
+  ctx: CanvasRenderingContext2D,
+  b: { x: number; y: number; w: number; h: number },
+  text: string,
+  color: string,
+  stroke: string,
+): void {
+  ctx.save();
+  ctx.font = `bold ${Math.round(b.h * 0.3)}px "PingFang SC", "STKaiti", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = stroke;
+  ctx.strokeText(text, b.x + b.w / 2, b.y + b.h / 2 + 1);
+  ctx.fillStyle = color;
+  ctx.fillText(text, b.x + b.w / 2, b.y + b.h / 2 + 1);
+  ctx.restore();
+}
+
 export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   // 小游戏下首页背景改由 drawScreenBackdrop 铺满整屏(含黑边)，此处跳过，避免 VIEW 内外两套缩放接缝/双重底。
   if (!isWeChat) drawMenuBackground(ctx);
@@ -322,8 +344,7 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.restore();
 
   for (const b of menuButtons()) {
-    const interact = menuInteract(info.pressedId, info.hoverId, b.id);
-    if (b.id === 'staminaPlus' || b.id === 'mapPick') continue;
+    const interact = menuInteract(info.pressedId, info.hoverId, b.id);    if (b.id === 'staminaPlus' || b.id === 'mapPick') continue;
     if (b.id === 'settings') {
       drawMenuSpriteButton(ctx, sprite('menu-btn-settings'), b, interact, 'none', '设置', 'secondary', 'cover');
       continue;
@@ -373,13 +394,18 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
       );
       continue;
     }
-    // PvP 入口：水墨按钮。真人对战为主操作（primary）、邀请好友为次操作（secondary）
+    // PvP 入口：Seedream 生成的按钮底图（无字，中央留空）+ 程序化叠字（Seedream 文字失败率高，同图鉴按钮范式）。
+    // 素材是 180×46 等比横条，contain 居中画在 64 高的按钮框内；缺图回退水墨按钮。
     if (b.id === 'pvpMatch') {
-      drawInkActionButton(ctx, b, '真人对战', info.pressedId === 'pvpMatch', 'primary');
+      const spr = sprite('menu-btn-pvp');
+      drawMenuSpriteButton(ctx, spr, b, interact, 'none', '真人对战', 'primary', 'contain');
+      if (spr) drawMenuBtnLabel(ctx, b, '真人对战', '#ffe9b8', 'rgba(80,24,6,0.9)');
       continue;
     }
     if (b.id === 'pvpInvite') {
-      drawInkActionButton(ctx, b, '邀请好友', info.pressedId === 'pvpInvite', 'secondary');
+      const spr = sprite('menu-btn-pvp-invite');
+      drawMenuSpriteButton(ctx, spr, b, interact, 'none', '邀请好友', 'secondary', 'contain');
+      if (spr) drawMenuBtnLabel(ctx, b, '邀请好友', '#4a3010', 'rgba(255,244,220,0.85)');
       continue;
     }
     if (b.id === 'endless') {
