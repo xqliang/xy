@@ -75,3 +75,28 @@ def require_uid(handler: BaseHTTPRequestHandler, body: dict[str, Any] | None = N
 
 def query_params(handler: BaseHTTPRequestHandler) -> dict[str, list[str]]:
     return parse_qs(urlparse(handler.path).query)
+
+
+def bearer_token(handler: BaseHTTPRequestHandler) -> str:
+    # 从 Authorization 头里取出 Bearer 令牌；没有或格式不对时返回空串。
+    # 大小写不敏感（HTTP 头本就大小写不敏感），只截取 "Bearer " 之后的部分并去空白。
+    auth = handler.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def require_auth(handler: BaseHTTPRequestHandler, db, body: dict[str, Any] | None = None) -> str | None:
+    """统一鉴权：优先 Bearer token；token 缺失/失效时，strict=True→401，否则回退认 X-Uid（灰度）。"""
+    from auth_session import resolve_token  # 局部导入避免模块级循环
+
+    token = bearer_token(handler)
+    if token:
+        uid = resolve_token(db, token)
+        if uid:
+            return uid
+    strict = bool(((getattr(handler, "cfg", None) or {}).get("auth") or {}).get("strict", False))
+    if strict:
+        send_json(handler, 401, {"error": {"code": "unauthorized", "msg": "login required"}})
+        return None
+    return require_uid(handler, body)

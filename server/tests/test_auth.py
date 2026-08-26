@@ -215,3 +215,48 @@ def test_resolve_token_sliding_renewal_throttled(db):
     with db.cursor() as cur:
         cur.execute("SELECT expires_at FROM sessions WHERE token=%s", ("g" * 64,))
         assert cur.fetchone()["expires_at"] > near0  # 已滑动前移
+
+
+# ---- httputil.require_auth（Bearer token + strict 灰度回退 X-Uid）----
+# 用一个最小假 handler 直接单测 require_auth，不用起真 HTTP 服务：
+# 它只提供 require_auth / send_json 需要的 headers、cfg，并把 send_json 的状态码记下来核对。
+class _FakeHandler:
+    """最小假 handler：只提供 require_auth 需要的 headers/cfg，并捕获 send_json 的状态码。"""
+
+    def __init__(self, headers, cfg):
+        self.headers = headers          # dict：.get() 兼容
+        self.cfg = cfg
+        self.sent_status = None
+        self.sent_body = None
+
+    # httputil.send_json 会调用这些；此处仅记录，不真发
+    def send_response(self, status): self.sent_status = status
+    def send_header(self, *a, **k): pass
+    def end_headers(self): pass
+    class _W:
+        def write(self, b): pass
+    wfile = _W()
+
+
+def test_require_auth_token_ok(db):
+    import auth_session
+    import httputil
+
+    token, _ = auth_session.issue_token(db, "1000000000000021", "wx")
+    h = _FakeHandler({"Authorization": f"Bearer {token}"}, {"auth": {"strict": True}})
+    assert httputil.require_auth(h, db) == "1000000000000021"
+
+
+def test_require_auth_strict_no_token_401(db):
+    import httputil
+
+    h = _FakeHandler({}, {"auth": {"strict": True}})
+    assert httputil.require_auth(h, db) is None
+    assert h.sent_status == 401
+
+
+def test_require_auth_fallback_xuid_when_not_strict(db):
+    import httputil
+
+    h = _FakeHandler({"X-Uid": "1000000000000022"}, {"auth": {"strict": False}})
+    assert httputil.require_auth(h, db) == "1000000000000022"
