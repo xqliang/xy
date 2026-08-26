@@ -101,7 +101,8 @@ import {
   syncAvatarUnlocks,
   updateProfile,
 } from './cloud-sync';
-import { bootstrapAuth, getToken } from './auth';
+import { bootstrapAuth, getToken, clearToken } from './auth';
+import { apiFetch } from './api/client';
 import { track } from './telemetry';
 import { bumpClearCount } from './clear-count';
 import { loadProfile } from './profile';
@@ -335,7 +336,22 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpSock = new PvpSocket({
     matchId: ms.matchId,
     uid: ensureUserId(),
-    token: getToken() ?? undefined,
+    // A4：每次连接取最新 token（重连也刷新），避免烘焙的旧 token 过期后连不上。
+    tokenProvider: () => getToken() ?? undefined,
+    // A4：连续重连达阈值时探活——打一个 require_auth 的轻量 GET；401=令牌失效。
+    // 非 strict 灰度期服务端回退 X-Uid 不会 401，与 WS 同步（那时 WS 也不会因鉴权失败），故不会误短路。
+    authProbe: async () => {
+      const r = await apiFetch('/api/leaderboard/daily?limit=1', { method: 'GET' });
+      return !(r.ok === false && r.status === 401);
+    },
+    // A4：令牌失效 → 清 token + 退出对局 + 回首页提示重登。
+    onAuthFail: () => {
+      clearToken();
+      endPvpSession();
+      screen = 'menu';
+      pushMenuFloatToast('登录已失效，请重新进入');
+      scheduleFrame();
+    },
     onWelcome: (_serverMs) => { /* 对时暂留空：快照时钟已由 normalizeSnapClock 归一化到本机时基，无需 serverMs */ },
     onOppSnap: (s) => {
       if (!oppView) return;
