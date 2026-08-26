@@ -35,9 +35,22 @@ const jobs = [
       + '远景淡青色仙山与飘渺云雾，中央大片干净的浅米金渐变留白（供 UI 放置），'
       + '水墨淡彩插画风格，色调宁静仙气，无角色，无格子，无瓷砖，无几何图案花纹，无文字',
   },
+  {
+    // 征兵「宫」屋身：与 palace-camp-roof 屋顶配套的棕木屋身（无字，canvas 叠「宫」）。
+    // 显示约 58×30（×3 生成后裁 bbox）。横向圆角、瓦顶下承重墙质感、中央留空叠字。
+    id: 'palace-camp-body', size: '1280x720',
+    prompt: '中国古代宫殿建筑的屋身正视图（只有墙体部分，不含屋顶不含屋檐），横向圆角矩形，'
+      + '深棕色木质结构，暖棕木纹墙面配深红木柱与横梁框架，'
+      + '底部一条深红色门槛横贯，中央大面积干净的深棕木面留空（供叠字），'
+      + '中国传统宫阙建筑风格，细节精致，扁平插画风格，'
+      + '屋身完整横贯画面左右两边缘、上下居中' + GREEN,
+  },
 ];
 
+// 用法：node gen-palace-roofs.mjs [id ...]——只重生成指定 id（缺省全部；避免无谓重生成已定稿素材）
+const only = process.argv.slice(2);
 for (const job of jobs) {
+  if (only.length && !only.includes(job.id)) continue;
   const res = await fetch(API, {
     method: 'POST',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },

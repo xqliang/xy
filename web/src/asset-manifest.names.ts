@@ -112,9 +112,10 @@ export const ASSET_FILENAMES: Record<string, string> = {
   'fence-huangfengling': 'fence-huangfengling.png',
   'gate-liushahe': 'gate-liushahe.png',
   'gate-huangfengling': 'gate-huangfengling.png',
-  // 宫阙顶饰（弹窗标题栏厚重宫檐横带 / 征兵「宫」屋顶），Seedream 生成绿幕直出 + 软抠图
+  // 宫阙顶饰（弹窗标题栏厚重宫檐横带 / 征兵「宫」屋顶+屋身），Seedream 生成绿幕直出 + 软抠图
   'palace-roof-band': 'palace-roof-band.png',
   'palace-camp-roof': 'palace-camp-roof.png',
+  'palace-camp-body': 'palace-camp-body.png',
   // PvP 匹配页背景（真人对战/好友匹配共用）+ 首页 PvP 入口按钮底图（无字，程序叠字）
   'pvp-bg': 'pvp-bg.jpg',
   'menu-btn-pvp': 'menu-btn-pvp.png',

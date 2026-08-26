@@ -1480,7 +1480,9 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const EAVE = 6 * CAMP_SCALE; // 屋檐外挑量(比屋身两侧各宽出)
   const roofW = campW + 2 * EAVE;
   const roofH = roofImg && roofImg.naturalWidth
-    ? roofW * (roofImg.naturalHeight / roofImg.naturalWidth)
+    // 素材高宽比 ~0.64，按宽推算会高 ~46px，把屋身挤到 18px 连「宫」字都放不下（底部显示不全）；
+    // 钳到矢量版等高 36px（等比缩小画，屋顶略窄不失真，屋身回到 ~28px）。
+    ? Math.min(roofW * (roofImg.naturalHeight / roofImg.naturalWidth), 16 * CAMP_SCALE * 1.9)
     : 16 * CAMP_SCALE * 1.9; // 回退矢量版的总高（含翘角与宝顶）
   const BODY_SHRINK = 6 * CAMP_SCALE; // 棕色屋身减矮量
   const bodyH0 = campH - roofH - BODY_SHRINK;
@@ -1489,16 +1491,22 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   const stackH = bodyH + roofH;
   const stackTop = campY + (campH - stackH) / 2;
   const bodyY = stackTop + roofH; // 屋身顶沿 = 屋顶铰链；屋顶向上画 roofH
-  // —— 屋身（棕色木屋身 + 「宫」字）——
-  const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
-  wood.addColorStop(0, '#8a5626');
-  wood.addColorStop(1, '#6d431d');
-  ctx.fillStyle = wood;
-  roundRect(ctx, campX, bodyY, campW, bodyH, 5 * CAMP_SCALE);
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#4f3115';
-  ctx.stroke();
+  // —— 屋身（Seedream 棕木屋身素材，中央 canvas 叠「宫」字；缺图回退矢量木屋身）——
+  const bodyImg = sprite('palace-camp-body');
+  if (bodyImg && bodyImg.naturalWidth) {
+    // 非等比铺满 bodyH（素材比例 0.43 vs 显示 ~0.49，轻微纵向拉伸无碍——纹理是横向木纹）
+    ctx.drawImage(bodyImg, campX, bodyY, campW, bodyH);
+  } else {
+    const wood = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
+    wood.addColorStop(0, '#8a5626');
+    wood.addColorStop(1, '#6d431d');
+    ctx.fillStyle = wood;
+    roundRect(ctx, campX, bodyY, campW, bodyH, 5 * CAMP_SCALE);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#4f3115';
+    ctx.stroke();
+  }
   ctx.fillStyle = '#fff2d8';
   ctx.font = `bold ${Math.round(22 * CAMP_SCALE)}px "PingFang SC", sans-serif`;
   ctx.textAlign = 'center';
@@ -1510,8 +1518,11 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.translate(campX, bodyY);
   ctx.rotate(-roofAng);
   if (roofImg && roofImg.naturalWidth) {
-    // 素材底边就是檐口底线：画在铰链线(y=0)上方，横向比屋身两侧各外挑 EAVE
-    ctx.drawImage(roofImg, -EAVE, -roofH, roofW, roofH);
+    // 素材底边就是檐口底线：画在铰链线(y=0)上方。roofH 被钳制时等比缩宽居中（不压扁变形），
+    // 缩后檐口宽≈屋身宽（外挑感交给素材自带的翘角表现）。
+    const srcRatio = roofImg.naturalHeight / roofImg.naturalWidth;
+    const drawW = roofH / srcRatio;
+    ctx.drawImage(roofImg, -EAVE - (drawW - roofW) / 2, -roofH, drawW, roofH);
   } else {
     drawPalaceRoof(ctx, campW / 2, 0, roofW, roofH);
   }
