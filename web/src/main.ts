@@ -2848,8 +2848,11 @@ function frame(now: number): void {
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
     // Task 7.6：断线弹窗最顶层（盖住结算/暂停），只有判死后才画。
     if (pvpNetDead) drawNetDeadOverlay(ctx, (DISCONNECT_COUNTDOWN_MS - (now - pvpNetDeadStart)) / 1000);
-    // A3：断线判死前、连接处于重连中 → 顶部横幅（sim 仍在跑，不遮挡；判死后由 drawNetDeadOverlay 接管）。
-    if (pvpSock && !pvpResult && !pvpNetDead && !pvpOppGone && pvpSock.state === 'reconnecting') {
+    // A3：断线重连期间（含每次握手尝试的 connecting 子态）→ 顶部横幅（sim 仍在跑，不遮挡；判死后由 drawNetDeadOverlay 接管）。
+    // 用 reconnectAttempt>0 而非 state==='reconnecting'：后者会在每次握手尝试的 connecting 子态漏掉——
+    // 若握手挂起（弱网黑洞/captive portal），会出现近 10s 既无横幅也无弹窗的盲区。retryCount 在整个重连周期恒≥1，
+    // 初次连接/成功 open 后为 0；手动关/鉴权失败后 pvpSock 会被 endPvpSession 置空，再加 state!=='closed' 双保险。
+    if (pvpSock && !pvpResult && !pvpNetDead && !pvpOppGone && pvpSock.reconnectAttempt > 0 && pvpSock.state !== 'closed') {
       drawReconnectingBanner(ctx, pvpSock.reconnectAttempt);
     }
     // 对方断线弹窗：倒计时期间显示；结算屏一开（pvpSettleResult 非空）则让位给结算（避免两顶层重叠）。
