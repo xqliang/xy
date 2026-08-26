@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def test_ok_uid_rejects_trailing_newline():
+    # \A...\Z 绝对锚定：尾随换行不再被 $ 放过（否则 "uid\n" 会绕过按精确串比较的守卫）
+    from httputil import ok_uid
+
+    assert ok_uid("12345678") is True
+    assert ok_uid("12345678\n") is False
+    assert ok_uid(" 12345678") is False
+    assert ok_uid(None) is False
+
+
 # ---- DB 夹具 ----
 # 复用 test_player_api.py 的建库/建表模式，但特意换成独立库名 xy_game_authtest，
 # 与 xy_game_test 隔离：鉴权相关表的建表/删表不会污染其它测试库。

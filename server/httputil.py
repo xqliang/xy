@@ -6,7 +6,9 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-UID_RE = re.compile(r"^\d{8,20}$")
+# 用 \A...\Z 绝对锚定：Python 的 $ 会在结尾换行前匹配，`^\d{8,20}$` 会把 "12345678\n" 判为合法，
+# 使带尾随换行的 uid 绕过下游按精确串比较的守卫（如 web 分支的 wx_bound 检查）。\Z 只匹配串尾，堵住此类输入。
+UID_RE = re.compile(r"\A\d{8,20}\Z")
 
 
 def ok_uid(uid: str | None) -> bool:
