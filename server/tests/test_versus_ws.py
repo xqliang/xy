@@ -457,7 +457,7 @@ def test_reconnect_within_grace_recovers():
         a.close()                       # A 断开
         assert b.recv()["type"] == "oppGone"
 
-        hub._clock["ms"] += 500         # 仍远小于宽限(6s)
+        hub._clock["ms"] += 500         # 仍在 DISCONNECT_GRACE_MS 宽限内
         a2 = WsClient(port, mid, "A1")  # 重连
         _hello(a2)
         assert a2.recv()["type"] == "welcome"

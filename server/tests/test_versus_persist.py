@@ -159,3 +159,20 @@ def test_reap_keeps_match_if_one_side_connected(rhub, db):
     rhub._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
     rhub.poll("bogus")
     assert mid in rhub.matches            # 连过的不按"从未连接"退队
+
+
+def test_reload_preserves_connected_ever_so_resumed_match_not_reaped_at_connect_grace(rhub, db):
+    from api_versus import VersusHub, MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
+    mid = _mk(rhub, "R1", "R2")
+    rhub.ws_hello("R1", mid, lambda t: True)   # 一侧连过 → connected_ever=True
+    rhub.flush_active_matches()
+    h2 = VersusHub(db, now_ms=lambda: 5_000_000)
+    h2.load_active_matches()
+    # 回放后 R1 侧 connected_ever 应被保留为 True（而非被覆盖成 False）
+    assert h2.matches[mid]["a"]["connected_ever"] is True
+    # 因此即便双方都没再 hello，也不会被 20s「从未连接」分支秒删（改由 IDLE_REAP/DISCONNECT_GRACE 治理）
+    h2._clock = {"ms": 5_000_000}
+    h2._now = lambda: h2._clock["ms"]
+    h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
+    h2.poll("bogus")
+    assert mid in h2.matches

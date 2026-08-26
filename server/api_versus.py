@@ -765,8 +765,9 @@ def _serialize_match(m: dict) -> dict:
 def _deserialize_match(blob: dict, now: int) -> dict:
     """把 JSON 快照还原成内存 match dict：int() 键、ws_send=None、gone_ms=now（视为断线待重连）、
     created_ms=now（关键：给回放局新鲜的重连窗，否则旧 created_ms 会让它一 _reap 就被“从未连接”清掉）、
-    last_tick_ms=now（同理：视为刚活跃，否则长停机后旧 last_tick 会被 _reap 的 IDLE 分支立即清掉）、
-    connected_ever=False（回放后需重新 ws_hello 才算“连过”）。"""
+    last_tick_ms=now（同理：视为刚活跃，否则长停机后旧 last_tick 会被 _reap 的 IDLE 分支立即清掉）。
+    connected_ever 恢复持久化值（不覆盖）：曾连过的恢复局豁免 20s「从未连接」退队，改由 45s 断线宽限 /
+    300s IDLE 治理其重连窗；真·从未连接的撮合僵尸局仍为 False → 仍 20s 回收。"""
     m = dict(blob)
     m["wave_schedule"] = {int(k): v for k, v in (blob.get("wave_schedule") or {}).items()}
     m["first_clear"] = {int(k): v for k, v in (blob.get("first_clear") or {}).items()}
@@ -776,7 +777,7 @@ def _deserialize_match(blob: dict, now: int) -> dict:
         s["ws_send"] = None
         s["gone_ms"] = now
         s["last_tick_ms"] = now   # 回放视为刚活跃，避免长停机后旧 last_tick 让回放局被 IDLE_REAP 立即清掉
-        s["connected_ever"] = False   # 回放后需重新 ws_hello 才算“连过”（B4 撮合退队分支据此）
+        s["connected_ever"] = bool(blob[key].get("connected_ever", False))  # 恢复持久化值：曾连接过的恢复局豁免20s退队，走45s宽限/300s IDLE；真·从未连接的撮合僵尸局(False)仍20s回收
         m[key] = s
     return m
 
