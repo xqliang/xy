@@ -133,3 +133,16 @@ export function onWxTouch(h: {
   wx.onTouchStart(h.start); wx.onTouchMove(h.move); wx.onTouchEnd(h.end); wx.onTouchCancel(h.cancel);
   return true;
 }
+
+// 微信登录：wx.login 拿临时 code（换 openid 用）。Web/无 wx 返回 null。
+export function wxLogin(): Promise<string | null> {
+  if (!(isWeChat && typeof wx.login === 'function')) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      wx.login({
+        success: (res: { code?: string }) => resolve(res?.code || null),
+        fail: () => resolve(null),
+      });
+    } catch { resolve(null); }
+  });
+}
