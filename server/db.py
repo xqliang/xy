@@ -110,6 +110,21 @@ SCHEMA = [
       KEY idx_uid_day (uid, day)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 在线真人对战（PvP）里程碑 B：正在进行的活跃对局镜像。单进程内存 matches 的持久层，
+    # 供 systemctl restart/发版/崩溃后回放（重连客户端经 ws_hello 重挂 ws_send）。以 match_id 为主键，
+    # 定期全量 UPSERT + 对账删除；只存未终局对局（终局入 pvp_results）。state_json 为剔除 ws_send 后的整局快照。
+    """
+    CREATE TABLE IF NOT EXISTS pvp_active_match (
+      match_id VARCHAR(40) NOT NULL PRIMARY KEY,
+      uid_a VARCHAR(20) NOT NULL,
+      uid_b VARCHAR(20) NOT NULL,
+      ticket_a VARCHAR(40) NULL,
+      ticket_b VARCHAR(40) NULL,
+      state_json MEDIUMTEXT NOT NULL,
+      updated_at DATETIME NOT NULL,
+      KEY idx_updated (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
     # 微信身份映射：openid → 内部数字 uid。openid 主键 + 绑定用 ON DUPLICATE KEY，保证并发只绑一次。
     # 注意：openid 大小写敏感、纯 ASCII（字母/数字/-/_）。若沿用表默认的 utf8mb4_unicode_ci（不区分大小写），
     #       只差大小写的两个 openid 会折叠成同一主键，Task 6 的 ON DUPLICATE KEY 会把用户张冠李戴；
