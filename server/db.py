@@ -110,6 +110,28 @@ SCHEMA = [
       KEY idx_uid_day (uid, day)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 微信身份映射：openid → 内部数字 uid。openid 主键 + 绑定用 ON DUPLICATE KEY，保证并发只绑一次。
+    """
+    CREATE TABLE IF NOT EXISTS wx_identities (
+      openid  VARCHAR(64) NOT NULL PRIMARY KEY,
+      unionid VARCHAR(64) NULL,
+      uid     VARCHAR(20) NOT NULL,
+      created_at DATETIME NOT NULL,
+      KEY idx_uid (uid)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    # 会话令牌：token → uid，滑动过期。expires_at 索引便于将来清理过期行。
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+      token   CHAR(64) NOT NULL PRIMARY KEY,
+      uid     VARCHAR(20) NOT NULL,
+      platform VARCHAR(8) NOT NULL,
+      created_at DATETIME NOT NULL,
+      expires_at DATETIME NOT NULL,
+      KEY idx_uid (uid),
+      KEY idx_expires (expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 
