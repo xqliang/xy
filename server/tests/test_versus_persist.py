@@ -211,3 +211,31 @@ def test_both_never_connect_not_resolved_as_win_still_reaped():
     hub._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
     hub.poll("bogus")
     assert mid not in hub.matches   # 被 reap 删除，而非判胜
+
+
+def test_reload_opponent_no_show_present_side_wins(rhub, db):
+    # I1 路径回归：打空气判胜在"回放恢复的对局"上也成立（最微妙的一环——
+    # 回放把两侧 gone_ms 置 now、connected_ever 按持久化值恢复；在场方重连后过 20s 宽限即判胜）。
+    from api_versus import VersusHub, MATCH_CONNECT_GRACE_MS
+    import json
+    mid = _mk(rhub, "PW1", "PW2")
+    rhub.ws_hello("PW1", mid, lambda t: True)   # PW1 连过(connected_ever=True)；PW2 从未连接
+    rhub.flush_active_matches()
+    # 模拟重启：新 hub 从库回放
+    h2 = VersusHub(db, now_ms=lambda: 9_000_000)
+    h2._clock = {"ms": 9_000_000}; h2._now = lambda: h2._clock["ms"]
+    h2.load_active_matches()
+    # 回放后 PW1 的 connected_ever 应保留 True、PW2 仍 False
+    assert h2.matches[mid]["a"]["connected_ever"] is True
+    assert h2.matches[mid]["b"]["connected_ever"] is False
+    # PW1 重连并在过撮合宽限后发快照 → 对手 PW2 从未露面 → PW1 判胜
+    sent = []
+    h2.ws_hello("PW1", mid, lambda t: (sent.append(t), True)[1])
+    h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + 1
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    h2.ws_snap("PW1", mid, {"type": "snap", "t": 1, "s": base})
+    m = h2.matches[mid]
+    assert m["ended"] is True
+    assert m["result"]["a"]["outcome"] == "win"
+    assert m["result"]["a"]["reason"] == "opponentDisconnectTimeout"
+    assert "result" in [json.loads(t).get("type") for t in sent]

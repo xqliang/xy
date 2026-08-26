@@ -480,6 +480,10 @@ class VersusHub:
             # （对手 no-show ≈ 断线超时）。由在场方的 ws_* 驱动本检查（_reap 不会触发本局：在场方
             # 在局内不轮询 matchmaking）；复用 DisconnectTimeout（客户端已有「对手掉线」文案）。
             # 仅当"恰好一方缺席"时命中：双方都没连由 _reap 的 20s 分支删除（无在场方、不判胜）。
+            # 回放耦合：_deserialize_match 把两侧 gone_ms 都置 now，故"被恢复的从未连接侧"同时满足
+            # 上面的 gone-branch(>45s) 与本分支(>20s)。20-45s 窗口内只有本分支命中；>45s 后 gone-branch
+            # （代码里更靠前）先命中——但两条路径判负方(缺席侧)与 reason(DisconnectTimeout)完全一致，
+            # 无正确性差异（仅"都合格、阈值短的先赢"这层耦合不直观，故在此点明）。
             if (not side.get("connected_ever") and other.get("connected_ever")
                     and now - m["created_ms"] > MATCH_CONNECT_GRACE_MS):
                 self._set_result(m, key, "DisconnectTimeout", now)   # 未露面的 side 判负
