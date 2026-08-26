@@ -22,7 +22,7 @@ from ws import (  # RFC6455 握手/帧编解码纯函数（Task 1），被 WebSo
 # —— 可调常量 ——
 STAMINA_COST = 5                 # 仅供客户端参考；体力为客户端权威，服务端不校验
 MATCH_TIMEOUT_MS = 120_000       # 匹配/等友 2 分钟总倒计时
-DISCONNECT_GRACE_MS = 10_000     # 断线宽限：对手 tick 缺失超过即可判赢（与客户端倒计时对齐）
+DISCONNECT_GRACE_MS = 45_000     # 断线宽限（10s→45s）：覆盖切后台/弱网/服务端重启回放后的重连窗；与客户端倒计时对齐
 RECENT_WINDOW_MS = 300_000       # 自适应窗口统计的近 5 分钟
 W_MIN_MS, W_MAX_MS = 3_000, 15_000   # 同级保持窗口范围
 INTER_WAVE_DELAY_MS = 3_000      # 先清者触发后到下一波开始的间隔（须与前端一致）

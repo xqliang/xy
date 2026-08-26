@@ -650,7 +650,7 @@ let pvpNetDeadStart = 0;                        // 判死时刻(ms)：倒计时�
 let pvpOppGone = false;                         // 对手已断线（WS oppGone）：置真即弹「对方断线」倒计时
 let pvpOppGoneStart = 0;                        // 对手断线时刻(ms)：倒计时起点，0=未开始
 /** 断线倒计时时长（ms）：与 NET_DEAD_THRESHOLD_MS / 服务端 DISCONNECT_GRACE_MS 对齐。 */
-const DISCONNECT_COUNTDOWN_MS = 10_000;
+const DISCONNECT_COUNTDOWN_MS = 45_000;   // 与服务端 DISCONNECT_GRACE_MS 对齐（10s→45s）：断线倒计时/复活窗口
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
