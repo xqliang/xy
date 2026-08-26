@@ -1,7 +1,7 @@
 // PvP 匹配/等待界面：背景图（pvp-bg，Seedream 生成）+ 匹配中雷达扫描动画 + 匹配成功对阵卡动画；
 // 邀请模式额外画分享链接与复制按钮。纯渲染 + 命中。
 import { VIEW_W, VIEW_H } from './render';
-import { drawInkActionButton } from './menu-ui';
+import { roundRect } from './menu-ui';
 import { isWeChat } from './platform';
 import { sprite } from './assets';
 import { avatarById } from './avatar-catalog';
@@ -117,6 +117,45 @@ function drawMatchCard(
   ctx.fillText(`Lv.${p.rankLevel} ${rankName(p.rankLevel)}`, cardX, cy + 66);
 }
 
+/** 匹配页按钮：不透明米玉底 + 深棕外框 + 金内线（云海背景上比半透明深棕底醒目、有玉石质感）。
+ *  pressed 时下沉微缩，视觉反馈与 drawInkActionButton 一致。 */
+function drawPvpButton(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  label: string,
+  pressed: boolean,
+): void {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  ctx.save();
+  if (pressed) {
+    ctx.translate(cx, cy + 2);
+    ctx.scale(0.97, 0.97);
+    ctx.translate(-cx, -cy);
+  }
+  // 米玉底：上亮下沉的暖玉渐变
+  roundRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(rect.h / 2, 14));
+  const g = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
+  g.addColorStop(0, pressed ? '#e2cfa8' : '#f4e8cd');
+  g.addColorStop(1, pressed ? '#c2a678' : '#d9bd8e');
+  ctx.fillStyle = g;
+  ctx.fill();
+  // 外框深棕 + 内缩 3px 金线（双线描边出玉石嵌金感）
+  ctx.strokeStyle = '#5a3a14';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  roundRect(ctx, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6, Math.min(rect.h / 2, 11));
+  ctx.strokeStyle = 'rgba(216,160,24,0.75)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = '#4a3010';
+  ctx.font = `bold ${rect.h >= 50 ? 17 : 15}px "PingFang SC", "STKaiti", serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, cx, cy + 1);
+  ctx.restore();
+}
+
 export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatchingView): void {
   // 背景：Seedream 生成的云海仙山对战背景（824×1536，与视口同比例直接铺满）；
   // 未加载时回退米色平涂。上沿加轻微暗化渐晕，让顶部标题文字更清楚。
@@ -142,7 +181,7 @@ export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatching
     ctx.fillStyle = '#5a3a12';
     ctx.font = 'bold 22px "PingFang SC", serif';
     ctx.fillText(view.message || '未匹配到对手', VIEW_W / 2, 380);
-    drawInkActionButton(ctx, FAIL_OK_RECT, '确认', false, 'primary');
+    drawPvpButton(ctx, FAIL_OK_RECT, '确认', false);
     return;
   }
 
@@ -274,11 +313,11 @@ export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatching
     const label = isWeChat
       ? (view.copied ? '已分享 ✓' : '分享给好友')
       : (view.copied ? '已复制链接 ✓' : '复制邀请链接');
-    drawInkActionButton(ctx, COPY_RECT, label, false, 'secondary');
+    drawPvpButton(ctx, COPY_RECT, label, false);
   }
 
   // 底部退出按钮：所有非失败、非 matched 阶段都有。
-  drawInkActionButton(ctx, EXIT_RECT, '退出匹配', false, 'secondary');
+  drawPvpButton(ctx, EXIT_RECT, '退出匹配', false);
 }
 
 /**
