@@ -419,3 +419,29 @@ def test_bind_openid_concurrent_same_openid_one_uid(server_base, monkeypatch):
     with db_handle.cursor() as cur:
         cur.execute("SELECT COUNT(*) AS c FROM wx_identities WHERE openid=%s", ("openid_race",))
         assert cur.fetchone()["c"] == 1  # 只绑一行
+
+
+# ---- 各受保护 handler 切到 require_auth（Task 7）----
+# 登录拿到 token 后，应能凭 Bearer token 访问受保护接口；strict 灰度关掉回退时，
+# 无 token 必须被 401 拒绝（不再静默信任 X-Uid）。
+def test_protected_endpoints_accept_token(server_base):
+    base, _db, _cfg = server_base
+    _st, body = _req(base, "POST", "/api/auth/login", {"platform": "web", "uid": "1000000000000300"})
+    token = body["token"]
+    for method, path, payload in [
+        ("POST", "/api/player/sync", {"saveJson": "{}", "saveUpdatedAt": 5}),
+        ("POST", "/api/leaderboard/submit", {"rankLevel": 1}),
+        ("POST", "/api/events", {"events": [{"type": "login", "payload": {}}]}),
+    ]:
+        st, _ = _req(base, method, path, payload, token=token)
+        assert st == 200, (path, st)
+
+
+def test_strict_mode_rejects_missing_token(server_base):
+    base, _db, cfg = server_base
+    cfg["auth"]["strict"] = True         # 运行时切 strict，模拟灰度关回退
+    try:
+        st, _ = _req(base, "GET", "/api/player/me", headers={"X-Uid": "1000000000000300"})
+        assert st == 401
+    finally:
+        cfg["auth"]["strict"] = False    # 复位，勿污染同 module 其它用例

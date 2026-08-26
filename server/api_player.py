@@ -6,7 +6,7 @@ from typing import Any
 from auth_session import issue_token
 from avatar_catalog import by_id, default_ids, unlockable
 from db import DB
-from httputil import client_ip, ok_uid, read_json, require_uid, send_json
+from httputil import client_ip, ok_uid, read_json, require_auth, require_uid, send_json
 
 NICKNAME_MAX_WEIGHT = 20
 
@@ -198,7 +198,7 @@ def handle_auth_login(handler, db: DB) -> None:
 
 
 def handle_me(handler, db: DB) -> None:
-    uid = require_uid(handler)
+    uid = require_auth(handler, db)
     if not uid:
         return
     row = _player_row(db, uid)
@@ -217,7 +217,7 @@ def handle_sync(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     save_json = body.get("saveJson") or body.get("save_json")
@@ -268,7 +268,7 @@ def handle_profile(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     row = _player_row(db, uid)
@@ -330,7 +330,7 @@ def handle_unlock(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     row = _player_row(db, uid)
