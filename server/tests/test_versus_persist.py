@@ -142,3 +142,20 @@ def test_flush_reconciles_deletes_ended_and_absent(rhub, db):
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) AS c FROM pvp_active_match WHERE match_id=%s", (mid,))
         assert cur.fetchone()["c"] == 0
+
+
+def test_reap_removes_never_connected_match(rhub, db):
+    from api_versus import MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
+    mid = _mk(rhub, "N1", "N2")           # 撮合成局，但双方都没 ws_hello
+    rhub._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
+    rhub.poll("bogus")                    # 触发 in-lock _reap
+    assert mid not in rhub.matches
+    assert all(v[0] != mid for v in rhub.ticket_match.values())
+
+def test_reap_keeps_match_if_one_side_connected(rhub, db):
+    from api_versus import MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
+    mid = _mk(rhub, "C1", "C2")
+    rhub.ws_hello("C1", mid, lambda t: True)   # 一方连上 → connected_ever
+    rhub._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
+    rhub.poll("bogus")
+    assert mid in rhub.matches            # 连过的不按"从未连接"退队

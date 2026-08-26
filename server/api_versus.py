@@ -39,6 +39,7 @@ MAPS = ["huoyanshan", "liushahe", "baiguling", "pansidong"]
 REAP_INTERVAL_MS = 10_000                 # 回收时间闸门：最多每 10s 扫一次，避免每 poll 都 O(N) 扫描占锁
 MATCH_REAP_MS = 120_000                   # 终局后多久回收该 match（给客户端重连/看结果留余量）
 IDLE_REAP_MS = 300_000                    # 建局后双方都久未心跳(废弃局)多久回收
+MATCH_CONNECT_GRACE_MS = 20_000  # 撮合成局后，双方都从未 WS 连接超过此时长 → 退队回收（防僵尸局/打空气）
 ROOM_TTL_MS = MATCH_TIMEOUT_MS            # 孤儿私房存活上限（与匹配总超时一致）
 QUEUE_TTL_MS = MATCH_TIMEOUT_MS + 30_000  # 孤儿等待者存活上限（略长于匹配总超时）
 
@@ -129,7 +130,8 @@ class VersusHub:
                 #          None 表示当前无 WS 连接（尚未握手 / 已断开 / 未走 WS 的纯 HTTP tick 客户端）。
                 # gone_ms：0 表示在线；非 0 为该侧 WS 断开的服务器时刻(ms)。宽限 DISCONNECT_GRACE_MS 内
                 #          同 uid 重连 hello 会清零恢复；超时则惰性判定为 DisconnectTimeout 终局。
-                "ws_send": None, "gone_ms": 0}
+                "ws_send": None, "gone_ms": 0,
+                "connected_ever": False}   # 里程碑 B：是否曾有过 ws_hello（撮合退队用）
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 组装 Match、建 ticket->match 索引，返回 match_id
@@ -188,6 +190,9 @@ class VersusHub:
             if m.get("ended"):
                 if now - m.get("ended_ms", m["created_ms"]) > MATCH_REAP_MS:
                     dead.append(mid)
+            elif (not m["a"].get("connected_ever") and not m["b"].get("connected_ever")
+                  and now - m["created_ms"] > MATCH_CONNECT_GRACE_MS):
+                dead.append(mid)   # 里程碑 B：撮合成局后双方都从未连接 → 退队（防打空气）
             elif now - max(m["a"]["last_tick_ms"], m["b"]["last_tick_ms"]) > IDLE_REAP_MS:
                 dead.append(mid)
         for mid in dead:
@@ -499,6 +504,7 @@ class VersusHub:
             self._ws_check_gone_locked(m, now)      # 顺便惰性检查对手宽限超时
             me["ws_send"] = send
             me["gone_ms"] = 0                        # 重连清零，恢复在线
+            me["connected_ever"] = True              # 标记该侧至少连过一次（撮合退队据此豁免）
             me["last_tick_ms"] = now                 # 刷 liveness，防 IDLE_REAP 中途回收
             me["last_next_wave"] = None              # 清零去重标记，重连后首快照重新宣告 nextWave
             return {"serverMs": now}
