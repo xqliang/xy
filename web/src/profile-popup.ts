@@ -1,14 +1,15 @@
-// 个人信息弹层：横向卷轴选头像 + 昵称 + UID。
-import { VIEW_W, VIEW_H, fillViewScrim } from './render';
+// 个人信息弹层：宫檐头部 + 横向卷轴选头像 + 昵称 + UID。
+import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { AVATARS, unlockHint, type AvatarDef } from './avatar-catalog';
 import { loadProfile } from './profile';
-import { drawInkActionButton, roundRect } from './menu-ui';
+import { drawInkActionButton, drawInkPopupFrame, inkPopupCloseRect, roundRect } from './menu-ui';
 import { loadUserId } from './user-id';
 import { clampNickname } from './nickname';
 
-const PANEL = { x: 40, y: 120, w: VIEW_W - 80, h: 500 };
-const CLOSE = { x: PANEL.x + 16, y: PANEL.y + 14, w: 44, h: 44 };
+const PANEL = { x: 40, y: 120, w: VIEW_W - 80, h: 512 };
+// 关闭按钮：与其他 7 处水墨弹窗同源（宫檐标题栏上、跟随 BAND_LIFT/CLOSE_LIFT 布局常量）
+const CLOSE = inkPopupCloseRect(PANEL.x, PANEL.y);
 /** 横向滚动视口 */
 const SCROLL = { x: PANEL.x + 24, y: PANEL.y + 80, w: PANEL.w - 48, h: 196 };
 /** 卡片：上图下文，避免立绘压字 */
@@ -19,9 +20,9 @@ const NAME_H = 28;
 const IMG_PAD = 8;
 const COPY_BTN = { w: 56, h: 30 };
 
-/** 卷轴下方留出「左右滑动 / 已解锁」两行，避免被昵称框盖住 */
+/** 卷轴下方留出「左右滑动 / 已解锁」两行（间距加到 +64），避免被昵称框盖住 */
 function nickFieldY(): number {
-  return SCROLL.y + SCROLL.h + 56;
+  return SCROLL.y + SCROLL.h + 64;
 }
 
 function uidRowY(): number {
@@ -140,44 +141,8 @@ export function applyProfileScrollDrag(st: ProfilePopupState, drag: ProfileScrol
 }
 
 export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopupState): void {
-  fillViewScrim(ctx, 'rgba(20,14,8,0.55)');
-
-  roundRect(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, 16);
-  const bg = ctx.createLinearGradient(PANEL.x, PANEL.y, PANEL.x, PANEL.y + PANEL.h);
-  bg.addColorStop(0, '#f3e6c8');
-  bg.addColorStop(1, '#e2c894');
-  ctx.fillStyle = bg;
-  ctx.fill();
-  ctx.strokeStyle = '#6b4420';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-
-  // header bar
-  roundRect(ctx, PANEL.x, PANEL.y, PANEL.w, 64, 16);
-  ctx.fillStyle = '#6b4420';
-  ctx.fill();
-  ctx.fillStyle = '#f8ecd0';
-  ctx.font = 'bold 26px "PingFang SC", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('个人信息', PANEL.x + PANEL.w / 2, PANEL.y + 32);
-
-  // × 用两条对角线描出（几何居中），不依赖字体基线——微信真机 'middle' 基线偏上。
-  {
-    const cx = CLOSE.x + CLOSE.w / 2;
-    const cy = CLOSE.y + CLOSE.h / 2;
-    const r = Math.min(CLOSE.w, CLOSE.h) * 0.28;
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2.6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx - r, cy - r);
-    ctx.lineTo(cx + r, cy + r);
-    ctx.moveTo(cx - r, cy + r);
-    ctx.lineTo(cx + r, cy - r);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-  }
+  // 与其余水墨弹窗同款：米色卷轴体 + 厚重宫檐标题栏（内含 scrim/标题/关闭按钮，一站式）
+  drawInkPopupFrame(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, '个人信息', CLOSE);
 
   // 卷轴纸底
   roundRect(ctx, SCROLL.x - 8, SCROLL.y - 8, SCROLL.w + 16, SCROLL.h + 16, 12);
@@ -222,14 +187,14 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
 
   ctx.fillStyle = '#8a6a40';
   ctx.font = '13px "PingFang SC", sans-serif';
-  ctx.fillText('左右滑动查看更多', VIEW_W / 2, SCROLL.y + SCROLL.h + 16);
+  ctx.fillText('左右滑动查看更多', VIEW_W / 2, SCROLL.y + SCROLL.h + 26);
 
   const sel = AVATARS.find((a) => a.id === st.selectedId);
   ctx.fillStyle = '#4a3218';
   ctx.font = '15px "PingFang SC", sans-serif';
   if (sel) {
     const locked = !st.unlocked.has(sel.id);
-    ctx.fillText(locked ? unlockHint(sel) : '已解锁', VIEW_W / 2, SCROLL.y + SCROLL.h + 36);
+    ctx.fillText(locked ? unlockHint(sel) : '已解锁', VIEW_W / 2, SCROLL.y + SCROLL.h + 46);
   }
 
   // nickname field
@@ -300,15 +265,49 @@ function drawAvatarCell(
   unlocked: boolean,
 ): void {
   roundRect(ctx, x, y, CELL_W, CELL_H, 10);
-  ctx.fillStyle = '#f7efe0';
+  if (selected) {
+    // 选中态加强（原白细边太不明显）：暖金渐变底 + 金色外发光 + 双层金边 + 右上角对勾角标
+    const gold = ctx.createLinearGradient(x, y, x, y + CELL_H);
+    gold.addColorStop(0, '#f6e3b0');
+    gold.addColorStop(1, '#e8c87e');
+    ctx.fillStyle = gold;
+  } else {
+    ctx.fillStyle = '#f7efe0';
+  }
+  if (selected) {
+    // 金色外发光：先以 shadow 画一遍底（不透明部分），再关 shadow 画描边
+    ctx.save();
+    ctx.shadowColor = 'rgba(216,160,24,0.9)';
+    ctx.shadowBlur = 14;
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.fill();
   if (selected) {
+    ctx.strokeStyle = '#d8a018';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,244,210,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 右上角金色圆形对勾徽章：一眼锁定当前选中
+    const bx = x + CELL_W - 16, by = y + 14, br = 10;
+    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fillStyle = '#d8a018';
+    ctx.fill();
+    ctx.strokeStyle = '#6b4410';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bx - 4.5, by + 0.5);
+    ctx.lineTo(bx - 1.2, by + 4);
+    ctx.lineTo(bx + 4.8, by - 4);
     ctx.stroke();
-    ctx.strokeStyle = '#c9a227';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.lineCap = 'butt';
   } else {
     ctx.strokeStyle = 'rgba(100,70,30,0.35)';
     ctx.lineWidth = 1.5;
