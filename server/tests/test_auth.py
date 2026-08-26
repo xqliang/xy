@@ -326,6 +326,10 @@ def server_base():
         pass
     H.db = H_db
     H.cfg = cfg
+    # Task 8：versus HTTP 端点走 _hub(handler)=handler.versus；main() 外的测试 server 需自行挂 hub，
+    # 否则 enqueue 通过鉴权后取 handler.versus 会 AttributeError→500。
+    from api_versus import VersusHub
+    H.versus = VersusHub(H_db)
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: H(*a, directory=str(ROOT), **k))
     port = httpd.server_address[1]
@@ -445,3 +449,31 @@ def test_strict_mode_rejects_missing_token(server_base):
         assert st == 401
     finally:
         cfg["auth"]["strict"] = False    # 复位，勿污染同 module 其它用例
+
+
+# ---- PvP WS 握手 + versus HTTP 端点切到 require_auth（Task 8）----
+# WS 握手鉴权：优先 ?token=；非 strict 时回退 ?uid=（不做数字格式校验，兼容旧客户端/测试）。
+def test_ws_authenticate_token_and_fallback(db):
+    import api_versus
+    import auth_session
+
+    token, _ = auth_session.issue_token(db, "1000000000000401", "wx")
+    assert api_versus._ws_authenticate({"token": [token]}, db, strict=True) == "1000000000000401"
+    # 非 strict：回退 ?uid=，且不做数字格式校验（兼容既有 uid=A1 测试）
+    assert api_versus._ws_authenticate({"uid": ["A1"]}, db, strict=False) == "A1"
+    # strict：无 token → None
+    assert api_versus._ws_authenticate({"uid": ["A1"]}, db, strict=True) is None
+
+
+def test_versus_enqueue_accepts_token_and_strict_rejects(server_base):
+    base, _db, cfg = server_base
+    _st, body = _req(base, "POST", "/api/auth/login", {"platform": "web", "uid": "1000000000000600"})
+    token = body["token"]
+    st, _ = _req(base, "POST", "/api/versus/enqueue", {"rank": 0}, token=token)
+    assert st == 200                        # token 通过
+    cfg["auth"]["strict"] = True
+    try:
+        st, _ = _req(base, "POST", "/api/versus/enqueue", {"rank": 0}, headers={"X-Uid": "1000000000000600"})
+        assert st == 401                    # strict 下无 token 被拒
+    finally:
+        cfg["auth"]["strict"] = False
