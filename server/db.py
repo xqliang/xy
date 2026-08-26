@@ -121,8 +121,7 @@ SCHEMA = [
       ticket_a VARCHAR(40) NULL,
       ticket_b VARCHAR(40) NULL,
       state_json MEDIUMTEXT NOT NULL,
-      updated_at DATETIME NOT NULL,
-      KEY idx_updated (updated_at)
+      updated_at DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
     # 微信身份映射：openid → 内部数字 uid。openid 主键 + 绑定用 ON DUPLICATE KEY，保证并发只绑一次。

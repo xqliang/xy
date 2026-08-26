@@ -1,7 +1,12 @@
 # server/tests/test_versus_persist.py
 # 里程碑 B-core：活跃对局持久化 + 回放。用一次性 MariaDB（本机跑用 XY_DB_PORT=3308 覆盖）。
-import os
+import os, sys
+from pathlib import Path
+
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))   # 让 config/db/api_versus 可导入（与 test_versus.py 一致，脱离 python -m 也能跑）
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
