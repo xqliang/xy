@@ -144,5 +144,18 @@ def test_code2session_errcode_raises(monkeypatch):
 def test_code2session_not_configured_raises():
     import wechat_auth
 
-    with pytest.raises(wechat_auth.WxAuthError):
+    with pytest.raises(wechat_auth.WxAuthError) as ei:
         wechat_auth.code2session({"wechat": {"appid": "", "secret": ""}}, "x")
+    assert ei.value.code == -1
+
+
+def test_code2session_non_dict_body_raises(monkeypatch):
+    import json as _json
+    import urllib.request
+
+    import wechat_auth
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen(_json.dumps([1, 2, 3]).encode()))
+    with pytest.raises(wechat_auth.WxAuthError) as ei:
+        wechat_auth.code2session({"wechat": {"appid": "a", "secret": "s"}}, "c")
+    assert ei.value.code == -4

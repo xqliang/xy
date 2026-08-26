@@ -61,7 +61,10 @@ def code2session(cfg: dict[str, Any], code: str) -> dict[str, Any]:
         with urllib.request.urlopen(url, timeout=5) as resp:
             raw = resp.read()
     except OSError as e:  # 网络/超时（含 URLError/timeout，都是 OSError 子类）
-        raise WxAuthError(-3, f"network error: {e}") from e
+        # 安全：不要把异常字符串原样拼进 msg —— URLError 的字符串可能带上完整请求 URL，
+        # 而 URL 查询串里含 secret=<AppSecret>。这里只保留异常类型名；原始异常仍通过
+        # from e 链在 traceback 里供本地排障，但不进入会被日志/返回给客户端的 WxAuthError.msg。
+        raise WxAuthError(-3, f"network error: {type(e).__name__}") from e
 
     # 解析微信返回的 JSON。返回体异常（非 UTF-8 / 非合法 JSON）时报 -4。
     try:
@@ -69,8 +72,17 @@ def code2session(cfg: dict[str, Any], code: str) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise WxAuthError(-4, f"bad response: {e}") from e
 
+    # 防御：是合法 JSON 但不是对象（例如 [1,2,3] 或裸字符串/数字）时，下面的
+    # data.get(...) 会抛裸 AttributeError，绕过本模块的 -4 契约。这里提前拦下。
+    if not isinstance(data, dict):
+        raise WxAuthError(-4, "response not a JSON object")
+
     # 微信约定：成功时通常不带 errcode，或 errcode=0；非 0 即业务错误。
-    errcode = int(data.get("errcode") or 0)
+    # 稳健解析：errcode 可能是非法类型（如 {} 或 "abc"），int() 会抛异常，统一归到 -4。
+    try:
+        errcode = int(data.get("errcode") or 0)
+    except (TypeError, ValueError):
+        raise WxAuthError(-4, "invalid errcode in response") from None
     if errcode != 0:
         # 把微信原始 errcode 透传出去（>0），方便上层区分「code 失效」等具体原因。
         raise WxAuthError(errcode, str(data.get("errmsg") or "wx error"))
