@@ -475,6 +475,25 @@ function drawOppGoneOverlay(ctx: CanvasRenderingContext2D, remainSec: number): v
   drawDisconnectOverlay(ctx, '对方断线', '对手网络已中断', remainSec);
 }
 
+/** 重连中横幅：顶部居中小药丸「正在重连…(第 N 次)」。断线判死前(0~countdown)显示——
+ *  此时本方 sim 仍在跑，故用不铺满的顶部横幅，不遮挡棋盘（区别于 drawNetDeadOverlay 全屏弹窗）。 */
+function drawReconnectingBanner(ctx: CanvasRenderingContext2D, attempt: number): void {
+  const text = attempt > 0 ? `正在重连…(第 ${attempt} 次)` : '正在重连…';
+  ctx.save();
+  ctx.font = '14px "PingFang SC", serif';
+  const padX = 14, h = 28;
+  const w = ctx.measureText(text).width + padX * 2;
+  const x = (VIEW_W - w) / 2, y = 36;
+  ctx.fillStyle = 'rgba(20,20,20,0.62)';
+  if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); }
+  else ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#ffe9b0';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, VIEW_W / 2, y + h / 2);
+  ctx.restore();
+}
+
 /** 我方断线看门狗刚判死（pvpNetDead false→true）：记倒计时起点。 */
 function beginNetDeadCountdown(nowMs: number): void {
   if (!pvpNetDead) return;
@@ -2813,6 +2832,10 @@ function frame(now: number): void {
     drawWeaponPickups(ctx, visibleWeaponPickups(), bag);
     // Task 7.6：断线弹窗最顶层（盖住结算/暂停），只有判死后才画。
     if (pvpNetDead) drawNetDeadOverlay(ctx, (DISCONNECT_COUNTDOWN_MS - (now - pvpNetDeadStart)) / 1000);
+    // A3：断线判死前、连接处于重连中 → 顶部横幅（sim 仍在跑，不遮挡；判死后由 drawNetDeadOverlay 接管）。
+    if (pvpSock && !pvpResult && !pvpNetDead && !pvpOppGone && pvpSock.state === 'reconnecting') {
+      drawReconnectingBanner(ctx, pvpSock.reconnectAttempt);
+    }
     // 对方断线弹窗：倒计时期间显示；结算屏一开（pvpSettleResult 非空）则让位给结算（避免两顶层重叠）。
     if (pvpOppGone && !pvpResult && !pvpSettleResult) drawOppGoneOverlay(ctx, (DISCONNECT_COUNTDOWN_MS - (now - pvpOppGoneStart)) / 1000);
     // 暂停/退出弹窗：与结算、断线互斥（ settle > net-dead > pause 的视觉优先级靠下面的 !isSettleOpen()/!pvpNetDead 保证）。
