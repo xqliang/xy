@@ -108,8 +108,7 @@ export class PvpSocket {
   private retryCount = 0;
   private authProbing = false; // 正在探活（防重复并发探测）
   // 已判令牌失效标记。恒有 authFatal ⟹ closed（failAuth 里二者同置），故重连门控实际由 closed 完成；
-  // 保留本字段是为「显式标记 auth 致命短路意图」的自文档 + 门控同一 streak 内的重复探测（见 scheduleReconnect），
-  // 非死代码，勿删。
+  // 保留本字段是为「显式标记 auth 致命短路意图」的自文档 / 防御（万一将来 closed 与 auth-fatal 语义分家），非死代码，勿删。
   private authFatal = false;
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）

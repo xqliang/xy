@@ -560,6 +560,7 @@ describe('PvpSocket 鉴权失败探测短路', () => {
     calls.find((c) => c.ms === 1000)!.fn();
     FakeWebSocket.last().close();          // retryCount→3 → probe（将 reject）
     await tick();
+    expect(authProbe).toHaveBeenCalledTimes(1);   // 确认探测确实触发（自足性，与 false 路径对称）
     expect(onAuthFail).not.toHaveBeenCalled();
     const before = FakeWebSocket.instances.length;
     calls.filter((c) => c.ms === 2000).forEach((c) => c.fn()); // 触发挂起的重连
