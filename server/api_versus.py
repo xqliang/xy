@@ -66,6 +66,7 @@ class VersusHub:
         self._gen_code = gen_code or (lambda: secrets.token_hex(3).upper())
         self._pick_map = pick_map or (lambda: secrets.choice(MAPS))
         self.lock = threading.Lock()
+        self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM）防两次 flush 的 UPSERT/DELETE 交错丢局
         self.queue: dict[str, dict] = {}          # ticket -> waiting entry
         self.recent: dict[int, list[tuple[str, int]]] = {}  # rank -> [(uid, ms)]
         self.rooms: dict[str, dict] = {}          # code -> room
@@ -658,39 +659,53 @@ class VersusHub:
 
     def flush_active_matches(self) -> None:
         """定期/关机时把所有未终局对局镜像进 pvp_active_match（锁内快照、锁外写库、对账删非活跃行）。
-        写库失败只记日志不抛（对齐 _persist_result）。"""
-        with self.lock:
-            snap = []
-            for mid, m in self.matches.items():
-                if m.get("ended"):
-                    continue
-                tks = {u: t for t, (mm, u) in self.ticket_match.items() if mm == mid}
-                snap.append({
-                    "match_id": mid, "uid_a": m["a"]["uid"], "uid_b": m["b"]["uid"],
-                    "ticket_a": tks.get(m["a"]["uid"]), "ticket_b": tks.get(m["b"]["uid"]),
-                    "state_json": json.dumps(_serialize_match(m), ensure_ascii=False),
-                })
-            active_ids = [s["match_id"] for s in snap]
-        dt = self.db.now()
-        try:
-            with self.db.cursor() as cur:
-                for s in snap:
-                    cur.execute(
-                        "INSERT INTO pvp_active_match"
-                        " (match_id,uid_a,uid_b,ticket_a,ticket_b,state_json,updated_at)"
-                        " VALUES (%s,%s,%s,%s,%s,%s,%s)"
-                        " ON DUPLICATE KEY UPDATE uid_a=VALUES(uid_a),uid_b=VALUES(uid_b),"
-                        " ticket_a=VALUES(ticket_a),ticket_b=VALUES(ticket_b),"
-                        " state_json=VALUES(state_json),updated_at=VALUES(updated_at)",
-                        (s["match_id"], s["uid_a"], s["uid_b"], s["ticket_a"], s["ticket_b"],
-                         s["state_json"], dt))
-                if active_ids:
-                    ph = ",".join(["%s"] * len(active_ids))
-                    cur.execute(f"DELETE FROM pvp_active_match WHERE match_id NOT IN ({ph})", active_ids)
-                else:
-                    cur.execute("DELETE FROM pvp_active_match")
-        except Exception:
-            logging.exception("pvp_active_match flush 失败（不影响对局，下轮重试）")
+        写库失败只记日志不抛（对齐 _persist_result）。
+        _flush_lock 串行化整个 flush：B5 会让 SIGTERM handler 也调本方法，与周期 flush 并发时，
+        老快照的 DELETE ... NOT IN 可能删掉新 flush 刚 UPSERT 的局、关机时无下轮自愈 → 丢局；
+        故最外层串行化（比"关机前停线程"可靠，停标志不打断在途 flush）。_flush_lock 是外层、
+        self.lock 内层，无别的路径取 _flush_lock，故无重入无死锁。"""
+        with self._flush_lock:
+            with self.lock:
+                snap = []
+                for mid, m in self.matches.items():
+                    if m.get("ended"):
+                        continue
+                    # 逐局 try/except：某局序列化抛错只跳过该局（对齐 load 的逐行容错），
+                    # 不中断整轮 flush，否则一局坏数据会让本轮所有活跃局都不落库、且每轮复发。
+                    try:
+                        tks = {u: t for t, (mm, u) in self.ticket_match.items() if mm == mid}
+                        # 锁内 json.dumps：依赖「服务端每局只存小 digest（不含 units/大快照）」故成本低（微秒级），
+                        # 持锁可忽略。若将来每局状态变大或并发局数飙升，改 deepcopy-in-lock + dumps-out-of-lock 或分片。
+                        snap.append({
+                            "match_id": mid, "uid_a": m["a"]["uid"], "uid_b": m["b"]["uid"],
+                            "ticket_a": tks.get(m["a"]["uid"]), "ticket_b": tks.get(m["b"]["uid"]),
+                            "state_json": json.dumps(_serialize_match(m), ensure_ascii=False),
+                        })
+                    except Exception:
+                        # 序列化失败的局本轮不进 active_ids，可能被 reconcile 删掉它上一轮的行——可接受：
+                        # 下轮修好会重新 UPSERT；且持续失败本就说明该局数据有问题。
+                        logging.exception("pvp_active_match 单局快照失败 match_id=%s，跳过", mid)
+                active_ids = [s["match_id"] for s in snap]
+            dt = self.db.now()
+            try:
+                with self.db.cursor() as cur:
+                    for s in snap:
+                        cur.execute(
+                            "INSERT INTO pvp_active_match"
+                            " (match_id,uid_a,uid_b,ticket_a,ticket_b,state_json,updated_at)"
+                            " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                            " ON DUPLICATE KEY UPDATE uid_a=VALUES(uid_a),uid_b=VALUES(uid_b),"
+                            " ticket_a=VALUES(ticket_a),ticket_b=VALUES(ticket_b),"
+                            " state_json=VALUES(state_json),updated_at=VALUES(updated_at)",
+                            (s["match_id"], s["uid_a"], s["uid_b"], s["ticket_a"], s["ticket_b"],
+                             s["state_json"], dt))
+                    if active_ids:
+                        ph = ",".join(["%s"] * len(active_ids))
+                        cur.execute(f"DELETE FROM pvp_active_match WHERE match_id NOT IN ({ph})", active_ids)
+                    else:
+                        cur.execute("DELETE FROM pvp_active_match")
+            except Exception:
+                logging.exception("pvp_active_match flush 失败（不影响对局，下轮重试）")
 
     def load_active_matches(self) -> int:
         """进程启动时回放未终局对局到内存（在 serve_forever 之前调用，无并发）。返回回放条数。"""
