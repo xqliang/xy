@@ -1,7 +1,7 @@
 // web/tests/pvp-netwatch.test.ts
 // Task 7.6：PvP 断线看门狗纯判定 netDead() 的边界单测（无需画布）。
 import { describe, it, expect } from 'vitest';
-import { netDead, NET_DEAD_THRESHOLD_MS } from '../src/pvp-netwatch';
+import { netDead, netRecovered, NET_DEAD_THRESHOLD_MS } from '../src/pvp-netwatch';
 
 describe('netDead 断线看门狗判定', () => {
   it('尚未 open（lastInboundAt===0）永远不判死，避免刚建连误判', () => {
@@ -26,5 +26,23 @@ describe('netDead 断线看门狗判定', () => {
   it('自定义阈值生效', () => {
     expect(netDead(5_000, 4_000, 500)).toBe(true); // 1000 > 500
     expect(netDead(4_500, 4_000, 500)).toBe(false); // 500 = 阈值
+  });
+});
+
+describe('netRecovered 断线后连接恢复判定', () => {
+  it('尚未 open（lastInboundAt===0）不算恢复', () => {
+    expect(netRecovered(1_000_000, 0)).toBe(false);
+  });
+  it('入站在阈值内 → 恢复', () => {
+    expect(netRecovered(15_000, 10_000)).toBe(true); // 距上次入站 5s ≤ 10s
+  });
+  it('边界：恰好等于阈值算恢复；超过阈值不算', () => {
+    const base = 10_000;
+    expect(netRecovered(base + NET_DEAD_THRESHOLD_MS, base)).toBe(true);      // =10000 → 恢复
+    expect(netRecovered(base + NET_DEAD_THRESHOLD_MS + 1, base)).toBe(false); // 10001 → 仍算断
+  });
+  it('自定义阈值生效', () => {
+    expect(netRecovered(4_400, 4_000, 500)).toBe(true);  // 400 ≤ 500
+    expect(netRecovered(4_600, 4_000, 500)).toBe(false); // 600 > 500
   });
 });
