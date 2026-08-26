@@ -99,6 +99,7 @@ import {
   syncAvatarUnlocks,
   updateProfile,
 } from './cloud-sync';
+import { bootstrapAuth, getToken } from './auth';
 import { track } from './telemetry';
 import { bumpClearCount } from './clear-count';
 import { loadProfile } from './profile';
@@ -332,6 +333,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpSock = new PvpSocket({
     matchId: ms.matchId,
     uid: ensureUserId(),
+    token: getToken() ?? undefined,
     onWelcome: (_serverMs) => { /* 对时暂留空：快照时钟已由 normalizeSnapClock 归一化到本机时基，无需 serverMs */ },
     onOppSnap: (s) => {
       if (!oppView) return;
@@ -534,6 +536,13 @@ void (async () => {
     loadProgress = { ...loadProgress, phase: 'done' };
     bootstrapMenuMusic();
     ensureUserId();
+    // 先换取会话令牌（微信=wx.login→code；Web=本机 uid TOFU），供随后的 cloudLogin / PvP 带 token。
+    // 用超时兜底：最多等 4s，网络慢/服务端无响应也不卡加载页——超时先进游戏，
+    // token 由 bootstrapAuth 后台完成后补上；灰度期 cloudLogin 无 token 会回退 X-Uid。
+    await Promise.race([
+      bootstrapAuth(),
+      new Promise<void>((resolve) => setTimeout(resolve, 4000)),
+    ]);
     // 本地对局续玩：无 PvP 深链且存在有效未终局存档时，直接恢复进战斗、跳过首页。
     if (!(versusCode == null && tryResumeLocalBattle())) {
       screen = 'menu';
