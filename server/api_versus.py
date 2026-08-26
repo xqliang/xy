@@ -656,6 +656,71 @@ class VersusHub:
             logging.exception("pvp_anomaly 记录失败 uid=%s opp=%s match_id=%s", uid, opp_uid, m.get("match_id"))
             return False
 
+    def flush_active_matches(self) -> None:
+        """定期/关机时把所有未终局对局镜像进 pvp_active_match（锁内快照、锁外写库、对账删非活跃行）。
+        写库失败只记日志不抛（对齐 _persist_result）。"""
+        with self.lock:
+            snap = []
+            for mid, m in self.matches.items():
+                if m.get("ended"):
+                    continue
+                tks = {u: t for t, (mm, u) in self.ticket_match.items() if mm == mid}
+                snap.append({
+                    "match_id": mid, "uid_a": m["a"]["uid"], "uid_b": m["b"]["uid"],
+                    "ticket_a": tks.get(m["a"]["uid"]), "ticket_b": tks.get(m["b"]["uid"]),
+                    "blob": _serialize_match(m),
+                })
+            active_ids = [s["match_id"] for s in snap]
+        dt = self.db.now()
+        try:
+            with self.db.cursor() as cur:
+                for s in snap:
+                    cur.execute(
+                        "INSERT INTO pvp_active_match"
+                        " (match_id,uid_a,uid_b,ticket_a,ticket_b,state_json,updated_at)"
+                        " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE uid_a=VALUES(uid_a),uid_b=VALUES(uid_b),"
+                        " ticket_a=VALUES(ticket_a),ticket_b=VALUES(ticket_b),"
+                        " state_json=VALUES(state_json),updated_at=VALUES(updated_at)",
+                        (s["match_id"], s["uid_a"], s["uid_b"], s["ticket_a"], s["ticket_b"],
+                         json.dumps(s["blob"], ensure_ascii=False), dt))
+                if active_ids:
+                    ph = ",".join(["%s"] * len(active_ids))
+                    cur.execute(f"DELETE FROM pvp_active_match WHERE match_id NOT IN ({ph})", active_ids)
+                else:
+                    cur.execute("DELETE FROM pvp_active_match")
+        except Exception:
+            logging.exception("pvp_active_match flush 失败（不影响对局，下轮重试）")
+
+    def load_active_matches(self) -> int:
+        """进程启动时回放未终局对局到内存（在 serve_forever 之前调用，无并发）。返回回放条数。"""
+        now = self._now()
+        try:
+            with self.db.cursor() as cur:
+                cur.execute("SELECT match_id,uid_a,uid_b,ticket_a,ticket_b,state_json FROM pvp_active_match")
+                rows = cur.fetchall()
+        except Exception:
+            logging.exception("pvp_active_match 回放读取失败，跳过（活跃对局丢失，客户端将重新匹配）")
+            return 0
+        n = 0
+        for row in rows:
+            try:
+                blob = json.loads(row["state_json"])
+                m = _deserialize_match(blob, now)
+                if m.get("ended"):
+                    continue
+                self.matches[m["match_id"]] = m
+                if row.get("ticket_a"):
+                    self.ticket_match[row["ticket_a"]] = (m["match_id"], row["uid_a"])
+                if row.get("ticket_b"):
+                    self.ticket_match[row["ticket_b"]] = (m["match_id"], row["uid_b"])
+                n += 1
+            except Exception:
+                logging.exception("pvp_active_match 单行回放失败 match_id=%s，跳过", row.get("match_id"))
+        if n:
+            logging.info("pvp_active_match 回放 %d 局活跃对局", n)
+        return n
+
 
 # ---- 里程碑 B：活跃对局序列化（持久化用）----
 # ws_send 是运行时闭包（不可 JSON 化），序列化一律剔除；重连时 ws_hello 会重挂。

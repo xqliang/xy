@@ -100,3 +100,45 @@ def test_serialize_drops_ws_send_and_roundtrips():
     assert restored["a"]["last_tick_ms"] == 2_000_000 and restored["b"]["last_tick_ms"] == 2_000_000
     assert restored["created_ms"] == 2_000_000
     assert restored["a"]["connected_ever"] is False and restored["b"]["connected_ever"] is False
+
+
+@pytest.fixture
+def rhub(db):
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(db, now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
+                  pick_map=lambda: "huoyanshan")
+    h._clock = clock
+    return h
+
+def _mk(hub, ua, ub):
+    return hub._make_match({"uid": ua, "rank": 3, "ticket": "t_" + ua},
+                           {"uid": ub, "rank": 3, "ticket": "t_" + ub}, hub._now())
+
+def test_flush_then_load_restores_match_and_tickets(rhub, db):
+    mid1 = _mk(rhub, "P1", "P2")
+    mid2 = _mk(rhub, "P3", "P4")
+    rhub.flush_active_matches()
+    from api_versus import VersusHub
+    h2 = VersusHub(db, now_ms=lambda: 2_000_000)
+    h2.load_active_matches()
+    assert mid1 in h2.matches and mid2 in h2.matches
+    assert h2.matches[mid1]["a"]["uid"] == "P1" and h2.matches[mid1]["b"]["uid"] == "P2"
+    assert h2.ticket_match.get("t_P1") == (mid1, "P1")
+    assert h2.ticket_match.get("t_P2") == (mid1, "P2")
+    sent = []
+    res = h2.ws_hello("P1", mid1, lambda t: (sent.append(t), True)[1])
+    assert "error" not in res
+    assert h2.matches[mid1]["a"]["ws_send"] is not None
+    assert h2.matches[mid1]["a"]["gone_ms"] == 0
+
+def test_flush_reconciles_deletes_ended_and_absent(rhub, db):
+    mid = _mk(rhub, "Q1", "Q2")
+    rhub.flush_active_matches()
+    rhub.ws_status("Q1", mid, "surrender")   # 终局 → ended=True
+    rhub.flush_active_matches()              # 对账：活跃集不含 mid → 删行
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM pvp_active_match WHERE match_id=%s", (mid,))
+        assert cur.fetchone()["c"] == 0
