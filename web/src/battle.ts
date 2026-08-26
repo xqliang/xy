@@ -6191,6 +6191,13 @@ export class Battle {
     for (const m of this.aiMonsters) {
       m.spawnT += dt;
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
+      // 灼烧持续掉血 + 计时衰减：与玩家侧 updateMonsters 同口径（burnDps×dt）。置于 hp<=0
+      // 判定「前」，让灼烧击杀同帧走下方 creditAiKill/掉桃流程（对齐玩家侧「烧死也产桃」语义）。
+      if (m.burnT > 0) {
+        m.hp -= m.burnDps * dt;
+        m.burnT = Math.max(0, m.burnT - dt);
+        if (m.burnT <= 0) m.burnDps = 0;
+      }
       if (m.hp <= 0) {
         this.creditAiKill(m.isBoss, !m.isBoss && !m.isMiniBoss && !!m.skill, m.isMiniBoss);
         // 掉桃特效：与玩家击杀（updateMonsters 的 burst+peachFloats）及在线 PvP 对手击杀补演
@@ -6206,10 +6213,16 @@ export class Battle {
         m.stunT = Math.max(0, m.stunT - dt);
         if (m.frozenT > 0) m.frozenT = Math.max(0, m.frozenT - dt); // 冰晶视觉与定身同步融化
       } else if (!this.aiPalmPushFx) {
-        m.dist += m.spd * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
+        // 迟滞减速 0.5×：与玩家侧 updateMonsters 同口径。此前 AI 侧漏乘 slowMul → 对方怪对减速免疫。
+        const slowMul = m.slowT > 0 ? 0.5 : 1;
+        m.dist += m.spd * slowMul * (m.hasteT > 0 ? TUNING.hasteSpdMul : 1)
           * (this.aiMonsterInMudZone(m) ? 0.82 : 1) * dt;
       }
+      if (m.slowT > 0) m.slowT = Math.max(0, m.slowT - dt);
       if (m.hasteT > 0) m.hasteT = Math.max(0, m.hasteT - dt);
+      // 血泉治疗闪光衰减：与玩家侧 updateMonsters 同口径（dt*2.5，约 0.4s 消退）。
+      // 漏了这句会让被 AI 血泉治疗过的怪 healFlash 永久停在 1 → 状态面板「回春」态卡住不消、无倒计时。
+      if (m.healFlash > 0) m.healFlash = Math.max(0, m.healFlash - dt * 2.5);
       if (m.dist >= this.aiPathLen) {
         if (this.aiTangsengHurtImmuneT > 0) continue;
         this.aiTangsengHP -= 1;

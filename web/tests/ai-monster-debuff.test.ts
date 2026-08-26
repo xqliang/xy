@@ -131,6 +131,56 @@ describe('AI 半场怪物施法（updateAiMonsterSkills）', () => {
     expect(b2.stealFx[0]!.kind).toBe('cell');
   });
 
+  // 回归：AI 半场小 Boss 光环写入的「逐怪计时器」也要随帧衰减（对齐玩家侧 updateMonsters）。
+  // 此前 updateAi 的怪物推进循环只衰减 stunT/hasteT，漏了 healFlash（血泉治疗闪光）→ 被治疗的
+  // AI 怪 healFlash 永久停在 1，点开怪物状态面板会「一直停在回春态、无倒计时」。
+  it('血泉治疗后 AI 怪 healFlash 会随帧衰减到 0，不会卡在「回春」状态', () => {
+    const b = mkB();
+    // AI 血泉小 Boss + 一只贴近的残血 AI 怪（skillCd≈0 → 首帧即施法治疗）
+    const blood = aiMon({ id: 1, isMiniBoss: true, miniBossKind: 'blood' as unknown as Monster['miniBossKind'], skill: null, skillCd: 0.01, dist: 3 });
+    const ally = aiMon({ id: 2, skill: null, skillCd: 99, dist: 3.2, hp: 20, maxHp: 100 });
+    b.aiMonsters = [blood, ally];
+    // 首帧触发治疗：castAiMiniBossSkill 把 healFlash 置 1
+    b.step(1 / 30);
+    expect(ally.healFlash).toBeGreaterThan(0); // 已被治疗、进入「回春」态
+    expect(ally.hp).toBeGreaterThan(20); // 确实回了血（佐证确在光环半径内）
+    // 再推进 ~0.6s（> 0.4s 衰减窗，且远小于 miniBossInterval=8s，不会二次治疗）
+    for (let t = 0; t < 0.6; t += 1 / 30) b.step(1 / 30);
+    expect(ally.healFlash).toBe(0); // 玩家侧会衰减到 0；AI 侧若漏衰减则卡在 1（本用例复现该 bug）
+  });
+
+  // 回归：AI 怪被减速后移速应减半（此前 AI 侧移动漏乘 slowMul → 对方怪对减速免疫）。
+  it('AI 怪被减速后推进更慢，且 slowT 随帧衰减', () => {
+    const b = mkB();
+    const slowed = aiMon({ id: 1, skill: null, spd: 1, dist: 1, slowT: 5 });
+    const normal = aiMon({ id: 2, skill: null, spd: 1, dist: 1, slowT: 0 });
+    b.aiMonsters = [slowed, normal];
+    for (let t = 0; t < 0.3; t += 1 / 30) b.step(1 / 30);
+    const advSlow = slowed.dist - 1;
+    const advNormal = normal.dist - 1;
+    expect(advSlow).toBeGreaterThan(0);
+    expect(advSlow).toBeLessThan(advNormal); // 减速怪推进更少（修复前两者相等）
+    expect(slowed.slowT).toBeLessThan(5); // slowT 在衰减
+    expect(slowed.slowT).toBeGreaterThan(0); // 0.3s 内尚未耗尽
+  });
+
+  // 回归：AI 怪被灼烧应持续掉血（此前 AI 侧循环无灼烧结算 → 对方怪对灼烧 DoT 免疫）。
+  it('AI 怪被灼烧持续掉血，烧完 burnDps 归零后停止', () => {
+    const b = mkB();
+    const m = aiMon({ id: 1, skill: null, spd: 0, dist: 3, hp: 100, maxHp: 100, burnT: 1, burnDps: 20 });
+    b.aiMonsters = [m];
+    b.step(1 / 30);
+    expect(m.hp).toBeLessThan(100); // 掉血了（修复前恒为 100）
+    expect(m.burnT).toBeLessThan(1); // 计时衰减
+    // 烧完（burnT>1s）后 burnDps 归零、不再掉血
+    for (let t = 0; t < 1.2; t += 1 / 30) b.step(1 / 30);
+    expect(m.burnT).toBe(0);
+    expect(m.burnDps).toBe(0);
+    const hpAfter = m.hp;
+    b.step(1 / 30);
+    expect(m.hp).toBe(hpAfter); // 灼烧结束不再掉血
+  });
+
   it('PvP 下不本地施法（对手半场由对手权威 sim 负责，快照携带状态）', () => {
     const b = new Battle(1, 1, MAPS[0]!, undefined, {}, [], [], false, undefined, 1, undefined, { enabled: true });
     b.introDone = true;
