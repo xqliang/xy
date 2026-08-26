@@ -662,7 +662,10 @@ class VersusHub:
 # wave_schedule / first_clear 是 int 键 dict，JSON 会把键转成 str，反序列化时 int() 回来。
 
 def _serialize_match(m: dict) -> dict:
-    """把内存 match dict 转成可 JSON 化的快照（剔除每侧 ws_send）。"""
+    """把内存 match dict 转成可 JSON 化的快照（剔除每侧 ws_send）。
+    注意：这是 shallow-copy——返回的 out["wave_schedule"]/out["first_clear"]/out["result"]
+    与活跃 match 仍是同一对象（未深拷）。仅因 B3 在锁内快照后立即 json.dumps 才安全；
+    调用方切勿把返回的 blob 暂存到锁外再序列化，否则可能读到被其它请求并发改动的中间态。"""
     def side(s: dict) -> dict:
         return {k: v for k, v in s.items() if k != "ws_send"}
     out = {k: v for k, v in m.items() if k not in ("a", "b")}
@@ -670,9 +673,12 @@ def _serialize_match(m: dict) -> dict:
     out["b"] = side(m["b"])
     return out
 
+
 def _deserialize_match(blob: dict, now: int) -> dict:
     """把 JSON 快照还原成内存 match dict：int() 键、ws_send=None、gone_ms=now（视为断线待重连）、
-    created_ms=now（关键：给回放局新鲜的重连窗，否则旧 created_ms 会让它一 _reap 就被“从未连接”清掉）。"""
+    created_ms=now（关键：给回放局新鲜的重连窗，否则旧 created_ms 会让它一 _reap 就被“从未连接”清掉）、
+    last_tick_ms=now（同理：视为刚活跃，否则长停机后旧 last_tick 会被 _reap 的 IDLE 分支立即清掉）、
+    connected_ever=False（回放后需重新 ws_hello 才算“连过”）。"""
     m = dict(blob)
     m["wave_schedule"] = {int(k): v for k, v in (blob.get("wave_schedule") or {}).items()}
     m["first_clear"] = {int(k): v for k, v in (blob.get("first_clear") or {}).items()}
@@ -681,7 +687,8 @@ def _deserialize_match(blob: dict, now: int) -> dict:
         s = dict(blob[key])
         s["ws_send"] = None
         s["gone_ms"] = now
-        s["connected_ever"] = False
+        s["last_tick_ms"] = now   # 回放视为刚活跃，避免长停机后旧 last_tick 让回放局被 IDLE_REAP 立即清掉
+        s["connected_ever"] = False   # 回放后需重新 ws_hello 才算“连过”（B4 撮合退队分支据此）
         m[key] = s
     return m
 

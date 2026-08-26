@@ -59,7 +59,7 @@ def _fake_hub():
 
 def test_serialize_drops_ws_send_and_roundtrips():
     from api_versus import _serialize_match, _deserialize_match
-    import json
+    import json, copy
     hub = _fake_hub()
     e1 = {"uid": "A1", "rank": 3, "ticket": "tA"}
     e2 = {"uid": "B1", "rank": 3, "ticket": "tB"}
@@ -68,19 +68,35 @@ def test_serialize_drops_ws_send_and_roundtrips():
     m["a"]["ws_send"] = lambda t: True          # 装一个闭包，序列化必须丢掉
     m["wave_schedule"][2] = hub._now() + 5000    # int 键
     m["first_clear"][1] = "A1"
+    # 塞入带 _ms 的 digest（B3 flush/load 依赖它原样 round-trip）+ 几个非默认 per-side 字段
+    m["a"]["last_digest"] = {"tangsengHP": 3, "kills": 5, "_ms": 123}
+    m["a"]["status"] = "dead"
+    m["a"]["wave"] = 4
+    m["a"]["last_next_wave"] = 3
 
     blob = _serialize_match(m)
     text = json.dumps(blob)                      # 必须能 JSON 化（无闭包）
     assert "ws_send" not in text
 
-    restored = _deserialize_match(json.loads(text), now=2_000_000)
+    parsed = json.loads(text)
+    parsed_before = copy.deepcopy(parsed)        # 反序列化必须是纯函数：不得就地改动入参 blob
+    restored = _deserialize_match(parsed, now=2_000_000)
+    assert parsed == parsed_before               # 入参未被 _deserialize_match 修改
+
     assert restored["match_id"] == mid
     assert restored["a"]["uid"] == "A1" and restored["b"]["uid"] == "B1"
     assert restored["seed"] == m["seed"] and restored["map"] == m["map"]
     assert 2 in restored["wave_schedule"] and restored["wave_schedule"][2] == m["wave_schedule"][2]
     assert 1 in restored["first_clear"] and restored["first_clear"][1] == "A1"
-    # 连接态复位：ws_send=None、gone_ms=now、created_ms=now、connected_ever=False
+    # 带 _ms 的 digest 原样 round-trip
+    assert restored["a"]["last_digest"] == {"tangsengHP": 3, "kills": 5, "_ms": 123}
+    # 其它 per-side 字段也 round-trip
+    assert restored["a"]["status"] == "dead"
+    assert restored["a"]["wave"] == 4
+    assert restored["a"]["last_next_wave"] == 3
+    # 连接态复位：ws_send=None、gone_ms=now、last_tick_ms=now、created_ms=now、connected_ever=False
     assert restored["a"]["ws_send"] is None and restored["b"]["ws_send"] is None
     assert restored["a"]["gone_ms"] == 2_000_000 and restored["b"]["gone_ms"] == 2_000_000
+    assert restored["a"]["last_tick_ms"] == 2_000_000 and restored["b"]["last_tick_ms"] == 2_000_000
     assert restored["created_ms"] == 2_000_000
     assert restored["a"]["connected_ever"] is False and restored["b"]["connected_ever"] is False
