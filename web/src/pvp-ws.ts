@@ -29,6 +29,9 @@ export interface PvpSocketOpts {
   uid: string;
   // 会话令牌（可选）：登录后由上层（Task 12 的 main.ts）传入，追加到 WS URL 供服务端校验身份。
   token?: string;
+  // 会话令牌提供者（可选）：每次连接/重连时调用取最新 token，避免构造时烘焙导致过期后重连仍用旧 token。
+  // 与 token 二选一；两者都给则 tokenProvider 优先。
+  tokenProvider?: () => string | undefined;
   onWelcome?: (serverMs: number) => void;
   onOppSnap?: (s: unknown) => void;
   onNextWave?: (wave: number, startAtServerMs: number) => void;
@@ -73,8 +76,9 @@ const defaultScheduler = (fn: () => void, ms: number): unknown => setTimeout(fn,
 export class PvpSocket {
   readonly matchId: string;
   readonly uid: string;
-  /** 会话令牌（可选）：构造时随 URL 烘焙进 wsUrl，重连复用同一 URL。 */
+  /** 会话令牌（可选）：静态回退值——未注入 tokenProvider 时用它拼 URL。每次连接由 currentToken() 取值，不再构造时烘焙。 */
   readonly token?: string;
+  private readonly tokenProvider?: () => string | undefined;
   /** 当前连接状态（只读快照，上层可轮询）。 */
   state: PvpSocketState = 'closed';
   /** 应用层 RTT（ms，EWMA α=0.25）：首个 pong 前为 null，供顶部延迟 HUD 显示。 */
@@ -87,7 +91,6 @@ export class PvpSocket {
   private readonly opts: PvpSocketOpts;
   private readonly factory: (url: string) => PvpWsLike;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
-  private readonly wsUrl: string;
   private sock: PvpWsLike | null = null;
   /** 断线期间积压的事件类上行（waveCleared/status 信封）。弱网优化②：
    *  清波下降沿与终局是「事件」而非「状态」，断线窗口跨过它们时静默丢弃会让服务端判定
@@ -108,14 +111,19 @@ export class PvpSocket {
     this.token = opts.token;
     this.factory = opts.wsFactory ?? ((url: string) => new WebSocket(url) as unknown as PvpWsLike);
     this.schedule = opts.scheduler ?? defaultScheduler;
-    this.wsUrl = buildWsUrl(this.matchId, this.uid, this.token);
+    this.tokenProvider = opts.tokenProvider;
+  }
+
+  /** 取当前令牌：优先 tokenProvider（每连接刷新），回退构造时的静态 token。 */
+  private currentToken(): string | undefined {
+    return this.tokenProvider ? this.tokenProvider() : this.token;
   }
 
   /** 建立连接：创建 socket、绑定三事件。幂等保护——已手动关闭则不再连。 */
   connect(): void {
     if (this.closed) return;
     this.state = 'connecting';
-    const sock = this.factory(this.wsUrl);
+    const sock = this.factory(buildWsUrl(this.matchId, this.uid, this.currentToken()));
     this.sock = sock;
     sock.onopen = () => this.handleOpen();
     sock.onmessage = (e) => this.handleMessage(e.data);

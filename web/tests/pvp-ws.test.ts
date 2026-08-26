@@ -88,6 +88,29 @@ describe('PvpSocket URL 构造', () => {
     s.connect();
     expect(FakeWebSocket.last().url).toBe('ws://localhost/api/versus/ws?matchId=m&uid=u');
   });
+
+  it('tokenProvider：每次连接取最新 token 拼进 &token=（重连刷新，不烘焙旧值）', () => {
+    vi.stubGlobal('location', { protocol: 'https:', host: 'h' } as unknown as Location);
+    let tok: string | undefined = 'T1';
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const s = new PvpSocket({ matchId: 'm', uid: 'u', tokenProvider: () => tok, wsFactory: fakeFactory, scheduler });
+    s.connect();
+    expect(FakeWebSocket.last().url).toContain('&token=T1');
+    FakeWebSocket.last().close();          // 断 → 排重连
+    tok = 'T2';                            // 令牌在重连前刷新了
+    calls.find((c) => c.ms === 300)!.fn(); // 重连
+    expect(FakeWebSocket.last().url).toContain('&token=T2'); // 用的是新 token，不是烘焙的 T1
+    s.close();
+  });
+
+  it('tokenProvider 返回 undefined → URL 不带 &token=', () => {
+    vi.stubGlobal('location', { protocol: 'https:', host: 'h' } as unknown as Location);
+    const s = new PvpSocket({ matchId: 'm', uid: 'u', tokenProvider: () => undefined, wsFactory: fakeFactory });
+    s.connect();
+    expect(FakeWebSocket.last().url).not.toContain('token=');
+    s.close();
+  });
 });
 
 describe('PvpSocket 握手与消息分发', () => {
