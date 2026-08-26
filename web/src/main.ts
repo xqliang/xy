@@ -2617,6 +2617,8 @@ function frame(now: number): void {
       // A1-lite：断线判死后若入站重新到达（socket 已重连）→ 解冻续打。
       // 等同「取消暂停」——sim 状态还在内存里，只是之前被 netDead 冻结（shouldStepSim 门控）；
       // 与「跨刷新重建 sim」不同（后者会与服务端波次时钟 desync，见 spec §3 A1），故此处安全。
+      // 注：这里只凭「传输层存活」（lastInboundAt 在 PvpSocket.handleOpen 重开时即刷新），不代表服务端仍认对局有效；
+      // 若服务端其实已判负，本地最多空跑 ~10s 后重新判死并最终回首页（安全）。真·会话恢复属后续服务端里程碑。
       pvpNetDead = false;
       pvpNetDeadStart = 0;
     }
