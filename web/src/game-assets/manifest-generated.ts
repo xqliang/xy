@@ -90,6 +90,7 @@ export const HASHED_URLS: Record<string, string> = {
   "palace-camp-body.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/palace-camp-body-223885f7.png",
   "palace-camp-roof.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/palace-camp-roof-81b2a462.png",
   "palace-roof-band.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/palace-roof-band-604b7ee5.png",
+  "palace-title-plaque.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/palace-title-plaque-4c90c649.png",
   "pvp-bg.jpg": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/pvp-bg-f4bbfd74.jpg",
   "rank-star-off.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/rank-star-off-b059013e.png",
   "rank-star-on.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/rank-star-on-a698c3b3.png",

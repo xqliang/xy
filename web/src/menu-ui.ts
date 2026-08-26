@@ -38,6 +38,39 @@ export function inkPopupCloseRect(
   };
 }
 
+/** 宫檐标题匾额：优先用生成的红木牌匾图 palace-title-plaque（金龙雕花框），缺图回退程序化红木匾。
+ *  居中于 (cx,cy)；返回匾内可题字的最大宽度（供调用方按需缩小字号适配长标题）。 */
+function drawTitlePlaque(ctx: CanvasRenderingContext2D, cx: number, cy: number): number {
+  const img = sprite('palace-title-plaque');
+  if (img && img.naturalWidth) {
+    const dispH = 38; // 显示高（贴合宫檐下带、不喧宾夺主）
+    const dispW = dispH * (img.naturalWidth / img.naturalHeight);
+    ctx.drawImage(img, cx - dispW / 2, cy - dispH / 2, dispW, dispH);
+    return dispW * 0.6; // 中央木面可题字宽（两侧金框+盘龙约占 40%）
+  }
+  // 回退（CDN 图未就绪）：程序化红木匾——暖褐红木底 + 双金线框
+  const pw = 220, ph = 38, padX = 26;
+  const px = cx - pw / 2, py = cy - ph / 2, r = 8;
+  ctx.save();
+  const g = ctx.createLinearGradient(0, py, 0, py + ph);
+  g.addColorStop(0, '#93582f');
+  g.addColorStop(0.5, '#74401f');
+  g.addColorStop(1, '#5c3016');
+  roundRect(ctx, px, py, pw, ph, r);
+  ctx.fillStyle = g;
+  ctx.fill();
+  roundRect(ctx, px, py, pw, ph, r);
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = '#caa24e';
+  ctx.stroke();
+  roundRect(ctx, px + 4, py + 4, pw - 8, ph - 8, Math.max(1, r - 3));
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(230,200,120,0.65)';
+  ctx.stroke();
+  ctx.restore();
+  return pw - padX * 2;
+}
+
 /** 弹窗卷轴框：返回内容区 top（标题栏下方） */
 export function drawInkPopupFrame(
   ctx: CanvasRenderingContext2D,
@@ -89,16 +122,28 @@ export function drawInkPopupFrame(
   } else {
     drawPalaceRoof(ctx, x + w / 2, y + 10, w + 24, 26);
   }
-  // 标题画在瓦面下带（檐梁上方 ~20px，避开正脊）：米金字 + 深红描边，压在瓦面上保持可读
-  ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
+  // 标题画在瓦面下带（檐梁上方 ~20px，避开正脊）。宫檐瓦面花纹杂、纯描边字偏糊，
+  // 故先在檐上嵌一块红木牌匾（生成图，缺图回退程序化匾），标题再题在匾木面上——对比强、像宫门匾额。
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  const titleCx = x + w / 2;
+  const titleCy = bandTop + bandH - 25; // 匾中心（坐在瓦面下带、略高于檐口）
+  const innerW = drawTitlePlaque(ctx, titleCx, titleCy);
+  // 题字：默认 20px，超过匾木面宽则按比例缩小字号适配（长标题如「继续上次对局？」）
+  let fs = 20;
+  ctx.font = `bold ${fs}px "PingFang SC", "STKaiti", serif`;
+  const tw = ctx.measureText(title).width;
+  if (tw > innerW) {
+    fs = Math.max(13, Math.floor((fs * innerW) / tw));
+    ctx.font = `bold ${fs}px "PingFang SC", "STKaiti", serif`;
+  }
+  // 米金字 + 极细深棕描边（匾木面已提供对比，描边只为字口清晰）；题字居中于匾（水平/垂直皆取匾中心）
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 3.5;
-  ctx.strokeStyle = 'rgba(70,26,8,0.85)';
-  ctx.strokeText(title, x + w / 2, bandTop + bandH - 20);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(50,20,6,0.7)';
+  ctx.strokeText(title, titleCx, titleCy);
   ctx.fillStyle = '#ffe9b8';
-  ctx.fillText(title, x + w / 2, bandTop + bandH - 20);
+  ctx.fillText(title, titleCx, titleCy);
 
   roundRect(ctx, closeR.x, closeR.y, closeR.w, closeR.h, 6);
   ctx.fillStyle = 'rgba(48,28,12,0.55)';
