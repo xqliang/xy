@@ -1850,7 +1850,8 @@ function handleButton(x: number, y: number): boolean {
 function onPointerDown(e: PointerEvent) {
   e.preventDefault();
   if (screen === 'loading') return; // 加载中不响应点击（BGM 仍可在进首页后由首次手势唤醒）
-  resumeAudioAfterGesture(audioScreenKind(screen), currentMap.id);
+  // 战斗屏跟随 battle 的实际地图（PvP 由服务端指定，可能与菜单所选 currentMap 不同）
+  resumeAudioAfterGesture(audioScreenKind(screen), screen === 'battle' ? battle.map.id : currentMap.id);
   const { x, y } = toLogical(e.clientX, e.clientY);
   // 新手引导展示中：拦截全部点击，仅响应「跳过引导」或前进到下一步
   if (tutorialOverlay) {
@@ -2606,7 +2607,9 @@ function frame(now: number): void {
       checkBattleTutorials();
       updateFirstGameGuide(); // Task 10：推进首局引导阶段（征兵→部署→done，modal 期间暂停）
     }
-    startAmbient(currentMap.id); // 进入对战启动该地图氛围音（幂等）
+  // BGM 跟随实际战斗地图而非菜单所选：PvP 的地图由服务端 match 决定（onPvpMatched 用 ms.map 建 battle），
+  // 与 currentMap 不一致时会一直播错曲（曾表现为真人对战播的始终是首页前选中的那张图的 BGM）。
+  startAmbient(battle.map.id); // 进入对战启动该地图氛围音（幂等）
     updateBattleToasts(dt); // 战斗内 toast（续玩提示等）按真实时间淡出
     // 播放引擎发出的音效事件
     if (battle.sfxEvents.length) {
