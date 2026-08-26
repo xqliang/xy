@@ -207,8 +207,8 @@ export const TUNING = {
   miniBossFromWave: 5, // 第 5 波起（第 4 波之后）才可能出现
   miniBossChance: 0.5, // 非 BOSS 波出现小 Boss 的概率
   miniBossHpMul: 3.5, // 血量相对普通妖倍数（介于精英与妖王之间）
-  miniBossSpdMul: 0.8, // 移速略慢，给玩家反应窗口（blight/blood 等未特指种类用此默认）
-  miniBossSpdMulSlow: 0.75, // 霜魄/撼地小 Boss 本体移速倍率（偏慢，给玩家反应）
+  miniBossSpdMul: 0.8, // 移速略慢，给玩家反应窗口（蚀甲等未特指种类用此默认）
+  miniBossSpdMulSlow: 0.75, // 霜魄/撼地/血泉小 Boss 本体移速倍率（偏慢，给玩家反应）
   miniBossSpdMulFast: 1.05, // 疾风小 Boss 本体移速倍率（本身很快）
   miniBossRadius: 2.8, // 光环作用半径（格；gale/blood 用；frost/blight/quake 仍用 skillRadius）
   miniBossInterval: 8, // 两次施法间隔（秒）
@@ -276,7 +276,7 @@ export const TUNING = {
   heroUltFxTtlBite: 0.8, // 白龙突进撕咬
   heroUltFxTtlSupport: 0.85, // 辅助系（观音/老君/文殊线）
   heroUltFxTtlDefault: 0.6, // 其余英雄
-  tangsengHurtImmuneDur: 2, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
+  tangsengHurtImmuneDur: 3, // 唐僧漏怪扣血后短暂免疫（防同帧连扣）
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
@@ -5805,12 +5805,12 @@ export class Battle {
   }
 
   /** 小 Boss 按种类的移速倍率（本体固有移速，非疾风光环加速，DevTools 可调）：
-   *  霜魄/撼地用 miniBossSpdMulSlow、疾风用 miniBossSpdMulFast、其余用默认 miniBossSpdMul。 */
+   *  霜魄/撼地/血泉用 miniBossSpdMulSlow、疾风用 miniBossSpdMulFast、其余用默认 miniBossSpdMul。 */
   static miniBossSpawnSpdMul(
     kind: MiniBossKind | null,
     t: { miniBossSpdMul: number; miniBossSpdMulSlow: number; miniBossSpdMulFast: number },
   ): number {
-    if (kind === 'frost' || kind === 'quake') return t.miniBossSpdMulSlow;
+    if (kind === 'frost' || kind === 'quake' || kind === 'blood') return t.miniBossSpdMulSlow;
     if (kind === 'gale') return t.miniBossSpdMulFast;
     return t.miniBossSpdMul;
   }
