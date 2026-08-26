@@ -31,7 +31,7 @@
 
 ### 1.2 缺口（按体感影响排序）
 
-1. **刷新 / 小游戏被回收 → 无法 rejoin**：`matchId/uid/side` 只在 `PvpSocket` 内存，未持久化；页面上下文销毁即丢，只能重新匹配。最常见的断线诱因。
+1. **断线判死后永不复活**：`pvpNetDead` 一旦 >10s 无入站置真（`main.ts:2614`），即便 socket 在倒计时内重连成功也不清除、不解冻 → 任何 >10s 抖动都march 到回首页。（这是 A1-lite 要修的点。）真·跨刷新恢复因确定性实时 sim 架构不安全，不做，理由见 §3 A1。
 2. **服务端活跃对局零持久化**：`systemctl restart` 发版 = 硬重启 = 所有进行中对局全丢，重连必失败。
 3. **鉴权失败被当普通断线**：token 失效后陷入无限退避重连，不提示重登。
 4. **无"正在重连"提示**：断线到 10s 判死之间画面定格，体感像卡死。
@@ -51,7 +51,7 @@
 
 **目标**
 - 显著降低"断线导致对局中断/被判负"的发生率与体感。
-- 刷新 / 短暂被杀后能自动恢复正在进行的 PvP 对局。
+- 瞬断（页面存活：抖动/切后台/断网/wss 中断）后能自动恢复正在进行的 PvP 对局，包括 >10s 断线重连后解冻续打。
 - 服务端发版/重启不再丢活跃对局。
 - 鉴权失效时给出正确引导而非无限重连。
 - 提供数据支撑的心跳阈值调优（不拍脑袋改）。
@@ -60,21 +60,25 @@
 - 多进程横向扩展 / Redis（当前单机规模 YAGNI，用户已确认）。
 - 抗任意时长断网（超过 grace 仍判负，符合公平性）。
 - 改动确定性 sim 本身。
+- **真·跨刷新 / 进程被杀恢复对局**（确定性实时 sim 下需服务端辅助 resync，独立大工程；用户已确认不做，见 §3 A1 理由）。
 
 ---
 
 ## 3. 里程碑 A — 客户端断线韧性（纯 `web/`，可独立上线）
 
-### A1 · 跨刷新/被杀后重进对局（**完整方案**）
-持久化对局标识 + 扩展本地战局检查点，重进后自动重连恢复。
+### A1 · 瞬断重连加固（**降级方案，已定**）
 
-- **组件**
-  - `storage.ts` 新增一条 active-PvP 记录 key（如 `pvp.active`），存 `{matchId, uid, side, startedAtMs}`。
-  - `battle-save.ts`：去掉/放宽 `saveResumeCheckpoint` 的 isPvp 跳过，允许 PvP 检查点（含波次/HP/RNG 等确定性状态），并区分单人存档与 PvP 存档 key，互不覆盖。
-  - `main.ts`：`onPvpMatched` 时写 active-PvP 记录并开始 PvP 检查点；收到 `result` / 手动退 / 判负时 `clearBattleSave` + 清 active-PvP 记录。
-- **数据流（重进恢复）**：App 启动 → 读 active-PvP 记录 → 若 `now - startedAtMs < 恢复窗口`（对齐服务端 grace 45s）→ `loadResumeBattle` 恢复我方半场 → 用存的 matchId/uid/side `new PvpSocket(...).connect()` → 服务端在 grace 内（或已从 B5 持久化回放）→ hello 恢复 → 继续对局。**不弹"继续/首页"选择框**（PvP 时间在走，直接自动恢复以省 grace）。
-- **一致性**：对手是快照木偶（见项目既有认知），恢复我方后继续发快照，对手 puppet 视角会有一次轻微跳变，可接受；波次/quorum/终局仍由服务端权威裁决。
-- **错误处理**：恢复窗口已过 / 服务端已判负 / hello 返回 bad_hello → 清 active-PvP 记录 + 存档，回到匹配首页并提示"上局已结束"。
+> **为何不做"真·跨刷新恢复"**（重要，防后人重蹈）：PvP 本方是确定性实时 sim——`localSimTick` 从开局按 30Hz 实时推进，波次由服务端绝对纪元锚定（`pvpWaveStartTick = round((波纪元-开局纪元)×30/1000)`，`pvp-fixedstep.ts:21`）。跨刷新后 sim 状态全丢，要恢复必须把 `localSimTick` 还原到旧值，但服务端对局时钟已走到"现在"，而 sim 不能瞬间快进追赶（`drainFixedSteps` 的 `maxSteps` 雪崩保护会丢弃积压，`pvp-fixedstep.ts:9`）→ 客户端永久落后服务端波次时钟 → quorum 错位、错误结算。加之存档只能在 `status==='ready'` 安全序列化（`battle-save.ts:63`）。故**真恢复需服务端辅助 resync，是独立大工程，本方案不做**。
+
+**关键区分**：解冻"内存里还在的 sim"（等同取消暂停，游戏已支持 pause/oppGone 冻结再恢复）是安全的；**重建丢失的 sim** 才 desync。A1-lite 只做前者。
+
+**已定位的现状缺口**：`pvpNetDead` 一旦置真（>10s 无入站，`main.ts:2614-2615`）**永不清除**——只在 `onPvpMatched`(`:367`)/`endPvpSession`(`:388`)重置。故断线 >10s 后即便 socket 在倒计时内重连成功、快照恢复，对局也不解冻，照样倒计时结束回首页。
+
+**A1-lite 交付物**：连接在倒计时内恢复时清除 `pvpNetDead`、解冻续打。
+- `main.ts` 帧循环：在"置 `pvpNetDead`"检查之后，加一条"复活"检查——`pvpNetDead && pvpSock && !pvpResult && !netDead(Date.now(), pvpSock.lastInboundAt)` → 说明入站已恢复 → `pvpNetDead=false; pvpNetDeadStart=0`（sim 随即解冻，等同取消暂停）。
+- 时间线：drop→(0~countdown 内 socket 无限退避重连，A3 显示"正在重连")→若在 countdown 内收到新快照则复活续打；否则 countdown 到点回首页（同现状）。
+- **不改** sim、不持久化、不跨刷新。刷新/被杀仍丢局（按服务端 grace 判负），干净退出。
+- **相位注意**：`DISCONNECT_COUNTDOWN_MS`（客户端）本期保持与服务端当前 grace 一致（10s）；B5 把 grace 拉到 45s 时，同步把 `DISCONNECT_COUNTDOWN_MS` 改 45s（复活窗口随之变长）。
 
 ### A3 · "正在重连"横幅
 - `PvpSocket` 暴露 `retryCount`（或 `reconnectAttempt`）只读快照。
@@ -132,7 +136,7 @@
 ## 6. 测试与验收（遵循项目既有约定）
 
 - **服务端**：`server/` pytest 用 3308 一次性 MariaDB。新增：B5 持久化写/回放/幂等/版本并发测试、SIGTERM 刷库测试、B6 撮合超窗退队测试、grace 45s 相关既有测试更新。
-- **前端**：vitest 放 `web/tests/**`（不放 src）。新增：A1 active 记录 + PvP 检查点存取、A4 探测短路状态机、重连横幅 state 驱动、tokenProvider 重连取新 token。
+- **前端**：vitest 放 `web/tests/**`（不放 src）。新增：A1 连接恢复清 `pvpNetDead`（纯函数化"是否应复活"便于单测）、A4 探测短路状态机、重连横幅 state 驱动、tokenProvider 重连取新 token。
 - **类型检查**：tsc 基线本有 ~28 处既有报错，验收标准 = **不新增**。
 - **真机验证**（强制）：A 期改渲染/循环，必须浏览器真机验证——重连横幅、刷新续玩、鉴权失效提示。
 - **B7**：交付弱网测量数据，不凭感觉改阈值。
@@ -150,4 +154,5 @@
 ## 8. 遗留 / 后续跟进
 - A4 可选增强：B 期给服务端加"握手后发 `{"type":"error"}` + 关闭码 4001"精确信号，客户端改为优先读关闭码、探测兜底。
 - B5 若未来真需多进程横向扩展，再评估 Redis + 分布式锁（当前 YAGNI）。
-- 恢复窗口与 grace 的具体秒数可按 B7 真机数据回调。
+- grace / countdown 具体秒数可按 B7 真机数据回调。
+- **真·跨刷新恢复**：如未来确有强需求，需单独设计"服务端辅助 resync"（重连时服务端下发权威追帧状态，客户端硬同步 `localSimTick` 与波次）。当前已确认不做，parked。
