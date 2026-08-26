@@ -176,3 +176,38 @@ def test_reload_preserves_connected_ever_so_resumed_match_not_reaped_at_connect_
     h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
     h2.poll("bogus")
     assert mid in h2.matches
+
+
+def test_opponent_never_connects_present_side_wins():
+    from api_versus import MATCH_CONNECT_GRACE_MS
+    import json
+    hub = _fake_hub()
+    e1 = {"uid": "A1", "rank": 3, "ticket": "tA"}
+    e2 = {"uid": "B1", "rank": 3, "ticket": "tB"}
+    mid = hub._make_match(e1, e2, hub._now())
+    sent_a = []
+    hub.ws_hello("A1", mid, lambda t: (sent_a.append(t), True)[1])   # A connects; B never does
+    # 未过撮合宽限：A 发快照不应判定
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": base})
+    assert hub.matches[mid].get("ended") is not True
+    # 过了撮合宽限：A 再发快照 → 对手 B 从未露面 → A 判胜
+    hub._clock["ms"] += MATCH_CONNECT_GRACE_MS + 1
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 2, "s": base})
+    m = hub.matches[mid]
+    assert m["ended"] is True
+    assert m["result"]["a"]["outcome"] == "win"
+    assert m["result"]["a"]["reason"] == "opponentDisconnectTimeout"
+    assert m["result"]["b"]["reason"] == "selfDisconnect"
+    # A 收到 result 推送
+    types = [json.loads(t).get("type") for t in sent_a]
+    assert "result" in types
+
+def test_both_never_connect_not_resolved_as_win_still_reaped():
+    # 双方都没连：不判胜（无在场方），仍由 _reap 的 20s 分支回收（B4 行为不变）
+    from api_versus import MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
+    hub = _fake_hub()
+    mid = hub._make_match({"uid":"N1","rank":3,"ticket":"tN1"}, {"uid":"N2","rank":3,"ticket":"tN2"}, hub._now())
+    hub._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
+    hub.poll("bogus")
+    assert mid not in hub.matches   # 被 reap 删除，而非判胜

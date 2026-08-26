@@ -469,9 +469,20 @@ class VersusHub:
             return
         for key, other_key in (("a", "b"), ("b", "a")):
             side = m[key]
+            other = m[other_key]
             if side.get("gone_ms") and now - side["gone_ms"] > DISCONNECT_GRACE_MS:
                 self._set_result(m, key, "DisconnectTimeout", now)
-                other = m[other_key]
+                if other.get("ws_send"):
+                    self._ws_push_locked(other, side, m,
+                                         {"type": "result", **m["result"][other_key]})
+                return
+            # B4b：对手从未连接（撮合后一方到场、另一方一直没 hello）→ 过撮合宽限即判在场方胜
+            # （对手 no-show ≈ 断线超时）。由在场方的 ws_* 驱动本检查（_reap 不会触发本局：在场方
+            # 在局内不轮询 matchmaking）；复用 DisconnectTimeout（客户端已有「对手掉线」文案）。
+            # 仅当"恰好一方缺席"时命中：双方都没连由 _reap 的 20s 分支删除（无在场方、不判胜）。
+            if (not side.get("connected_ever") and other.get("connected_ever")
+                    and now - m["created_ms"] > MATCH_CONNECT_GRACE_MS):
+                self._set_result(m, key, "DisconnectTimeout", now)   # 未露面的 side 判负
                 if other.get("ws_send"):
                     self._ws_push_locked(other, side, m,
                                          {"type": "result", **m["result"][other_key]})
