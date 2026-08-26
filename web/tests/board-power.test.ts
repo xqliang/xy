@@ -350,7 +350,7 @@ describe('Battle 接入压力规划', () => {
     const w = Math.max(1, Math.floor(wave));
     const early = TUNING.monsterHpEarlyFixed[w - 1];
     const base = early ?? TUNING.monsterHpBase + TUNING.monsterHpStep * w;
-    return base * b.wavePostMul(w);
+    return base;
   };
   const rampFrom = () => TUNING.monsterHpNoDiffTo + 1;
   const maxRamp = (wave: number) => {
@@ -360,13 +360,10 @@ describe('Battle 接入压力规划', () => {
   };
   const targetHp = (b: Battle, wave: number, optimalDps = 0) => {
     const diff = b.effectiveDifficulty(wave);
-    const staticHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diff * b.wavePostMul(wave);
+    const staticHp = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diff;
     if (wave < MONSTER_HP_FROM_WAVE || optimalDps <= 0) return staticHp;
     const powerHp =
-      monsterHpFromBoardPower(wave, optimalDps, pressureRatioForWave(wave)) *
-      diff *
-      b.wavePostMul(wave);
+      monsterHpFromBoardPower(wave, optimalDps, pressureRatioForWave(wave)) * diff;
     return Math.max(staticHp, powerHp);
   };
   const expectedHp = (b: Battle, wave: number, optimalDps = 0) => {

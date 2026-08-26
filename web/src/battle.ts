@@ -5575,17 +5575,16 @@ export class Battle {
     this.message = `掉落「${wname}」碎片（点击左下角领取）`;
   }
 
-  // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈阶梯。
-  // 圈系数 = endlessCycleStep ^ floor((wave-1)/endlessWavesPerCycle)：波1-10 ×1，波11-20 ×STEP…
+  // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈难度曲线。
+  // 圈系数 = endlessCycleStep ^ (max(0, wave-10) / endlessWavesPerCycle)：
+  //   波 1-10 恒为 ×1（前 10 波保护），其后随波次「连续」爬升（不再台阶式跳升）。
+  //   在每圈末与旧台阶对齐：波 20 = ×STEP、波 30 = ×STEP²…，
+  //   但去掉了波 11 / 21 的悬崖跳变——前面缓、后面越来越陡，手感更平滑。
   effectiveDifficulty(wave: number = this.wave): number {
-    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const w = Math.max(1, wave);
+    // 连续圈系数：前 10 波为 0，其后每满 1 波 +0.1 圈（波 20=1 圈、波 30=2 圈）
+    const cycle = Math.max(0, w - TUNING.endlessWavesPerCycle) / TUNING.endlessWavesPerCycle;
     return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
-  }
-
-  /** 波 >10 后 HP 线性加成（每波 +1%）；移速固定不乘此系数 */
-  wavePostMul(wave: number = this.wave): number {
-    if (wave <= 10) return 1;
-    return 1 + (wave - 10) / 100;
   }
 
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
@@ -5642,7 +5641,7 @@ export class Battle {
     const w = Math.max(1, Math.floor(wave));
     const early = TUNING.monsterHpEarlyFixed[w - 1];
     const baseHp = early ?? TUNING.monsterHpBase + TUNING.monsterHpStep * w;
-    return baseHp * this.wavePostMul(w);
+    return baseHp;
   }
 
   /**
@@ -5651,13 +5650,12 @@ export class Battle {
    */
   private targetMonsterHp(wave: number, optimalDps?: number): number {
     const diffMul = this.effectiveDifficulty(wave);
-    const staticHp =
-      (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diffMul * this.wavePostMul(wave);
+    const staticHp = (TUNING.monsterHpBase + TUNING.monsterHpStep * wave) * diffMul;
     if (wave < BOARD_POWER.MONSTER_HP_FROM_WAVE) return staticHp;
     const dps = optimalDps ?? this.estimateOptimalPower().optimalDps;
     const powerBase = monsterHpFromBoardPower(wave, dps, pressureRatioForWave(wave));
     if (powerBase <= 0) return staticHp;
-    return Math.max(staticHp, powerBase * diffMul * this.wavePostMul(wave));
+    return Math.max(staticHp, powerBase * diffMul);
   }
 
   /** 爬坡起始波（紧接固定公式波之后，默认 4） */

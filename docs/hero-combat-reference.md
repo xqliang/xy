@@ -359,7 +359,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 **前 3 波（≤ `monsterHpNoDiffTo`）绝对血量**（`monsterHpEarlyFixed`，不含境界）：
 
 ```
-fixed(w) = monsterHpEarlyFixed[w−1] × wavePostMul
+fixed(w) = monsterHpEarlyFixed[w−1]
 ```
 
 当前表：**20 / 40 / 65**。
@@ -367,8 +367,8 @@ fixed(w) = monsterHpEarlyFixed[w−1] × wavePostMul
 **第 4 波起目标血量**（含境界；第 `MONSTER_HP_FROM_WAVE` 波起再与 DPS 公式取 max）：
 
 ```
-static = (monsterHpBase + monsterHpStep × wave) × effectiveDifficulty × wavePostMul
-powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × effectiveDifficulty × wavePostMul
+static = (monsterHpBase + monsterHpStep × wave) × effectiveDifficulty
+powerHp = optimalDps × MONSTER_HP_KILL_SEC × pressureRatio × effectiveDifficulty
 target = max(static, powerHp)   // optimalDps=0 时回退 static
 ```
 
@@ -386,7 +386,6 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | `monsterHpStep` | **13** | 静态公式每波 +13；爬坡步长基准 |
 | `monsterHpNoDiffTo` | 3 | 波 1–3 用 EarlyFixed |
 | `monsterHpRampMul` | **2** | 爬坡：`step×2 + (wave−rampFrom)` |
-| `wavePostMul` | 波 ≤10 → 1；否则 `1 + (wave−10)/100` | 波 >10 每波 HP +1% |
 
 | 常量（`BOARD_POWER`） | 值 |
 |----------------------|-----|
@@ -429,22 +428,22 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 
 逐只普通怪独立判定是否变骑兵；妖王 / 小 Boss 不会是骑兵。
 
-### 9.5 分圈难度 `effectiveDifficulty`
+### 9.5 分圈难度 `effectiveDifficulty`（连续爬升，去悬崖）
 
 ```
-effectiveDifficulty = difficultyMul × endlessCycleStep ^ floor((wave−1) / endlessWavesPerCycle)
+effectiveDifficulty = difficultyMul × endlessCycleStep ^ (max(0, wave−10) / endlessWavesPerCycle)
 ```
 
 | 常量 | 值 |
 |------|-----|
 | `endlessWavesPerCycle` | 10 |
-| `endlessCycleStep` | **1.2** |
+| `endlessCycleStep` | **1.1** |
 
-| 波次 | 圈系数 |
-|------|--------|
-| 1–10 | ×1 |
-| 11–20 | ×1.2 |
-| 21–30 | ×1.44（1.2²） |
+| 波次 | 圈系数（S=1.1） |
+|------|----------------|
+| 1–10 | ×1（前 10 波保护） |
+| 11–20 | 连续 ×S^0.1 → ×S（波 20 = ×1.1，不再波 11 悬崖） |
+| 21–30 | 连续 ×S^1.1 → ×S²（波 30 ≈ ×1.21） |
 
 对战与无尽共用；写入目标血量的 `effectiveDifficulty` 乘区（波 ≤ `monsterHpNoDiffTo` 不乘，其后经绝对血量爬坡逼近），**不影响移速**。
 

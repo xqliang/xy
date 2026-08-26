@@ -40,17 +40,6 @@ describe('endless persistence', () => {
 });
 
 describe('endless difficulty curve', () => {
-  it('波>10：基础血量 ×(1+(wave-10)/100)；移速不随波次变化', () => {
-    const endless = new Battle(1, 1, undefined, undefined, {}, [], [], true);
-    const versus = new Battle(1, 1, undefined, undefined, {}, [], [], false);
-    for (const b of [endless, versus]) {
-      expect(b.wavePostMul(10)).toBe(1);
-      expect(b.wavePostMul(11)).toBeCloseTo(1.01, 5);
-      expect(b.wavePostMul(20)).toBeCloseTo(1.1, 5);
-      expect(b.wavePostMul(50)).toBeCloseTo(1.4, 5);
-    }
-  });
-
   it('移速不随波次/境界升高', () => {
     const b = new Battle(1, 2, undefined, undefined, {}, [], [], false);
     const priv = b as unknown as { endlessMonsterBaseSpeed: (w: number) => number };
@@ -59,14 +48,19 @@ describe('endless difficulty curve', () => {
     expect(b.effectiveDifficulty(50)).toBeGreaterThan(1);
   });
 
-  it('effectiveDifficulty 分圈阶梯：每 10 波一圈 ×STEP', () => {
+  it('effectiveDifficulty 连续爬升：前10波×1、每圈末与旧台阶对齐、无悬崖跳变', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
     const S = TUNING.endlessCycleStep;
+    // 前 10 波保护：恒为 ×1
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1, 5);
     expect(b.effectiveDifficulty(10)).toBeCloseTo(1, 5);
-    expect(b.effectiveDifficulty(11)).toBeCloseTo(S, 5);
+    // 波 11 不再悬崖跳到 ×S，而是缓起（×S^0.1）
+    expect(b.effectiveDifficulty(11)).toBeCloseTo(S ** 0.1, 5);
+    // 每圈末与旧台阶对齐：波 20 = ×S、波 30 = ×S²
     expect(b.effectiveDifficulty(20)).toBeCloseTo(S, 5);
-    expect(b.effectiveDifficulty(21)).toBeCloseTo(S * S, 5);
+    expect(b.effectiveDifficulty(30)).toBeCloseTo(S * S, 5);
+    // 相邻波比值恒为 S^0.1（连续、无跳变）
+    expect(b.effectiveDifficulty(21) / b.effectiveDifficulty(20)).toBeCloseTo(S ** 0.1, 5);
   });
 
   it('对战模式 effectiveDifficulty 同样分圈加压', () => {

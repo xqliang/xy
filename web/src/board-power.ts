@@ -66,7 +66,7 @@ export function monsterHpFromBoardPower(
 
 /**
  * 随波次升高的压力比：
- * - 波 ≤ fromWave：PRESSURE_RATIO（0.60）
+ * - 波 ≤ fromWave：PRESSURE_RATIO（0.56）
  * - 波 fromWave→midWave（6→20）：线性至 PRESSURE_RATIO_MID（0.75）
  * - 波 > midWave：每波 + PRESSURE_RATIO_STEP_AFTER（0.02）
  */

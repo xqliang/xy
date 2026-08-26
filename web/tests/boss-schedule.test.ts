@@ -61,11 +61,12 @@ describe('versus infinite waves', () => {
     expect(b.status).toBe('ready');
   });
 
-  it('对战 effectiveDifficulty 随圈上升', () => {
+  it('对战 effectiveDifficulty 随圈连续上升（前10波保护、圈末对齐、无悬崖）', () => {
     const b = new Battle(1, 1.5, undefined, undefined, {}, [], [], false);
     const S = TUNING.endlessCycleStep;
-    expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
-    expect(b.effectiveDifficulty(11)).toBeCloseTo(1.5 * S, 5);
-    expect(b.effectiveDifficulty(21)).toBeCloseTo(1.5 * S * S, 5);
+    expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5); // 前 10 波恒 ×difficultyMul
+    expect(b.effectiveDifficulty(11)).toBeCloseTo(1.5 * S ** 0.1, 5); // 波 11 缓起，不再悬崖 ×S
+    expect(b.effectiveDifficulty(20)).toBeCloseTo(1.5 * S, 5); // 圈末与旧台阶对齐
+    expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5 * S * S, 5); // 下一圈末对齐
   });
 });
