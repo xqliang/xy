@@ -1,5 +1,5 @@
 // web/tests/pvp-netwatch.test.ts
-// Task 7.6：PvP 断线看门狗纯判定 netDead() 的边界单测（无需画布）。
+// Task 7.6：PvP 断线看门狗纯判定 netDead() / netRecovered() 的边界单测（无需画布）。
 import { describe, it, expect } from 'vitest';
 import { netDead, netRecovered, NET_DEAD_THRESHOLD_MS } from '../src/pvp-netwatch';
 

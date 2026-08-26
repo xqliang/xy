@@ -23,7 +23,10 @@ export function netDead(nowMs: number, lastInboundAt: number, thresholdMs = NET_
 /**
  * 判定断线判死后连接是否已恢复（入站在阈值内且已有过入站基线）→ 应清 pvpNetDead 解冻续打。
  * 与 netDead 对称：lastInboundAt===0（尚未 open）不算恢复，返回 false。
+ * @param nowMs 当前墙钟 ms（Date.now()）
+ * @param lastInboundAt 最近一次收到下行消息的墙钟 ms（PvpSocket.lastInboundAt；0=尚未 open）
  * @param thresholdMs 阈值 ms（默认 10000，与 netDead 同）
+ * @returns true=连接已恢复，应清 pvpNetDead 解冻续打
  */
 export function netRecovered(nowMs: number, lastInboundAt: number, thresholdMs = NET_DEAD_THRESHOLD_MS): boolean {
   return lastInboundAt > 0 && nowMs - lastInboundAt <= thresholdMs;
