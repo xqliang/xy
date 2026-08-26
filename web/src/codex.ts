@@ -866,9 +866,6 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
     const s = Math.min(box / heroSpr.width, box / heroSpr.height);
     ctx.drawImage(heroSpr, x + 10, y + 10, heroSpr.width * s, heroSpr.height * s);
   }
-  // 武将卡左上角五行徽章（武将必有属性，直接画；五行总开关关闭时隐藏）
-  if (wuxingEnabled()) drawElementBadge(ctx, x + 16, y + 16, 8, g.element);
-
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   const nameX = x + 72;
@@ -877,9 +874,16 @@ function drawHeroCard(ctx: CanvasRenderingContext2D, g: GeneralDef, x: number, y
   const nameW = ctx.measureText(g.name).width;
   ctx.fillStyle = '#fff6e6';
   ctx.fillText(g.name, nameX, nameY);
+  // 五行徽章：名字后、品阶前（原画在头像左上角会挡住立绘）；五行总开关关闭时隐藏
+  const badgeR = 8;
+  let rankX = nameX + nameW + 8;
+  if (wuxingEnabled()) {
+    drawElementBadge(ctx, rankX + badgeR, nameY + 9, badgeR, g.element);
+    rankX += badgeR * 2 + 6;
+  }
   ctx.fillStyle = rankColor;
   ctx.font = 'bold 12px "PingFang SC", sans-serif';
-  ctx.fillText(g.rank, nameX + nameW + 8, nameY + 3);
+  ctx.fillText(g.rank, rankX, nameY + 3);
   ctx.fillStyle = 'rgba(255,240,210,0.8)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`「${g.chars[0]}」「${g.chars[1]}」· ${g.role} · ${g.atkStyle}`, x + 72, y + 32);

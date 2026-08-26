@@ -95,4 +95,5 @@ export const BOSS_LORE: Record<string, string> = {
   liushahe: '流沙河妖王，流沙裹足、兵器出手变慢',
   baiguling: '白骨岭妖王，白骨魅惑、兵器无法出手',
   pansidong: '盘丝洞妖王，蛛丝黏缚、兵器攻程骤减',
+  huangfengling: '黄风岭妖王，三昧神风裹足、兵器出手变慢',
 };
