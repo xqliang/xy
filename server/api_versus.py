@@ -668,7 +668,7 @@ class VersusHub:
                 snap.append({
                     "match_id": mid, "uid_a": m["a"]["uid"], "uid_b": m["b"]["uid"],
                     "ticket_a": tks.get(m["a"]["uid"]), "ticket_b": tks.get(m["b"]["uid"]),
-                    "blob": _serialize_match(m),
+                    "state_json": json.dumps(_serialize_match(m), ensure_ascii=False),
                 })
             active_ids = [s["match_id"] for s in snap]
         dt = self.db.now()
@@ -683,7 +683,7 @@ class VersusHub:
                         " ticket_a=VALUES(ticket_a),ticket_b=VALUES(ticket_b),"
                         " state_json=VALUES(state_json),updated_at=VALUES(updated_at)",
                         (s["match_id"], s["uid_a"], s["uid_b"], s["ticket_a"], s["ticket_b"],
-                         json.dumps(s["blob"], ensure_ascii=False), dt))
+                         s["state_json"], dt))
                 if active_ids:
                     ph = ",".join(["%s"] * len(active_ids))
                     cur.execute(f"DELETE FROM pvp_active_match WHERE match_id NOT IN ({ph})", active_ids)
@@ -729,8 +729,10 @@ class VersusHub:
 def _serialize_match(m: dict) -> dict:
     """把内存 match dict 转成可 JSON 化的快照（剔除每侧 ws_send）。
     注意：这是 shallow-copy——返回的 out["wave_schedule"]/out["first_clear"]/out["result"]
-    与活跃 match 仍是同一对象（未深拷）。仅因 B3 在锁内快照后立即 json.dumps 才安全；
-    调用方切勿把返回的 blob 暂存到锁外再序列化，否则可能读到被其它请求并发改动的中间态。"""
+    与活跃 match 仍是同一对象（未深拷）。flush_active_matches 在锁内完成
+    `json.dumps(_serialize_match(m))`（快照与序列化都持锁），故浅拷贝的嵌套别名是安全的；
+    任何新调用方也必须在持锁期间 dumps，切勿把浅拷贝 blob 带到锁外再序列化，
+    否则可能读到被其它请求并发改动的中间态（撕裂快照，甚至 dict changed size 异常）。"""
     def side(s: dict) -> dict:
         return {k: v for k, v in s.items() if k != "ws_send"}
     out = {k: v for k, v in m.items() if k not in ("a", "b")}
