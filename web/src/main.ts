@@ -476,14 +476,14 @@ function drawOppGoneOverlay(ctx: CanvasRenderingContext2D, remainSec: number): v
 }
 
 /** 重连中横幅：顶部居中小药丸「正在重连…(第 N 次)」。断线判死前(0~countdown)显示——
- *  此时本方 sim 仍在跑，故用不铺满的顶部横幅，不遮挡棋盘（区别于 drawNetDeadOverlay 全屏弹窗）。 */
+ *  此时本方 sim 仍在跑，故用不铺满的 HUD 下方横幅，不遮挡棋盘与顶部读数（区别于 drawNetDeadOverlay 全屏弹窗）。 */
 function drawReconnectingBanner(ctx: CanvasRenderingContext2D, attempt: number): void {
   const text = attempt > 0 ? `正在重连…(第 ${attempt} 次)` : '正在重连…';
   ctx.save();
   ctx.font = '14px "PingFang SC", serif';
   const padX = 14, h = 28;
   const w = ctx.measureText(text).width + padX * 2;
-  const x = (VIEW_W - w) / 2, y = 36;
+  const x = (VIEW_W - w) / 2, y = HUD_H + 8; // 落在 HUD(72px 波次/境界带)之下，不遮挡顶部读数（Task4 review M1）
   ctx.fillStyle = 'rgba(20,20,20,0.62)';
   if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); }
   else ctx.fillRect(x, y, w, h);
