@@ -1,9 +1,9 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
-import { Battle, TUNING, findTrayIndex, traySome, trayTokens } from './battle';
+import { Battle, TUNING, MAP_ELEMENT, findTrayIndex, traySome, trayTokens } from './battle';
 import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
 import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
-import { canMerge } from '@core';
+import { canMerge, ELEMENT_ZH } from '@core';
 import type { UnitType } from '@core';
 import {
   draw,
@@ -32,6 +32,8 @@ import {
   summonButtonRect,
   guideSkipRect,
   drawGuideSkip,
+  introHopY,
+  mapBadgeRect,
   activeSlotRect,
   drawGameStartHint,
   stepGameStartHint,
@@ -47,7 +49,7 @@ import { loadMapSelection, saveMapSelection, resolveMap, type MapSelection } fro
 import { loadAssets, type AssetLoadProgress } from './assets';
 import { drawLoadingScreen } from './loading-screen';
 import { hasFinishedGame, markGameFinished, pvpUnlocked } from './play-history';
-import { showAutoplaceBtn } from './dev-flags';
+import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 import {
   pushMenuFloatToast,
   updateMenuFloatToasts,
@@ -1126,6 +1128,39 @@ function merchantFirstOpenSequence(): TutorialSequence {
   };
 }
 
+/** 五行地图指引：五行总开关（DevTools/默认）开启才弹；独立 seen key——
+ *  老玩家（已见过其余引导）也会见到一次，五行是新机制需要单独交代。
+ *  三步：① 本图五行是什么、妖怪全部继承（锚 HUD 地图名旁徽章）
+ *        ② 相克环与倍率（居中卡片）
+ *        ③ 武将徽章怎么看克制（居中卡片）。 */
+function wuxingMapSequence(): TutorialSequence {
+  if (!wuxingEnabled()) return { id: 'wuxingMap', steps: [] };
+  const mapEl = MAP_ELEMENT[battle.map.id] ?? null;
+  return {
+    id: 'wuxingMap',
+    steps: [
+      {
+        id: 'mapBadge',
+        title: '地图五行',
+        text: `每张地图都有自己的五行，本图是「${mapEl ? ELEMENT_ZH[mapEl] : '？'}」——图上所有妖怪（小怪/精英/小Boss/妖王）都继承它。徽章就在顶部地图名旁边。`,
+        getAnchor: () => mapBadgeRect(ctx, battle),
+      },
+      {
+        id: 'cycle',
+        title: '相克之道',
+        text: '金克木、木克土、土克水、水克火、火克金。克制妖怪伤害×1.25，被克×0.75；兵种没有五行，不受影响。',
+        getAnchor: () => null,
+      },
+      {
+        id: 'generalBadge',
+        title: '武将五行',
+        text: '武将名字后有五行徽章（图鉴·神将可查各将属性）：金底「克」=克制本图、伤害更高；灰底「被克」=被本图克制，尽量少上。',
+        getAnchor: () => null,
+      },
+    ],
+  };
+}
+
 function lowStaminaSequence(): TutorialSequence {
   return {
     id: 'lowStamina',
@@ -1186,6 +1221,9 @@ function updateFirstGameGuide(): void {
 function checkBattleTutorials(): void {
   if (tutorialOverlay) return;
   if (battle.status !== 'ready' && battle.status !== 'playing') return;
+  // 五行地图指引最先弹（battleIntro 结束后的第一帧即触发），让玩家开打前先懂克制
+  tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, wuxingMapSequence());
+  if (tutorialOverlay) return;
   if (pendingFirstSummonTutorial && summonAnimDone(battle)) {
     pendingFirstSummonTutorial = false;
     tutorialOverlay = maybeStartTutorial(tutorial, tutorialOverlay, firstSummonSequence());
@@ -2897,6 +2935,8 @@ interface GameHook {
   rankMerit: () => { rankLevel: number; merit: number };
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
   resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null; toast: string | null };
+  // 自测探针：唐僧入场走跳（冒烟验证 introT 推进 + hopY 振荡、归位后归零）。
+  tangsengIntro: () => { t: number; done: boolean; hopY: number };
 }
 const hook: GameHook = {
   get battle() {
@@ -3093,5 +3133,7 @@ const hook: GameHook = {
   },
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
   resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle.wave, status: battle.status, toast: peekBattleToast() }),
+  // 自测探针：唐僧入场走跳（hopY 与 drawTangseng 同源 introHopY，供 headless 冒烟验证）。
+  tangsengIntro: () => ({ t: battle.introT, done: battle.introDone, hopY: introHopY(battle) }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;

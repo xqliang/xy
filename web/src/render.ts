@@ -2471,31 +2471,53 @@ function drawTangsengFigure(
   x: number,
   y: number,
   hp: number,
-  opts?: { rad?: number; defeated?: boolean },
+  opts?: { rad?: number; defeated?: boolean; hopY?: number },
 ) {
   const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
   const defeated = opts?.defeated ?? false;
-  drawGroundShadow(ctx, x, y + rad * 0.22, rad * 0.72, defeated ? 0.16 : 0.26);
+  const hopY = opts?.hopY ?? 0; // 入场小跳的离地高度（px）：身体抬升、影子留地面
+  // 跳得越高影子越小越淡（离地感）；影子始终贴地面，不随身体抬升
+  const airborne = Math.min(1, hopY / INTRO_HOP_AMP);
+  drawGroundShadow(
+    ctx,
+    x,
+    y + rad * 0.22,
+    rad * 0.72 * (1 - 0.3 * airborne),
+    (defeated ? 0.16 : 0.26) * (1 - 0.4 * airborne),
+  );
   const spr = sprite('tangseng');
-  let headTop = y - rad;
-  let feetY = y + rad * 0.8; // 脚底近似位置
+  const by = y - hopY; // 身体实际绘制中心（跳起时上移）
+  let headTop = by - rad;
+  let feetY = by + rad * 0.8; // 脚底近似位置
   if (spr) {
     const box = rad * 2;
     const scale = Math.min(box / spr.width, box / spr.height);
     const dw = spr.width * scale;
     const dh = spr.height * scale;
-    ctx.drawImage(spr, x - dw / 2, y - dh / 2, dw, dh);
-    headTop = y - dh / 2;
-    feetY = y + dh / 2; // 脚底 = 立绘底部
+    ctx.drawImage(spr, x - dw / 2, by - dh / 2, dw, dh);
+    headTop = by - dh / 2;
+    feetY = by + dh / 2; // 脚底 = 立绘底部
   } else {
     ctx.fillStyle = '#5a3a08';
     ctx.font = 'bold 22px "PingFang SC", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('唐', x, y);
+    ctx.fillText('唐', x, by);
   }
   // 传入脚底位置，便于在头顶空间不够时改为向下堆叠
   drawTangsengHearts(ctx, x, headTop, hp, defeated, feetY);
+}
+
+// —— 开局入场「走跳」：唐僧沿路走向归位原为匀速平移（视觉上像飘过去）。
+// 加一步一跳的正弦弹跳（|sin| 拱形，落点干脆），配合影子收缩营造小跑蹦跳感。
+const INTRO_HOP_PERIOD = 0.42; // 秒/步：约 2.4 步/s 的轻快小碎步
+const INTRO_HOP_AMP = 5; // px：单步最大跳高（CELL 约40px，5px 约一格的 1/8，不夸张）
+/** 入场期间跳起高度（px）。已归位/新手引导展示覆盖时为 0；末段 0.5s 幅度渐零，落位不突兀。
+ *  导出供 main.ts 的 __game.tangsengIntro 探针复用（headless 冒烟验证走跳节拍）。 */
+export function introHopY(b: Battle): number {
+  if (b.introDone || b.tangsengRenderOverride) return 0;
+  const fade = Math.min(1, Math.max(0, (Battle.INTRO_DUR - b.introT) / 0.5));
+  return INTRO_HOP_AMP * Math.abs(Math.sin((Math.PI * b.introT) / INTRO_HOP_PERIOD)) * fade;
 }
 
 // —— 开局唐僧出场气泡（仅本方唐僧、入场途中冒泡；台词/是否冒泡由 Battle.rollIntroSpeech 掷定）——
@@ -2551,11 +2573,12 @@ function drawSpeechBubble(ctx: CanvasRenderingContext2D, cx: number, tipY: numbe
 function drawTangseng(ctx: CanvasRenderingContext2D, b: Battle) {
   const pos = b.tangsengRenderPos();
   const { x, y } = cellCenterPx(pos.c, pos.r);
-  drawTangsengFigure(ctx, x, y, b.tangsengHP);
+  const hop = introHopY(b); // 入场小跳：身体/气泡同步抬升，影子留地面
+  drawTangsengFigure(ctx, x, y, b.tangsengHP, { hopY: hop });
   // 开局出场气泡（50% 概率已在 rollIntroSpeech 掷定；仅本方唐僧、入场未归位时冒泡）
   if (!b.introDone && b.introSpeech) {
     const a = introSpeechAlpha(b.introT);
-    if (a > 0) drawSpeechBubble(ctx, x, y - CELL * 0.6, b.introSpeech, a);
+    if (a > 0) drawSpeechBubble(ctx, x, y - hop - CELL * 0.6, b.introSpeech, a);
   }
 }
 
@@ -10062,6 +10085,7 @@ function drawAiSide(ctx: CanvasRenderingContext2D, b: Battle) {
   const { x, y } = cellCenterPx(tp.c, tp.r);
   drawTangsengFigure(ctx, x, y, b.aiTangsengHP, {
     defeated: b.aiDefeated,
+    hopY: introHopY(b), // AI 唐僧入场同款走跳（与玩家同 introT 节奏）
   });
 }
 
@@ -10522,6 +10546,32 @@ function drawAiItemsHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
 }
 
+/** HUD 地图五行徽章的圆心/半径（与 drawHud 同源布局，勿改其一忘了另一处）：
+ *  bold 24px 量 waveStr 居中求左缘，地图名宽 + gap 后挂徽章；五行关闭/地图无属性时 null。
+ *  量宽前临时切字体、量完还原（measureText 只受 font 影响，不影响调用方后续绘制）。 */
+function mapBadgeCenter(ctx: CanvasRenderingContext2D, b: Battle): { cx: number; cy: number; r: number } | null {
+  const mapEl = MAP_ELEMENT[b.map.id];
+  if (!mapEl || !wuxingEnabled()) return null;
+  const saveFont = ctx.font;
+  ctx.font = 'bold 24px "PingFang SC", sans-serif';
+  const waveStr = `${b.map.name} · 第 ${b.wave} 波`;
+  const waveW = ctx.measureText(waveStr).width;
+  const nameW = ctx.measureText(b.map.name).width;
+  ctx.font = saveFont;
+  const gap = 6; // 与地图名拉开一点，别贴字
+  const r = 8;
+  return { cx: VIEW_W / 2 - waveW / 2 + nameW + gap + r, cy: HUD_H / 2 - 12, r };
+}
+
+/** HUD 地图五行徽章外接矩形（新手引导「地图五行」步骤的高亮锚点）。
+ *  在圆心外扩 3px；五行关闭/无属性时 null（教程步骤退化为居中卡片，见 tutorial.ts 布局）。 */
+export function mapBadgeRect(ctx: CanvasRenderingContext2D, b: Battle): { x: number; y: number; w: number; h: number } | null {
+  const c = mapBadgeCenter(ctx, b);
+  if (!c) return null;
+  const pad = c.r + 3;
+  return { x: c.cx - pad, y: c.cy - pad, w: pad * 2, h: pad * 2 };
+}
+
 function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillStyle = b.map.theme.hud;
   ctx.fillRect(0, 0, VIEW_W, HUD_H);
@@ -10554,14 +10604,8 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   ctx.fillText(waveStr, VIEW_W / 2, HUD_H / 2 - 12);
   // 地图名后挂一枚地图五行徽章（替代原来逐个怪物头顶徽章：小怪与地图同属性，一枚即可表达）
   {
-    const mapEl = MAP_ELEMENT[b.map.id];
-    if (mapEl && wuxingEnabled()) {
-      const waveW = ctx.measureText(waveStr).width;
-      const nameW = ctx.measureText(b.map.name).width;
-      const textL = VIEW_W / 2 - waveW / 2; // 居中文字左缘
-      const gap = 6; // 与地图名拉开一点，别贴字
-      drawElementBadge(ctx, textL + nameW + gap + 8, HUD_H / 2 - 12, 8, mapEl);
-    }
+    const c = mapBadgeCenter(ctx, b);
+    if (c) drawElementBadge(ctx, c.cx, c.cy, c.r, MAP_ELEMENT[b.map.id]!);
   }
   const rankStr = hudRankLabel ? `境界·${hudRankLabel}` : null; // 复用：同上（无境界则 null）
   if (rankStr) {
