@@ -900,7 +900,20 @@ export function drawScreenBackdrop(
   if (screen === 'codex') return fillVGrad('#2a2418', '#3a3222');
   if (screen === 'rank') return fillVGrad('#22283a', '#2e3550');
   if (screen === 'bag') return fillVGrad('#2b2418', '#3b3324');
-  if (screen === 'pvpMatching') { ctx.fillStyle = '#efe3c6'; ctx.fillRect(x, y, w, h); return; }
+  if (screen === 'pvpMatching') {
+    // 参考首页：把 pvp-bg 云海图 cover 到扩展矩形(含黑边)，缺图回退米色平涂。
+    // 否则黑边只填纯底、没背景图（顶部/底部露亮块）。VIEW 内也由此图铺，pvp-screen 在 wx 下跳过 inline 背景避免接缝。
+    const bg = sprite('pvp-bg');
+    if (bg && bg.width) {
+      const scale = Math.max(w / bg.width, h / bg.height);
+      const dw = bg.width * scale, dh = bg.height * scale;
+      ctx.drawImage(bg, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    } else {
+      ctx.fillStyle = '#efe3c6';
+      ctx.fillRect(x, y, w, h);
+    }
+    return;
+  }
   // 加载页：黑边续 loading-screen drawPaper 的纸色首尾（PAPER_TOP #f0e4c8 / PAPER_BOTTOM #c8a068）。
   // VIEW 区随后由 drawLoadingScreen 覆盖，故此处只需让上下黑边接上纸色即无缝（参考主页铺满做法）。
   if (screen === 'loading') return fillVGrad('#f0e4c8', '#c8a068');

@@ -159,17 +159,24 @@ function drawPvpButton(
 export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatchingView): void {
   // 背景：Seedream 生成的云海仙山对战背景（824×1536，与视口同比例直接铺满）；
   // 未加载时回退米色平涂。上沿加轻微暗化渐晕，让顶部标题文字更清楚。
+  // 小游戏下背景由 drawScreenBackdrop 把 pvp-bg 铺满整屏(含黑边)，此处跳过 inline 背景，
+  // 避免 VIEW 内外两套缩放接缝 + 黑边露纯底（参考首页/战斗 draw() 的 isWeChat 跳过处理）。
   const bg = sprite('pvp-bg');
+  if (!isWeChat) {
+    if (bg && bg.naturalWidth) {
+      ctx.drawImage(bg, 0, 0, VIEW_W, VIEW_H);
+    } else {
+      ctx.fillStyle = '#efe3c6';
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    }
+  }
+  // 顶部暗化渐晕（画在背景之上，两端平台一致）：让顶部标题文字更清楚。
   if (bg && bg.naturalWidth) {
-    ctx.drawImage(bg, 0, 0, VIEW_W, VIEW_H);
     const dim = ctx.createLinearGradient(0, 0, 0, 200);
     dim.addColorStop(0, 'rgba(60,42,20,0.30)');
     dim.addColorStop(1, 'rgba(60,42,20,0)');
     ctx.fillStyle = dim;
     ctx.fillRect(0, 0, VIEW_W, 200);
-  } else {
-    ctx.fillStyle = '#efe3c6';
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
