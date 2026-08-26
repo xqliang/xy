@@ -228,23 +228,28 @@ export function drawInkCheckbox(
     roundRect(ctx, box.x - 4, box.y - 6, label.length * 14 + box.w + 20, box.h + 12, 6);
     ctx.fill();
   }
-  roundRect(ctx, box.x, box.y, box.w, box.h, 4);
-  ctx.fillStyle = on ? 'rgba(180,90,70,0.4)' : 'rgba(255,248,235,0.6)';
+  // 朱印风格：未选=宣纸米底细棕边；选中=朱红印底白勾（方形圆角近印章，配水墨 UI）
+  roundRect(ctx, box.x, box.y, box.w, box.h, 3);
+  ctx.fillStyle = on ? 'rgba(168,58,34,0.92)' : 'rgba(250,243,224,0.75)';
   ctx.fill();
-  ctx.strokeStyle = on ? '#8a4020' : 'rgba(90,60,30,0.55)';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = on ? '#7a2410' : 'rgba(90,60,30,0.55)';
+  ctx.lineWidth = on ? 2 : 1.5;
   ctx.stroke();
   if (on) {
-    ctx.strokeStyle = '#5a3010';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#fff6e6';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.beginPath();
     ctx.moveTo(box.x + 4, box.y + box.h / 2);
     ctx.lineTo(box.x + 7, box.y + box.h - 4);
     ctx.lineTo(box.x + box.w - 3, box.y + 3);
     ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
   }
   ctx.fillStyle = '#5a3a12';
-  ctx.font = '14px "PingFang SC", serif';
+  ctx.font = 'bold 14px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, box.x + box.w + 8, box.y + box.h / 2);

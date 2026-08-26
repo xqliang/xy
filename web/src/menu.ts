@@ -324,11 +324,12 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   applyMenuInteract(ctx, MAP_PICK_BTN, mapInteract);
   const mapR = MAP_PICK_BTN.h / 2;
   roundRect(ctx, MAP_PICK_BTN.x, MAP_PICK_BTN.y, MAP_PICK_BTN.w, MAP_PICK_BTN.h, mapR);
+  // 宣纸木牌风：米色不透明底 + 深棕描边（原深灰半透明胶囊在暖色水墨背景上显突兀）
   ctx.fillStyle =
-    mapInteract === 'pressed' ? 'rgba(48,28,12,0.42)' : mapInteract === 'hover' ? 'rgba(48,28,12,0.3)' : 'rgba(48,28,12,0.2)';
+    mapInteract === 'pressed' ? 'rgba(236,222,194,0.95)' : mapInteract === 'hover' ? 'rgba(250,242,222,0.96)' : 'rgba(247,239,219,0.93)';
   ctx.fill();
-  ctx.strokeStyle = mapInteract === 'hover' ? 'rgba(255,220,160,0.5)' : 'rgba(255,220,160,0.32)';
-  ctx.lineWidth = mapInteract === 'hover' ? 2 : 1.5;
+  ctx.strokeStyle = mapInteract === 'hover' ? '#8a5a20' : 'rgba(128,88,42,0.9)';
+  ctx.lineWidth = mapInteract === 'hover' ? 2.5 : 2;
   ctx.stroke();
   const mapLabel = info.mapDaily ? `今日关卡 · ${info.mapName}` : `关卡 · ${info.mapName}`;
   const mapCx = MAP_PICK_BTN.x + MAP_PICK_BTN.w / 2;
@@ -336,10 +337,12 @@ export function drawMenu(ctx: CanvasRenderingContext2D, info: MenuInfo): void {
   ctx.font = 'bold 16px "PingFang SC", "STKaiti", serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.strokeStyle = 'rgba(40,25,10,0.9)';
-  ctx.lineWidth = 4;
+  // 深棕墨字 + 细米描边（宣纸上墨迹感）
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255,248,230,0.85)';
+  ctx.lineWidth = 3;
   ctx.strokeText(`${mapLabel}  ›`, mapCx, mapCy);
-  ctx.fillStyle = '#fff8ee';
+  ctx.fillStyle = '#4a3010';
   ctx.fillText(`${mapLabel}  ›`, mapCx, mapCy);
   ctx.restore();
 
