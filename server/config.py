@@ -43,6 +43,23 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
         "username": admin.get("username", "admin"),
         "password": admin.get("password", "admin123"),
     }
+    # 微信小游戏登录凭据：appid/secret。secret 仅服务端持有，绝不下发到客户端。
+    wechat = data.get("wechat") or {}
+    data["wechat"] = {
+        "appid": wechat.get("appid", ""),
+        "secret": wechat.get("secret", ""),
+    }
+    # 会话鉴权配置：strict 控制是否强制校验 token（灰度开关），session_days 为会话有效天数。
+    auth = data.get("auth") or {}
+    strict = auth.get("strict", False)
+    # 环境变量优先（运维灰度切换用），接受 true/1/yes 等常见真值写法。
+    env_strict = os.environ.get("XY_AUTH_STRICT")
+    if env_strict is not None:
+        strict = env_strict.strip().lower() in ("1", "true", "yes", "on")
+    data["auth"] = {
+        "strict": bool(strict),
+        "session_days": int(auth.get("session_days", 30)),
+    }
     data.setdefault("tos", data.get("tos") or {})
     return data
 
