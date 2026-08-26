@@ -154,10 +154,13 @@ def main() -> None:
 
     # 周期 flush：镜像 start_aggregator 的守护线程形态（daemon、swallow-and-log、sleep 循环）
     import threading, time as _time
+    try:
+        flush_interval = max(0.5, float(os.environ.get("XY_PVP_FLUSH_INTERVAL", "5")))
+    except (TypeError, ValueError):
+        flush_interval = 5.0   # 值非法回退默认，别让周期 flush 线程静默死掉
     def _pvp_flush_loop():
-        interval = float(os.environ.get("XY_PVP_FLUSH_INTERVAL", "5"))
         while True:
-            _time.sleep(interval)
+            _time.sleep(flush_interval)
             try:
                 hub.flush_active_matches()
             except Exception:
@@ -168,6 +171,8 @@ def main() -> None:
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(f"serving static={static_dir} api+admin on {host}:{port}", flush=True)
         def _graceful(signum, _frame):
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)   # 忽略重复信号，防第二个信号在 flush 期间重入 _graceful 造成 _flush_lock 自死锁
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             print(f"signal {signum} → flushing pvp active matches then shutting down", flush=True)
             try:
                 hub.flush_active_matches()        # 关机前刷一次，发版不丢活跃对局（_flush_lock 保证与周期 flush 不交错）
