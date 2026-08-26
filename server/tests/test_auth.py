@@ -220,11 +220,20 @@ def test_resolve_token_sliding_renewal_throttled(db):
 # ---- httputil.require_auth（Bearer token + strict 灰度回退 X-Uid）----
 # 用一个最小假 handler 直接单测 require_auth，不用起真 HTTP 服务：
 # 它只提供 require_auth / send_json 需要的 headers、cfg，并把 send_json 的状态码记下来核对。
+class _CIHeaders(dict):
+    """大小写不敏感的 headers 桩，贴近真实 HTTPMessage 行为。"""
+    def get(self, key, default=None):
+        for k, v in self.items():
+            if k.lower() == key.lower():
+                return v
+        return default
+
+
 class _FakeHandler:
     """最小假 handler：只提供 require_auth 需要的 headers/cfg，并捕获 send_json 的状态码。"""
 
     def __init__(self, headers, cfg):
-        self.headers = headers          # dict：.get() 兼容
+        self.headers = _CIHeaders(headers)   # 大小写不敏感，贴近真实 HTTPMessage
         self.cfg = cfg
         self.sent_status = None
         self.sent_body = None
@@ -260,3 +269,19 @@ def test_require_auth_fallback_xuid_when_not_strict(db):
 
     h = _FakeHandler({"X-Uid": "1000000000000022"}, {"auth": {"strict": False}})
     assert httputil.require_auth(h, db) == "1000000000000022"
+
+
+def test_require_auth_fail_closed_when_cfg_missing(db):
+    import httputil
+    # handler 无可用 cfg（异常/非标准调用方）→ 安全门禁 fail-closed，不得回退信任 X-Uid
+    h = _FakeHandler({"X-Uid": "1000000000000032"}, None)
+    assert httputil.require_auth(h, db) is None
+    assert h.sent_status == 401
+
+
+def test_require_auth_fail_closed_when_auth_not_dict(db):
+    import httputil
+    # auth 段类型异常（非 dict）→ 不崩溃，按 fail-closed 处理
+    h = _FakeHandler({"X-Uid": "1000000000000032"}, {"auth": "oops"})
+    assert httputil.require_auth(h, db) is None
+    assert h.sent_status == 401
