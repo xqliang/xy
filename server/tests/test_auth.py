@@ -92,3 +92,57 @@ def test_migrate_creates_wx_and_session_tables(db):
         assert cur.fetchone()["uid"] == "1000000000000001"
         cur.execute("SELECT uid FROM sessions WHERE token=%s", ("t" * 64,))
         assert cur.fetchone()["uid"] == "1000000000000001"
+
+
+# ---- wechat_auth.code2session（换 openid）----
+# 这些用例 monkeypatch 掉 urllib.request.urlopen，不打真实微信接口，也不依赖数据库。
+def _fake_urlopen(payload: bytes):
+    """构造一个假的 urlopen：无论传什么 url，都返回预设的 payload 字节。
+
+    urlopen 本身是上下文管理器（with ... as resp），所以这里用 contextmanager
+    包一层，yield 出一个带 read() 的假响应对象来模拟真实响应。
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm(url, timeout=5):
+        class _R:
+            def read(self_inner):
+                return payload
+        yield _R()
+    return _cm
+
+
+def test_code2session_success(monkeypatch):
+    import json as _json
+    import urllib.request
+
+    import wechat_auth
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        _fake_urlopen(_json.dumps({"openid": "oABC123", "session_key": "sk", "unionid": "u1"}).encode()))
+    cfg = {"wechat": {"appid": "wxappid", "secret": "sec"}}
+    out = wechat_auth.code2session(cfg, "somecode")
+    assert out["openid"] == "oABC123"
+    assert out["unionid"] == "u1"
+
+
+def test_code2session_errcode_raises(monkeypatch):
+    import json as _json
+    import urllib.request
+
+    import wechat_auth
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        _fake_urlopen(_json.dumps({"errcode": 40029, "errmsg": "invalid code"}).encode()))
+    cfg = {"wechat": {"appid": "wxappid", "secret": "sec"}}
+    with pytest.raises(wechat_auth.WxAuthError) as ei:
+        wechat_auth.code2session(cfg, "badcode")
+    assert ei.value.code == 40029
+
+
+def test_code2session_not_configured_raises():
+    import wechat_auth
+
+    with pytest.raises(wechat_auth.WxAuthError):
+        wechat_auth.code2session({"wechat": {"appid": "", "secret": ""}}, "x")
