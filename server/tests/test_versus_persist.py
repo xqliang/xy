@@ -33,3 +33,54 @@ def test_migrate_creates_pvp_active_match(db):
     with db.cursor() as cur:
         cur.execute("SHOW TABLES LIKE 'pvp_active_match'")
         assert cur.fetchone() is not None
+
+
+def _fake_hub():
+    from api_versus import VersusHub
+    import contextlib
+    class _FakeDB:
+        def today(self): return "2026-01-01"
+        def now(self): return 1_000_000
+        @contextlib.contextmanager
+        def cursor(self):
+            class _Cur:
+                def execute(self, *a, **k): pass
+                def executemany(self, *a, **k): pass
+                def fetchone(self): return None
+                def fetchall(self): return []
+            yield _Cur()
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
+                  pick_map=lambda: "huoyanshan")
+    h._clock = clock
+    return h
+
+def test_serialize_drops_ws_send_and_roundtrips():
+    from api_versus import _serialize_match, _deserialize_match
+    import json
+    hub = _fake_hub()
+    e1 = {"uid": "A1", "rank": 3, "ticket": "tA"}
+    e2 = {"uid": "B1", "rank": 3, "ticket": "tB"}
+    mid = hub._make_match(e1, e2, hub._now())
+    m = hub.matches[mid]
+    m["a"]["ws_send"] = lambda t: True          # 装一个闭包，序列化必须丢掉
+    m["wave_schedule"][2] = hub._now() + 5000    # int 键
+    m["first_clear"][1] = "A1"
+
+    blob = _serialize_match(m)
+    text = json.dumps(blob)                      # 必须能 JSON 化（无闭包）
+    assert "ws_send" not in text
+
+    restored = _deserialize_match(json.loads(text), now=2_000_000)
+    assert restored["match_id"] == mid
+    assert restored["a"]["uid"] == "A1" and restored["b"]["uid"] == "B1"
+    assert restored["seed"] == m["seed"] and restored["map"] == m["map"]
+    assert 2 in restored["wave_schedule"] and restored["wave_schedule"][2] == m["wave_schedule"][2]
+    assert 1 in restored["first_clear"] and restored["first_clear"][1] == "A1"
+    # 连接态复位：ws_send=None、gone_ms=now、created_ms=now、connected_ever=False
+    assert restored["a"]["ws_send"] is None and restored["b"]["ws_send"] is None
+    assert restored["a"]["gone_ms"] == 2_000_000 and restored["b"]["gone_ms"] == 2_000_000
+    assert restored["created_ms"] == 2_000_000
+    assert restored["a"]["connected_ever"] is False and restored["b"]["connected_ever"] is False

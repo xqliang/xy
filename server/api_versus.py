@@ -657,6 +657,35 @@ class VersusHub:
             return False
 
 
+# ---- 里程碑 B：活跃对局序列化（持久化用）----
+# ws_send 是运行时闭包（不可 JSON 化），序列化一律剔除；重连时 ws_hello 会重挂。
+# wave_schedule / first_clear 是 int 键 dict，JSON 会把键转成 str，反序列化时 int() 回来。
+
+def _serialize_match(m: dict) -> dict:
+    """把内存 match dict 转成可 JSON 化的快照（剔除每侧 ws_send）。"""
+    def side(s: dict) -> dict:
+        return {k: v for k, v in s.items() if k != "ws_send"}
+    out = {k: v for k, v in m.items() if k not in ("a", "b")}
+    out["a"] = side(m["a"])
+    out["b"] = side(m["b"])
+    return out
+
+def _deserialize_match(blob: dict, now: int) -> dict:
+    """把 JSON 快照还原成内存 match dict：int() 键、ws_send=None、gone_ms=now（视为断线待重连）、
+    created_ms=now（关键：给回放局新鲜的重连窗，否则旧 created_ms 会让它一 _reap 就被“从未连接”清掉）。"""
+    m = dict(blob)
+    m["wave_schedule"] = {int(k): v for k, v in (blob.get("wave_schedule") or {}).items()}
+    m["first_clear"] = {int(k): v for k, v in (blob.get("first_clear") or {}).items()}
+    m["created_ms"] = now
+    for key in ("a", "b"):
+        s = dict(blob[key])
+        s["ws_send"] = None
+        s["gone_ms"] = now
+        s["connected_ever"] = False
+        m[key] = s
+    return m
+
+
 # ============================================================================
 # HTTP handler 封装（Task 8）：把 VersusHub 方法包成 fn(handler, db)，供 server.py
 # 路由字典 dispatch。风格与 api_player.py 一致——不自己 try/except，统一由
