@@ -371,3 +371,51 @@ def test_auth_login_wx_bad_code_4xx(server_base, monkeypatch):
     monkeypatch.setattr(wechat_auth, "code2session", _boom)
     st, body = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "bad"})
     assert st == 401
+
+
+def test_auth_login_wx_collision_guard_gets_fresh_uid(server_base, monkeypatch):
+    # 已有 (O1 -> uidX)；O2 带同一 local_uid 登录 → 不得继承，必须拿到不同的新 uid
+    base, db_handle, _cfg = server_base
+    import wechat_auth
+    monkeypatch.setattr(wechat_auth, "code2session",
+                        lambda cfg, code: {"openid": "openid_c1", "session_key": "s", "unionid": None})
+    st, b1 = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "x", "uid": "1000000000000500"})
+    assert st == 200 and b1["uid"] == "1000000000000500"
+    monkeypatch.setattr(wechat_auth, "code2session",
+                        lambda cfg, code: {"openid": "openid_c2", "session_key": "s", "unionid": None})
+    st, b2 = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "y", "uid": "1000000000000500"})
+    assert st == 200
+    assert b2["uid"] != "1000000000000500"  # 未继承他人已绑 uid
+
+
+def test_auth_login_empty_code_400(server_base, monkeypatch):
+    base, _db, _cfg = server_base
+    import wechat_auth
+    def _empty(cfg, code):
+        raise wechat_auth.WxAuthError(-2, "empty code")
+    monkeypatch.setattr(wechat_auth, "code2session", _empty)
+    st, _ = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": ""})
+    assert st == 400
+
+
+def test_bind_openid_concurrent_same_openid_one_uid(server_base, monkeypatch):
+    # 兑现设计 §8「并发同 openid 只绑一个 uid」：两线程同时首登同一 openid → 同一 uid，且只有一行
+    base, db_handle, _cfg = server_base
+    import threading
+    import wechat_auth
+    monkeypatch.setattr(wechat_auth, "code2session",
+                        lambda cfg, code: {"openid": "openid_race", "session_key": "s", "unionid": None})
+    results = {}
+    barrier = threading.Barrier(2)
+    def _go(idx):
+        barrier.wait()
+        st, b = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "z"})
+        results[idx] = (st, b["uid"] if b else None)
+    ts = [threading.Thread(target=_go, args=(i,)) for i in range(2)]
+    for t in ts: t.start()
+    for t in ts: t.join()
+    assert results[0][0] == 200 and results[1][0] == 200
+    assert results[0][1] == results[1][1]  # 同一 uid
+    with db_handle.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM wx_identities WHERE openid=%s", ("openid_race",))
+        assert cur.fetchone()["c"] == 1  # 只绑一行

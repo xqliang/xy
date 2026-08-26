@@ -70,26 +70,22 @@ def _login_upsert(db: DB, uid: str, ip: str) -> None:
     """登录时对 players 行做「有则更新、无则插入」，并补齐默认头像。
 
     从 handle_login 抽出的公共逻辑：/api/player/login（老/web 路径）与
-    /api/auth/login（新的微信/统一登录）都要在确定 uid 后走这同一套落库动作，
-    抽成一个函数避免两处各写一遍、行为漂移。
+    /api/auth/login（新的微信/统一登录）都要在确定 uid 后走这同一套落库动作。
+
+    幂等：用单条 INSERT ... ON DUPLICATE KEY UPDATE 代替「先查再插/更」，
+    消除两个并发首登同一新 uid 时第二条 INSERT 撞主键 500 的竞态；
+    新行按默认值播种（昵称 NULL、悟空头像、0 段位），已存在行只刷新登录时间/IP/updated_at。
     """
     now = db.now()
-    row = _player_row(db, uid)
-    if not row:
-        with db.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO players (uid, nickname, avatar_id, rank_level, last_login_at, last_ip, created_at, updated_at)
-                VALUES (%s, NULL, 'wukong', 0, %s, %s, %s, %s)
-                """,
-                (uid, now, ip, now, now),
-            )
-    else:
-        with db.cursor() as cur:
-            cur.execute(
-                "UPDATE players SET last_login_at=%s, last_ip=%s, updated_at=%s WHERE uid=%s",
-                (now, ip, now, uid),
-            )
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO players (uid, nickname, avatar_id, rank_level, last_login_at, last_ip, created_at, updated_at)
+            VALUES (%s, NULL, 'wukong', 0, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE last_login_at=VALUES(last_login_at), last_ip=VALUES(last_ip), updated_at=VALUES(updated_at)
+            """,
+            (uid, now, ip, now, now),
+        )
     _ensure_defaults(db, uid)
 
 
@@ -122,13 +118,26 @@ def _gen_uid(db: DB) -> str:
 
 
 def _bind_openid(db: DB, openid: str, unionid: str | None, local_uid: str | None) -> str:
-    """openid→uid：已绑返回旧 uid；未绑则绑 local_uid（老玩家迁移）或新建。并发安全靠 openid 主键。"""
+    """openid→uid：已绑返回旧 uid；未绑则绑 local_uid（老玩家迁移）或新建。
+
+    并发安全：openid 是主键，INSERT ... ON DUPLICATE KEY UPDATE + 回读收敛到唯一 uid。
+    ⚠️ 回读正确性依赖连接 autocommit=True（每条语句独立读视图，能看到并发赢家已提交的行）；
+       若日后改成显式事务/关 autocommit，回读可能读不到并发写入 → 需另行加锁，勿静默破坏此处。
+    安全约束（防串号/冒领）：客户端自报的 local_uid 只有在「尚未被任何其它 openid 绑定」时才可继承。
+       走到这里说明本 openid 未绑定，故任何命中的 uid 行都属于别的微信身份 → 放弃继承、改新建，
+       绝不让两个 openid 指向同一 uid。
+    """
     now = db.now()
     with db.cursor() as cur:
         cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
         row = cur.fetchone()
         if row:
             return row["uid"]
+        if local_uid:
+            cur.execute("SELECT 1 FROM wx_identities WHERE uid=%s LIMIT 1", (local_uid,))
+            if cur.fetchone():
+                local_uid = None  # 已被别的 openid 占用 → 不继承
+        adopted = bool(local_uid)
         uid = local_uid or _gen_uid(db)
         cur.execute(
             "INSERT INTO wx_identities (openid, unionid, uid, created_at) VALUES (%s,%s,%s,%s) "
@@ -136,7 +145,12 @@ def _bind_openid(db: DB, openid: str, unionid: str | None, local_uid: str | None
             (openid, unionid, uid, now),
         )
         cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
-        return cur.fetchone()["uid"]
+        bound = cur.fetchone()["uid"]
+    if adopted:
+        # 迁移审计：记录「客户端自报 uid 被某 openid 继承」，便于事后排查冒领（openid 脱敏）
+        import sys
+        sys.stderr.write(f"[auth] wx-migrate bind openid=***{openid[-4:]} adopt_uid={bound}\n")
+    return bound
 
 
 def handle_auth_login(handler, db: DB) -> None:
@@ -153,7 +167,15 @@ def handle_auth_login(handler, db: DB) -> None:
         try:
             sess = code2session(handler.cfg, body.get("code") or "")
         except WxAuthError as e:
-            status = 429 if e.code == 45011 else (502 if e.code < 0 and e.code != -2 else 401)
+            if e.code == -2:  # 空 code：请求格式问题
+                send_json(handler, 400, {"error": {"code": "bad_code", "msg": "empty code"}})
+                return
+            if e.code == -1:  # 服务端未配置 appid/secret：不回显配置状态，仅服务端留痕
+                import sys
+                sys.stderr.write("[auth] wx login unavailable: appid/secret not configured\n")
+                send_json(handler, 503, {"error": {"code": "wx_unavailable", "msg": "wx login temporarily unavailable"}})
+                return
+            status = 429 if e.code == 45011 else (502 if e.code < 0 else 401)
             send_json(handler, status, {"error": {"code": "wx_auth", "msg": e.msg}})
             return
         local = body.get("uid")
