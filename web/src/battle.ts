@@ -181,7 +181,7 @@ export const TUNING = {
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
-  endlessCycleStep: 1.2,
+  endlessCycleStep: 1.1,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
