@@ -15,6 +15,8 @@ import {
 } from './board';
 import type { GameSettings } from './settings';
 import type { MapSelection } from './map-select';
+import { MAP_ELEMENT } from './battle';
+import { drawElementBadge, softenElementColor } from './wuxing-ui';
 import {
   roundRect,
   drawInkPopupFrame,
@@ -405,34 +407,41 @@ export function mapPopupHitAt(x: number, y: number, scrollY = 0): MapPopupHit {
   return { kind: 'close' };
 }
 
-/** 关卡卡预览：主题底图 + 迷你棋盘（路径/半场/唐僧位），不只是风景背景 */
+/** 关卡卡预览：风景图铺满整卡 + 迷你棋盘（路径/半场/唐僧位），底部半透明色条放地图名+五行徽章 */
 function drawMapThumb(ctx: CanvasRenderingContext2D, mapId: string, r: { x: number; y: number; w: number; h: number }): void {
   const map = mapById(mapId);
-  const thumbH = r.h - MAP_LABEL_H;
-  roundRect(ctx, r.x, r.y, r.w, thumbH, 8);
+  roundRect(ctx, r.x, r.y, r.w, r.h, 8);
   ctx.save();
   ctx.clip();
 
-  // 主题底色 / 风景图（淡化，突出棋盘）
+  // 主题底色渐变兜底（图未加载时）
   const th = map.theme;
-  const bg = ctx.createLinearGradient(r.x, r.y, r.x, r.y + thumbH);
+  const bg = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
   bg.addColorStop(0, th.bg0);
   bg.addColorStop(1, th.bg1);
   ctx.fillStyle = bg;
-  ctx.fillRect(r.x, r.y, r.w, thumbH);
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  // 风景图 cover 铺满整卡（含底部标签区——名字压在半透明色条上读得清）；
+  // 半透明 + 轻微米色罩，保留图辨识度同时给迷你棋盘让出可读性
   const img = sprite(`map-${mapId}` as Parameters<typeof sprite>[0]);
   if (img) {
-    const scale = Math.max(r.w / img.width, thumbH / img.height);
+    const scale = Math.max(r.w / img.width, r.h / img.height);
     const dw = img.width * scale;
     const dh = img.height * scale;
-    ctx.globalAlpha = 0.35;
-    ctx.drawImage(img, r.x + (r.w - dw) / 2, r.y + (thumbH - dh) / 2, dw, dh);
+    ctx.globalAlpha = 0.8;
+    ctx.drawImage(img, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(245,236,220,0.28)';
-    ctx.fillRect(r.x, r.y, r.w, thumbH);
+    ctx.fillStyle = 'rgba(245,236,220,0.18)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
   }
 
+  // 迷你棋盘画在标签条以上的区域
+  const thumbH = r.h - MAP_LABEL_H;
   drawMiniMapBoard(ctx, map, r.x + 8, r.y + 6, r.w - 16, thumbH - 12);
+
+  // 底部半透明色条：压在风景图上，放地图名与五行徽章（调用方绘制文字）
+  ctx.fillStyle = 'rgba(35,25,14,0.52)';
+  ctx.fillRect(r.x, r.y + thumbH, r.w, MAP_LABEL_H);
   ctx.restore();
 }
 
@@ -451,6 +460,9 @@ function drawMiniMapBoard(
   const oy = y + (h - bh) / 2;
   const th = map.theme;
   const initial = new Set((map.initialBlock ?? []).map((c) => `${c.c},${c.r}`));
+  // 未挖（锁定）格底色改用地图对应五行色——与战斗棋盘同口径：向主题锁定色混合 0.38（保留色相但不刺眼）
+  const mapEl = MAP_ELEMENT[map.id] ?? null;
+  const lockedColor = mapEl ? softenElementColor(mapEl, th.cellLocked) : th.cellLocked;
 
   // 棋盘底
   roundRect(ctx, ox - 1, oy - 1, bw + 2, bh + 2, 3);
@@ -476,13 +488,13 @@ function drawMiniMapBoard(
         ctx.lineWidth = 0.8;
         ctx.stroke();
       } else if (player) {
-        ctx.fillStyle = th.cellLocked;
+        ctx.fillStyle = lockedColor;
         ctx.fill();
         ctx.fillStyle = 'rgba(40,28,14,0.22)';
         ctx.fill();
       } else {
         // AI 半场：略深一档，便于分辨上下场
-        ctx.fillStyle = th.cellLocked;
+        ctx.fillStyle = lockedColor;
         ctx.fill();
         ctx.fillStyle = 'rgba(30,24,18,0.32)';
         ctx.fill();
@@ -585,10 +597,16 @@ export function drawMapPopup(
     ctx.lineWidth = picked ? 2.5 : 1.5;
     ctx.strokeStyle = picked ? '#8a4020' : 'rgba(90,60,30,0.45)';
     ctx.stroke();
-    ctx.fillStyle = '#5a3a12';
+    // 地图名（底部半透明色条上，米白字）+ 名后五行徽章；名字+徽章整体居中
     ctx.font = 'bold 14px "PingFang SC", serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(map.name, r.x + r.w / 2, r.y + r.h - MAP_LABEL_H / 2 + 1);
+    const badgeR = 8;
+    const nameW = ctx.measureText(map.name).width;
+    const startX = r.x + r.w / 2 - (nameW + 6 + badgeR * 2) / 2;
+    const labelY = r.y + r.h - MAP_LABEL_H / 2 + 1;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#fff4e0';
+    ctx.fillText(map.name, startX, labelY);
+    drawElementBadge(ctx, startX + nameW + 6 + badgeR, labelY, badgeR, MAP_ELEMENT[map.id] ?? null);
   }
   ctx.restore();
 
