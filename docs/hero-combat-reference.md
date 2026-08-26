@@ -453,14 +453,12 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ (max(0, wave−10) / e
 |------|------|
 | **出怪总量** | `planWavePressure`：最优 DPS × `PRESSURE_WINDOW_SEC`（10s）× 压力比；数量不低于 `monstersInWave(wave)`（10+n−1） |
 | **同批叠怪** | `spawnBatchCap(wave)`：单次随机 1..N（波 6 起 N≥2，约波 22 封顶 10） |
-| **压力比** | 波 ≤6 → 60%；6→20 线性至 75%；波 21 起每波 +2%（无封顶） |
+| **压力比** | 恒定 **60%**（`PRESSURE_RATIO`，全波次一致；随波变难交给 §9.5 `effectiveDifficulty`） |
 
 | 常量（`BOARD_POWER`） | 值 |
 |----------------------|-----|
 | `PRESSURE_FROM_WAVE` | 6 |
-| `PRESSURE_RATIO` / `PRESSURE_RATIO_MID` | 0.60 / 0.75 |
-| `PRESSURE_RATIO_MID_WAVE` | 20 |
-| `PRESSURE_RATIO_STEP_AFTER` | 0.02 |
+| `PRESSURE_RATIO` | **0.60**（恒定，全波次一致，DevTools 可调） |
 | `PRESSURE_WINDOW_SEC` | 10 |
 | `SPAWN_BATCH_CAP_MAX` | 10 |
 

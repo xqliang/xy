@@ -14,10 +14,7 @@ export const PARAM_ZH: Record<string, string> = {
   REMAINING_INTERCEPT: '【未接线】参考剩余桃曲线截距',
 
   // BOARD_POWER
-  PRESSURE_RATIO: '承压比起点',
-  PRESSURE_RATIO_MID: '承压比线性终点',
-  PRESSURE_RATIO_MID_WAVE: '承压比线性结束波',
-  PRESSURE_RATIO_STEP_AFTER: '承压比线性后每波增量',
+  PRESSURE_RATIO: '承压比（恒定，全波次一致）',
   PRESSURE_WINDOW_SEC: '承压窗口（秒）',
   PRESSURE_FROM_WAVE: '承压起始波次',
   ENTRANCE_ZONE_LEN: '门口路段长度（格）',

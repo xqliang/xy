@@ -7,14 +7,12 @@ import { placeCellScore } from './autoplace';
 
 /** 承压 / 出怪批次等可调参数（DevTools 可改；函数内读此对象） */
 export const BOARD_POWER = {
-  /** 压力比起点（第 fromWave 波） */
-  PRESSURE_RATIO: 0.56,
-  /** 线性段终点压力比（第 midWave 波） */
-  PRESSURE_RATIO_MID: 0.75,
-  /** 线性爬升结束波（fromWave → midWave：RATIO → RATIO_MID） */
-  PRESSURE_RATIO_MID_WAVE: 20,
-  /** midWave 之后每波叠加 */
-  PRESSURE_RATIO_STEP_AFTER: 0.02,
+  /**
+   * 承压比（恒定，全波次一致）：按最优 DPS 估算每波「该承受多少输出」的比例。
+   * 「随波变难」已完全交给 effectiveDifficulty（分圈曲线），故此比例不再随波爬升，
+   * 避免「按波加压」在两个旋钮上重复。DevTools 可调此单值。
+   */
+  PRESSURE_RATIO: 0.6,
   /** 压力窗口（秒） */
   PRESSURE_WINDOW_SEC: 10,
   /** 第几波起按最优输出抬高出怪数 */
@@ -37,9 +35,6 @@ export const BOARD_POWER = {
 
 /** @deprecated 快照；运行时请读 BOARD_POWER.* */
 export const PRESSURE_RATIO = BOARD_POWER.PRESSURE_RATIO;
-export const PRESSURE_RATIO_MID = BOARD_POWER.PRESSURE_RATIO_MID;
-export const PRESSURE_RATIO_MID_WAVE = BOARD_POWER.PRESSURE_RATIO_MID_WAVE;
-export const PRESSURE_RATIO_STEP_AFTER = BOARD_POWER.PRESSURE_RATIO_STEP_AFTER;
 export const PRESSURE_WINDOW_SEC = BOARD_POWER.PRESSURE_WINDOW_SEC;
 export const PRESSURE_FROM_WAVE = BOARD_POWER.PRESSURE_FROM_WAVE;
 export const ENTRANCE_ZONE_LEN = BOARD_POWER.ENTRANCE_ZONE_LEN;
@@ -65,26 +60,12 @@ export function monsterHpFromBoardPower(
 }
 
 /**
- * 随波次升高的压力比：
- * - 波 ≤ fromWave：PRESSURE_RATIO（0.56）
- * - 波 fromWave→midWave（6→20）：线性至 PRESSURE_RATIO_MID（0.75）
- * - 波 > midWave：每波 + PRESSURE_RATIO_STEP_AFTER（0.02）
+ * 承压比：恒定 `BOARD_POWER.PRESSURE_RATIO`，不随波次变化。
+ * 「随波变难」交给 effectiveDifficulty 的分圈曲线；此处保留 wave 形参仅为兼容既有调用点。
  */
 export function pressureRatioForWave(wave: number): number {
-  const w = Math.max(1, Math.floor(wave));
-  const {
-    PRESSURE_RATIO: lo,
-    PRESSURE_RATIO_MID: mid,
-    PRESSURE_RATIO_MID_WAVE: midWave,
-    PRESSURE_RATIO_STEP_AFTER: step,
-    PRESSURE_FROM_WAVE: from,
-  } = BOARD_POWER;
-  if (w <= from) return lo;
-  if (w <= midWave) {
-    const span = Math.max(1, midWave - from);
-    return lo + ((w - from) / span) * (mid - lo);
-  }
-  return mid + (w - midWave) * step;
+  void wave;
+  return BOARD_POWER.PRESSURE_RATIO;
 }
 
 /**

@@ -58,23 +58,20 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 
 怪物血量、骑兵波、分圈难度等完整常量见 [`hero-combat-reference.md` §9](./hero-combat-reference.md#9-波次压力怪物血量与移速tuning--board-powerts2026-08-12)。
 
-### 压力比（随波次升高）
+### 压力比（恒定）
 
-出怪数量预算与 Boss 血参考均用 `pressureRatioForWave(wave)`（`web/src/board-power.ts`）：
+出怪数量预算与 Boss 血参考均用 `pressureRatioForWave(wave)`（`web/src/board-power.ts`），现返回**恒定** `PRESSURE_RATIO`：
 
-| 波次 | 压力比 |
-|------|--------|
-| ≤6（含压力起始波） | **60%** |
-| 6 → 20 线性 | 60% → 75% |
-| ≥21 | 每波 **+2%**（无封顶；波 21 = 77%） |
+| 参数 | 值 |
+|------|-----|
+| 压力比（全波次一致） | **60%** |
+
+「随波变难」已完全交给 `effectiveDifficulty` 分圈曲线（见 [`hero-combat-reference.md` §9.5](./hero-combat-reference.md)），压力比不再按波爬升——避免「按波加压」在两个旋钮上重复。
 
 相关常量：
 
 - `PRESSURE_FROM_WAVE = 6` — 第几波起按最优 DPS 抬量 / 允许叠怪批次
-- `PRESSURE_RATIO = 0.60` — 起点（≤6）
-- `PRESSURE_RATIO_MID = 0.75` — 线性段终点（波 20）
-- `PRESSURE_RATIO_MID_WAVE = 20`
-- `PRESSURE_RATIO_STEP_AFTER = 0.02` — 波 20 之后每波增量
+- `PRESSURE_RATIO = 0.60` — 承压比（恒定，全波次一致，DevTools 可调）
 
 ### AI 节奏
 
