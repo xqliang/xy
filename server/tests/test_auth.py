@@ -285,3 +285,89 @@ def test_require_auth_fail_closed_when_auth_not_dict(db):
     h = _FakeHandler({"X-Uid": "1000000000000032"}, {"auth": "oops"})
     assert httputil.require_auth(h, db) is None
     assert h.sent_status == 401
+
+
+# ---- /api/auth/login 端到端（Task 6）----
+# 起一个真 HTTP 服务，走完整路由 → handle_auth_login，覆盖：微信 openid 绑定/迁移/新建、
+# web 平台首次信任（TOFU）、微信 code 失败映射为 4xx。code2session 用 monkeypatch 打桩，不打真实微信。
+def _req(base, method, path, body=None, token=None, headers=None):
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    data = None if body is None else _json.dumps(body).encode()
+    hdr = {"Content-Type": "application/json"}
+    if token:
+        hdr["Authorization"] = f"Bearer {token}"
+    if headers:
+        hdr.update(headers)
+    req = urllib.request.Request(base + path, data=data, headers=hdr, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read()
+            return resp.status, (_json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        return e.code, (_json.loads(raw) if raw else None)
+
+
+@pytest.fixture(scope="module")
+def server_base():
+    db = _fresh_db()
+    from config import load_config
+    from server import Handler
+
+    cfg = load_config()
+    cfg["static_dir"] = str(ROOT)
+    from db import DB
+    H_db = DB(cfg)
+
+    class H(Handler):
+        pass
+    H.db = H_db
+    H.cfg = cfg
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: H(*a, directory=str(ROOT), **k))
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{port}", H_db, cfg
+    httpd.shutdown()
+
+
+def test_auth_login_wx_binds_local_uid_and_issues_token(server_base, monkeypatch):
+    base, _db, _cfg = server_base
+    import wechat_auth
+
+    monkeypatch.setattr(wechat_auth, "code2session",
+                        lambda cfg, code: {"openid": "openid_new", "session_key": "sk", "unionid": None})
+    st, body = _req(base, "POST", "/api/auth/login",
+                    {"platform": "wx", "code": "c1", "uid": "1000000000000100"})
+    assert st == 200
+    assert body["uid"] == "1000000000000100"
+    assert len(body["token"]) == 64
+    st, body2 = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "c2"})
+    assert st == 200 and body2["uid"] == "1000000000000100"
+
+
+def test_auth_login_web_tofu(server_base):
+    base, db_handle, _cfg = server_base
+    st, body = _req(base, "POST", "/api/auth/login", {"platform": "web", "uid": "1000000000000200"})
+    assert st == 200
+    assert body["uid"] == "1000000000000200"
+    assert len(body["token"]) == 64
+    # CORRECTION vs plan: /api/player/me still uses require_uid until Task 7, so we verify the
+    # issued token resolves to the uid DIRECTLY (independent of Task 7's handler swap):
+    from auth_session import resolve_token
+    assert resolve_token(db_handle, body["token"]) == "1000000000000200"
+
+
+def test_auth_login_wx_bad_code_4xx(server_base, monkeypatch):
+    base, _db, _cfg = server_base
+    import wechat_auth
+
+    def _boom(cfg, code):
+        raise wechat_auth.WxAuthError(40029, "invalid code")
+    monkeypatch.setattr(wechat_auth, "code2session", _boom)
+    st, body = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "bad"})
+    assert st == 401

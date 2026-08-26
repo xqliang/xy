@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import random
 from typing import Any
 
+from auth_session import issue_token
 from avatar_catalog import by_id, default_ids, unlockable
 from db import DB
-from httputil import client_ip, read_json, require_uid, send_json
+from httputil import client_ip, ok_uid, read_json, require_uid, send_json
 
 NICKNAME_MAX_WEIGHT = 20
 
@@ -64,16 +66,13 @@ def _public_player(row: dict[str, Any], unlocked: list[str]) -> dict[str, Any]:
     }
 
 
-def handle_login(handler, db: DB) -> None:
-    try:
-        body = read_json(handler)
-    except ValueError as e:
-        send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
-        return
-    uid = require_uid(handler, body)
-    if not uid:
-        return
-    ip = client_ip(handler)
+def _login_upsert(db: DB, uid: str, ip: str) -> None:
+    """登录时对 players 行做「有则更新、无则插入」，并补齐默认头像。
+
+    从 handle_login 抽出的公共逻辑：/api/player/login（老/web 路径）与
+    /api/auth/login（新的微信/统一登录）都要在确定 uid 后走这同一套落库动作，
+    抽成一个函数避免两处各写一遍、行为漂移。
+    """
     now = db.now()
     row = _player_row(db, uid)
     if not row:
@@ -92,11 +91,87 @@ def handle_login(handler, db: DB) -> None:
                 (now, ip, now, uid),
             )
     _ensure_defaults(db, uid)
+
+
+def handle_login(handler, db: DB) -> None:
+    try:
+        body = read_json(handler)
+    except ValueError as e:
+        send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
+        return
+    uid = require_uid(handler, body)
+    if not uid:
+        return
+    ip = client_ip(handler)
+    _login_upsert(db, uid, ip)
     row = _player_row(db, uid)
     assert row
     unlocked = _unlocked(db, uid)
     out = _public_player(row, unlocked)
     out["saveJson"] = row["save_json"]
+    send_json(handler, 200, out)
+
+
+def _gen_uid(db: DB) -> str:
+    """服务端生成 16 位数字 uid（与前端 randomUid 同格式），避开已存在的行。"""
+    for _ in range(10):
+        uid = str(random.randint(10 ** 15, 10 ** 16 - 1))
+        if not _player_row(db, uid):
+            return uid
+    return str(random.randint(10 ** 15, 10 ** 16 - 1))
+
+
+def _bind_openid(db: DB, openid: str, unionid: str | None, local_uid: str | None) -> str:
+    """openid→uid：已绑返回旧 uid；未绑则绑 local_uid（老玩家迁移）或新建。并发安全靠 openid 主键。"""
+    now = db.now()
+    with db.cursor() as cur:
+        cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
+        row = cur.fetchone()
+        if row:
+            return row["uid"]
+        uid = local_uid or _gen_uid(db)
+        cur.execute(
+            "INSERT INTO wx_identities (openid, unionid, uid, created_at) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE openid=openid",
+            (openid, unionid, uid, now),
+        )
+        cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
+        return cur.fetchone()["uid"]
+
+
+def handle_auth_login(handler, db: DB) -> None:
+    try:
+        body = read_json(handler)
+    except ValueError as e:
+        send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
+        return
+    platform = (body.get("platform") or "web").strip()
+    ip = client_ip(handler)
+    if platform == "wx":
+        from wechat_auth import WxAuthError, code2session
+
+        try:
+            sess = code2session(handler.cfg, body.get("code") or "")
+        except WxAuthError as e:
+            status = 429 if e.code == 45011 else (502 if e.code < 0 and e.code != -2 else 401)
+            send_json(handler, status, {"error": {"code": "wx_auth", "msg": e.msg}})
+            return
+        local = body.get("uid")
+        uid = _bind_openid(db, sess["openid"], sess.get("unionid"), local if ok_uid(local) else None)
+    else:
+        uid = body.get("uid")
+        if not ok_uid(uid):
+            send_json(handler, 400, {"error": {"code": "bad_uid", "msg": "invalid uid"}})
+            return
+    _login_upsert(db, uid, ip)
+    days = int((handler.cfg.get("auth") or {}).get("session_days", 30))
+    token, expires = issue_token(db, uid, platform, days=days)
+    row = _player_row(db, uid)
+    assert row
+    out = _public_player(row, _unlocked(db, uid))
+    out["saveJson"] = row["save_json"]
+    out["token"] = token
+    out["expiresAt"] = expires
     send_json(handler, 200, out)
 
 
