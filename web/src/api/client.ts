@@ -1,5 +1,6 @@
 // 轻量 API 客户端：同源 /api 或 VITE_API_BASE。
 import { ensureUserId } from '../user-id';
+import { getToken } from '../auth-token';
 
 declare const __API_BASE__: string | undefined;
 
@@ -26,6 +27,9 @@ export async function apiFetch<T>(
   const uid = init.uid === undefined ? ensureUserId() : init.uid;
   const headers = new Headers(init.headers || {});
   if (uid) headers.set('X-Uid', uid);
+  // 会话令牌：登录后带 Bearer，服务端据此校验账号身份（无 token 则匿名走 X-Uid）。
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const url = `${apiBase()}${path.startsWith('/') ? path : `/${path}`}`;
   try {

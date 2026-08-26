@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from db import DB
-from httputil import query_params, read_json, require_uid, send_json
+from httputil import query_params, read_json, require_auth, send_json
 
 
 def _display_name(nickname: str | None, uid: str) -> str:
@@ -20,7 +20,7 @@ def handle_submit(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     try:
@@ -73,7 +73,7 @@ def handle_submit(handler, db: DB) -> None:
 
 
 def handle_daily(handler, db: DB) -> None:
-    uid = require_uid(handler)
+    uid = require_auth(handler, db)
     if not uid:
         return
     qs = query_params(handler)
@@ -124,7 +124,6 @@ def handle_daily(handler, db: DB) -> None:
 
     def map_row(r: dict[str, Any], me: bool = False) -> dict[str, Any]:
         return {
-            "uid": r["uid"],
             "name": _display_name(r["nickname"], r["uid"]),
             "rankLevel": int(r["rank_level"]),
             "avatarId": r["avatar_id"],

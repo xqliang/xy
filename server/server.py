@@ -18,6 +18,7 @@ from admin_app import handle_admin  # noqa: E402
 from api_events import handle_events, start_aggregator  # noqa: E402
 from api_leaderboard import handle_daily, handle_submit  # noqa: E402
 from api_player import (  # noqa: E402
+    handle_auth_login,
     handle_login,
     handle_me,
     handle_profile,
@@ -93,6 +94,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api(self, method: str, path: str) -> None:
         routes = {
+            ("POST", "/api/auth/login"): handle_auth_login,
             ("POST", "/api/player/login"): handle_login,
             ("GET", "/api/player/me"): handle_me,
             ("POST", "/api/player/sync"): handle_sync,

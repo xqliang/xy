@@ -27,6 +27,8 @@ export interface PvpResult {
 export interface PvpSocketOpts {
   matchId: string;
   uid: string;
+  // 会话令牌（可选）：登录后由上层（Task 12 的 main.ts）传入，追加到 WS URL 供服务端校验身份。
+  token?: string;
   onWelcome?: (serverMs: number) => void;
   onOppSnap?: (s: unknown) => void;
   onNextWave?: (wave: number, startAtServerMs: number) => void;
@@ -71,6 +73,8 @@ const defaultScheduler = (fn: () => void, ms: number): unknown => setTimeout(fn,
 export class PvpSocket {
   readonly matchId: string;
   readonly uid: string;
+  /** 会话令牌（可选）：构造时随 URL 烘焙进 wsUrl，重连复用同一 URL。 */
+  readonly token?: string;
   /** 当前连接状态（只读快照，上层可轮询）。 */
   state: PvpSocketState = 'closed';
   /** 应用层 RTT（ms，EWMA α=0.25）：首个 pong 前为 null，供顶部延迟 HUD 显示。 */
@@ -99,9 +103,10 @@ export class PvpSocket {
     this.opts = opts;
     this.matchId = opts.matchId;
     this.uid = opts.uid;
+    this.token = opts.token;
     this.factory = opts.wsFactory ?? ((url: string) => new WebSocket(url) as unknown as PvpWsLike);
     this.schedule = opts.scheduler ?? defaultScheduler;
-    this.wsUrl = buildWsUrl(opts.matchId, opts.uid);
+    this.wsUrl = buildWsUrl(this.matchId, this.uid, this.token);
   }
 
   /** 建立连接：创建 socket、绑定三事件。幂等保护——已手动关闭则不再连。 */
@@ -300,8 +305,8 @@ export class PvpSocket {
   }
 }
 
-/** 由 location 推导 WS URL：https→wss、http→ws；无 location（node 单测）回退 ws://localhost。 */
-function buildWsUrl(matchId: string, uid: string): string {
+/** 由 location 推导 WS URL：https→wss、http→ws；无 location（node 单测）回退 ws://localhost；有 token 追加 &token=。 */
+export function buildWsUrl(matchId: string, uid: string, token?: string): string {
   let scheme: string;
   let host: string;
   if (typeof location !== 'undefined' && location) {
@@ -311,9 +316,10 @@ function buildWsUrl(matchId: string, uid: string): string {
     scheme = 'ws://';
     host = 'localhost';
   }
-  return (
+  let url =
     scheme + host +
     '/api/versus/ws?matchId=' + encodeURIComponent(matchId) +
-    '&uid=' + encodeURIComponent(uid)
-  );
+    '&uid=' + encodeURIComponent(uid);
+  if (token) url += '&token=' + encodeURIComponent(token);
+  return url;
 }

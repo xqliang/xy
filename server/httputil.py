@@ -6,7 +6,9 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-UID_RE = re.compile(r"^\d{8,20}$")
+# 用 \A...\Z 绝对锚定：Python 的 $ 会在结尾换行前匹配，`^\d{8,20}$` 会把 "12345678\n" 判为合法，
+# 使带尾随换行的 uid 绕过下游按精确串比较的守卫（如 web 分支的 wx_bound 检查）。\Z 只匹配串尾，堵住此类输入。
+UID_RE = re.compile(r"\A\d{8,20}\Z")
 
 
 def ok_uid(uid: str | None) -> bool:
@@ -75,3 +77,43 @@ def require_uid(handler: BaseHTTPRequestHandler, body: dict[str, Any] | None = N
 
 def query_params(handler: BaseHTTPRequestHandler) -> dict[str, list[str]]:
     return parse_qs(urlparse(handler.path).query)
+
+
+def bearer_token(handler: BaseHTTPRequestHandler) -> str:
+    # 从 Authorization 头里取出 Bearer 令牌；没有或格式不对时返回空串。
+    # 大小写不敏感（HTTP 头本就大小写不敏感），只截取 "Bearer " 之后的部分并去空白。
+    auth = handler.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _strict_enabled(handler: BaseHTTPRequestHandler) -> bool:
+    """读取鉴权灰度开关 auth.strict。
+    正常运行时 load_config 一定把它规范化成真正的 bool；若这里读不到
+    （无 cfg / auth 段缺失或类型异常），说明配置被破坏或调用方非标准 handler ——
+    对安全门禁按最保守的『严格』处理（fail-closed），绝不静默放开成 X-Uid 信任（否则等于无鉴权冒名）。"""
+    cfg = getattr(handler, "cfg", None)
+    if not isinstance(cfg, dict):
+        return True
+    auth = cfg.get("auth")
+    if not isinstance(auth, dict) or "strict" not in auth:
+        return True
+    return bool(auth["strict"])
+
+
+def require_auth(handler: BaseHTTPRequestHandler, db, body: dict[str, Any] | None = None) -> str | None:
+    """统一鉴权：优先 Bearer token；token 缺失/失效时，strict=True→401，否则回退认 X-Uid（灰度）。"""
+    # 局部导入：httputil 是被广泛引用的底层工具，避免其模块加载期就拉入 DB 层（auth_session→db→pymysql）。
+    from auth_session import resolve_token
+
+    token = bearer_token(handler)
+    if token:
+        uid = resolve_token(db, token)
+        if uid:
+            return uid
+    strict = _strict_enabled(handler)
+    if strict:
+        send_json(handler, 401, {"error": {"code": "unauthorized", "msg": "login required"}})
+        return None
+    return require_uid(handler, body)

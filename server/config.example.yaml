@@ -10,6 +10,12 @@ db:
 admin:
   username: "admin"
   password: "CHANGE_ME"
+wechat:
+  appid: ""      # 小游戏 AppID
+  secret: ""     # AppSecret —— 仅服务端持有，绝不进客户端包
+auth:
+  strict: false  # 灰度：false=无 token 回退认 X-Uid；前端全量带 token 后置 true
+  session_days: 30
 # optional TOS backup (leave empty to skip upload)
 tos:
   endpoint: ""

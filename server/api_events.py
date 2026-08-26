@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Any
 
 from db import DB
-from httputil import client_ip, read_json, require_uid, send_json
+from httputil import client_ip, read_json, require_auth, send_json
 
 ALLOWED = {
     "login",
@@ -29,7 +29,7 @@ def handle_events(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     events = body.get("events")

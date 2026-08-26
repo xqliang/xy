@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import random
 from typing import Any
 
+from auth_session import issue_token
 from avatar_catalog import by_id, default_ids, unlockable
 from db import DB
-from httputil import client_ip, read_json, require_uid, send_json
+from httputil import client_ip, ok_uid, read_json, require_auth, send_json
 
 NICKNAME_MAX_WEIGHT = 20
 
@@ -64,34 +66,40 @@ def _public_player(row: dict[str, Any], unlocked: list[str]) -> dict[str, Any]:
     }
 
 
+def _login_upsert(db: DB, uid: str, ip: str) -> None:
+    """登录时对 players 行做「有则更新、无则插入」，并补齐默认头像。
+
+    从 handle_login 抽出的公共逻辑：/api/player/login（老/web 路径）与
+    /api/auth/login（新的微信/统一登录）都要在确定 uid 后走这同一套落库动作。
+
+    幂等：用单条 INSERT ... ON DUPLICATE KEY UPDATE 代替「先查再插/更」，
+    消除两个并发首登同一新 uid 时第二条 INSERT 撞主键 500 的竞态；
+    新行按默认值播种（昵称 NULL、悟空头像、0 段位），已存在行只刷新登录时间/IP/updated_at。
+    """
+    now = db.now()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO players (uid, nickname, avatar_id, rank_level, last_login_at, last_ip, created_at, updated_at)
+            VALUES (%s, NULL, 'wukong', 0, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE last_login_at=VALUES(last_login_at), last_ip=VALUES(last_ip), updated_at=VALUES(updated_at)
+            """,
+            (uid, now, ip, now, now),
+        )
+    _ensure_defaults(db, uid)
+
+
 def handle_login(handler, db: DB) -> None:
     try:
         body = read_json(handler)
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     ip = client_ip(handler)
-    now = db.now()
-    row = _player_row(db, uid)
-    if not row:
-        with db.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO players (uid, nickname, avatar_id, rank_level, last_login_at, last_ip, created_at, updated_at)
-                VALUES (%s, NULL, 'wukong', 0, %s, %s, %s, %s)
-                """,
-                (uid, now, ip, now, now),
-            )
-    else:
-        with db.cursor() as cur:
-            cur.execute(
-                "UPDATE players SET last_login_at=%s, last_ip=%s, updated_at=%s WHERE uid=%s",
-                (now, ip, now, uid),
-            )
-    _ensure_defaults(db, uid)
+    _login_upsert(db, uid, ip)
     row = _player_row(db, uid)
     assert row
     unlocked = _unlocked(db, uid)
@@ -100,8 +108,104 @@ def handle_login(handler, db: DB) -> None:
     send_json(handler, 200, out)
 
 
+def _gen_uid(db: DB) -> str:
+    """服务端生成 16 位数字 uid（与前端 randomUid 同格式），避开已存在的行。"""
+    for _ in range(10):
+        uid = str(random.randint(10 ** 15, 10 ** 16 - 1))
+        if not _player_row(db, uid):
+            return uid
+    return str(random.randint(10 ** 15, 10 ** 16 - 1))
+
+
+def _bind_openid(db: DB, openid: str, unionid: str | None, local_uid: str | None) -> str:
+    """openid→uid：已绑返回旧 uid；未绑则绑 local_uid（老玩家迁移）或新建。
+
+    并发安全：openid 是主键，INSERT ... ON DUPLICATE KEY UPDATE + 回读收敛到唯一 uid。
+    ⚠️ 回读正确性依赖连接 autocommit=True（每条语句独立读视图，能看到并发赢家已提交的行）；
+       若日后改成显式事务/关 autocommit，回读可能读不到并发写入 → 需另行加锁，勿静默破坏此处。
+    安全约束（防串号/冒领）：客户端自报的 local_uid 只有在「尚未被任何其它 openid 绑定」时才可继承。
+       走到这里说明本 openid 未绑定，故任何命中的 uid 行都属于别的微信身份 → 放弃继承、改新建，
+       绝不让两个 openid 指向同一 uid。
+    """
+    now = db.now()
+    with db.cursor() as cur:
+        cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
+        row = cur.fetchone()
+        if row:
+            return row["uid"]
+        if local_uid:
+            cur.execute("SELECT 1 FROM wx_identities WHERE uid=%s LIMIT 1", (local_uid,))
+            if cur.fetchone():
+                local_uid = None  # 已被别的 openid 占用 → 不继承
+        adopted = bool(local_uid)
+        uid = local_uid or _gen_uid(db)
+        cur.execute(
+            "INSERT INTO wx_identities (openid, unionid, uid, created_at) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE openid=openid",
+            (openid, unionid, uid, now),
+        )
+        cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", (openid,))
+        bound = cur.fetchone()["uid"]
+    if adopted:
+        # 迁移审计：记录「客户端自报 uid 被某 openid 继承」，便于事后排查冒领（openid 脱敏）
+        import sys
+        sys.stderr.write(f"[auth] wx-migrate bind openid=***{openid[-4:]} adopt_uid={bound}\n")
+    return bound
+
+
+def handle_auth_login(handler, db: DB) -> None:
+    try:
+        body = read_json(handler)
+    except ValueError as e:
+        send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
+        return
+    platform = (body.get("platform") or "web").strip()
+    ip = client_ip(handler)
+    if platform == "wx":
+        from wechat_auth import WxAuthError, code2session
+
+        try:
+            sess = code2session(handler.cfg, body.get("code") or "")
+        except WxAuthError as e:
+            if e.code == -2:  # 空 code：请求格式问题
+                send_json(handler, 400, {"error": {"code": "bad_code", "msg": "empty code"}})
+                return
+            if e.code == -1:  # 服务端未配置 appid/secret：不回显配置状态，仅服务端留痕
+                import sys
+                sys.stderr.write("[auth] wx login unavailable: appid/secret not configured\n")
+                send_json(handler, 503, {"error": {"code": "wx_unavailable", "msg": "wx login temporarily unavailable"}})
+                return
+            status = 429 if e.code == 45011 else (502 if e.code < 0 else 401)
+            send_json(handler, status, {"error": {"code": "wx_auth", "msg": e.msg}})
+            return
+        local = body.get("uid")
+        uid = _bind_openid(db, sess["openid"], sess.get("unionid"), local if ok_uid(local) else None)
+    else:
+        uid = body.get("uid")
+        if not ok_uid(uid):
+            send_json(handler, 400, {"error": {"code": "bad_uid", "msg": "invalid uid"}})
+            return
+        # 安全：已绑微信的 uid 不允许走 web TOFU 冒领——该账号必须用微信登录。
+        # 灰度期(strict=false)前端拿不到 token 会回退 X-Uid 仍可用；strict 期该账号在纯 web 端登不进（预期）。
+        with db.cursor() as cur:
+            cur.execute("SELECT 1 FROM wx_identities WHERE uid=%s LIMIT 1", (uid,))
+            if cur.fetchone():
+                send_json(handler, 403, {"error": {"code": "wx_bound", "msg": "account bound to WeChat, use WeChat login"}})
+                return
+    _login_upsert(db, uid, ip)
+    days = int((handler.cfg.get("auth") or {}).get("session_days", 30))
+    token, expires = issue_token(db, uid, platform, days=days)
+    row = _player_row(db, uid)
+    assert row
+    out = _public_player(row, _unlocked(db, uid))
+    out["saveJson"] = row["save_json"]
+    out["token"] = token
+    out["expiresAt"] = expires
+    send_json(handler, 200, out)
+
+
 def handle_me(handler, db: DB) -> None:
-    uid = require_uid(handler)
+    uid = require_auth(handler, db)
     if not uid:
         return
     row = _player_row(db, uid)
@@ -120,7 +224,7 @@ def handle_sync(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     save_json = body.get("saveJson") or body.get("save_json")
@@ -171,7 +275,7 @@ def handle_profile(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     row = _player_row(db, uid)
@@ -233,7 +337,7 @@ def handle_unlock(handler, db: DB) -> None:
     except ValueError as e:
         send_json(handler, 400, {"error": {"code": "bad_json", "msg": str(e)}})
         return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid:
         return
     row = _player_row(db, uid)

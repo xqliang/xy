@@ -13,7 +13,7 @@ import time
 from typing import Any, Callable, Optional
 
 from db import DB
-from httputil import read_json, require_uid, send_json
+from httputil import read_json, require_auth, send_json, _strict_enabled
 from ws import (  # RFC6455 握手/帧编解码纯函数（Task 1），被 WebSocket 连接层复用
     OP_CLOSE, OP_PING, OP_PONG, OP_TEXT,
     decode_frame, encode_frame, encode_text, handshake_response,
@@ -688,7 +688,7 @@ def handle_versus_enqueue(handler, db: DB) -> None:
     # 注（Task 6 退役）：旧模型曾接收并透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
@@ -698,7 +698,7 @@ def handle_versus_poll(handler, db: DB) -> None:
     # 轮询排队/对局状态：waiting / matched / timeout
     body = _read_body(handler)
     if body is None: return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).poll(str(body.get("ticket") or "")))
 
@@ -706,7 +706,7 @@ def handle_versus_cancel(handler, db: DB) -> None:
     # 取消排队（离开队列；已成局的不受影响）
     body = _read_body(handler)
     if body is None: return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).cancel(str(body.get("ticket") or "")))
 
@@ -715,7 +715,7 @@ def handle_versus_room_create(handler, db: DB) -> None:
     # 注（Task 6 退役）：旧模型曾透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
@@ -727,11 +727,25 @@ def handle_versus_room_join(handler, db: DB) -> None:
     # 注（Task 6 退役）：旧模型曾透传 loadout，WS 快照模型无消费方，已删除。
     body = _read_body(handler)
     if body is None: return
-    uid = require_uid(handler, body)
+    uid = require_auth(handler, db, body)
     if not uid: return
     rank = _parse_rank(handler, body)
     if rank is None: return
     send_json(handler, 200, _hub(handler).room_join(str(body.get("code") or "").upper(), uid, rank))
+
+
+def _ws_authenticate(qs, db, strict: bool) -> str | None:
+    """WS 握手鉴权：优先 ?token=；非 strict 时回退 ?uid=（不做数字格式校验，兼容旧客户端/测试）。"""
+    from auth_session import resolve_token
+
+    token = (qs.get("token") or [""])[0]
+    if token:
+        uid = resolve_token(db, token)
+        if uid:
+            return uid
+    if strict:
+        return None
+    return (qs.get("uid") or [""])[0] or None
 
 
 # ============================================================================
@@ -748,10 +762,14 @@ def handle_versus_room_join(handler, db: DB) -> None:
 def handle_versus_ws(handler, hub) -> None:
     from urllib.parse import parse_qs, urlparse
 
-    # 1) 解析 query：matchId / uid（与 spec §3 一致，query 参数认证）。
+    # 1) 解析 query：matchId + 鉴权（?token= 优先，非 strict 时回退 ?uid=，与 HTTP 端点同一 fail-closed strict 读）。
     qs = parse_qs(urlparse(handler.path).query)
     match_id = (qs.get("matchId") or [""])[0]
-    uid = (qs.get("uid") or [""])[0]
+    strict = _strict_enabled(handler)
+    uid = _ws_authenticate(qs, hub.db, strict)
+    if not uid:
+        send_json(handler, 401, {"error": {"code": "unauthorized", "msg": "ws auth required"}})
+        return
 
     # 2) 校验升级头：必须 Upgrade: websocket + Sec-WebSocket-Key，否则 400 不升级。
     upgrade = (handler.headers.get("Upgrade") or "").lower()

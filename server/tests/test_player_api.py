@@ -168,7 +168,7 @@ def test_leaderboard_and_events(server_base):
     st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
     assert st == 200
     assert body["me"]["name"] == "新昵称侠"
-    me_entry = next((e for e in body["entries"] if e.get("me") or e["uid"] == uid), None)
+    me_entry = next((e for e in body["entries"] if e.get("me")), None)
     assert me_entry is not None
     assert me_entry["name"] == "新昵称侠"
 

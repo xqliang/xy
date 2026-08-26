@@ -145,7 +145,10 @@ def _ws_server(hub):
         pass
 
     H.db = _FakeDB()
-    H.cfg = {"static_dir": static_dir}
+    # Task 8：WS 握手鉴权 fail-closed 读 cfg["auth"]["strict"]（缺 auth 段即按 strict 处理）。
+    # 生产 load_config() 恒带 auth 段（默认 strict=False），此处补上以对齐生产配置——
+    # 是让夹具贴近现实，而非放松门禁；否则本文件 ?uid= 连接会被 401。
+    H.cfg = {"static_dir": static_dir, "auth": {"strict": False}}
     H.versus = hub
     httpd = ThreadingHTTPServer(
         ("127.0.0.1", 0),
@@ -822,6 +825,9 @@ def test_ws_handshake_sets_tcp_nodelay():
         path = "/api/versus/ws?matchId=M1&uid=A1"
         headers = {"Upgrade": "websocket",
                    "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
+        # Task 8：WS 握手鉴权 fail-closed 读 cfg["auth"]["strict"]；生产 cfg 恒带 auth 段（默认 strict=False），
+        # 补上以对齐生产配置（否则缺 auth 段按 strict 处理 → ?uid= 走 401 而非升级）。
+        cfg = {"auth": {"strict": False}}
 
         def __init__(self):
             self.connection = _Conn()
