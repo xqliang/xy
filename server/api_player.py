@@ -185,6 +185,13 @@ def handle_auth_login(handler, db: DB) -> None:
         if not ok_uid(uid):
             send_json(handler, 400, {"error": {"code": "bad_uid", "msg": "invalid uid"}})
             return
+        # 安全：已绑微信的 uid 不允许走 web TOFU 冒领——该账号必须用微信登录。
+        # 灰度期(strict=false)前端拿不到 token 会回退 X-Uid 仍可用；strict 期该账号在纯 web 端登不进（预期）。
+        with db.cursor() as cur:
+            cur.execute("SELECT 1 FROM wx_identities WHERE uid=%s LIMIT 1", (uid,))
+            if cur.fetchone():
+                send_json(handler, 403, {"error": {"code": "wx_bound", "msg": "account bound to WeChat, use WeChat login"}})
+                return
     _login_upsert(db, uid, ip)
     days = int((handler.cfg.get("auth") or {}).get("session_days", 30))
     token, expires = issue_token(db, uid, platform, days=days)

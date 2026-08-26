@@ -124,7 +124,6 @@ def handle_daily(handler, db: DB) -> None:
 
     def map_row(r: dict[str, Any], me: bool = False) -> dict[str, Any]:
         return {
-            "uid": r["uid"],
             "name": _display_name(r["nickname"], r["uid"]),
             "rankLevel": int(r["rank_level"]),
             "avatarId": r["avatar_id"],

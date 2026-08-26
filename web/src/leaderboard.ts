@@ -3,8 +3,7 @@ import { VIEW_W, VIEW_H } from './render';
 import { rankName } from './rank';
 import { sprite } from './assets';
 import { apiFetch } from './api/client';
-import { avatarById, maskUid } from './avatar-catalog';
-import { ensureUserId } from './user-id';
+import { avatarById } from './avatar-catalog';
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
@@ -42,13 +41,12 @@ interface SelfRow {
 interface DailyResp {
   day: string;
   entries: Array<{
-    uid: string;
     name: string;
     rankLevel: number;
     avatarId: string;
     me?: boolean;
   }>;
-  me: { uid: string; name: string; rankLevel: number; avatarId: string; place?: number } | null;
+  me: { name: string; rankLevel: number; avatarId: string; place?: number } | null;
 }
 
 let cache: { day: string; rows: LeaderboardRow[]; self: SelfRow | null; error: string | null; at: number } | null = null;
@@ -72,11 +70,10 @@ export function ensureLeaderboardLoaded(onDone?: () => void): void {
     if (!res.ok) {
       cache = { day: '', rows: [], self: null, error: '排行榜暂不可用', at: Date.now() };
     } else {
-      const uid = ensureUserId();
       const rows: LeaderboardRow[] = res.data.entries.map((e) => ({
-        name: e.name || maskUid(e.uid),
+        name: e.name,
         level: e.rankLevel,
-        me: !!e.me || e.uid === uid,
+        me: !!e.me,
         avatarId: e.avatarId || 'wukong',
       }));
       // 自己的成绩单独保存：unranked=当前用户不在服务端返回的榜单条目里（即未上榜）。

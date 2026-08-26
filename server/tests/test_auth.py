@@ -366,6 +366,20 @@ def test_auth_login_web_tofu(server_base):
     assert resolve_token(db_handle, body["token"]) == "1000000000000200"
 
 
+def test_auth_login_web_refuses_wx_bound_uid(server_base, monkeypatch):
+    base, _db, _cfg = server_base
+    import wechat_auth
+    # 先用微信把 uid 绑上 openid
+    monkeypatch.setattr(wechat_auth, "code2session",
+                        lambda cfg, code: {"openid": "openid_wb", "session_key": "s", "unionid": None})
+    st, b = _req(base, "POST", "/api/auth/login", {"platform": "wx", "code": "c", "uid": "1000000000000700"})
+    assert st == 200 and b["uid"] == "1000000000000700"
+    # 再用 web TOFU 冒领同一个已绑 uid → 必须拒绝，不发 token
+    st, b2 = _req(base, "POST", "/api/auth/login", {"platform": "web", "uid": "1000000000000700"})
+    assert st == 403
+    assert b2 is None or "token" not in (b2 or {})
+
+
 def test_auth_login_wx_bad_code_4xx(server_base, monkeypatch):
     base, _db, _cfg = server_base
     import wechat_auth
