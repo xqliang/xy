@@ -2,7 +2,9 @@
 """xy game HTTP server: static files + /api + /admin."""
 from __future__ import annotations
 
+import logging
 import os
+import signal
 import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -146,9 +148,34 @@ def main() -> None:
     BoundHandler.db = db
     BoundHandler.cfg = cfg
     BoundHandler.versus = VersusHub(db)   # 进程内 PvP 单例：匹配/私房/波次/终局/反作弊（WS 快照模型，HTTP tick 已退役）
+    hub = BoundHandler.versus
+    restored = hub.load_active_matches()          # 启动回放：把上次未终局对局读回内存
+    print(f"pvp active matches restored: {restored}", flush=True)
+
+    # 周期 flush：镜像 start_aggregator 的守护线程形态（daemon、swallow-and-log、sleep 循环）
+    import threading, time as _time
+    def _pvp_flush_loop():
+        interval = float(os.environ.get("XY_PVP_FLUSH_INTERVAL", "5"))
+        while True:
+            _time.sleep(interval)
+            try:
+                hub.flush_active_matches()
+            except Exception:
+                logging.exception("pvp flush loop 异常（继续）")
+    threading.Thread(target=_pvp_flush_loop, name="pvp-flush", daemon=True).start()
+
     handler = partial(BoundHandler, directory=static_dir)
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(f"serving static={static_dir} api+admin on {host}:{port}", flush=True)
+        def _graceful(signum, _frame):
+            print(f"signal {signum} → flushing pvp active matches then shutting down", flush=True)
+            try:
+                hub.flush_active_matches()        # 关机前刷一次，发版不丢活跃对局（_flush_lock 保证与周期 flush 不交错）
+            except Exception:
+                logging.exception("关机 flush 失败")
+            httpd.shutdown()                       # 从信号处理线程打断 serve_forever
+        signal.signal(signal.SIGTERM, _graceful)
+        signal.signal(signal.SIGINT, _graceful)
         httpd.serve_forever()
 
 
