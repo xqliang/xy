@@ -268,7 +268,7 @@ const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 import { drainFixedSteps, PVP_SIM_DT, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 波起始纪元→tick（Task 9；DELAY_TICKS 延迟重放已随确定性重放拆除）
 import { PvpSocket } from './pvp-ws';                                 // PvP WS 连接层（Task 3）：连/重连/消息分发 + 上行发送
-import { netDead } from './pvp-netwatch';                            // PvP 断线看门狗纯判定（>6s 无入站→判死；Task 7.6）
+import { netDead, netRecovered } from './pvp-netwatch';             // PvP 断线看门狗纯判定（>10s 无入站→判死 / 恢复→解冻；Task 7.6 + A1-lite）
 import { PvpOppView, normalizeSnapClock } from './pvp-snap';            // 对手双缓冲插值视图 + 跨机时钟归一（Task 4/Task 5）
 import type { PvpSnap } from './pvp-snap';                             // 快照类型（onOppSnap 归一化入参类型标注）
 
@@ -2613,6 +2613,12 @@ function frame(now: number): void {
     // 一旦置真，本局内保持不变，直到 endPvpSession() 清零（下面冻结 + 弹窗 + 倒计时退出都靠它）。
     if (pvpSock && !pvpResult && !pvpNetDead && netDead(Date.now(), pvpSock.lastInboundAt)) {
       pvpNetDead = true;
+    } else if (pvpSock && !pvpResult && pvpNetDead && netRecovered(Date.now(), pvpSock.lastInboundAt)) {
+      // A1-lite：断线判死后若入站重新到达（socket 已重连）→ 解冻续打。
+      // 等同「取消暂停」——sim 状态还在内存里，只是之前被 netDead 冻结（shouldStepSim 门控）；
+      // 与「跨刷新重建 sim」不同（后者会与服务端波次时钟 desync，见 spec §3 A1），故此处安全。
+      pvpNetDead = false;
+      pvpNetDeadStart = 0;
     }
     beginNetDeadCountdown(now); // 判死瞬间记倒计时起点（幂等）
     // 冻结战斗（不 step）：结算弹层 / 暂停 / 引导 / 我方断线(pvpNetDead) / 对方断线倒计时(pvpOppGone)。
