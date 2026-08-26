@@ -41,6 +41,11 @@ export interface PvpSocketOpts {
   wsFactory?: (url: string) => PvpWsLike;
   // 注入重连延时调度器（单测传可控假计时器）；不传则用全局 setTimeout。
   scheduler?: (fn: () => void, ms: number) => unknown;
+  // 鉴权探活（可选）：连续重连达阈值时调用，返回 false=令牌已失效(探到 401)。因浏览器不暴露失败
+  // 握手的 HTTP 401 给 JS，无法靠 close code 判定，故用它探活。默认不注入=永不短路（保持无限重连）。
+  authProbe?: () => Promise<boolean>;
+  // 令牌失效回调（authProbe 返回 false 时触发一次）：上层据此 clearToken + 退出重登。
+  onAuthFail?: () => void;
 }
 
 /** 连接状态：closed 未连/已手动关 / connecting 首连中 / open 已开 / reconnecting 退避等重连。 */
@@ -70,6 +75,8 @@ const PING_INTERVAL_MS = 2_000;
 const RTT_EWMA_ALPHA = 0.25;
 /** 补发队列封顶：超出门槛丢最旧。正常一局事件远少于 16 条，封顶只防极端场景无界增长。 */
 const PENDING_MAX = 16;
+/** 连续重连失败达此次数即探活一次账号令牌（区分「网络断」与「令牌失效」）。 */
+const AUTH_PROBE_AFTER_ATTEMPTS = 3;
 /** 默认重连调度器：真实 setTimeout（返回句柄，close 时可 clearTimeout 兜底）。 */
 const defaultScheduler = (fn: () => void, ms: number): unknown => setTimeout(fn, ms);
 
@@ -99,6 +106,8 @@ export class PvpSocket {
   private closed = false; // 手动 close() 置真：之后永不重连、永不建新 socket
   /** 重连失败计数（成功 open 后清零）：0 → 首试 300ms 快试；n → min(1s·2^(n-1), 5s)。 */
   private retryCount = 0;
+  private authProbing = false; // 正在探活（防重复并发探测）
+  private authFatal = false;   // 已判令牌失效：短路，永不再重连
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
   private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
@@ -243,6 +252,10 @@ export class PvpSocket {
       ? FIRST_RETRY_MS
       : Math.min(BACKOFF_BASE_MS * 2 ** (this.retryCount - 1), BACKOFF_CAP_MS);
     this.retryCount++;
+    // A4：连续重连达阈值 → 探活账号令牌（一次）。探到失效则短路重连。
+    if (this.retryCount === AUTH_PROBE_AFTER_ATTEMPTS && this.opts.authProbe && !this.authProbing && !this.authFatal) {
+      this.runAuthProbe();
+    }
     this.reconnectGen++;
     const gen = this.reconnectGen;
     this.timer = this.schedule(() => {
@@ -251,6 +264,36 @@ export class PvpSocket {
       this.timer = null;
       this.connect();
     }, delay);
+  }
+
+  /** 探活账号令牌：返回 false（探到 401）→ 判令牌失效短路。fire-and-forget，探测中不阻塞重连退避。 */
+  private runAuthProbe(): void {
+    const probe = this.opts.authProbe;
+    if (!probe) return;
+    this.authProbing = true;
+    probe().then((ok) => {
+      this.authProbing = false;
+      if (!ok && !this.closed && !this.authFatal) this.failAuth();
+    }).catch(() => {
+      this.authProbing = false; // 探测本身失败（网络问题）：不短路，继续重连
+    });
+  }
+
+  /** 令牌失效短路：停止一切重连（等同手动 close 的重连抑制），回调 onAuthFail 让上层重登。 */
+  private failAuth(): void {
+    if (this.closed) return;
+    this.authFatal = true;
+    this.closed = true;          // 复用 closed 语义：connect/scheduleReconnect 均短路
+    this.reconnectGen++;         // 让挂起的退避计时器过期
+    this.clearPingTimer();
+    if (this.timer !== null && this.timer !== undefined) {
+      clearTimeout(this.timer as ReturnType<typeof setTimeout>);
+    }
+    this.timer = null;
+    this.state = 'closed';
+    this.sock?.close();
+    this.sock = null;
+    this.opts.onAuthFail?.();
   }
 
   /** 立即重连：跳过挂起的退避等待（仅 reconnecting 态生效）。供 online 事件 / 回前台 /

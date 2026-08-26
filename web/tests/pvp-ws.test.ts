@@ -111,6 +111,14 @@ describe('PvpSocket URL 构造', () => {
     expect(FakeWebSocket.last().url).not.toContain('token=');
     s.close();
   });
+
+  it('静态 token（无 tokenProvider）→ URL 带 &token=', () => {
+    vi.stubGlobal('location', { protocol: 'https:', host: 'h' } as unknown as Location);
+    const s = new PvpSocket({ matchId: 'm', uid: 'u', token: 'S1', wsFactory: fakeFactory });
+    s.connect();
+    expect(FakeWebSocket.last().url).toContain('&token=S1');
+    s.close();
+  });
 });
 
 describe('PvpSocket 握手与消息分发', () => {
@@ -493,4 +501,47 @@ describe('PvpSocket 弱网事件补发队列', () => {
     sock.close();
   });
 
+});
+
+describe('PvpSocket 鉴权失败探测短路', () => {
+  it('连续重连达阈值(3) → authProbe 返回 false → onAuthFail 触发且不再重连', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onAuthFail = vi.fn();
+    const authProbe = vi.fn(async () => false); // 探到 401：令牌失效
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, authProbe, onAuthFail });
+    sock.connect();
+    FakeWebSocket.last().close();          // retryCount→1（排 300ms）
+    calls.find((c) => c.ms === 300)!.fn();
+    FakeWebSocket.last().close();          // retryCount→2（排 1000ms）
+    calls.find((c) => c.ms === 1000)!.fn();
+    FakeWebSocket.last().close();          // retryCount→3 → 触发 authProbe
+    expect(authProbe).toHaveBeenCalledTimes(1);
+    await tick();                          // 等 probe promise resolve → failAuth
+    expect(onAuthFail).toHaveBeenCalledTimes(1);
+    const socketsBefore = FakeWebSocket.instances.length;
+    // 之后即便挂起的重连计时器到点，也不再建新 socket（已短路）。
+    calls.filter((c) => c.ms === 2000).forEach((c) => c.fn());
+    expect(FakeWebSocket.instances.length).toBe(socketsBefore);
+    expect(sock.state).toBe('closed');
+  });
+
+  it('authProbe 返回 true（仍有效，网络问题）→ 不触发 onAuthFail，继续重连', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onAuthFail = vi.fn();
+    const authProbe = vi.fn(async () => true);
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, authProbe, onAuthFail });
+    sock.connect();
+    FakeWebSocket.last().close();
+    calls.find((c) => c.ms === 300)!.fn();
+    FakeWebSocket.last().close();
+    calls.find((c) => c.ms === 1000)!.fn();
+    FakeWebSocket.last().close();          // retryCount→3 → probe
+    await tick();
+    expect(onAuthFail).not.toHaveBeenCalled();
+    // 仍在重连（下一次退避计时器已排）
+    expect(calls.some((c) => c.ms === 2000)).toBe(true);
+    sock.close();
+  });
 });
