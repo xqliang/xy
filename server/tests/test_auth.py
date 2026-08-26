@@ -451,6 +451,18 @@ def test_strict_mode_rejects_missing_token(server_base):
         cfg["auth"]["strict"] = False    # 复位，勿污染同 module 其它用例
 
 
+def test_strict_mode_login_rejects_only_xuid(server_base):
+    # 回归（安全）：/api/player/login 也切到 require_auth 后，strict 下只带 X-Uid（无 token）
+    # 必须被 401 拒绝——否则任何人拿别人的 uid 就能冒领登录、读回其云存档。
+    base, _db, cfg = server_base
+    cfg["auth"]["strict"] = True         # 运行时切 strict，模拟灰度关回退
+    try:
+        st, _ = _req(base, "POST", "/api/player/login", headers={"X-Uid": "1000000000000300"})
+        assert st == 401
+    finally:
+        cfg["auth"]["strict"] = False    # 复位，勿污染同 module 其它用例
+
+
 # ---- PvP WS 握手 + versus HTTP 端点切到 require_auth（Task 8）----
 # WS 握手鉴权：优先 ?token=；非 strict 时回退 ?uid=（不做数字格式校验，兼容旧客户端/测试）。
 def test_ws_authenticate_token_and_fallback(db):
