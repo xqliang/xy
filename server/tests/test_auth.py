@@ -90,3 +90,5 @@ def test_migrate_creates_wx_and_session_tables(db):
                     ("t" * 64, "1000000000000001", "wx", now, now))
         cur.execute("SELECT uid FROM wx_identities WHERE openid=%s", ("openid_x",))
         assert cur.fetchone()["uid"] == "1000000000000001"
+        cur.execute("SELECT uid FROM sessions WHERE token=%s", ("t" * 64,))
+        assert cur.fetchone()["uid"] == "1000000000000001"
