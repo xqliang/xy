@@ -159,3 +159,30 @@ def test_code2session_non_dict_body_raises(monkeypatch):
     with pytest.raises(wechat_auth.WxAuthError) as ei:
         wechat_auth.code2session({"wechat": {"appid": "a", "secret": "s"}}, "c")
     assert ei.value.code == -4
+
+
+# ---- auth_session.issue_token / resolve_token（会话令牌签发与校验）----
+# 这些用例依赖数据库（sessions 表），跑之前请确保 XY_DB_PORT=3308。
+def test_issue_and_resolve_token(db):
+    import auth_session
+
+    # 签发一条 30 天有效的令牌：token 必须是 64 位 hex，且立刻能反查回同一个 uid。
+    token, expires = auth_session.issue_token(db, "1000000000000009", "web", days=30)
+    assert len(token) == 64
+    assert auth_session.resolve_token(db, token) == "1000000000000009"
+
+
+def test_resolve_unknown_and_expired_token(db):
+    from datetime import timedelta
+
+    import auth_session
+
+    # 空串 / 不存在的 token 都应判为无效（返回 None），不能抛异常。
+    assert auth_session.resolve_token(db, "") is None
+    assert auth_session.resolve_token(db, "z" * 64) is None
+    # 手插一条已过期 session（created_at 两天前、expires_at 一天前），resolve 必须拒绝。
+    now = db.now()
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO sessions (token, uid, platform, created_at, expires_at) VALUES (%s,%s,%s,%s,%s)",
+                    ("e" * 64, "1000000000000010", "web", now - timedelta(days=2), now - timedelta(days=1)))
+    assert auth_session.resolve_token(db, "e" * 64) is None
