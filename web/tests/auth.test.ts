@@ -54,3 +54,34 @@ describe('auth 应用登录响应', () => {
     expect(loadUserId()).toBe('1000000000000777');
   });
 });
+
+import { vi } from 'vitest';
+import { apiFetch } from '../src/api/client';
+import { saveToken as _saveToken } from '../src/auth-token';
+import { buildWsUrl } from '../src/pvp-ws';
+
+describe('apiFetch 带 Authorization', () => {
+  beforeEach(() => { installMemStorage(); });
+
+  it('有 token 时带 Bearer 头', async () => {
+    _saveToken('tok-xyz');
+    const spy = vi.fn(async () => new Response('{}', { status: 200 }));
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = spy as unknown as typeof fetch;
+    await apiFetch('/api/player/me', { method: 'GET' });
+    const init = spy.mock.calls[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get('Authorization')).toBe('Bearer tok-xyz');
+  });
+});
+
+describe('buildWsUrl 带 token', () => {
+  it('token 存在时追加 &token=', () => {
+    const url = buildWsUrl('M1', 'A1', 'tok-1');
+    expect(url).toContain('matchId=M1');
+    expect(url).toContain('uid=A1');
+    expect(url).toContain('token=tok-1');
+  });
+  it('无 token 时不追加', () => {
+    expect(buildWsUrl('M1', 'A1')).not.toContain('token=');
+  });
+});
