@@ -540,8 +540,30 @@ describe('PvpSocket 鉴权失败探测短路', () => {
     FakeWebSocket.last().close();          // retryCount→3 → probe
     await tick();
     expect(onAuthFail).not.toHaveBeenCalled();
-    // 仍在重连（下一次退避计时器已排）
-    expect(calls.some((c) => c.ms === 2000)).toBe(true);
+    // 仍在重连：触发挂起的退避计时器，应真的又建一个新 socket（不只是「计时器存在」）。
+    const before = FakeWebSocket.instances.length;
+    calls.filter((c) => c.ms === 2000).forEach((c) => c.fn());
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(before);
+    sock.close();
+  });
+
+  it('authProbe 抛错（网络问题，非401）→ 不触发 onAuthFail，继续重连', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onAuthFail = vi.fn();
+    const authProbe = vi.fn(async () => { throw new Error('net'); });
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, authProbe, onAuthFail });
+    sock.connect();
+    FakeWebSocket.last().close();
+    calls.find((c) => c.ms === 300)!.fn();
+    FakeWebSocket.last().close();
+    calls.find((c) => c.ms === 1000)!.fn();
+    FakeWebSocket.last().close();          // retryCount→3 → probe（将 reject）
+    await tick();
+    expect(onAuthFail).not.toHaveBeenCalled();
+    const before = FakeWebSocket.instances.length;
+    calls.filter((c) => c.ms === 2000).forEach((c) => c.fn()); // 触发挂起的重连
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(before); // 确实又建了新 socket=继续重连
     sock.close();
   });
 });

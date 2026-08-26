@@ -107,7 +107,10 @@ export class PvpSocket {
   /** 重连失败计数（成功 open 后清零）：0 → 首试 300ms 快试；n → min(1s·2^(n-1), 5s)。 */
   private retryCount = 0;
   private authProbing = false; // 正在探活（防重复并发探测）
-  private authFatal = false;   // 已判令牌失效：短路，永不再重连
+  // 已判令牌失效标记。恒有 authFatal ⟹ closed（failAuth 里二者同置），故重连门控实际由 closed 完成；
+  // 保留本字段是为「显式标记 auth 致命短路意图」的自文档 + 门控同一 streak 内的重复探测（见 scheduleReconnect），
+  // 非死代码，勿删。
+  private authFatal = false;
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
   private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
@@ -284,6 +287,7 @@ export class PvpSocket {
     if (this.closed) return;
     this.authFatal = true;
     this.closed = true;          // 复用 closed 语义：connect/scheduleReconnect 均短路
+    this.pending = [];           // 与 close() 对齐：清掉残留补发队列信封（不再重连，无处补发）
     this.reconnectGen++;         // 让挂起的退避计时器过期
     this.clearPingTimer();
     if (this.timer !== null && this.timer !== undefined) {
