@@ -173,7 +173,8 @@ def main() -> None:
                 hub.flush_active_matches()        # 关机前刷一次，发版不丢活跃对局（_flush_lock 保证与周期 flush 不交错）
             except Exception:
                 logging.exception("关机 flush 失败")
-            httpd.shutdown()                       # 从信号处理线程打断 serve_forever
+            # shutdown() 必须在 serve_forever 所在的主线程之外调用，否则与主线程死锁；故起一个短命线程调它。
+            threading.Thread(target=httpd.shutdown, name="pvp-shutdown", daemon=True).start()
         signal.signal(signal.SIGTERM, _graceful)
         signal.signal(signal.SIGINT, _graceful)
         httpd.serve_forever()
