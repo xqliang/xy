@@ -72,11 +72,15 @@ function drawAvatar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
   if (img && img.naturalWidth) {
     ctx.save();
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
-    // cover：按长边缩放居中裁剪（立绘多为竖长方形，取横向满宽、纵向居中偏上——头像重心在脸部）
+    // 裁剪取景：按宽撑满再放大 1.6 倍，让「脸部中心」（国风全身立绘约在图高 22% 处）对准圆心。
+    // 只按宽撑满（旧版）时 2r 窗口仅占图高 ~70% 且起点在 18%，脸会贴在框顶显得人像吊在上面不居中。
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = (r * 2) / iw; // 宽撑满圆径
-    const dh = ih * s, dy = cy - r - dh * 0.18; // 纵向略偏上取脸部
-    ctx.drawImage(img, cx - r, dy, r * 2, dh);
+    const ZOOM = 1.6;
+    const s = (r * 2 * ZOOM) / iw; // 宽放大撑满（ZOOM 倍）
+    const dh = ih * s;
+    let top = dh * 0.22 - r; // 显示窗口顶部在图内的位置（把脸拉到圆心）
+    top = Math.max(0, Math.min(dh - r * 2, top)); // 夹在图内，避免上溢/下溢
+    ctx.drawImage(img, cx - r, cy - r - top, r * 2, dh);
     ctx.restore();
   } else {
     // 占位：头像名首字
