@@ -93,7 +93,7 @@ import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weap
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus } from './platform';
-import { canShare, consumeShare } from './share-quota';
+import { canShare, consumeShare, remainingShares } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
   cloudLogin,
@@ -302,7 +302,7 @@ function openSettingsPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'settings'; scheduleFrame(); });
 }
 function openStaminaPopup(): void {
-  menuPopupsLazy.ensure(() => { staminaPopupToast = ''; menuPopup = 'stamina'; scheduleFrame(); });
+  menuPopupsLazy.ensure(() => { staminaPopupToast = ''; staminaSharesLeft = remainingShares(); menuPopup = 'stamina'; scheduleFrame(); });
 }
 function openMapPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'map'; mapScrollY = 0; scheduleFrame(); });
@@ -763,6 +763,7 @@ let profilePopup: ProfilePopupState | null = null;
 let profileScrollDrag: ProfileScrollDrag | null = null;
 let profileCopyBusy = false;
 let staminaPopupToast = '';
+let staminaSharesLeft = 0;
 let menuSliderDrag: 'music' | 'sfx' | null = null;
 let helpScrollY = 0;
 let helpPointerActive = false;
@@ -1672,7 +1673,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     return true;
   }
   if (hit.kind === 'share') {
-    // 微信端真分享：判定成功后 +5 体力，扣 1 次每日额度；web 端弹窗不画此按钮，不会走到这里。
+    // 微信端真分享：判定成功后 +5 体力，扣 1 次每日额度；web 端此位画的是看广告(hit 映射为 'ad')，不会进本分支。
     if (!canShare()) { staminaPopupToast = '今日分享已达上限'; return true; }
     if (stamina.value >= STAMINA_MAX) { staminaPopupToast = '体力已满'; return true; }
     staminaPopupToast = '正在拉起分享…';
@@ -1680,6 +1681,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     void shareToFriend({ title: '大圣塔防·助我一臂之力！' }).then((ok) => {
       if (ok) {
         consumeShare();
+        staminaSharesLeft = remainingShares();
         stamina = addStamina(stamina, 5);
         staminaPopupToast = '分享成功，体力 +5';
         track('share_success', { scene: 'stamina' });
@@ -2623,7 +2625,7 @@ function frame(now: number): void {
       });
     }
     if (menuPopup === 'settings') menuPopupsLazy.get()!.drawSettingsPopup(ctx, gameSettings);
-    else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast);
+    else if (menuPopup === 'stamina') menuPopupsLazy.get()!.drawStaminaPopup(ctx, stamina.value, staminaPopupToast, staminaSharesLeft);
     else if (menuPopup === 'map') menuPopupsLazy.get()!.drawMapPopup(ctx, mapSelection, pickDailyMap().name, mapScrollY);
     else if (menuPopup === 'help') menuHelpLazy.get()!.drawHelpPopup(ctx, helpScrollY);
     else if (menuPopup === 'profile' && profilePopup) drawProfilePopup(ctx, profilePopup);

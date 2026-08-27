@@ -3,7 +3,6 @@ import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_REGEN_MS } from './stamina';
 import { isWeChat } from './platform';
-import { remainingShares } from './share-quota';
 import {
   MAPS,
   COLS,
@@ -260,8 +259,7 @@ const STA_BTN_GAP = 16;
 const STA_BTN_X = STA_PX + 32;
 const STA_BOTTOM = STA_PY + STA_PH - 28;
 const STA_SHARE = { x: STA_BTN_X, y: STA_BOTTOM - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
-const STA_AD = { x: STA_BTN_X, y: STA_SHARE.y - STA_BTN_GAP - STA_BTN_H, w: STA_BTN_W, h: STA_BTN_H };
-const STA_REGEN_Y = STA_AD.y - 22;
+const STA_REGEN_Y = STA_SHARE.y - STA_BTN_GAP - STA_BTN_H - 22;
 const STA_HINT_Y = STA_REGEN_Y - 22;
 const STA_HERO_SIZE = 84;
 const STA_HERO_CY = STA_HINT_Y - 22 - STA_HERO_SIZE / 2;
@@ -282,7 +280,7 @@ export function staminaPopupHitAt(x: number, y: number): StaminaPopupHit {
   return { kind: 'close' };
 }
 
-export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number, toast: string): void {
+export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number, toast: string, sharesLeft: number): void {
   drawInkPopupFrame(ctx, STA_PX, STA_PY, STA_PW, STA_PH, '获取体力', STA_CLOSE);
 
   ctx.textAlign = 'center';
@@ -332,9 +330,9 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
   // 单按钮：微信端「分享好友 +5」(真分享，受每日额度/体力上限影响置灰)；web 端「看广告 +10」(不变)。
   if (isWeChat) {
     const full = stamina >= STAMINA_MAX;
-    const noQuota = remainingShares() <= 0;
-    const label = noQuota ? '今日分享已达上限' : full ? '体力已满' : '分享好友 +5';
-    drawInkActionButton(ctx, STA_SHARE, label, full || noQuota, 'secondary');
+    const noQuota = sharesLeft <= 0;
+    const btnLabel = noQuota ? '今日分享已达上限' : full ? '体力已满' : '分享好友 +5';
+    drawInkActionButton(ctx, STA_SHARE, btnLabel, full || noQuota, 'secondary');
   } else {
     drawInkActionButton(ctx, STA_SHARE, '看广告 +10', false, 'accent');
   }

@@ -51,7 +51,10 @@ function save(q: ShareQuota): ShareQuota {
 /** 读取今日额度（跨天自动清零并持久化） */
 export function loadShareQuota(): ShareQuota {
   const raw = parseStoredJson<ShareQuota | null>(storeGet(KEY), normalizeRaw, null);
-  return save(normalizeQuota(raw, today()));
+  const q = normalizeQuota(raw, today());
+  // 仅当规范化结果与已存不同(无存档/跨天重置/异常夹紧)才落盘，避免纯读重复写
+  if (!raw || raw.day !== q.day || raw.count !== q.count) save(q);
+  return q;
 }
 
 /** 今日剩余可分享次数 */

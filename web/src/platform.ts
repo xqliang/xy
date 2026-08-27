@@ -167,6 +167,7 @@ export interface ShareToFriendOpts {
   imageUrl?: string;
 }
 
+let sharePending = false; // 单飞：防连点重复拉起分享/重复发奖
 /**
  * 拉起微信好友转发并按 onHide+停留启发式判定是否成功。
  * - Web / 无 wx → resolve(false)（调用方据此不发奖）。
@@ -175,6 +176,8 @@ export interface ShareToFriendOpts {
  */
 export function shareToFriend(opts: ShareToFriendOpts): Promise<boolean> {
   if (!(isWeChat && typeof wx.shareAppMessage === 'function')) return Promise.resolve(false);
+  if (sharePending) return Promise.resolve(false);
+  sharePending = true;
   return new Promise<boolean>((resolve) => {
     let settled = false;
     let sawHide = false;
@@ -184,6 +187,7 @@ export function shareToFriend(opts: ShareToFriendOpts): Promise<boolean> {
     const finish = (ok: boolean) => {
       if (settled) return;
       settled = true;
+      sharePending = false;
       clearTimeout(timer);
       try { wx.offHide?.(onHide); } catch { /* ignore */ }
       try { wx.offShow?.(onShow); } catch { /* ignore */ }
