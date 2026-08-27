@@ -67,7 +67,7 @@ import {
 } from './pause-popup';
 // Task 9.5：暂停改退出的纯决策（弹窗模态 vs 仿真暂停的拆分），抽到 pvp-pause.ts 以便单测。
 import { isPausePopupOpen as isPausePopupOpenPure, shouldStepSim, pausePopupContext } from './pvp-pause';
-import { drawInkPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮
+import { drawInkPopupFrame, drawPlainPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮；续玩弹窗用简化普通框（无宫檐）
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
 import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
 import { pvpSettle } from './pvp-settle';
@@ -461,24 +461,23 @@ const RESUME_CONTINUE_BTN = {
 const RESUME_HOME_BTN = { x: RESUME_CONTINUE_BTN.x + RESUME_BTN_W + RESUME_BTN_GAP, y: RESUME_CONTINUE_BTN.y, w: RESUME_BTN_W, h: RESUME_BTN_H };
 
 function drawResumePopup(ctx: CanvasRenderingContext2D): void {
-  const closeR = inkPopupCloseRect(RESUME_POP_X, RESUME_POP_Y);
-  const bodyTop = drawInkPopupFrame(ctx, RESUME_POP_X, RESUME_POP_Y, RESUME_POP_W, RESUME_POP_H, '继续上次对局？', closeR);
+  // 简化版（用户要求）：普通弹窗、无宫檐屋顶，标题下直接两个按钮「继续对局 / 回到首页」。
+  const bodyTop = drawPlainPopupFrame(ctx, RESUME_POP_X, RESUME_POP_Y, RESUME_POP_W, RESUME_POP_H, '继续上次对局？');
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#5a3a12';
   ctx.font = '15px "PingFang SC", serif';
   const msg = battle.wave >= 1 ? `检测到未完成的对局（第 ${battle.wave} 波）` : '检测到未完成的对局';
   ctx.fillText(msg, RESUME_POP_X + RESUME_POP_W / 2, bodyTop + 26);
-  drawInkActionButton(ctx, RESUME_CONTINUE_BTN, '继续', false, 'primary');
+  drawInkActionButton(ctx, RESUME_CONTINUE_BTN, '继续对局', false, 'primary');
   drawInkActionButton(ctx, RESUME_HOME_BTN, '回到首页', false, 'secondary');
 }
 
 function resumePopupHitAt(x: number, y: number): 'continue' | 'home' | null {
   const inR = (r: { x: number; y: number; w: number; h: number }) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-  if (inR(inkPopupCloseRect(RESUME_POP_X, RESUME_POP_Y))) return 'continue'; // × = 继续（关掉「是否继续」弹窗即继续玩）
   if (inR(RESUME_CONTINUE_BTN)) return 'continue';
   if (inR(RESUME_HOME_BTN)) return 'home';
-  return null; // 模态：点其他处不关闭，必须二选一
+  return null; // 模态：点其他处不关闭，必须二选一（简化版无 × 关闭）
 }
 
 /** 我方断线弹窗：上半区「我方连不上服务器」+ 10s 倒计时，结束自动退出。

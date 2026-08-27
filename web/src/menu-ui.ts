@@ -19,10 +19,17 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
 
 /** 弹窗标题栏高度（内容区距弹窗顶的偏移；宫檐横带「戴」在弹窗顶上方） */
 export const INK_POPUP_HEAD_H = 46;
-/** 宫檐整体上移量：檐口压到弹窗顶内、盖住弹窗顶部圆角边框（drawInkPopupFrame 用） */
-const BAND_LIFT = 5;
+/** 宫檐整体上移量：檐口压到弹窗顶内、盖住弹窗顶部圆角边角（drawInkPopupFrame 用）。用户两轮要求上移：5→10 */
+const BAND_LIFT = 10;
 /** 关闭按钮随宫檐整体上移量（与宫檐同步，压在瓦面上） */
 const CLOSE_LIFT = 0;
+/** 宫檐横带素材实测比例（tools/seeddream/_process-roof.mjs 量得，v3 水墨檐带）：
+ *  檐梁只占素材宽的 ~90%（两端各内缩 ~5%），翘角外缘伸到素材两侧边。
+ *  据此把檐梁两端对齐弹窗左右侧边（x / x+w），翘角自然外挑到弹窗外。 */
+const ROOF_BEAM_SPAN = 0.902; // bandW 基础 = w / ROOF_BEAM_SPAN
+const ROOF_BEAM_LEFT = 0.051; // bandLeft = x - ROOF_BEAM_LEFT * baseBandW - ROOF_EXTRA_W
+/** 宫檐在「檐梁对齐弹窗侧边」基础上左右各再外扩的像素（用户要求整体再宽 5px/边） */
+const ROOF_EXTRA_W = 5;
 
 export function inkPopupCloseRect(
   popX: number,
@@ -43,13 +50,13 @@ export function inkPopupCloseRect(
 function drawTitlePlaque(ctx: CanvasRenderingContext2D, cx: number, cy: number): number {
   const img = sprite('palace-title-plaque');
   if (img && img.naturalWidth) {
-    const dispH = 38; // 显示高（贴合宫檐下带、不喧宾夺主）
+    const dispH = 59; // 显示高（用户两轮要求逐步加高：38→44→59；水墨牌匾更大更醒目）
     const dispW = dispH * (img.naturalWidth / img.naturalHeight);
     ctx.drawImage(img, cx - dispW / 2, cy - dispH / 2, dispW, dispH);
-    return dispW * 0.6; // 中央木面可题字宽（两侧金框+盘龙约占 40%）
+    return dispW * 0.60; // 中央木面可题字宽（v3 水墨牌匾龙纹更大，占比回调到 0.60，题字不压龙）
   }
   // 回退（CDN 图未就绪）：程序化红木匾——暖褐红木底 + 双金线框
-  const pw = 220, ph = 38, padX = 26;
+  const pw = 260, ph = 59, padX = 30;
   const px = cx - pw / 2, py = cy - ph / 2, r = 8;
   ctx.save();
   const g = ctx.createLinearGradient(0, py, 0, py + ph);
@@ -101,24 +108,27 @@ export function drawInkPopupFrame(
   const headH = INK_POPUP_HEAD_H;
   // 不再画老的朱红渐变标题背景条（用户反馈多余）：标题栏视觉完全由厚重宫檐承担，
   // 宫檐透明处直接露出弹窗米色体（檐梁底边即标题栏与内容区的分界）。
-  // 厚重宫檐横带（Seedream 生成 palace-roof-band）：正脊+翘角+宝顶高出弹窗上沿（屋顶「戴」在弹窗顶上），
-  // 瓦面与檐梁构成标题栏主体，标题字画在瓦面上。
-  // 弹窗宽度 320~504 不一 → 三段式绘制：左右翘角段按原比例不变形，中间瓦面段横向拉伸补足
-  // （中间段被拉伸 ~2.6 倍会让瓦垄变稀，故显示高给足 72 让整体造型醒目）。
+  // 水墨宫檐横带（Seedream 生成 palace-roof-band，v3 国风水墨）：正脊+翘角+宝顶高出弹窗上沿（屋顶「戴」在弹窗顶上），
+  // 瓦面与檐梁构成标题栏主体，标题牌匾嵌在瓦面上。
+  // 三段式绘制：左右翘角段按原图比例不变形，中间瓦面段横向拉伸补足。
+  // 关键：素材里檐梁只占宽 ~90%（翘角外挑），故 bandW=w/ROOF_BEAM_SPAN、bandLeft=x-ROOF_BEAM_LEFT*bandW，
+  //       使「檐梁两端」正好压在弹窗左右侧边、翘角凸出到弹窗外（用户要求：屋顶下边缘对齐弹窗两边、屋角凸出）。
   // 素材未加载时回退矢量 drawPalaceRoof（同样造型，无细节纹理）。
   const band = sprite('palace-roof-band');
-  const bandH = 110; // 显示高（正脊顶到檐梁底）
-  const bandLift = BAND_LIFT; // 整体上移量：檐口压进弹窗顶、盖住顶部圆角边框（关闭按钮按 CLOSE_LIFT 同步微调）
-  const bandW = w + 24; // 两端翘角略出挑到弹窗外——标题栏像宫门楼，添仙宫感
-  const bandCx = x + w / 2, bandTop = y + headH - bandLift - bandH; // 檐梁底在 y+headH-30（弹窗顶圆角内）
+  const bandH = 104; // 显示高（v3 水墨檐带更扁）
+  const bandLift = BAND_LIFT; // 整体上移量：檐口压进弹窗顶、盖住顶部圆角边角
+  const baseBandW = w / ROOF_BEAM_SPAN; // 檐梁恰好 = 弹窗宽 w 时的基础宽
+  const bandW = baseBandW + ROOF_EXTRA_W * 2; // 用户要求宫檐左右各再宽 5px
+  const bandLeft = x - ROOF_BEAM_LEFT * baseBandW - ROOF_EXTRA_W; // 檐梁≈对齐弹窗侧边，整体再外扩 5px/边
+  const bandTop = y + headH - bandLift - bandH; // 檐梁底在 y+headH-bandLift（弹窗顶附近）
   if (band && band.naturalWidth) {
     const imgW = band.naturalWidth, imgH = band.naturalHeight;
-    const endSrcW = imgW * 0.25; // 源图两端翘角段各占 1/4 宽（生成时要求翘角贴满画幅两端）
+    const endSrcW = imgW * 0.25; // 源图两端翘角段各占 1/4 宽
     const endW = bandH * (endSrcW / imgH); // 翘角段显示宽按原图纵横比，保持不变形
     const midW = Math.max(0, bandW - 2 * endW);
-    ctx.drawImage(band, 0, 0, endSrcW, imgH, bandCx - bandW / 2, bandTop, endW, bandH);
-    ctx.drawImage(band, endSrcW, 0, imgW - 2 * endSrcW, imgH, bandCx - bandW / 2 + endW, bandTop, midW, bandH);
-    ctx.drawImage(band, imgW - endSrcW, 0, endSrcW, imgH, bandCx - bandW / 2 + endW + midW, bandTop, endW, bandH);
+    ctx.drawImage(band, 0, 0, endSrcW, imgH, bandLeft, bandTop, endW, bandH);
+    ctx.drawImage(band, endSrcW, 0, imgW - 2 * endSrcW, imgH, bandLeft + endW, bandTop, midW, bandH);
+    ctx.drawImage(band, imgW - endSrcW, 0, endSrcW, imgH, bandLeft + endW + midW, bandTop, endW, bandH);
   } else {
     drawPalaceRoof(ctx, x + w / 2, y + 10, w + 24, 26);
   }
@@ -127,19 +137,19 @@ export function drawInkPopupFrame(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const titleCx = x + w / 2;
-  const titleCy = bandTop + bandH - 25; // 匾中心（坐在瓦面下带、略高于檐口）
+  const titleCy = y + 11; // 匾中心（相对弹窗顶固定，与宫檐上移解耦；用户逐轮上移：19→17→14→11）
   const innerW = drawTitlePlaque(ctx, titleCx, titleCy);
   // 题字：默认 20px，超过匾木面宽则按比例缩小字号适配（长标题如「继续上次对局？」）
-  let fs = 20;
-  ctx.font = `bold ${fs}px "PingFang SC", "STKaiti", serif`;
+  let fs = 24; // 题字字号（原 20，用户要求稍微放大）
+  ctx.font = `900 ${fs}px "PingFang SC", "STKaiti", serif`;
   const tw = ctx.measureText(title).width;
   if (tw > innerW) {
     fs = Math.max(13, Math.floor((fs * innerW) / tw));
-    ctx.font = `bold ${fs}px "PingFang SC", "STKaiti", serif`;
+    ctx.font = `900 ${fs}px "PingFang SC", "STKaiti", serif`;
   }
   // 米金字 + 极细深棕描边（匾木面已提供对比，描边只为字口清晰）；题字居中于匾（水平/垂直皆取匾中心）
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.8; // 描边加粗（原 2），配合字号放大让字口更醒目
   ctx.strokeStyle = 'rgba(50,20,6,0.7)';
   ctx.strokeText(title, titleCx, titleCy);
   ctx.fillStyle = '#ffe9b8';
@@ -167,6 +177,48 @@ export function drawInkPopupFrame(
     ctx.stroke();
     ctx.lineCap = 'butt';
   }
+
+  return y + headH + 12;
+}
+
+/** 普通弹窗框（无宫檐/牌匾）：米色卷轴体 + 顶部居中标题 + 淡金分隔线，返回内容区 top。
+ *  用于需要「简化、无屋顶」的确认类弹窗（如续玩「继续对局/回到首页」）。 */
+export function drawPlainPopupFrame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  title: string,
+): number {
+  fillViewScrim(ctx, 'rgba(28,22,16,0.38)');
+  roundRect(ctx, x, y, w, h, 14);
+  const bodyG = ctx.createLinearGradient(x, y, x, y + h);
+  bodyG.addColorStop(0, '#f0e6d0');
+  bodyG.addColorStop(1, '#dcc9a4');
+  ctx.fillStyle = bodyG;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(90,60,30,0.55)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 10);
+  ctx.strokeStyle = 'rgba(180,140,90,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const headH = INK_POPUP_HEAD_H;
+  // 顶部居中标题（深棕水墨字）+ 一条淡金分隔线（替代宫檐/牌匾）
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '900 22px "PingFang SC", "STKaiti", serif';
+  ctx.fillStyle = '#5a3a12';
+  ctx.fillText(title, x + w / 2, y + headH / 2 + 6);
+  ctx.strokeStyle = 'rgba(150,110,60,0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 20, y + headH);
+  ctx.lineTo(x + w - 20, y + headH);
+  ctx.stroke();
 
   return y + headH + 12;
 }
