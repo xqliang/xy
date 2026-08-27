@@ -170,9 +170,9 @@ describe('半对保底 N=6', () => {
     TUNING.wordDrawChance = origWord;
   });
 
-  it('PAIR_PITY_AFTER 为 6', () => {
-    expect(PAIR_PITY_AFTER).toBe(6);
-    expect(TUNING.pairPityAfter).toBe(6);
+  it('PAIR_PITY_AFTER 为 5', () => {
+    expect(PAIR_PITY_AFTER).toBe(5);
+    expect(TUNING.pairPityAfter).toBe(5);
   });
 
   it('有孤儿且连续未补满 pairPityAfter 次后强制出配对字', () => {

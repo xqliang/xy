@@ -139,7 +139,7 @@ export const TUNING = {
   bossEscortSpacing: 0.38, // 护卫在妖王身后的沿路间距（格）
   // —— 骑兵波（后期随机某波：占比随波次升高；移速 ×cavalrySpdMul、血量略低）——
   cavalryFromWave: 5, // 第 5 波起才可能出现骑兵波
-  cavalryWaveChance: 0.5, // 达到后期后，每波成为骑兵波的概率
+  cavalryWaveChance: 0.45, // 达到后期后，每波成为骑兵波的概率
   cavalryRatioRampLoWave: 5, // 占比线性爬升：本波 → cavalryRatioRampHiWave
   cavalryRatioRampHiWave: 20,
   cavalryRatioRampStart: 0.3, // 第 5 波骑兵占比 30%
@@ -163,12 +163,12 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.18, // 候选中出现铲子的概率
   shovelPityAfter: 4, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
-  wordDrawChance: 0.08, // 候选中出现武将字牌的概率（每兵槽独立判定）
+  wordDrawChance: 0.15, // 候选中出现武将字牌的概率（每兵槽独立判定）
   wordPityAfter: 8, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
   earlyWordCapWave: 3, // 前 N 波字牌累计上限窗口
-  earlyWordCap: 1, // 上限窗口内最多出几个字
+  earlyWordCap: 2, // 上限窗口内最多出几个字
   earlyWordGuaranteeWave: 6, // 到该波仍无字则强制出字
   earlyWordGuarantee: 1, // 前 earlyWordGuaranteeWave 波至少出几个字
   earlyShovelWave: 3, // 前 N 波铲子累计配额窗口
@@ -181,12 +181,12 @@ export const TUNING = {
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
-  endlessCycleStep: 1.1,
+  endlessCycleStep: 1.05,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
   eliteFromWave: 4, // 第 4 波起可能刷出精英妖（略推迟控场，降低开局秒杀感）
-  eliteChance: 0.28, // 非 BOSS 怪成为精英的概率
+  eliteChance: 0.2, // 非 BOSS 怪成为精英的概率
   eliteMinGap: 5, // 两次带技能精英之间至少隔几只普通妖（避免连控导致大片兵器失效）
   skillRadius: 2, // 控制技能作用半径（格）
   skillTargetMin: 0, // 单次施法最少命中兵器数（0=可落空/空放）

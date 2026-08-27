@@ -13,7 +13,7 @@ import {
   type GeneralRole,
 } from './generals';
 
-export const PAIR_PITY_AFTER = 6;
+export const PAIR_PITY_AFTER = 5;
 /** 半对保底聚焦：场上独特单字 ≥ 该数时，随机选一个提高其配对权重 */
 export const PAIR_PITY_FOCUS_MIN_ORPHANS = 3;
 /** 半对保底：聚焦孤儿所需配对字的相对权重 */

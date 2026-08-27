@@ -229,17 +229,17 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 
 | 常量 | 值 | 含义 |
 |------|----|------|
-| `wordDrawChance` | **0.08** | 每兵槽独立转字概率（英雄随机） |
+| `wordDrawChance` | **0.15** | 每兵槽独立转字概率（英雄随机） |
 | `SUMMON_MAX_WORD_SLOTS` | **2** | 单次征兵最多出几个字 |
 | `PARTNER_BOOST` | **0.12** | 非保底时：半对孤儿所需配对字的抽字权重倍率（软加权） |
 | `TRANSIT_RAMP_START/FULL` | 4 / 10 | 满3过渡武将在场时，**相对其组成波次**在后续 4-10 波内提升同门满5**非共享字**权重（age=当前波−组成波；age<4 不 boost、4→10 线性、≥10 满额）。各满3 独立计时，故不同波次组成的满3 各自爬坡；确保能在其组成后约 4-10 波抽到该字，把满3换非共享字升为同门满5（如牛郎 牛+郎 于第 5 波组成 → 第 9-15 波爬坡抽「二」→ 二郎）。组成波次记在 `GeneralState.formedWave`（首次激活时记录） |
 | `TRANSIT_BOOST_MAX` | **8** | 上述爬坡满额倍率（×8，强压过满5基础 weight=1 与其它衰减） |
-| `pairPityAfter` / `PAIR_PITY_AFTER` | 6 | 有孤儿且连续 N 次未补 → 强制抽一张配对字 |
+| `pairPityAfter` / `PAIR_PITY_AFTER` | 5 | 有孤儿且连续 N 次未补 → 强制抽一张配对字 |
 | `PAIR_PITY_FOCUS_MIN_ORPHANS` | **3** | 半对保底聚焦阈值：场上独特单字 ≥ 该数 |
 | `PAIR_PITY_FOCUS_W` | **0.4** | 保底时随机选中的孤儿，其配对字相对权重 |
 | `PAIR_PITY_OTHER_W` | **0.2** | 保底时其余配对字相对权重（孤儿不足 3 时全部用此权） |
 | `wordPityAfter` | **8** | 连续 N 次无字 → 下次强制 1 字 |
-| `earlyWordCapWave` / `earlyWordCap` | 3 / 1 | 前 3 波征兵累计最多 1 字 |
+| `earlyWordCapWave` / `earlyWordCap` | 3 / 2 | 前 3 波征兵累计最多 2 字 |
 | `earlyWordGuaranteeWave` / `earlyWordGuarantee` | 6 / 1 | 第 6 波仍无字则强制 1 字 |
 | `earlyShovelWave` / `earlyShovelMin` / `earlyShovelMax` | 3 / 1 / 3 | 前 3 波征兵累计铲子 1–3（不含 `initialShovels`） |
 | `shovelDrawChance` | **0.18** | 候选中出现铲子的概率（仍有待挖空位或地图桃树时） |
@@ -256,7 +256,7 @@ UI：武将信息面板展示「大招CD」——未激活为配置值 `skillCd`
 **何时触发**
 
 1. 非首次征兵，且本方棋盘存在未激活占用的单字（孤儿，`boardOrphanCharsNow` / AI 对称）。
-2. 连续 `pairPityAfter`（**6**）次征兵仍未抽出可补该孤儿的配对字。
+2. 连续 `pairPityAfter`（**5**）次征兵仍未抽出可补该孤儿的配对字。
 3. 本盘字槽策略允许强制配对（`allowForcePartner`，且 `wordSlotsCap > 0`）。
 
 触发后本盘至少强制抽 **1** 张「仍缺的配对字」（`pendingPartnerChars`，已排除本盘 tray 已有字与场上达上限的字）；**不会**抽非配对字。
@@ -399,7 +399,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | 类型 | 公式 | 关键倍率 |
 |------|------|----------|
 | 普通妖 | `normalMonsterHp()` | — |
-| 精英 | × `eliteHpMul` | **1.4**（第 `eliteFromWave`=4 波起，概率 `eliteChance`=0.28） |
+| 精英 | × `eliteHpMul` | **1.4**（第 `eliteFromWave`=4 波起，概率 `eliteChance`=0.2） |
 | 小 Boss | × `miniBossHpMul` | **3.5**（第 `miniBossFromWave`=5 波起，非妖王波概率 0.42） |
 | 骑兵 | 在普通/精英上再 × `cavalryHpMul` | **2/3** |
 | 妖王 | 开波 `max(normalMonsterHp, pathDamage × 压力比)`；双雄引妖王实时重算 | 见 `bossHpMulEarly`~`bossHpMul` |
@@ -419,7 +419,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 
 ### 9.4 骑兵波
 
-第 `cavalryFromWave`（**5**）波起，每波 **50%** 概率成为骑兵波（`cavalryWaveChance`）。命中后本波占比：
+第 `cavalryFromWave`（**5**）波起，每波 **45%** 概率成为骑兵波（`cavalryWaveChance`）。命中后本波占比：
 
 | 波次 | 占比 | 常量 |
 |------|------|------|
@@ -437,13 +437,13 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ (max(0, wave−10) / e
 | 常量 | 值 |
 |------|-----|
 | `endlessWavesPerCycle` | 10 |
-| `endlessCycleStep` | **1.1** |
+| `endlessCycleStep` | **1.05** |
 
-| 波次 | 圈系数（S=1.1） |
+| 波次 | 圈系数（S=1.05） |
 |------|----------------|
 | 1–10 | ×1（前 10 波保护） |
-| 11–20 | 连续 ×S^0.1 → ×S（波 20 = ×1.1，不再波 11 悬崖） |
-| 21–30 | 连续 ×S^1.1 → ×S²（波 30 ≈ ×1.21） |
+| 11–20 | 连续 ×S^0.1 → ×S（波 20 = ×1.05，不再波 11 悬崖） |
+| 21–30 | 连续 ×S^1.1 → ×S²（波 30 ≈ ×1.10） |
 
 对战与无尽共用；写入目标血量的 `effectiveDifficulty` 乘区（波 ≤ `monsterHpNoDiffTo` 不乘，其后经绝对血量爬坡逼近），**不影响移速**。
 
@@ -453,12 +453,12 @@ effectiveDifficulty = difficultyMul × endlessCycleStep ^ (max(0, wave−10) / e
 |------|------|
 | **出怪总量** | `planWavePressure`：最优 DPS × `PRESSURE_WINDOW_SEC`（10s）× 压力比；数量不低于 `monstersInWave(wave)`（10+n−1） |
 | **同批叠怪** | `spawnBatchCap(wave)`：单次随机 1..N（波 6 起 N≥2，约波 22 封顶 10） |
-| **压力比** | 恒定 **60%**（`PRESSURE_RATIO`，全波次一致；随波变难交给 §9.5 `effectiveDifficulty`） |
+| **压力比** | 恒定 **52%**（`PRESSURE_RATIO`，全波次一致；随波变难交给 §9.5 `effectiveDifficulty`） |
 
 | 常量（`BOARD_POWER`） | 值 |
 |----------------------|-----|
 | `PRESSURE_FROM_WAVE` | 6 |
-| `PRESSURE_RATIO` | **0.60**（恒定，全波次一致，DevTools 可调） |
+| `PRESSURE_RATIO` | **0.52**（恒定，全波次一致，DevTools 可调） |
 | `PRESSURE_WINDOW_SEC` | 10 |
 | `SPAWN_BATCH_CAP_MAX` | 10 |
 

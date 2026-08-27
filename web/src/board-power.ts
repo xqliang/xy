@@ -12,7 +12,7 @@ export const BOARD_POWER = {
    * 「随波变难」已完全交给 effectiveDifficulty（分圈曲线），故此比例不再随波爬升，
    * 避免「按波加压」在两个旋钮上重复。DevTools 可调此单值。
    */
-  PRESSURE_RATIO: 0.6,
+  PRESSURE_RATIO: 0.52,
   /** 压力窗口（秒） */
   PRESSURE_WINDOW_SEC: 10,
   /** 第几波起按最优输出抬高出怪数 */

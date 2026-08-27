@@ -64,14 +64,14 @@ Headless 代理 = 空 loadout + 节流自动布阵，接近「初级～普通」
 
 | 参数 | 值 |
 |------|-----|
-| 压力比（全波次一致） | **60%** |
+| 压力比（全波次一致） | **52%** |
 
 「随波变难」已完全交给 `effectiveDifficulty` 分圈曲线（见 [`hero-combat-reference.md` §9.5](./hero-combat-reference.md)），压力比不再按波爬升——避免「按波加压」在两个旋钮上重复。
 
 相关常量：
 
 - `PRESSURE_FROM_WAVE = 6` — 第几波起按最优 DPS 抬量 / 允许叠怪批次
-- `PRESSURE_RATIO = 0.60` — 承压比（恒定，全波次一致，DevTools 可调）
+- `PRESSURE_RATIO = 0.52` — 承压比（恒定，全波次一致，DevTools 可调）
 
 ### AI 节奏
 

@@ -41,7 +41,7 @@ describe('征兵前期配额（Battle.summon）', () => {
     TUNING.shovelDrawChance = origShovel;
   });
 
-  it('前 3 波累计最多 1 字', () => {
+  it('前 3 波累计最多 2 字', () => {
     TUNING.wordDrawChance = 1; // 非首抽尽量转字
     TUNING.shovelDrawChance = 0;
     const b = new Battle(7);
@@ -55,8 +55,8 @@ describe('征兵前期配额（Battle.summon）', () => {
       expect(b.summon()).toBe(true);
       words += b.tray.filter((t) => t.kind === 'word').length;
     }
-    expect(words).toBeLessThanOrEqual(1);
-    expect(b.earlySummonStatsForTest().wordsCap).toBeLessThanOrEqual(1);
+    expect(words).toBeLessThanOrEqual(2);
+    expect(b.earlySummonStatsForTest().wordsCap).toBeLessThanOrEqual(2);
   });
 
   it('第 6 波仍无字时强制至少 1 字', () => {
