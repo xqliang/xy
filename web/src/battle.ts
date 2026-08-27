@@ -131,7 +131,7 @@ export const TUNING = {
   bossSegMax: 3, // 第 11 波起每段最多妖王波
   bossHpMul: 14, // 后期 BOSS 血量倍数
   bossHpMulEarly: 8, // 前期(约第5波)BOSS 血量倍数；随波次线性爬升到 bossHpMul
-  bossSpdMul: 0.625, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
+  bossSpdMul: 0.7, // BOSS 移速倍率：比普通妖慢（血厚推进慢，给玩家集火时间），但不至于过分迟缓
   bossHpRampWaves: 20, // 血量倍数从 early 爬到满所用波跨度（自 bossFirstSegLo 起算）
   bossEscortMin: 4, // 妖王出场护卫最少只数
   bossEscortMax: 10, // 妖王出场护卫最多只数

@@ -413,7 +413,7 @@ hp(w) = w ≤ monsterHpNoDiffTo ? fixed(w) : min(target(w), hp(w−1) + maxStep(
 | 普通妖 | 固定 `monsterSpd` = **0.6** 格/s（不随波次 / `effectiveDifficulty` 升高） |
 | 骑兵 | × `cavalrySpdMul` = **1.25** |
 | 小 Boss | × `miniBossSpdMul` = 0.82 |
-| 妖王 | × `bossSpdMul` = 0.625 |
+| 妖王 | × `bossSpdMul` = 0.7 |
 
 被动蛛网/淤泥、技能疾风/减速照常叠加。
 
