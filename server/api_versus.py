@@ -294,6 +294,7 @@ class VersusHub:
                 dead.append(mid)
         for mid in dead:
             self.matches.pop(mid, None)
+            self._forget_match_state(mid)              # C2：连带清 Redis mstate（终局残留/废弃局）
             for tk in [t for t, (mm, _u) in list(self.ticket_match.items()) if mm == mid]:
                 self.ticket_match.pop(tk, None)
         # 2) 孤儿/超时等待者（Redis）：委托 _sweep（EXISTS 孤儿清 + 逻辑超时清，含 q:{rank} 孤儿）。
@@ -519,6 +520,7 @@ class VersusHub:
         m["ended"] = True
         m["ended_ms"] = now
         self._persist_result(m, now)
+        self._forget_match_state(m["match_id"])        # C2：终局同步删 Redis mstate，防 TTL 窗口内被复活
 
     def _set_draw(self, m, now: int) -> None:
         # 双方 EPS 内阵亡 → 平局（可覆盖先到阵亡者已判的胜负）
@@ -526,6 +528,7 @@ class VersusHub:
                        "b": {"outcome": "draw", "reason": "draw"}}
         m["ended"] = True; m["ended_ms"] = now
         self._persist_result(m, now)
+        self._forget_match_state(m["match_id"])        # C2：同 _set_result
 
     def _persist_result(self, m, now: int) -> None:
         # 幂等落库：先删该 match 旧行再插，允许平局改判覆盖先前的胜负行。
@@ -670,6 +673,8 @@ class VersusHub:
         with self.lock:
             now = self._now()
             m = self.matches.get(match_id)
+            if m is None:                              # C2：本实例没有 → 尝试从 Redis 懒认领接管
+                m = self._load_match_from_redis(match_id, now)
             if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
                 return {"error": "bad_hello"}
             me, opp = self._sides(m, uid)
@@ -836,54 +841,76 @@ class VersusHub:
             return False
 
     def flush_active_matches(self) -> None:
-        """定期/关机时把所有未终局对局镜像进 pvp_active_match（锁内快照、锁外写库、对账删非活跃行）。
-        写库失败只记日志不抛（对齐 _persist_result）。
-        _flush_lock 串行化整个 flush：B5 会让 SIGTERM handler 也调本方法，与周期 flush 并发时，
-        老快照的 DELETE ... NOT IN 可能删掉新 flush 刚 UPSERT 的局、关机时无下轮自愈 → 丢局；
-        故最外层串行化（比"关机前停线程"可靠，停标志不打断在途 flush）。_flush_lock 是外层、
-        self.lock 内层，无别的路径取 _flush_lock，故无重入无死锁。"""
+        """把本实例持有的未终局对局镜像进 Redis mstate:{mid}（懒认领/接管的数据源）。
+        C2：取代 B-core 的 MariaDB pvp_active_match。多实例下每实例只 flush 自己 self.matches
+        （即它 own 的局），故**不做**跨实例的「DELETE NOT IN」对账（会误删别实例的活跃局）；
+        清理靠「终局同步删 mstate（_forget_match_state）」+ 每次写带 PEXPIRE MATCH_REAP_MS 兜底
+        （owner 崩溃则状态到点自动过期，与 match:{mid} 轻量记录同寿）。
+        并发纪律沿用 B-core：_flush_lock 串行化整个 flush（与周期 flush / SIGTERM flush 互斥）、
+        self.lock 内做内存快照 + json.dumps、Redis 写在锁外。self.r 为 None（纯内存 ws 测试 hub）直接跳过。"""
+        if self.r is None:
+            return
         with self._flush_lock:
             with self.lock:
                 snap = []
                 for mid, m in self.matches.items():
                     if m.get("ended"):
                         continue
-                    # 逐局 try/except：某局序列化抛错只跳过该局（对齐 load 的逐行容错），
-                    # 不中断整轮 flush，否则一局坏数据会让本轮所有活跃局都不落库、且每轮复发。
                     try:
                         tks = {u: t for t, (mm, u) in self.ticket_match.items() if mm == mid}
-                        # 锁内 json.dumps：依赖「服务端每局只存小 digest（不含 units/大快照）」故成本低（微秒级），
-                        # 持锁可忽略。若将来每局状态变大或并发局数飙升，改 deepcopy-in-lock + dumps-out-of-lock 或分片。
-                        snap.append({
-                            "match_id": mid, "uid_a": m["a"]["uid"], "uid_b": m["b"]["uid"],
-                            "ticket_a": tks.get(m["a"]["uid"]), "ticket_b": tks.get(m["b"]["uid"]),
-                            "state_json": json.dumps(_serialize_match(m), ensure_ascii=False),
-                        })
+                        blob = json.dumps({
+                            "state": _serialize_match(m),
+                            "ticket_a": tks.get(m["a"]["uid"]),
+                            "ticket_b": tks.get(m["b"]["uid"]),
+                        }, ensure_ascii=False)
+                        snap.append((mid, blob))
                     except Exception:
-                        # 序列化失败的局本轮不进 active_ids，可能被 reconcile 删掉它上一轮的行——可接受：
-                        # 下轮修好会重新 UPSERT；且持续失败本就说明该局数据有问题。
-                        logging.exception("pvp_active_match 单局快照失败 match_id=%s，跳过", mid)
-                active_ids = [s["match_id"] for s in snap]
-            dt = self.db.now()
+                        logging.exception("pvp mstate 单局快照失败 match_id=%s，跳过", mid)
             try:
-                with self.db.cursor() as cur:
-                    for s in snap:
-                        cur.execute(
-                            "INSERT INTO pvp_active_match"
-                            " (match_id,uid_a,uid_b,ticket_a,ticket_b,state_json,updated_at)"
-                            " VALUES (%s,%s,%s,%s,%s,%s,%s)"
-                            " ON DUPLICATE KEY UPDATE uid_a=VALUES(uid_a),uid_b=VALUES(uid_b),"
-                            " ticket_a=VALUES(ticket_a),ticket_b=VALUES(ticket_b),"
-                            " state_json=VALUES(state_json),updated_at=VALUES(updated_at)",
-                            (s["match_id"], s["uid_a"], s["uid_b"], s["ticket_a"], s["ticket_b"],
-                             s["state_json"], dt))
-                    if active_ids:
-                        ph = ",".join(["%s"] * len(active_ids))
-                        cur.execute(f"DELETE FROM pvp_active_match WHERE match_id NOT IN ({ph})", active_ids)
-                    else:
-                        cur.execute("DELETE FROM pvp_active_match")
+                pipe = self.r.pipeline(transaction=False)
+                for mid, blob in snap:
+                    pipe.set(k("mstate", mid), blob)
+                    pipe.pexpire(k("mstate", mid), MATCH_REAP_MS)
+                pipe.execute()
             except Exception:
-                logging.exception("pvp_active_match flush 失败（不影响对局，下轮重试）")
+                logging.exception("pvp mstate flush 失败（不影响对局，下轮重试）")
+
+    def _load_match_from_redis(self, mid: str, now: int) -> Optional[dict]:
+        """懒认领：本实例 self.matches 无此局时，从 Redis mstate:{mid} 重建整局运行时并接管 owner。
+        C2/C3：反代按 matchId 一致性哈希把两端路由到同一实例，owner 崩溃/发版后重连会落到接管实例，
+        此处从 Redis 恢复运行时（ws_send=None、gone_ms=now，等重连方在 ws_hello 里挂 send/清零）。
+        无记录/解析失败/已终局 → None（ws_hello 据此回 bad_hello）。self.r 为 None 直接 None。"""
+        if self.r is None:
+            return None
+        raw = self.r.get(k("mstate", mid))
+        if not raw:
+            return None
+        try:
+            blob = json.loads(raw)
+            m = _deserialize_match(blob["state"], now)
+        except Exception:
+            logging.exception("pvp mstate 解析失败 match_id=%s", mid)
+            return None
+        if m.get("ended"):
+            self.r.delete(k("mstate", mid))
+            return None
+        self.matches[mid] = m
+        ta, tb = blob.get("ticket_a"), blob.get("ticket_b")
+        if ta:
+            self.ticket_match[ta] = (mid, m["a"]["uid"])
+        if tb:
+            self.ticket_match[tb] = (mid, m["b"]["uid"])
+        return m
+
+    def _forget_match_state(self, mid: str) -> None:
+        """终局/回收时同步删 Redis mstate，避免终局后 TTL 窗口内被重连「复活」成活跃局。
+        幂等；失败仅记日志（不影响终局落库）。self.r 为 None 直接返回。"""
+        if self.r is None:
+            return
+        try:
+            self.r.delete(k("mstate", mid))
+        except Exception:
+            logging.exception("pvp mstate 删除失败 match_id=%s", mid)
 
     def load_active_matches(self) -> int:
         """进程启动时回放未终局对局到内存（在 serve_forever 之前调用，无并发）。返回回放条数。"""
