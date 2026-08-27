@@ -5291,6 +5291,12 @@ export class Battle {
     return ok;
   }
 
+  /** 是否存在可开垦阵位（未解锁、非桃树的玩家可摆放格）。与 shareDigBest 候选集同口径，供分享按钮门控/预检。 */
+  hasDiggableCell(): boolean {
+    if (this.status !== 'playing' && this.status !== 'ready') return false;
+    return this.lockedCells().some((c) => !this.trees.has(cellKey(c.c, c.r)));
+  }
+
   /**
    * AI 侧洛阳铲自动挖指定格：与 aiPlaceFromTray 铲子分支逐条一致，但不消耗 aiShovels 道具。
    * 评分来源 diggableCells 沿用 AI 既有口径（含桃树格），故此处只校验「未解锁 + 属 AI 可摆放格」。

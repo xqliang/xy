@@ -12,7 +12,7 @@ export interface ShareQuota {
   count: number;
 }
 
-// 自然日索引（与 stamina.ts / loadout.ts 一致）
+// 日索引 floor(Date.now()/86400000)：按 UTC 零点切天（与 loadout.ts 同口径）
 function today(): number {
   return Math.floor(Date.now() / 86400000);
 }

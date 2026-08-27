@@ -40,3 +40,12 @@ describe('shareDigBest：分享奖励自动挖最优格', () => {
     expect(b.digFx.length).toBe(0);
   });
 });
+
+describe('hasDiggableCell', () => {
+  it('有锁定非桃树格→true；全被桃树占→false', () => {
+    const b = mkBattle();
+    expect(b.hasDiggableCell()).toBe(true);
+    for (const c of b.lockedCells()) b.trees.set(`${c.c},${c.r}`, treeAt(c.c, c.r));
+    expect(b.hasDiggableCell()).toBe(false);
+  });
+});

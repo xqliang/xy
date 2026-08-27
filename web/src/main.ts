@@ -1693,7 +1693,7 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
         track('share_fail', { scene: 'stamina' });
       }
       scheduleFrame();
-    });
+    }).catch(() => { /* 防御:内部已各自吞错 */ });
     return true;
   }
   return true;
@@ -1956,6 +1956,7 @@ function handleButton(x: number, y: number): boolean {
 // tray 铲子分享按钮点击：微信真分享→成功则自动挖最优格并扣 1 次额度（先挖后扣，无可挖格不扣）。
 async function handleShareShovel(): Promise<void> {
   if (!canShare()) return; // 双保险（按钮已按额度隐藏）
+  if (!battle.hasDiggableCell()) { battle.message = '暂无可开垦阵位'; scheduleFrame(); return; } // 无可挖不发起分享
   track('share_click', { scene: 'shovel' });
   const ok = await shareToFriend({ title: '大圣塔防·助我一铲之力！' });
   if (!ok) {
@@ -1964,11 +1965,11 @@ async function handleShareShovel(): Promise<void> {
     scheduleFrame();
     return;
   }
+  track('share_success', { scene: 'shovel' }); // 分享成功即记(与体力弹窗口径一致);挖格是后续奖励
   if (battle.shareDigBest()) {
-    consumeShare(); // 挖到才扣次数；shareDigBest 内已设 message
-    track('share_success', { scene: 'shovel' });
+    consumeShare(); // 挖到才扣次数(先挖后扣);shareDigBest 内已设 message
   } else {
-    battle.message = '暂无可开垦阵位'; // 无可挖格：不扣次数
+    battle.message = '暂无可开垦阵位'; // 极少见:分享期间棋盘变满,不扣次数
   }
   scheduleFrame();
 }
@@ -2166,7 +2167,7 @@ function onPointerDown(e: PointerEvent) {
   }
   if (hitShareShovelBtn(x, y, battle)) {
     playSfx('click');
-    void handleShareShovel();
+    void handleShareShovel().catch(() => {});
     return;
   }
   if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {

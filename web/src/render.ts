@@ -10706,16 +10706,17 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
 
 // tray 右侧「分享得铲」按钮（一格大小）：仅微信端、wave≥6、今日仍有分享额度时显示。
 // 位置与 dev-only「布阵」按钮同区；生产 showAutoplaceBtn()=false 不冲突（仅 DevTools 开 autoplace 时视觉重叠）。
-export function shareShovelBtnRect(): { x: number; y: number; w: number; h: number } {
+function shareShovelBtnRect(): { x: number; y: number; w: number; h: number } {
   const x = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 4; // tray 右缘 +4
   return { x, y: TRAY_Y + 5, w: TRAY_SLOT - 6, h: TRAY_H - 10 };
 }
 
-export function shareShovelBtnVisible(b: Battle): boolean {
+function shareShovelBtnVisible(b: Battle): boolean {
   return isWeChat
     && b.wave >= 6
     && (b.status === 'ready' || b.status === 'playing')
-    && remainingShares() > 0;
+    && remainingShares() > 0
+    && b.hasDiggableCell();
 }
 
 export function hitShareShovelBtn(x: number, y: number, b: Battle): boolean {
