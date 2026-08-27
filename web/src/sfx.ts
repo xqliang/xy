@@ -138,6 +138,17 @@ let ambientNodes: { stop?: () => void; node: AudioNode | HTMLAudioElement }[] = 
 let ambientTimers: number[] = [];
 let ambientMap = '';
 
+// 微信小游戏运行时不暴露 Web Audio 全局构造器（AudioNode / GainNode），用 `instanceof` 会抛
+// ReferenceError: X is not defined（真机启用 BGM 后崩溃）。改用鸭子类型判断（类型名只出现在被擦除的
+// 类型位置，不产生运行时全局引用）：WebAudio 节点跨端都有 disconnect；GainNode 独有 gain(AudioParam)。
+// HTMLAudioElement 兜底节点二者皆无 → 与旧 instanceof 行为一致（Web 端不变）。
+function isWebAudioNode(n: AudioNode | HTMLAudioElement): n is AudioNode {
+  return typeof (n as { disconnect?: unknown }).disconnect === 'function';
+}
+function isGainNode(n: AudioNode | HTMLAudioElement): n is GainNode {
+  return (n as { gain?: unknown }).gain != null;
+}
+
 // —— 文件 BGM（真实音频循环）——
 // 指定地图 → 资源清单里的音频 key。这些地图用真实音频循环，替代程序化氛围旋律。
 // 循环平滑：各 bgm 文件已在离线裁剪时烘焙淡入/淡出（结尾数秒渐弱），循环接缝不突兀。
@@ -187,7 +198,7 @@ export function applyAudioVolumes(
   if (!ctx) return;
   const mg = musicEnabled && !muted && musicVolume > 0 ? 0.5 * musicVolume : 0;
   for (const a of ambientNodes) {
-    if (a.node instanceof GainNode) {
+    if (isGainNode(a.node)) {
       a.node.gain.setTargetAtTime(mg, ctx.currentTime, 0.05);
     }
   }
@@ -257,7 +268,7 @@ export function stopAmbient(): void {
   ambientTimers = [];
   for (const a of ambientNodes) {
     try { a.stop?.(); } catch { /* ignore */ }
-    if (a.node instanceof AudioNode) a.node.disconnect(); // HTMLAudioElement 兜底节点无 disconnect
+    if (isWebAudioNode(a.node)) a.node.disconnect(); // HTMLAudioElement 兜底节点无 disconnect
   }
   ambientNodes = [];
   ambientMap = '';
