@@ -1,0 +1,4 @@
+# 开发/测试依赖（生产不装）。fakeredis 用于 PvP Redis 逻辑的内存冒烟测试，免起真实 Redis。
+# 已在 Python 3.14.5 验证：fakeredis 2.37.1 安装+导入+读写(str/list/zset)均正常。
+fakeredis>=2
+pytest>=8

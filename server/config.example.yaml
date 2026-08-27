@@ -7,6 +7,11 @@ db:
   user: "xy_game"
   password: "CHANGE_ME"
   database: "xy_game"
+redis:
+  host: "127.0.0.1"   # PvP 匹配/对局状态存储；与其它项目共用同一 Redis，key 统一带 xy:pvp: 前缀
+  port: 6379
+  db: 0
+  password: ""        # 空串=无密码（本地默认）；线上按需填写
 admin:
   username: "admin"
   password: "CHANGE_ME"
