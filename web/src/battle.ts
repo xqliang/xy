@@ -5279,6 +5279,19 @@ export class Battle {
   }
 
   /**
+   * 分享奖励：自动挖一个最优可开挖阵位（复用洛阳铲玩家侧确定性路径 scoreDiggableCells→最优格→playerAutoDigCell）。
+   * 不消耗铲子道具、不依赖 mods.autoShovel；无可挖格 / 终局态返回 false（调用方据此决定是否扣分享次数）。
+   */
+  shareDigBest(): boolean {
+    if (this.status !== 'playing' && this.status !== 'ready') return false;
+    const scored = scoreDiggableCells(this.buildPlayerAutoView(), DIG_EXIT_WEIGHT);
+    if (scored.length === 0) return false;
+    const ok = this.playerAutoDigCell(scored[0]!.cell);
+    if (ok) this.message = '好友助力，铲开新阵位！'; // 覆盖 playerAutoDigCell 的洛阳铲文案
+    return ok;
+  }
+
+  /**
    * AI 侧洛阳铲自动挖指定格：与 aiPlaceFromTray 铲子分支逐条一致，但不消耗 aiShovels 道具。
    * 评分来源 diggableCells 沿用 AI 既有口径（含桃树格），故此处只校验「未解锁 + 属 AI 可摆放格」。
    */
