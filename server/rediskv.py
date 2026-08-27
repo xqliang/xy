@@ -4,8 +4,9 @@ from typing import Any
 PREFIX = "xy:pvp:"
 
 
-def k(*parts: str) -> str:
-    return PREFIX + ":".join(parts)
+def k(*parts: object) -> str:
+    # 接受 int（如 rank）等：统一转 str 再拼，避免 ":".join 对非 str 抛 TypeError（匹配层 xy:pvp:q:{rank} 常传 int）
+    return PREFIX + ":".join(map(str, parts))
 
 
 def make_client(cfg: dict[str, Any]):
