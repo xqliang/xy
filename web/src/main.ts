@@ -378,11 +378,16 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
       pvpOppGoneStart = performance.now();
       battle.message = '对手网络中断…';
     }, // 倒计时与判胜由 frame() 驱动
+    onNoShow: () => {
+      // C5：对手全程未应战(打空气)。已终局则不触发；由 frame() 退体力+自动重匹配。
+      if (pvpResult) return;
+      pvpNoShow = true;
+    },
   });
   pvpSock.connect();
   // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
-  pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; // 新对局从干净态开始（上次对局若被判死，endPvpSession 已清；这里再兜底一次）
+  pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 新对局从干净态开始（上次对局若被判死，endPvpSession 已清；这里再兜底一次）
   pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
   pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
@@ -403,7 +408,7 @@ function endPvpSession(): void {
   pvpSock = null; oppView = null;
   pvpResult = null; pvpNextWave = null; pvpSettleResult = null; pvpOpponent = null;
   pvpSurrendered = false; pvpStatusReported = false;
-  pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; // 清断线看门狗标志（下次进对局从干净态开始）
+  pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 清断线看门狗标志（下次进对局从干净态开始）
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpMatchStartMs = 0;
   pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
 }
@@ -536,8 +541,9 @@ function onPvpFailed(_reason: string): void {
   // 失败态由匹配屏「确认」按钮回首页；这里仅确保重绘（needsContinuousLoop 已保持帧）
   scheduleFrame();
 }
-function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string): void {
+function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string, note = ''): void {
   if (screen === 'pvpMatching') return; // 防重入：已在匹配屏则忽略（避免并发 ensure 建出多个 controller 泄漏）
+  pvpMatchingNote = note;                // C5：no-show 重匹配传提示；普通进入传空清掉
   // 注（Task 6 退役）：旧模型曾在此组装本方配装快照(myLoadout)上交服务端转发给对手；
   // WS 快照模型无消费方，已删除。net 直接用顶层 pvpNet 对象（五个透传函数）。
   pvpMatchLazy.ensure((m) => {
@@ -650,6 +656,8 @@ let pvpNetDead = false;                         // 本局已判网络断开（>1
 let pvpNetDeadStart = 0;                        // 判死时刻(ms)：倒计时起点，0=未开始
 let pvpOppGone = false;                         // 对手已断线（WS oppGone）：置真即弹「对方断线」倒计时
 let pvpOppGoneStart = 0;                        // 对手断线时刻(ms)：倒计时起点，0=未开始
+let pvpNoShow = false;              // C5：服务端判对手打空气 → frame() 退体力+自动重匹配
+let pvpMatchingNote = '';           // C5：匹配中界面提示（如「对手未应战，正在重新匹配…」）
 /** 断线倒计时时长（ms）：与服务端 DISCONNECT_GRACE_MS(45s) 对齐——客户端倒计时 ≥ 服务端宽限，
  *  确保不早于服务端权威 result 就回首页。起点是 netDead 判死时刻（其前还有 NET_DEAD_THRESHOLD_MS 的无入站检测窗，二者不同）。 */
 const DISCONNECT_COUNTDOWN_MS = 45_000;   // 与服务端 DISCONNECT_GRACE_MS 对齐（10s→45s）：断线倒计时/复活窗口
@@ -2678,7 +2686,7 @@ function frame(now: number): void {
         nickname: loadProfile().nickname,
         avatarId: loadProfile().avatarId,
         rankLevel: rank.level,
-      });
+      }, pvpMatchingNote);
       if (view) sc.drawPvpMatching(ctx, view);
       // matched 动画窗口期：MATCHED_SHOW_MS 播完对阵卡动画后真正开局（onPvpMatched 会切战斗屏并清 controller）
       if (pvpPendingMatch && pvpController.state.matchedAt > 0
@@ -2813,6 +2821,14 @@ function frame(now: number): void {
         void submitLeaderboard();
         scheduleCloudSync(1000);
       }
+    }
+    // C5：对手打空气 → 退还本局体力(镜像 onPvpMatched 的扣费)，关会话，自动静默重新匹配。
+    if (pvpSock && pvpNoShow) {
+      stamina = addStamina(stamina, STAMINA_COST);   // 退回本局扣的体力，避免为一场真实对局二次扣费
+      endPvpSession();                                // 关 WS + 清 PvP 态（含 pvpNoShow=false）
+      enterPvpMatching('random', undefined, '对手未应战，正在重新匹配…');
+      scheduleFrame();
+      return;
     }
     // —— Task 10：PvP 终局由「服务端 result」权威驱动 ——
     // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里结算段位/功德/商人

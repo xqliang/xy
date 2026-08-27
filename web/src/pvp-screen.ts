@@ -20,6 +20,8 @@ export interface PvpMatchingView {
   me?: { nickname: string | null; avatarId: string; rankLevel: number };
   /** 进入 matched 的时刻（performance.now 时基，ms）——驱动「匹配成功」动画进度；缺省视为动画已播完 */
   matchedAtMs?: number;
+  /** C5：匹配中界面附加提示（如「对手未应战，正在重新匹配…」）；空串=不画 */
+  note?: string;
 }
 
 // 各按钮命中矩形：居中排布，宽度统一 180。
@@ -272,6 +274,19 @@ export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatching
     ctx.beginPath();
     ctx.arc(VIEW_W / 2 + 92 + i * 17, 132, 4.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // C5：匹配中附加提示（如「对手未应战，正在重新匹配…」）——标题下方一行米金字 + 深棕描边，仅搜索中显示。
+  if (view.note && (view.phase === 'queuing' || view.phase === 'inviting')) {
+    ctx.font = '15px "PingFang SC", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(70,42,14,0.85)';
+    ctx.strokeText(view.note, VIEW_W / 2, 168);
+    ctx.fillStyle = '#ffe0a0';
+    ctx.fillText(view.note, VIEW_W / 2, 168);
   }
 
   // 倒计时环：先画浅色底环，再按剩余比例画橙色进度弧（从 12 点方向顺时针递减）。

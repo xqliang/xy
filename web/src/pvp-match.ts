@@ -154,6 +154,7 @@ export function toMatchView(
   mode: 'random' | 'invite' | 'join',
   copied: boolean,
   me?: PvpMatchingView['me'],
+  note = '',
 ): PvpMatchingView | null {
   if (state.phase === 'idle') return null; // 收窄：其余 4 个 phase 恰好等于 PvpMatchingView.phase 联合
   return {
@@ -166,5 +167,6 @@ export function toMatchView(
     message: state.message,
     me,
     matchedAtMs: state.matchedAt > 0 ? state.matchedAt : undefined,
+    note,
   };
 }
