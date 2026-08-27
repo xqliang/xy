@@ -5294,7 +5294,7 @@ export class Battle {
   /** 是否存在可开垦阵位（未解锁、非桃树的玩家可摆放格）。与 shareDigBest 候选集同口径，供分享按钮门控/预检。 */
   hasDiggableCell(): boolean {
     if (this.status !== 'playing' && this.status !== 'ready') return false;
-    return this.lockedCells().some((c) => !this.trees.has(cellKey(c.c, c.r)));
+    return this.hasDiggableSlot(); // 复用既有私有判定(lockedCells 无桃树)，避免逻辑重复
   }
 
   /**
