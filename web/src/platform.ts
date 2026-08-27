@@ -146,3 +146,57 @@ export function wxLogin(): Promise<string | null> {
     } catch { resolve(null); }
   });
 }
+
+// —— 通用好友分享（体力/铲子奖励用；区别于 PvP 邀请的 shareVersusInvite）——
+// 微信小游戏 wx.shareAppMessage 转发给单个好友无可靠成功回调（shareTicket 仅群分享产生）。
+// 故用启发式：拉起分享后若 onHide 真触发(转发面板/选人页真打开、App切后台)且停留≥2s 判成功。
+
+/** 纯判定：onHide 是否触发 且 onHide→onShow 停留是否 ≥ minDwellMs。抽出便于单测。 */
+export function judgeShareSuccess(
+  sawHide: boolean,
+  hideTs: number,
+  showTs: number,
+  minDwellMs = 2000,
+): boolean {
+  return sawHide && showTs - hideTs >= minDwellMs;
+}
+
+export interface ShareToFriendOpts {
+  title: string;
+  query?: string;
+  imageUrl?: string;
+}
+
+/**
+ * 拉起微信好友转发并按 onHide+停留启发式判定是否成功。
+ * - Web / 无 wx → resolve(false)（调用方据此不发奖）。
+ * - 挂临时 onHide/onShow（用 offHide/offShow 收尾），不影响 main.ts 已注册的全局暂停/重连 handler。
+ * - 兜底：拉起后 ~5s 内 onHide 未触发（面板没起/被频控）→ resolve(false)，避免永久 pending。
+ */
+export function shareToFriend(opts: ShareToFriendOpts): Promise<boolean> {
+  if (!(isWeChat && typeof wx.shareAppMessage === 'function')) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let sawHide = false;
+    let hideTs = 0;
+    const onHide = () => { sawHide = true; hideTs = Date.now(); };
+    const onShow = () => { if (!settled) finish(judgeShareSuccess(sawHide, hideTs, Date.now())); };
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { wx.offHide?.(onHide); } catch { /* ignore */ }
+      try { wx.offShow?.(onShow); } catch { /* ignore */ }
+      resolve(ok);
+    };
+    // 5s 内无 onHide → 面板未真正打开，判失败
+    const timer = setTimeout(() => { if (!sawHide) finish(false); }, 5000);
+    try {
+      wx.onHide?.(onHide);
+      wx.onShow?.(onShow);
+      wx.shareAppMessage({ title: opts.title, query: opts.query ?? '', imageUrl: opts.imageUrl });
+    } catch {
+      finish(false);
+    }
+  });
+}
