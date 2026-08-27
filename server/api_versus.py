@@ -296,18 +296,42 @@ class VersusHub:
             self.matches.pop(mid, None)
             for tk in [t for t, (mm, _u) in list(self.ticket_match.items()) if mm == mid]:
                 self.ticket_match.pop(tk, None)
-        # 2) 孤儿等待者（Redis）：qall 中入队超 QUEUE_TTL_MS，或 tk 已过期(PEXPIRE)残留的成员 → 清。
-        #    C1.3 把 queue 迁到 Redis 的连带项（旧 self.queue 分支已失效）；逻辑时钟越界为主动清（测试路径），
-        #    PEXPIRE 为真实时间兜底。完整 _sweep（rooms 走 SCAN + 改名）留 C1.6，本处只清队列。
-        if self.r is not None:
-            for ticket in self.r.zrange(k("qall"), 0, -1):
-                enq = self.r.hget(k("tk", ticket), "enqueued_ms")
-                if enq is None or now - int(enq) > QUEUE_TTL_MS:
-                    self._drop_ticket(ticket)
+        # 2) 孤儿/超时等待者（Redis）：委托 _sweep（EXISTS 孤儿清 + 逻辑超时清，含 q:{rank} 孤儿）。
+        #    C1.6：queue 惰性清从"仅扫 qall"升级为 clock-independent 的 EXISTS 校验 + SCAN q:* 双 ZSET 清。
+        self._sweep(now)
         # 3) 孤儿私房：C1.5 起房间记录迁 Redis(room:{code})，self.rooms 恒空 → 本分支已成 no-op；
-        #    Redis 孤儿房靠 PEXPIRE(ROOM_TTL_MS) 真实时间兜底，逻辑时钟惰性清(_sweep)留 C1.6。
+        #    Redis 孤儿房靠 PEXPIRE(ROOM_TTL_MS) 真实时间兜底（C1.6 结论：不加逻辑时钟 room sweep，
+        #    见 _sweep docstring），self.rooms 分支仅为历史兼容保留。
         for code in [c for c, r in list(self.rooms.items()) if now - r["created_ms"] > ROOM_TTL_MS]:
             self.rooms.pop(code, None)
+
+    def _sweep(self, now: int) -> None:
+        # C1.6：Redis 队列惰性清——clock-independent 的 EXISTS 孤儿清 + 逻辑时钟超时清。
+        # 由 _reap 在 REAP_INTERVAL_MS 时间闸门后调用（enqueue/poll 锁内），不引后台线程。
+        # 两类清理：
+        #   (a) 孤儿成员：backing tk 已 PEXPIRE 过期/被删（EXISTS==0）但 ZSET 成员残留 → ZREM。
+        #       qall 与 q:{rank} 都要扫：qall 分支拿不到 rank（tk 已亡）无法定位 q 桶，故 q:{rank}
+        #       另走 SCAN 单独清（修复 M3：旧 _drop_ticket 读不到 rank → q:{rank} 孤儿永久残留）。
+        #   (b) 逻辑超时：tk 仍在（PEXPIRE 是真实时间，测试推进逻辑时钟不触发它）但入队超
+        #       QUEUE_TTL_MS → _drop_ticket（删 tk + 两个 ZSET，此时能从 tk 读到 rank）。
+        # rooms 不做逻辑 sweep：房间记录 + 房主 tk 在 room_create 时同设 PEXPIRE(ROOM_TTL_MS)，
+        #   真实时间到点一起过期，无需逻辑时钟兜底；加 SCAN room:* 只为测试确定性、收益低于复杂度，故略。
+        if self.r is None:
+            return
+        # (a1) qall：孤儿 → ZREM qall；(b) 超时 → _drop_ticket（清 tk + 双 ZSET）。
+        #      score 即 enqueued_ms（zadd 时同值写入），用它判超时省一次 hget。
+        for ticket, score in self.r.zrange(k("qall"), 0, -1, withscores=True):
+            if not self.r.exists(k("tk", ticket)):
+                self.r.zrem(k("qall"), ticket)          # 孤儿：tk 没了，清 qall 成员
+            elif now - int(score) > QUEUE_TTL_MS:
+                self._drop_ticket(ticket)               # 超时：tk 还在，_drop_ticket 能读 rank 清两 ZSET
+        # (a2) q:{rank} 孤儿：SCAN 前缀限定 k("q","*")=xy:pvp:q:*（冒号消歧，不误匹配 qall），
+        #      ZREM backing tk 已亡的成员。单独扫是必需的——(a1) 的 qall 孤儿路径拿不到 rank。
+        #      SCAN 前缀受 xy:pvp: 约束，绝不触碰共享 Redis 上其它项目的键。
+        for qkey in self.r.scan_iter(match=k("q", "*")):
+            for ticket in self.r.zrange(qkey, 0, -1):
+                if not self.r.exists(k("tk", ticket)):
+                    self.r.zrem(qkey, ticket)
 
     # —— 对外匹配 API ——
     def _require_redis(self) -> None:

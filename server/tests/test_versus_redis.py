@@ -201,3 +201,35 @@ def test_room_join_expired_host_ticket_returns_room_expired():
     rc = h.room_create("host0001", 4)
     h.r.delete(k("tk", rc["ticket"]))            # 模拟房主 tk 过期/被清
     assert h.room_join(rc["code"], "guest001", 7).get("error") == "room_expired"
+
+
+# ---------------------------------------------------------------- C1.6 惰性清理 _sweep ----
+def test_sweep_removes_orphan_ticket_from_both_zsets():
+    # M3 修复：tk PEXPIRE 过期/被删后，qall 与 q:{rank} 里残留的 ZSET 成员都应被惰性清
+    # （EXISTS tk==0 → 双 ZSET ZREM）。旧 _reap 只扫 qall + _drop_ticket 读不到 rank → q:{rank} 孤儿残留。
+    from api_versus import REAP_INTERVAL_MS
+    from rediskv import k
+    h = _redis_hub()
+    t = h.enqueue("u1", 3)["ticket"]
+    assert h.r.zscore(k("qall"), t) is not None
+    assert h.r.zscore(k("q", 3), t) is not None
+    h.r.delete(k("tk", t))                       # 模拟 tk PEXPIRE 过期：ZSET 成员成孤儿
+    h._clock["ms"] += REAP_INTERVAL_MS + 1       # 越过 reap 闸门
+    h.poll("bogus")                              # 任意 poll 触发锁内 _reap → _sweep
+    assert h.r.zscore(k("qall"), t) is None      # qall 孤儿已清
+    assert h.r.zscore(k("q", 3), t) is None      # q:{rank} 孤儿也清（M3 gap 修复点）
+
+
+def test_sweep_removes_timed_out_ticket():
+    # 逻辑超时清：tk 仍在（PEXPIRE 是真实时间，逻辑时钟推进不触发它），但入队超 QUEUE_TTL_MS
+    # → _drop_ticket 删 tk + 两个 ZSET。clock-independent 判定，不依赖真实过期。
+    from api_versus import QUEUE_TTL_MS, REAP_INTERVAL_MS
+    from rediskv import k
+    h = _redis_hub()
+    t = h.enqueue("u1", 5)["ticket"]
+    assert h.r.exists(k("tk", t)) == 1
+    h._clock["ms"] += QUEUE_TTL_MS + REAP_INTERVAL_MS + 1
+    h.poll("bogus")                              # 触发锁内 _reap → _sweep 逻辑超时分支
+    assert h.r.exists(k("tk", t)) == 0
+    assert h.r.zscore(k("qall"), t) is None
+    assert h.r.zscore(k("q", 5), t) is None
