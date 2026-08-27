@@ -57,9 +57,18 @@ export function loadShareQuota(): ShareQuota {
   return q;
 }
 
-/** 今日剩余可分享次数 */
+// 内存缓存：remainingShares/canShare 可能被战斗渲染每帧调用，避免每次读 storage。
+// 仅首次 / 跨天 / consumeShare 后刷新；配额是本地量(不云同步)，无其它外部变更源。
+let cache: ShareQuota | null = null;
+function current(): ShareQuota {
+  const t = today();
+  if (!cache || cache.day !== t) cache = loadShareQuota(); // 仅缓存缺失或跨天才读盘
+  return cache;
+}
+
+/** 今日剩余可分享次数（走内存缓存，可安全每帧调用） */
 export function remainingShares(): number {
-  return remainingOf(loadShareQuota());
+  return remainingOf(current());
 }
 
 /** 今日是否还能分享 */
@@ -67,8 +76,9 @@ export function canShare(): boolean {
   return remainingShares() > 0;
 }
 
-/** 记一次成功分享（count+1，夹到上限并持久化）。调用方须保证分享确已成功。 */
+/** 记一次成功分享（count+1，夹到上限并持久化+更新缓存）。调用方须保证分享确已成功。 */
 export function consumeShare(): ShareQuota {
-  const q = loadShareQuota();
-  return save({ day: q.day, count: Math.min(MAX_DAILY_SHARES, q.count + 1) });
+  const q = current();
+  cache = save({ day: q.day, count: Math.min(MAX_DAILY_SHARES, q.count + 1) });
+  return cache;
 }

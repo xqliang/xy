@@ -15,6 +15,7 @@ import {
   VIEW_H,
   HUD_H,
   hitPauseBtn,
+  hitShareShovelBtn,
   hitMonsterAt,
   hitAiItemChip,
   hitPeachHud,
@@ -1952,6 +1953,26 @@ function handleButton(x: number, y: number): boolean {
   return false;
 }
 
+// tray 铲子分享按钮点击：微信真分享→成功则自动挖最优格并扣 1 次额度（先挖后扣，无可挖格不扣）。
+async function handleShareShovel(): Promise<void> {
+  if (!canShare()) return; // 双保险（按钮已按额度隐藏）
+  track('share_click', { scene: 'shovel' });
+  const ok = await shareToFriend({ title: '大圣塔防·助我一铲之力！' });
+  if (!ok) {
+    battle.message = '未完成分享';
+    track('share_fail', { scene: 'shovel' });
+    scheduleFrame();
+    return;
+  }
+  if (battle.shareDigBest()) {
+    consumeShare(); // 挖到才扣次数；shareDigBest 内已设 message
+    track('share_success', { scene: 'shovel' });
+  } else {
+    battle.message = '暂无可开垦阵位'; // 无可挖格：不扣次数
+  }
+  scheduleFrame();
+}
+
 function onPointerDown(e: PointerEvent) {
   e.preventDefault();
   if (screen === 'loading') return; // 加载中不响应点击（BGM 仍可在进首页后由首次手势唤醒）
@@ -2141,6 +2162,11 @@ function onPointerDown(e: PointerEvent) {
       pvpExitPopup = false; // 防御性清零（此分支本只属单人，但确认终止后不应残留 PvP 弹窗态）
       abortBattleToMenu();
     }
+    return;
+  }
+  if (hitShareShovelBtn(x, y, battle)) {
+    playSfx('click');
+    void handleShareShovel();
     return;
   }
   if (hitPauseBtn(x, y) && (battle.status === 'ready' || battle.status === 'playing')) {

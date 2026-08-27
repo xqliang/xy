@@ -29,6 +29,7 @@ import { drawPeachIcon } from './peach-icon';
 import { drawElementBadge, drawCounterBadge, counterRelation, softenElementColor } from './wuxing-ui';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 import { isWeChat } from './platform';
+import { remainingShares } from './share-quota';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
 export const PEACH_UI_ICON_SIZE = Math.round(26 * 1.5 * 0.7);
@@ -1012,6 +1013,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawActiveIcons(ctx, b);
   drawPassiveRow(ctx, b);
   drawPauseBtn(ctx, b);
+  drawShareShovelBtn(ctx, b);
   drawPassivePopup(ctx, b, ui);
   drawActivePopup(ctx, b, ui);
   drawBombPopup(ctx, b, ui); // 路径上已埋地雷的信息弹窗（点击地雷打开）
@@ -10700,6 +10702,57 @@ function drawHud(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
   }
   drawAiItemsHud(ctx, b, ui);
   drawBondHudChip(ctx, b);
+}
+
+// tray 右侧「分享得铲」按钮（一格大小）：仅微信端、wave≥6、今日仍有分享额度时显示。
+// 位置与 dev-only「布阵」按钮同区；生产 showAutoplaceBtn()=false 不冲突（仅 DevTools 开 autoplace 时视觉重叠）。
+export function shareShovelBtnRect(): { x: number; y: number; w: number; h: number } {
+  const x = TRAY_LEFT + TUNING.traySize * TRAY_SLOT + 4; // tray 右缘 +4
+  return { x, y: TRAY_Y + 5, w: TRAY_SLOT - 6, h: TRAY_H - 10 };
+}
+
+export function shareShovelBtnVisible(b: Battle): boolean {
+  return isWeChat
+    && b.wave >= 6
+    && (b.status === 'ready' || b.status === 'playing')
+    && remainingShares() > 0;
+}
+
+export function hitShareShovelBtn(x: number, y: number, b: Battle): boolean {
+  if (!shareShovelBtnVisible(b)) return false;
+  const r = shareShovelBtnRect();
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+function drawShareShovelBtn(ctx: CanvasRenderingContext2D, b: Battle): void {
+  if (!shareShovelBtnVisible(b)) return;
+  const r = shareShovelBtnRect();
+  ctx.save();
+  // 金色圆角底 + 描边
+  roundRect(ctx, r.x, r.y, r.w, r.h, 10);
+  ctx.fillStyle = '#f6c451';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#b9791e';
+  ctx.stroke();
+  ctx.clip();
+  // 铲子立绘（复用现有 item-shovel 素材）
+  const spr = sprite('item-shovel');
+  if (spr) {
+    const pad = 8;
+    const s = Math.min(r.w - pad * 2, r.h - pad * 2);
+    const scale = Math.min(s / spr.width, s / spr.height);
+    const dw = spr.width * scale;
+    const dh = spr.height * scale;
+    ctx.drawImage(spr, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2 - 2, dw, dh);
+  }
+  ctx.restore();
+  // 右下「×1」角标
+  ctx.fillStyle = '#7a3b12';
+  ctx.font = 'bold 15px "PingFang SC", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('×1', r.x + r.w - 5, r.y + r.h - 3);
 }
 
 // HUD 左上角（桃前）：播放器风格暂停按钮（两竖条）
