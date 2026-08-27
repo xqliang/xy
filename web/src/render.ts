@@ -1056,6 +1056,11 @@ const GUIDE_PILL_H = 32;          // 提示胶囊高
 const GUIDE_GAP = 10;             // 胶囊底 → 目标顶 的间距
 const GUIDE_PAD_X = 14;           // 胶囊左右内边距
 const GUIDE_FONT = 'bold 15px "PingFang SC", "STKaiti", serif';
+// 书法字族（iOS/Mac 生效；其它设备优雅回退 PingFang SC → serif，即原黑体，不缺字）：
+// - 字牌/棋盘英雄字用楷体（柔和易读，弱化生硬方块感）
+const BRUSH_FONT_STACK = '"STKaiti", "Kaiti SC", "KaiTi", "PingFang SC", serif';
+// - 「合成神将」浮字标题 + 征兵按钮用魏碑（浑厚有力，标题/按钮冲击感）
+const BANNER_FONT_STACK = '"Weibei SC", "STKaiti", "PingFang SC", serif';
 
 export interface GuideArrowGeom {
   pill: { x: number; y: number; w: number; h: number }; // 提示胶囊
@@ -1317,7 +1322,8 @@ function drawWordTile(
   const strokeW = active
     ? Math.max(2.8, s * (0.065 + (q - 1) * 0.022))
     : Math.max(2.5, s * 0.07);
-  ctx.font = `bold ${Math.round(s * fontScale)}px "PingFang SC", serif`;
+  // 字牌用楷/毛笔字族（iOS/Mac 上呈书法笔意，弱化生硬方块感；无该字体的设备优雅回退 PingFang→serif）
+  ctx.font = `bold ${Math.round(s * fontScale)}px ${BRUSH_FONT_STACK}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = strokeW;
@@ -4222,15 +4228,24 @@ function drawSynthBanners(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = grad;
     ctx.fill();
     ctx.restore();
-    // —— 文字：金黄 + 深褐描边（对齐参考图） ——
+    // —— 文字：楷/毛笔字 + 金色竖向渐变 + 深褐描边 + 柔和金光（艺术化标题感，对齐参考图） ——
     ctx.globalAlpha = textAlpha;
-    ctx.font = `bold ${fontPx}px "PingFang SC", sans-serif`;
+    ctx.font = `bold ${fontPx}px ${BANNER_FONT_STACK}`;
     ctx.lineJoin = 'round';
-    ctx.lineWidth = Math.max(3, fontPx * 0.22);
-    ctx.strokeStyle = 'rgba(60,36,12,0.95)';
+    // 先描边（不带辉光），保证暗底可读
+    ctx.lineWidth = Math.max(3, fontPx * 0.24);
+    ctx.strokeStyle = 'rgba(74,44,10,0.95)';
     ctx.strokeText(sb.text, 0, 0);
-    ctx.fillStyle = '#ffcf3a';
+    // 金色竖向渐变填充（上浅下深，似鎏金）+ 柔和外发光
+    const gold = ctx.createLinearGradient(0, -fontPx * 0.62, 0, fontPx * 0.62);
+    gold.addColorStop(0, '#fff3b8');
+    gold.addColorStop(0.5, '#ffd23a');
+    gold.addColorStop(1, '#f0a017');
+    ctx.shadowColor = `rgba(255,190,64,${0.55 * fade})`;
+    ctx.shadowBlur = fontPx * 0.5;
+    ctx.fillStyle = gold;
     ctx.fillText(sb.text, 0, 0);
+    ctx.shadowBlur = 0;
     ctx.restore();
   }
 }
@@ -10805,7 +10820,8 @@ function drawButtons(ctx: CanvasRenderingContext2D, b: Battle) {
       }
       const tx = btn.x + btn.w / 2;
       const ty = btn.y + btn.h / 2;
-      ctx.font = `bold ${btn.w < 140 ? 16 : 20}px "PingFang SC", sans-serif`;
+      // 征兵按钮用魏碑求冲击力（与「合成神将」浮字同族）；其余按钮保持黑体
+      ctx.font = `bold ${btn.w < 140 ? 16 : 20}px ${btn.id === 'summon' ? BANNER_FONT_STACK : '"PingFang SC", sans-serif'}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       // 征兵/布阵：浅字 + 深描边，在进度填充与深底上都能读清（四图统一）
