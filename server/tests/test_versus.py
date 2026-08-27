@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 # 注（Task 6 退役）：RELAY_RETAIN_MS / DISCONNECT_GRACE_MS / SIMULTANEOUS_EPS_MS 已不再被本文件用例引用
 # （tick 转发/保留窗口/按 tick 的断线与平局用例随 HTTP tick 退役而删除，其 WS 等价覆盖迁至 test_versus_ws.py）。
 from api_versus import (MATCH_TIMEOUT_MS, MATCH_REAP_MS, REAP_INTERVAL_MS,
-                        ROOM_TTL_MS, QUEUE_TTL_MS)
+                        QUEUE_TTL_MS)
 
 DSN_ENV = {
     "XY_DB_HOST": os.environ.get("XY_DB_HOST", "127.0.0.1"),
@@ -231,16 +231,19 @@ def _fake_match(hub, ua="A1", ub="B1", rank=3):
 
 def test_room_create_avoids_code_collision():
     # Bug2 撞码硬化：gen_code 先吐一个已占用的码，room_create 应重试换新码，绝不静默覆盖既有房间。
+    # C1.5：撞码检查改走 Redis EXISTS room:{code}，房间记录也断言在 Redis 上。
     from api_versus import VersusHub
+    from rediskv import k
     clock = {"ms": 1_000_000}
     codes = iter(["DUP001", "DUP001", "NEW002"])  # 首建用 DUP001；次建 gen 先撞 DUP001 再换 NEW002
     h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
-                  gen_seed=lambda: 1234, gen_code=lambda: next(codes), pick_map=lambda: "huoyanshan")
+                  gen_seed=lambda: 1234, gen_code=lambda: next(codes), pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     r1 = h.room_create("A1", 3)
     assert r1["code"] == "DUP001"
     r2 = h.room_create("B1", 3)
-    assert r2["code"] == "NEW002"                     # 撞 DUP001 后重试拿到 NEW002
-    assert h.rooms["DUP001"]["host_uid"] == "A1"      # 原房间未被覆盖（撞码没顶掉 A1）
+    assert r2["code"] == "NEW002"                          # 撞 DUP001 后重试拿到 NEW002
+    assert h.r.hget(k("room", "DUP001"), "host_uid") == "A1"   # 原房间未被覆盖（撞码没顶掉 A1）
 
 
 # —— HTTP 端到端冒烟：起真 ThreadingHTTPServer，跑 /api/versus/* 路由 ——
@@ -348,15 +351,17 @@ def test_reap_removes_ended_match(hub, db):
     assert mid not in hub.matches
     assert all(v[0] != mid for v in hub.ticket_match.values())
 
-def test_reap_removes_orphan_room(hub, db):
-    # 房主建房后蒸发：超 ROOM_TTL_MS 的孤儿房应被清
+def test_room_create_no_inproc_leak(hub, db):
+    # C1.5：room_create 把房间记录写 Redis（room:{code}，带 PEXPIRE 兜底），不再落进程内 self.rooms/self.queue。
+    # 旧的「推逻辑时钟越 ROOM_TTL_MS → _reap 清 self.rooms」语义随房间迁 Redis 失效：
+    # 孤儿房靠 PEXPIRE(ROOM_TTL_MS) 真实时间兜底，逻辑时钟惰性清（_sweep）留 C1.6。
+    from rediskv import k
     hub.reset()
     _mk_player(db, "10000371", 3)
     rc = hub.room_create("10000371", 3)
-    assert rc["code"] in hub.rooms
-    hub._clock["ms"] += ROOM_TTL_MS + REAP_INTERVAL_MS + 1
-    hub.poll("bogus")
-    assert rc["code"] not in hub.rooms
+    assert hub.r.exists(k("room", rc["code"])) == 1     # 房间记录在 Redis
+    assert hub.r.pttl(k("room", rc["code"])) > 0        # 设了 PEXPIRE 兜底
+    assert hub.rooms == {} and hub.queue == {}          # 不再有进程内房间镜像（无泄漏）
 
 def test_reap_removes_stale_queue(hub, db):
     # 入队后从不 poll/cancel 的孤儿等待者：超 QUEUE_TTL_MS 应被惰性清（C1.3 起队列在 Redis）。

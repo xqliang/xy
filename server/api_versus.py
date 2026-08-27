@@ -75,9 +75,9 @@ class VersusHub:
         self.r = redis_client
         self.lock = threading.Lock()
         self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM）防两次 flush 的 UPSERT/DELETE 交错丢局
-        self.queue: dict[str, dict] = {}          # 私房房主挂起票 ticket->entry（随机匹配队列已迁 Redis；self.queue 现仅 room_create/room_join 用，C1.5 迁 Redis）
+        self.queue: dict[str, dict] = {}          # 【已弃用·留空】随机队列(C1.3)+私房(C1.5)均迁 Redis；留空字段仅为 reset() 兼容，无写入方
         self.recent: dict[int, list[tuple[str, int]]] = {}  # rank -> [(uid, ms)]
-        self.rooms: dict[str, dict] = {}          # code -> room
+        self.rooms: dict[str, dict] = {}          # 【已弃用·留空】私房记录 C1.5 迁 Redis(room:{code})；留空以让 _reap 的 rooms 分支成 no-op（C1.6 迁其惰性清）
         self.matches: dict[str, dict] = {}        # match_id -> Match
         self.ticket_match: dict[str, tuple[str, str]] = {}  # ticket -> (match_id, uid)
         self._last_reap_ms = 0                    # 上次惰性回收时刻（时间闸门，0 保证冷启动首个 reap 即跑）
@@ -304,7 +304,8 @@ class VersusHub:
                 enq = self.r.hget(k("tk", ticket), "enqueued_ms")
                 if enq is None or now - int(enq) > QUEUE_TTL_MS:
                     self._drop_ticket(ticket)
-        # 3) 孤儿私房：建房超 ROOM_TTL_MS 无人加入
+        # 3) 孤儿私房：C1.5 起房间记录迁 Redis(room:{code})，self.rooms 恒空 → 本分支已成 no-op；
+        #    Redis 孤儿房靠 PEXPIRE(ROOM_TTL_MS) 真实时间兜底，逻辑时钟惰性清(_sweep)留 C1.6。
         for code in [c for c, r in list(self.rooms.items()) if now - r["created_ms"] > ROOM_TTL_MS]:
             self.rooms.pop(code, None)
 
@@ -375,60 +376,61 @@ class VersusHub:
 
     # —— 私房（邀请对战）：房主建房间占 ticket 挂起，客人凭码加入直接成局 ——
     def room_create(self, uid: str, rank: int, base_url: str = "") -> dict:
+        self._require_redis()
         # 禁赛拦截：与匹配一致，异常玩家当日不得开私房
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
         with self.lock:
             now = self._now()
             code = self._gen_code()
-            # 撞码检查：token_hex(3) 空间 16^6≈1670万，碰撞极罕见但非零；碰撞会静默覆盖既有房间→重试换新码。
+            # 撞码检查（C1.5：改查 Redis EXISTS room:{code}）：token_hex(3) 空间 16^6≈1670万，
+            # 碰撞极罕见但非零；碰撞会静默覆盖既有房间 → 重试换新码，绝不覆盖。
             for _ in range(8):
-                if code not in self.rooms:
+                if not self.r.exists(k("room", code)):
                     break
                 code = self._gen_code()
             ticket = secrets.token_hex(8)
-            # 房间记录：code -> 房间元信息（含房主 ticket，便于加入时定位房主）
-            self.rooms[code] = {"code": code, "host_uid": uid, "host_rank": rank,
-                                "map": self._pick_map(), "created_ms": now, "ticket": ticket}
-            # 房主也占一张 ticket，复用同一张 queue 表；标记 room 表示私房挂起（poll 见之仍等待）。
-            # 注（Task 6 退役）：旧模型曾把房主 loadout 挂在这张 ticket 上透传，WS 快照模型无消费方，已删除。
-            self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
-                                  "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS,
-                                  "room": code}
-            # C1.3/C1.5 衔接：poll 已迁 Redis（读 tk），故房主 ticket 也须 Redis 可见，
-            # 否则 poll 房主票会误判 timeout（应为 waiting）。只写 tk（带 room 标记 + PEXPIRE ROOM_TTL_MS），
+            mp = self._pick_map()
+            # 房间记录进 Redis：code -> 房间元信息（含房主 ticket，便于 room_join 定位房主）+PEXPIRE 兜底防泄漏
+            self.r.hset(k("room", code), mapping={
+                "code": code, "host_uid": uid, "host_rank": rank,
+                "map": mp, "created_ms": now, "ticket": ticket})
+            self.r.pexpire(k("room", code), ROOM_TTL_MS)
+            # 房主也占一张 ticket（写 tk，带 room 标记 → poll 见之仍 waiting；PEXPIRE ROOM_TTL_MS）。
             # **不 ZADD q/qall** —— 私房不进随机池（等价旧 _try_pair 跳过 room 标记）。
-            # 房间记录(self.rooms) 与 room_join 读 host_entry 仍进程内，完整迁移留 C1.5。
-            if self.r is not None:
-                self.r.hset(k("tk", ticket), mapping={
-                    "uid": uid, "rank": rank, "enqueued_ms": now,
-                    "hold_until_ms": now + MATCH_TIMEOUT_MS, "room": code})
-                self.r.pexpire(k("tk", ticket), ROOM_TTL_MS)
+            # 注（Task 6 退役）：旧模型曾把房主 loadout 挂在这张 ticket 上透传，WS 快照模型无消费方，已删除。
+            self.r.hset(k("tk", ticket), mapping={
+                "uid": uid, "rank": rank, "enqueued_ms": now,
+                "hold_until_ms": now + MATCH_TIMEOUT_MS, "room": code})
+            self.r.pexpire(k("tk", ticket), ROOM_TTL_MS)
             link = f"{base_url}/?versus={code}"
-            return {"code": code, "link": link, "ticket": ticket, "map": self.rooms[code]["map"]}
+            return {"code": code, "link": link, "ticket": ticket, "map": mp}
 
     def room_join(self, code: str, uid: str, rank: int) -> dict:
+        self._require_redis()
         # 禁赛拦截
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
         with self.lock:
             now = self._now()
-            room = self.rooms.get(code)
+            room = self.r.hgetall(k("room", code))
             if not room:
-                # 无此码：可能输错或已被占用
+                # 无此码：可能输错或已过期/已被占用
                 return {"error": "room_not_found"}
             host_ticket = room["ticket"]
-            host_entry = self.queue.get(host_ticket)
-            if not host_entry:
-                # 房已存在但房主 ticket 已不在队列（超时/被清理）
+            host_tk = self.r.hgetall(k("tk", host_ticket))
+            if not host_tk:
+                # 房已存在但房主 ticket 已不在（超时/被清理）
                 return {"error": "room_expired"}
-            # 客人这边只组一次性 entry 参与成局，不入 queue（避免污染匹配）。
+            # 从房主 tk 组 host_entry（_make_match 只用 uid/rank/ticket；rank 在 Redis 是字符串，还原为 int）。
+            host_entry = {"ticket": host_ticket, "uid": host_tk["uid"], "rank": int(host_tk["rank"])}
+            # 客人这边只组一次性 entry 参与成局，不入队（避免污染随机池）。
             # 注（Task 6 退役）：旧模型曾携带客人 loadout 透传给客人 side，WS 快照模型无消费方，已删除。
-            joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank,
-                      "enqueued_ms": now}
-            # 成局即销毁房间与房主挂起态，保证一码一局、不能重复加入
-            self.queue.pop(host_ticket, None)
-            self.rooms.pop(code, None)
+            joiner = {"ticket": secrets.token_hex(8), "uid": uid, "rank": rank}
+            # 成局即销毁房间与房主挂起态，保证一码一局、不能重复加入。
+            # C1.5：DEL host tk（不再靠 PEXPIRE 兜底放任泄漏）+ DEL room:{code}。房主从不进 q/qall，无需 ZREM。
+            self.r.delete(k("tk", host_ticket))
+            self.r.delete(k("room", code))
             mid = self._make_match(host_entry, joiner, now, map_id=room["map"])
             # 注意：_match_start_payload 在锁内调用（含 DB 读档）。
             # 私房加入是一次性低频操作，可接受；不改动 Task 3 的 poll 热路径。

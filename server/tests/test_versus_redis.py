@@ -141,3 +141,63 @@ def test_no_double_pairing_under_concurrency_redis():
     third = next(t for t in ts if t not in matched)
     assert h.poll(third)["status"] == "waiting"
     assert h.r.zscore(k("qall"), third) is not None
+
+
+# ---------------------------------------------------------------- C1.5 私房 room_create/room_join ----
+def test_room_create_writes_redis_and_host_waiting():
+    # room_create 把房间记录 + 房主 tk 写 Redis；房主 tk 带 room 标记、不进 q/qall 随机池；房主 poll 仍 waiting。
+    from rediskv import k
+    h = _redis_hub()
+    rc = h.room_create("host0001", 4)
+    code = rc["code"]
+    assert code == "ROOM01" and rc["map"] == "huoyanshan" and rc["ticket"]
+    assert f"?versus={code}" in rc["link"]
+    # 房间记录进 Redis（含 host_uid/ticket/map），并设了 PEXPIRE 兜底（pttl>0）
+    room = h.r.hgetall(k("room", code))
+    assert room["host_uid"] == "host0001" and room["ticket"] == rc["ticket"] and room["map"] == "huoyanshan"
+    assert h.r.pttl(k("room", code)) > 0
+    # 房主 tk 进 Redis（带 room 标记），但不 ZADD q/qall（私房不进随机池）
+    assert h.r.hget(k("tk", rc["ticket"]), "room") == code
+    assert h.r.zscore(k("qall"), rc["ticket"]) is None
+    assert h.r.zscore(k("q", 4), rc["ticket"]) is None
+    # 房主 poll 仍等待（私房挂起，poll 见 tk 无 tm → waiting）
+    assert h.poll(rc["ticket"])["status"] == "waiting"
+    # C1.5：不再落进程内 self.rooms/self.queue（房间态全在 Redis）
+    assert h.rooms == {} and h.queue == {}
+
+
+def test_room_join_matches_and_cleans_redis():
+    # room_join 读 Redis 房间 + 房主 tk 成局；成局后 DEL 房间记录 + DEL 房主 tk（无泄漏）；房主 poll 同 mid matched。
+    from rediskv import k
+    h = _redis_hub()
+    rc = h.room_create("host0001", 4)
+    code = rc["code"]; host_ticket = rc["ticket"]
+    rj = h.room_join(code, "guest001", 7)
+    assert rj["status"] == "matched"
+    payload = rj["matchStart"]
+    assert payload["map"] == "huoyanshan" and payload["seed"] and "opponent" in payload
+    mid = payload["matchId"]
+    # 成局后：房间记录 + 房主 tk 都从 Redis 删除（不再靠 PEXPIRE 兜底放任泄漏）
+    assert h.r.exists(k("room", code)) == 0
+    assert h.r.exists(k("tk", host_ticket)) == 0
+    # 轻量对局记录写入 Redis；房主 poll（用房主 ticket）也 matched，且同一 mid
+    assert h.r.exists(k("match", mid)) == 1
+    ph = h.poll(host_ticket)
+    assert ph["status"] == "matched" and ph["matchStart"]["matchId"] == mid
+    # 单实例 owner：进程内运行时也建了（供 ws_*）
+    assert mid in h.matches
+
+
+def test_room_join_unknown_code_returns_room_not_found():
+    # Redis 无 room:{code} → room_not_found
+    h = _redis_hub()
+    assert h.room_join("NOSUCH", "guest001", 3).get("error") == "room_not_found"
+
+
+def test_room_join_expired_host_ticket_returns_room_expired():
+    # 房间记录尚在但房主 tk 已过期（被清）→ room_expired
+    from rediskv import k
+    h = _redis_hub()
+    rc = h.room_create("host0001", 4)
+    h.r.delete(k("tk", rc["ticket"]))            # 模拟房主 tk 过期/被清
+    assert h.room_join(rc["code"], "guest001", 7).get("error") == "room_expired"
