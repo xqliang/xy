@@ -253,7 +253,10 @@ def http_base(db):
     from config import load_config
     cfg = load_config(); cfg["static_dir"] = str(ROOT)
     class H(Handler): pass
-    H.db = db; H.cfg = cfg; H.versus = VersusHub(db)
+    # http_base 的 hub 也须注入 fakeredis：匹配层已迁 Redis（enqueue/poll/_try_pair 读写 self.r），
+    # 否则 self.r=None 时匹配相关 e2e（enqueue/poll/room）会 AttributeError。
+    H.db = db; H.cfg = cfg
+    H.versus = VersusHub(db, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: H(*a, directory=str(ROOT), **k))
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -356,14 +359,18 @@ def test_reap_removes_orphan_room(hub, db):
     assert rc["code"] not in hub.rooms
 
 def test_reap_removes_stale_queue(hub, db):
-    # 入队后从不 poll/cancel 的孤儿等待者：超 QUEUE_TTL_MS 应被清
+    # 入队后从不 poll/cancel 的孤儿等待者：超 QUEUE_TTL_MS 应被惰性清（C1.3 起队列在 Redis）。
+    from rediskv import k
     hub.reset()
     _mk_player(db, "10000381", 5)
     r = hub.enqueue("10000381", 5)
-    assert r["ticket"] in hub.queue
+    assert hub.r.exists(k("tk", r["ticket"])) == 1
+    assert hub.r.zscore(k("q", 5), r["ticket"]) is not None
     hub._clock["ms"] += QUEUE_TTL_MS + REAP_INTERVAL_MS + 1
-    hub.poll("bogus")
-    assert r["ticket"] not in hub.queue
+    hub.poll("bogus")  # 任意 poll 触发锁内 _reap → Redis 队列惰性清
+    assert hub.r.exists(k("tk", r["ticket"])) == 0
+    assert hub.r.zscore(k("q", 5), r["ticket"]) is None
+    assert hub.r.zscore(k("qall"), r["ticket"]) is None
 
 def test_reap_keeps_active_match(hub, db):
     # 回收器最该防的：最近有心跳的活跃对局，reap 后必须仍在。

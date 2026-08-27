@@ -125,7 +125,7 @@ def test_flush_then_load_restores_match_and_tickets(rhub, db):
     mid2 = _mk(rhub, "P3", "P4")
     rhub.flush_active_matches()
     from api_versus import VersusHub
-    h2 = VersusHub(db, now_ms=lambda: 2_000_000)
+    h2 = VersusHub(db, now_ms=lambda: 2_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h2.load_active_matches()
     assert mid1 in h2.matches and mid2 in h2.matches
     assert h2.matches[mid1]["a"]["uid"] == "P1" and h2.matches[mid1]["b"]["uid"] == "P2"
@@ -169,7 +169,7 @@ def test_reload_preserves_connected_ever_so_resumed_match_not_reaped_at_connect_
     mid = _mk(rhub, "R1", "R2")
     rhub.ws_hello("R1", mid, lambda t: True)   # 一侧连过 → connected_ever=True
     rhub.flush_active_matches()
-    h2 = VersusHub(db, now_ms=lambda: 5_000_000)
+    h2 = VersusHub(db, now_ms=lambda: 5_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h2.load_active_matches()
     # 回放后 R1 侧 connected_ever 应被保留为 True（而非被覆盖成 False）
     assert h2.matches[mid]["a"]["connected_ever"] is True
@@ -225,7 +225,7 @@ def test_reload_opponent_no_show_present_side_wins(rhub, db):
     rhub.ws_hello("PW1", mid, lambda t: True)   # PW1 连过(connected_ever=True)；PW2 从未连接
     rhub.flush_active_matches()
     # 模拟重启：新 hub 从库回放
-    h2 = VersusHub(db, now_ms=lambda: 9_000_000)
+    h2 = VersusHub(db, now_ms=lambda: 9_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h2._clock = {"ms": 9_000_000}; h2._now = lambda: h2._clock["ms"]
     h2.load_active_matches()
     # 回放后 PW1 的 connected_ever 应保留 True、PW2 仍 False

@@ -12,8 +12,11 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from redis.exceptions import WatchError  # 撮合乐观事务：EXEC 时被 WATCH 的键被改过则抛此异常 → 重试
+
 from db import DB
 from httputil import read_json, require_auth, send_json, _strict_enabled
+from rediskv import k  # PvP Redis 键前缀助手（xy:pvp:...），匹配层所有 key 经它拼装
 from ws import (  # RFC6455 握手/帧编解码纯函数（Task 1），被 WebSocket 连接层复用
     OP_CLOSE, OP_PING, OP_PONG, OP_TEXT,
     decode_frame, encode_frame, encode_text, handshake_response,
@@ -139,50 +142,136 @@ class VersusHub:
                 "ws_send": None, "gone_ms": 0,
                 "connected_ever": False}   # 里程碑 B：是否曾有过 ws_hello（撮合退队用）
 
-    def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
-        # 组装 Match、建 ticket->match 索引，返回 match_id
-        mid = secrets.token_hex(8)
+    # —— 撮合成局：拆成「进程内运行时」+「Redis 轻量记录」两半 ——
+    # C1.4：_make_match 原来只建进程内 matches；现拆为
+    #   _store_match_inproc：建全 side/ws_send 运行时（单实例 owner=本实例，ws_* 读它，不变）；
+    #   _queue_match_record：把轻量记录(match:{mid})+ticket→match 索引(tm)写进给定 pipe
+    #                        （standalone 时自带 pipe；撮合时并进 WATCH/MULTI 同一事务，保证原子）。
+    # seed/map/start 只生成一次，同时喂给进程内与 Redis，保证两者一致（poll 从 Redis 读 matchStart）。
+    def _store_match_inproc(self, mid: str, seed: int, mp: str, start: int,
+                            e1: dict, e2: dict, now: int) -> dict:
+        # 建进程内 Match 运行时 + ticket->match 索引（与旧 _make_match 主体逐字等价，仅参数化 seed/map/start）
         m = {
-            "match_id": mid, "seed": self._gen_seed(), "map": map_id or self._pick_map(),
-            "start_at_ms": now + START_DELAY_MS,
+            "match_id": mid, "seed": seed, "map": mp,
+            "start_at_ms": start,
             "a": self._new_side(e1["uid"], e1["rank"], now),
             "b": self._new_side(e2["uid"], e2["rank"], now),
-            "wave_schedule": {1: now + START_DELAY_MS}, "first_clear": {},
+            "wave_schedule": {1: start}, "first_clear": {},
             "result": None, "created_ms": now, "ended": False,
         }
         self.matches[mid] = m
         self.ticket_match[e1["ticket"]] = (mid, e1["uid"])
         self.ticket_match[e2["ticket"]] = (mid, e2["uid"])
+        return m
+
+    def _queue_match_record(self, pipe, mid: str, seed: int, mp: str, start: int,
+                            uid_a: str, uid_b: str, tk_a: str, tk_b: str) -> None:
+        # 往 pipe 上排入：轻量对局记录 match:{mid} + tm 索引（供任意实例的 poll 组 matchStart）。
+        # PEXPIRE 作真实时间兜底防泄漏；逻辑时钟下的回收由进程内 _reap（matches 分支）负责。
+        pipe.hset(k("match", mid), mapping={
+            "seed": seed, "map": mp, "start_at_ms": start, "uid_a": uid_a, "uid_b": uid_b})
+        pipe.pexpire(k("match", mid), MATCH_REAP_MS)
+        pipe.set(k("tm", tk_a), f"{mid}|{uid_a}"); pipe.pexpire(k("tm", tk_a), MATCH_REAP_MS)
+        pipe.set(k("tm", tk_b), f"{mid}|{uid_b}"); pipe.pexpire(k("tm", tk_b), MATCH_REAP_MS)
+
+    def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
+        # 独立成局入口（room_join / 直连测试用）：进程内运行时 + Redis 轻量记录（各自一次写）。
+        # 撮合路径（_try_pair）不走这里——它把 Redis 写并进 WATCH/MULTI 事务后再单独 _store_match_inproc。
+        mid = secrets.token_hex(8)
+        seed = self._gen_seed(); mp = map_id or self._pick_map(); start = now + START_DELAY_MS
+        self._store_match_inproc(mid, seed, mp, start, e1, e2, now)
+        if self.r is not None:      # self.r=None（纯进程内运行时测试，如 ws _real_hub）跳过 Redis 写
+            pipe = self.r.pipeline(transaction=False)
+            self._queue_match_record(pipe, mid, seed, mp, start,
+                                     e1["uid"], e2["uid"], e1["ticket"], e2["ticket"])
+            pipe.execute()
         return mid
 
-    def _try_pair(self, now: int) -> None:
-        # 私房房主(带 room 标记)不参与随机匹配池，只能经 room_join 成局
-        # 第一轮：同段位两两配对
-        waiting = [e for e in self.queue.values() if not e.get("room")]
-        by_rank: dict[int, list[dict]] = {}
-        for e in waiting:
-            by_rank.setdefault(e["rank"], []).append(e)
-        for rank, lst in by_rank.items():
-            lst.sort(key=lambda e: e["enqueued_ms"])
-            while len(lst) >= 2:
-                a = lst.pop(0); b = lst.pop(0)
-                self._pair(a, b, now)
-        # 第二轮：已过保持窗口者与任意(非私房)等待者配对
-        waiting = sorted([e for e in self.queue.values() if not e.get("room")], key=lambda e: e["enqueued_ms"])
-        i = 0
-        while i < len(waiting):
-            a = waiting[i]
-            if a["ticket"] in self.queue and now >= a["hold_until_ms"]:
-                partner = next((x for x in waiting if x["ticket"] in self.queue and x["ticket"] != a["ticket"]), None)
-                if partner:
-                    self._pair(a, partner, now)
-                    waiting = sorted([e for e in self.queue.values() if not e.get("room")], key=lambda e: e["enqueued_ms"]); i = 0; continue
-            i += 1
+    def _live_waiters(self) -> list[dict]:
+        # 读 qall（按 score=enqueued_ms 升序=FIFO），逐 ticket 校验 tk 存活，组装等待者列表。
+        # 惰性清理：tk 已过期(PEXPIRE)但 ZSET 成员残留 → 顺手 ZREM（替代旧 _reap 的 queue 扫描）。
+        # 私房房主 tk 带 room 标记且从不 ZADD qall，此处 room 跳过为冗余防护（双保险）。
+        out: list[dict] = []
+        for t in self.r.zrange(k("qall"), 0, -1):
+            h = self.r.hgetall(k("tk", t))
+            if not h:
+                self.r.zrem(k("qall"), t)      # 孤儿 ZSET 成员，惰性清
+                continue
+            if h.get("room"):
+                continue
+            out.append({"ticket": t, "rank": int(h["rank"]), "uid": h["uid"],
+                        "enqueued_ms": int(h["enqueued_ms"]), "hold_until_ms": int(h["hold_until_ms"])})
+        return out
 
-    def _pair(self, a: dict, b: dict, now: int) -> None:
-        # 从队列摘除双方并成局
-        self.queue.pop(a["ticket"], None); self.queue.pop(b["ticket"], None)
-        self._make_match(a, b, now)
+    def _choose_pair(self, live: list[dict], now: int):
+        # 纯计算：复现现有两趟算法，返回本轮该成局的 (a, b, watch_key) 或 None。
+        # live 已按 enqueued_ms 升序。第一趟同段位 FIFO；第二趟过 hold 窗后跨段位放宽。
+        # 第一轮：同段位最老两个（by_rank 的插入序=各段位在 qall 中首现序；跨段位成对与否互不影响最终对集）
+        by_rank: dict[int, list[dict]] = {}
+        for w in live:
+            by_rank.setdefault(w["rank"], []).append(w)
+        for rank, lst in by_rank.items():
+            if len(lst) >= 2:
+                return (lst[0], lst[1], k("q", rank))
+        # 第二轮：最老的「已过保持窗口」者 a，与任意其他等待者 b（b 取 qall 中最老的非 a 者）
+        a = next((w for w in live if now >= w["hold_until_ms"]), None)
+        if a is not None:
+            b = next((w for w in live if w["ticket"] != a["ticket"]), None)
+            if b is not None:
+                return (a, b, k("qall"))
+        return None
+
+    def _pair_once(self, now: int) -> bool:
+        # 撮合一局：WATCH/MULTI 乐观事务，跨实例并发不重复配对。返回是否成局（True→外层继续撮下一局）。
+        live = self._live_waiters()
+        target = self._choose_pair(live, now)
+        if target is None:
+            return False
+        a, b, watch_key = target
+        for _ in range(8):          # WatchError 重试上限（到顶本轮放弃，下次 poll/enqueue 再撮）
+            pipe = self.r.pipeline()   # transaction=True：watch → 立即读 → multi → 缓冲写 → execute
+            try:
+                pipe.watch(watch_key, k("tk", a["ticket"]), k("tk", b["ticket"]))
+                # WATCH 后立即重校验两 tk 仍在（防 live 是陈旧读、其一已被别处摘走）
+                if not (pipe.exists(k("tk", a["ticket"])) and pipe.exists(k("tk", b["ticket"]))):
+                    pipe.unwatch()
+                    return False    # 一方已被摘走：本轮结束
+                mid = secrets.token_hex(8)
+                seed = self._gen_seed(); mp = self._pick_map(); start = now + START_DELAY_MS
+                pipe.multi()
+                # 原子摘除双方（q:{rank} 与 qall）+ 删 tk + 写轻量记录/tm，同一事务 EXEC
+                pipe.zrem(k("q", a["rank"]), a["ticket"]); pipe.zrem(k("qall"), a["ticket"]); pipe.delete(k("tk", a["ticket"]))
+                pipe.zrem(k("q", b["rank"]), b["ticket"]); pipe.zrem(k("qall"), b["ticket"]); pipe.delete(k("tk", b["ticket"]))
+                self._queue_match_record(pipe, mid, seed, mp, start,
+                                         a["uid"], b["uid"], a["ticket"], b["ticket"])
+                pipe.execute()
+            except WatchError:
+                continue            # 被并发改动（另一实例撮走/新入队改了 qall）→ 重试
+            finally:
+                pipe.reset()        # 释放 WATCH，归还连接
+            # EXEC 成功：本实例即该局 owner，建进程内运行时（ws_* 读它）
+            self._store_match_inproc(mid, seed, mp, start, a, b, now)
+            return True
+        return False
+
+    def _try_pair(self, now: int) -> None:
+        # 反复撮合直到无可成局（复现旧版一轮 _try_pair 尽量排空队列的语义）；每局一个独立事务。
+        if self.r is None:          # 无 Redis（纯进程内运行时测试）不参与随机撮合
+            return
+        while self._pair_once(now):
+            pass
+
+    def _drop_ticket(self, ticket: str) -> None:
+        # 从 Redis 移除一张等待 ticket：DEL tk + ZREM q:{rank} + ZREM qall。容忍已不存在（幂等）。
+        if self.r is None:
+            return
+        rank = self.r.hget(k("tk", ticket), "rank")   # 先读 rank 定位 q 桶（tk 已亡则 None）
+        pipe = self.r.pipeline(transaction=False)
+        pipe.delete(k("tk", ticket))
+        if rank is not None:
+            pipe.zrem(k("q", rank), ticket)
+        pipe.zrem(k("qall"), ticket)
+        pipe.execute()
 
     def _reap(self, now: int) -> None:
         # 惰性回收进程内字典，防无界增长（无后台线程，挂在最高频的 enqueue/poll 锁内）。
@@ -205,30 +294,40 @@ class VersusHub:
             self.matches.pop(mid, None)
             for tk in [t for t, (mm, _u) in list(self.ticket_match.items()) if mm == mid]:
                 self.ticket_match.pop(tk, None)
-        # 2) 孤儿等待者：入队超 QUEUE_TTL_MS 仍在队列（从不 poll/cancel）
-        for tk in [t for t, e in list(self.queue.items()) if now - e["enqueued_ms"] > QUEUE_TTL_MS]:
-            self.queue.pop(tk, None)
+        # 2) 孤儿等待者（Redis）：qall 中入队超 QUEUE_TTL_MS，或 tk 已过期(PEXPIRE)残留的成员 → 清。
+        #    C1.3 把 queue 迁到 Redis 的连带项（旧 self.queue 分支已失效）；逻辑时钟越界为主动清（测试路径），
+        #    PEXPIRE 为真实时间兜底。完整 _sweep（rooms 走 SCAN + 改名）留 C1.6，本处只清队列。
+        if self.r is not None:
+            for ticket in self.r.zrange(k("qall"), 0, -1):
+                enq = self.r.hget(k("tk", ticket), "enqueued_ms")
+                if enq is None or now - int(enq) > QUEUE_TTL_MS:
+                    self._drop_ticket(ticket)
         # 3) 孤儿私房：建房超 ROOM_TTL_MS 无人加入
         for code in [c for c, r in list(self.rooms.items()) if now - r["created_ms"] > ROOM_TTL_MS]:
             self.rooms.pop(code, None)
 
     # —— 对外匹配 API ——
     def enqueue(self, uid: str, rank: int) -> dict:
-        # 禁赛拦截
+        # 禁赛拦截（MySQL，锁外）
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
         with self.lock:
             now = self._now()
             self._prune_recent(now)
-            self._reap(now)                    # 惰性回收终局/孤儿状态，防字典无界增长
-            # 记录本次入队用于自适应窗口统计，再算去重人数决定窗口
+            self._reap(now)                    # 惰性回收终局/孤儿状态，防无界增长
+            # recent/自适应窗口仍进程内算（启发式，非正确性关键，多实例各算可接受）
             self.recent.setdefault(rank, []).append((uid, now))
             n = self._recent_distinct(rank, uid, now)
             ticket = secrets.token_hex(8)
-            # 注（Task 6 退役）：旧模型曾把本方 loadout 挂在入队条目上透传给 side 再下发对手；
-            # WS 快照模型无消费方，入队条目只留匹配必需字段。
-            self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
-                                  "enqueued_ms": now, "hold_until_ms": now + _adaptive_window_ms(n)}
+            hold_until = now + _adaptive_window_ms(n)
+            # 写 Redis：tk hash（+PEXPIRE 兜底）+ 同段位池 q:{rank} + 全池 qall（score=enqueued_ms，FIFO）
+            pipe = self.r.pipeline(transaction=False)
+            pipe.hset(k("tk", ticket), mapping={
+                "uid": uid, "rank": rank, "enqueued_ms": now, "hold_until_ms": hold_until})
+            pipe.pexpire(k("tk", ticket), QUEUE_TTL_MS)
+            pipe.zadd(k("q", rank), {ticket: now})
+            pipe.zadd(k("qall"), {ticket: now})
+            pipe.execute()
             self._try_pair(now)
             return {"ticket": ticket}
 
@@ -236,34 +335,32 @@ class VersusHub:
         with self.lock:
             now = self._now()
             self._reap(now)                    # 惰性回收（最高频入口之一），先清理再处理本请求
-            # 已成局 → 先判超时；未超时则捕获 (mid, uid)，锁外再组 payload
-            matched = self.ticket_match.get(ticket)
-            if matched is None:
-                e = self.queue.get(ticket)
-                if not e:
-                    # 不在队列也不在对局：已超时或被清理
-                    return {"status": "timeout"}
-                # 排队超时 → 摘除并返回 timeout
-                if now - e["enqueued_ms"] >= MATCH_TIMEOUT_MS:
-                    self.queue.pop(ticket, None)
-                    return {"status": "timeout"}
-                # 仍等待：再尝试一次配对（可能放宽窗口已过）
-                self._try_pair(now)
-                matched = self.ticket_match.get(ticket)
-                if matched is None:
+            # 已成局 → 捕获 (mid,uid) 待锁外组 payload；未成局 → 判超时/等待，必要时再撮一次
+            tm = self.r.get(k("tm", ticket))
+            if tm is None:
+                if not self.r.exists(k("tk", ticket)):
+                    return {"status": "timeout"}          # 既不在对局也不在队列：超时或已清理
+                enq = self.r.hget(k("tk", ticket), "enqueued_ms")
+                if enq is None:
+                    return {"status": "timeout"}          # exists 与 hget 之间 tk 恰好过期
+                if now - int(enq) >= MATCH_TIMEOUT_MS:
+                    self._drop_ticket(ticket)
+                    return {"status": "timeout"}          # 排队超时 → 摘除
+                self._try_pair(now)                       # 仍等待：再尝试一次配对（放宽窗口可能已过）
+                tm = self.r.get(k("tm", ticket))
+                if tm is None:
                     return {"status": "waiting"}
-        # 锁外组 payload：_profile 的 DB 查询不在全局锁内，避免热路径把匹配串在 DB 延迟上
-        # 注意：锁外此时 match 可能被并发 _reap 回收（仅当该局已可回收＝废弃局），
-        # 直接 self.matches[mid] 会抛 KeyError 导致 poll 500，故 _match_start_payload 用 .get() 兜底。
-        mid, uid = matched
+        # 锁外组 payload：_profile 的 DB 查询不占全局锁，避免热路径串在 DB 延迟上。
+        # 期间 match 记录可能被并发回收（仅废弃局）→ _match_start_payload 返回 None，视为 timeout，避免 500。
+        mid, uid = tm.split("|", 1)
         payload = self._match_start_payload(mid, uid)
-        if payload is None:                    # 期间被并发 _reap 回收（仅废弃局）→ 视为超时，避免 KeyError 500
+        if payload is None:
             return {"status": "timeout"}
         return {"status": "matched", "matchStart": payload}
 
     def cancel(self, ticket: str) -> dict:
         with self.lock:
-            self.queue.pop(ticket, None)
+            self._drop_ticket(ticket)
             return {"ok": True}
 
     # —— 私房（邀请对战）：房主建房间占 ticket 挂起，客人凭码加入直接成局 ——
@@ -288,6 +385,15 @@ class VersusHub:
             self.queue[ticket] = {"ticket": ticket, "uid": uid, "rank": rank,
                                   "enqueued_ms": now, "hold_until_ms": now + MATCH_TIMEOUT_MS,
                                   "room": code}
+            # C1.3/C1.5 衔接：poll 已迁 Redis（读 tk），故房主 ticket 也须 Redis 可见，
+            # 否则 poll 房主票会误判 timeout（应为 waiting）。只写 tk（带 room 标记 + PEXPIRE ROOM_TTL_MS），
+            # **不 ZADD q/qall** —— 私房不进随机池（等价旧 _try_pair 跳过 room 标记）。
+            # 房间记录(self.rooms) 与 room_join 读 host_entry 仍进程内，完整迁移留 C1.5。
+            if self.r is not None:
+                self.r.hset(k("tk", ticket), mapping={
+                    "uid": uid, "rank": rank, "enqueued_ms": now,
+                    "hold_until_ms": now + MATCH_TIMEOUT_MS, "room": code})
+                self.r.pexpire(k("tk", ticket), ROOM_TTL_MS)
             link = f"{base_url}/?versus={code}"
             return {"code": code, "link": link, "ticket": ticket, "map": self.rooms[code]["map"]}
 
@@ -319,14 +425,23 @@ class VersusHub:
             return {"status": "matched", "matchStart": self._match_start_payload(mid, uid)}
 
     def _match_start_payload(self, mid: str, uid: str) -> Optional[dict]:
-        # 注意：poll 在锁外调用本方法（DB 读档不占锁）；对局可能已被并发 _reap 回收 → 返回 None 由调用方兜底。
-        # 锁外只读 match 的不可变字段（seed/map/start_at_ms/双方 uid，成局后不再变），无撕裂读。
+        # 组 match-start：matchId/seed/map/startAt/对手档案。C1.4 起从 Redis 轻量记录 match:{mid} 读
+        # （seed/map/start_at_ms/uid_a/uid_b 成局后不变，无撕裂读），使任意实例的 poll 都能组包。
+        # 记录被回收（reaped/过期）→ 返回 None，poll 据此兜底为 timeout（避免 500）。
+        # 注：poll 在锁外调用本方法（_profile 的 DB 读不占锁）；room_join 在锁内调用（低频，可接受）。
+        if self.r is not None:
+            rec = self.r.hgetall(k("match", mid))
+            if not rec:
+                return None
+            uid_a = rec.get("uid_a"); uid_b = rec.get("uid_b")
+            opp_uid = uid_b if uid_a == uid else uid_a
+            # seed/start_at_ms 存 Redis 为字符串（decode_responses），还原为 int 保持既有 payload 形（数字）
+            return {"matchId": mid, "seed": int(rec["seed"]), "map": rec["map"],
+                    "startAtServerMs": int(rec["start_at_ms"]), "opponent": self._profile(opp_uid)}
+        # self.r=None（纯进程内运行时测试，如直连 _make_match 的 ws 用例）：退回进程内 matches。
         m = self.matches.get(mid)
         if m is None:
             return None
-        # 组 match-start：matchId/seed/map/startAt/对手档案。
-        # 注（Task 6 退役）：旧模型曾在此追加对方上交的 loadout 作 opponentLoadout（供对手侧确定性重放）；
-        # WS 快照模型对手侧从快照本地插值重建，无消费方，已删除。
         opp_uid = m["b"]["uid"] if m["a"]["uid"] == uid else m["a"]["uid"]
         return {"matchId": mid, "seed": m["seed"], "map": m["map"],
                 "startAtServerMs": m["start_at_ms"], "opponent": self._profile(opp_uid)}

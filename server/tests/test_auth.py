@@ -339,7 +339,9 @@ def server_base():
     # Task 8：versus HTTP 端点走 _hub(handler)=handler.versus；main() 外的测试 server 需自行挂 hub，
     # 否则 enqueue 通过鉴权后取 handler.versus 会 AttributeError→500。
     from api_versus import VersusHub
-    H.versus = VersusHub(H_db)
+    import fakeredis
+    # 匹配层已迁 Redis（enqueue 读写 self.r）；测试 server 注入 fakeredis，否则 enqueue→500。
+    H.versus = VersusHub(H_db, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: H(*a, directory=str(ROOT), **k))
     port = httpd.server_address[1]
