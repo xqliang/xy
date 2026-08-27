@@ -518,6 +518,16 @@ class VersusHub:
         self._persist_result(m, now)
         self._forget_match_state(m["match_id"])        # C2：终局同步删 Redis mstate，防 TTL 窗口内被复活
 
+    def _set_no_contest(self, m, now: int) -> None:
+        """C5：打空气作废——对手全程从未连接时该局不判胜、不写战绩(不调 _persist_result)。
+        仅置终局标志 + no_contest 供 _reap 回收;删 Redis mstate(C2)。幂等。"""
+        if m.get("ended"):
+            return
+        m["ended"] = True
+        m["ended_ms"] = now
+        m["no_contest"] = True
+        self._forget_match_state(m["match_id"])
+
     def _set_draw(self, m, now: int) -> None:
         # 双方 EPS 内阵亡 → 平局（可覆盖先到阵亡者已判的胜负）
         m["result"] = {"a": {"outcome": "draw", "reason": "draw"},
@@ -626,26 +636,24 @@ class VersusHub:
         for key, other_key in (("a", "b"), ("b", "a")):
             side = m[key]
             other = m[other_key]
-            if side.get("gone_ms") and now - side["gone_ms"] > DISCONNECT_GRACE_MS:
+            # 分支1：连过又掉线超时 → 判负(DisconnectTimeout)，推 result 给存活侧。
+            # C5：加 connected_ever 守卫——「从未连接」侧即便被 C2 回放置了 gone_ms，也不算掉线，
+            # 只能走下面分支2(no-contest)，绝不经此判胜；连过又掉线仍照旧判胜。
+            if (side.get("connected_ever") and side.get("gone_ms")
+                    and now - side["gone_ms"] > DISCONNECT_GRACE_MS):
                 self._set_result(m, key, "DisconnectTimeout", now)
                 if other.get("ws_send"):
                     self._ws_push_locked(other, side, m,
                                          {"type": "result", **m["result"][other_key]})
                 return
-            # B4b：对手从未连接（撮合后一方到场、另一方一直没 hello）→ 过撮合宽限即判在场方胜
-            # （对手 no-show ≈ 断线超时）。由在场方的 ws_* 驱动本检查（_reap 不会触发本局：在场方
-            # 在局内不轮询 matchmaking）；复用 DisconnectTimeout（客户端已有「对手掉线」文案）。
-            # 仅当"恰好一方缺席"时命中：双方都没连由 _reap 的 20s 分支删除（无在场方、不判胜）。
-            # 回放耦合：_deserialize_match 把两侧 gone_ms 都置 now，故"被恢复的从未连接侧"同时满足
-            # 上面的 gone-branch(>45s) 与本分支(>20s)。20-45s 窗口内只有本分支命中；>45s 后 gone-branch
-            # （代码里更靠前）先命中——但两条路径判负方(缺席侧)与 reason(DisconnectTimeout)完全一致，
-            # 无正确性差异（仅"都合格、阈值短的先赢"这层耦合不直观，故在此点明）。
+            # 分支2（C5 打空气作废）：对手从未连接（撮合后一方到场、另一方一直没 hello）→ 过撮合宽限
+            # 即把该局作废(no-contest)、不判胜不计战绩，推 noShow 给在场方触发自动重匹配。
+            # 仅当"恰好一方缺席"命中：双方都没连由 _reap 的 20s 分支静默删除。
             if (not side.get("connected_ever") and other.get("connected_ever")
                     and now - m["created_ms"] > MATCH_CONNECT_GRACE_MS):
-                self._set_result(m, key, "DisconnectTimeout", now)   # 未露面的 side 判负
+                self._set_no_contest(m, now)
                 if other.get("ws_send"):
-                    self._ws_push_locked(other, side, m,
-                                         {"type": "result", **m["result"][other_key]})
+                    self._ws_push_locked(other, side, m, {"type": "noShow"})
                 return
 
     def _ws_push_result_locked(self, m: dict) -> None:

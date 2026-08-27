@@ -156,7 +156,8 @@ def test_reload_lazy_preserves_connected_ever(rhub):
     assert mid in h2.matches
 
 
-def test_opponent_never_connects_present_side_wins():
+def test_opponent_never_connects_no_contest_rematch():
+    # C5：一侧到场、对手从未连接 → 该局作废(no-contest)，不判胜、不写战绩，推 noShow 给在场方重匹配。
     from api_versus import MATCH_CONNECT_GRACE_MS
     import json
     hub = _fake_hub()
@@ -164,22 +165,19 @@ def test_opponent_never_connects_present_side_wins():
     e2 = {"uid": "B1", "rank": 3, "ticket": "tB"}
     mid = hub._make_match(e1, e2, hub._now())
     sent_a = []
-    hub.ws_hello("A1", mid, lambda t: (sent_a.append(t), True)[1])   # A connects; B never does
-    # 未过撮合宽限：A 发快照不应判定
+    hub.ws_hello("A1", mid, lambda t: (sent_a.append(t), True)[1])   # A 连上；B 从未连接
     base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
     hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": base})
-    assert hub.matches[mid].get("ended") is not True
-    # 过了撮合宽限：A 再发快照 → 对手 B 从未露面 → A 判胜
+    assert hub.matches[mid].get("ended") is not True                 # 未过撮合宽限：不判定
     hub._clock["ms"] += MATCH_CONNECT_GRACE_MS + 1
     hub.ws_snap("A1", mid, {"type": "snap", "t": 2, "s": base})
     m = hub.matches[mid]
     assert m["ended"] is True
-    assert m["result"]["a"]["outcome"] == "win"
-    assert m["result"]["a"]["reason"] == "opponentDisconnectTimeout"
-    assert m["result"]["b"]["reason"] == "selfDisconnect"
-    # A 收到 result 推送
+    assert m.get("result") is None
+    assert m.get("no_contest") is True
     types = [json.loads(t).get("type") for t in sent_a]
-    assert "result" in types
+    assert "noShow" in types
+    assert "result" not in types
 
 def test_both_never_connect_not_resolved_as_win_still_reaped():
     # 双方都没连：不判胜（无在场方），仍由 _reap 的 20s 分支回收（B4 行为不变）
@@ -191,26 +189,67 @@ def test_both_never_connect_not_resolved_as_win_still_reaped():
     assert mid not in hub.matches   # 被 reap 删除，而非判胜
 
 
-def test_reload_lazy_opponent_no_show_present_side_wins(rhub):
+def test_reload_lazy_opponent_no_show_no_contest(rhub):
+    # C5：回放恢复的对局上，一侧打空气同样 no-contest（不判胜、不写 pvp_results、推 noShow）。
     from api_versus import MATCH_CONNECT_GRACE_MS
     import json
     mid = _mk(rhub, "PW1", "PW2")
-    rhub.ws_hello("PW1", mid, lambda t: True)
+    rhub.ws_hello("PW1", mid, lambda t: True)   # PW1 连过；PW2 从未连接
     rhub.flush_active_matches()
     h2 = _reopen(rhub.db, rhub._redis_server, 9_000_000)
     sent = []
-    res = h2.ws_hello("PW1", mid, lambda t: (sent.append(t), True)[1])
-    assert "error" not in res
-    assert h2.matches[mid]["a"]["connected_ever"] is True
-    assert h2.matches[mid]["b"]["connected_ever"] is False
+    h2.ws_hello("PW1", mid, lambda t: (sent.append(t), True)[1])   # 懒加载重建
     h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + 1
     base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
     h2.ws_snap("PW1", mid, {"type": "snap", "t": 1, "s": base})
     m = h2.matches[mid]
     assert m["ended"] is True
+    assert m.get("result") is None
+    assert m.get("no_contest") is True
+    assert "noShow" in [json.loads(t).get("type") for t in sent]
+    with rhub.db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM pvp_results WHERE match_id=%s", (mid,))
+        assert cur.fetchone()["c"] == 0
+
+
+def test_reloaded_never_connected_side_no_contest_after_disconnect_grace(rhub):
+    # 分支1 守卫回归：C2 回放把两侧 gone_ms=now；从未连接侧过 DISCONNECT_GRACE_MS(45s)
+    # 也不得经分支1 误判胜，必须走分支2 no-contest。
+    from api_versus import DISCONNECT_GRACE_MS
+    import json
+    mid = _mk(rhub, "N1", "N2")
+    rhub.ws_hello("N1", mid, lambda t: True)   # N1 连过；N2 从未连接
+    rhub.flush_active_matches()
+    h2 = _reopen(rhub.db, rhub._redis_server, 20_000_000)
+    sent = []
+    h2.ws_hello("N1", mid, lambda t: (sent.append(t), True)[1])
+    h2._clock["ms"] += DISCONNECT_GRACE_MS + 1
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    h2.ws_snap("N1", mid, {"type": "snap", "t": 1, "s": base})
+    m = h2.matches[mid]
+    assert m.get("result") is None
+    assert m.get("no_contest") is True
+    assert "result" not in [json.loads(t).get("type") for t in sent]
+
+
+def test_connected_then_dropped_still_wins(rhub):
+    # 分支1 不变回归：一方连过(connected_ever=True)后掉线超 45s → 仍判对方胜 + 写 pvp_results。
+    from api_versus import DISCONNECT_GRACE_MS
+    mid = _mk(rhub, "D1", "D2")
+    rhub.ws_hello("D1", mid, lambda t: True)
+    rhub.ws_hello("D2", mid, lambda t: True)
+    rhub.matches[mid]["b"]["gone_ms"] = rhub._now()          # 模拟 D2 socket 掉线（连过又断）
+    rhub._clock["ms"] += DISCONNECT_GRACE_MS + 1
+    base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    rhub.ws_snap("D1", mid, {"type": "snap", "t": 1, "s": base})
+    m = rhub.matches[mid]
+    assert m["ended"] is True
+    assert m.get("no_contest") is not True
     assert m["result"]["a"]["outcome"] == "win"
     assert m["result"]["a"]["reason"] == "opponentDisconnectTimeout"
-    assert "result" in [json.loads(t).get("type") for t in sent]
+    with rhub.db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM pvp_results WHERE match_id=%s", (mid,))
+        assert cur.fetchone()["c"] == 2
 
 
 def test_flush_writes_mstate_to_redis(rhub):
