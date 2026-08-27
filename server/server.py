@@ -150,8 +150,8 @@ def main() -> None:
     BoundHandler.cfg = cfg
     BoundHandler.versus = VersusHub(db, redis_client=make_client(cfg))   # 进程内 PvP 单例：匹配/私房/波次/终局/反作弊（WS 快照模型，HTTP tick 已退役）。匹配层共享态经注入的 Redis（enqueue/poll/撮合硬依赖 self.r）
     hub = BoundHandler.versus
-    restored = hub.load_active_matches()          # 启动回放：把上次未终局对局读回内存
-    print(f"pvp active matches restored: {restored}", flush=True)
+    # C2：对局态懒认领——不再启动时全量回放；重连经 ws_hello 按需从 Redis mstate 重建（跨实例接管）。
+    # 周期 flush 守护线程 + SIGTERM 优雅 flush（下方）把本实例 own 的活跃局节流镜像进 Redis。
 
     # 周期 flush：镜像 start_aggregator 的守护线程形态（daemon、swallow-and-log、sleep 循环）
     import threading, time as _time

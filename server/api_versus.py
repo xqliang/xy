@@ -74,10 +74,10 @@ class VersusHub:
         # None 表示未接 Redis（进程内模式/部分单测），使用方须自行判空。
         self.r = redis_client
         self.lock = threading.Lock()
-        self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM）防两次 flush 的 UPSERT/DELETE 交错丢局
+        self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM），防重入；实际互斥由 flush 内 self.lock 保证
         self.queue: dict[str, dict] = {}          # 【已弃用·留空】随机队列(C1.3)+私房(C1.5)均迁 Redis；留空字段仅为 reset() 兼容，无写入方
         self.recent: dict[int, list[tuple[str, int]]] = {}  # rank -> [(uid, ms)]
-        self.rooms: dict[str, dict] = {}          # 【已弃用·留空】私房记录 C1.5 迁 Redis(room:{code})；留空以让 _reap 的 rooms 分支成 no-op（C1.6 迁其惰性清）
+        self.rooms: dict[str, dict] = {}          # 【已弃用·留空】私房记录 C1.5 迁 Redis(room:{code})；留空字段仅为 reset() 兼容，无写入方（C2 删了 _reap 的 rooms 分支）
         self.matches: dict[str, dict] = {}        # match_id -> Match
         self.ticket_match: dict[str, tuple[str, str]] = {}  # ticket -> (match_id, uid)
         self._last_reap_ms = 0                    # 上次惰性回收时刻（时间闸门，0 保证冷启动首个 reap 即跑）
@@ -300,11 +300,6 @@ class VersusHub:
         # 2) 孤儿/超时等待者（Redis）：委托 _sweep（EXISTS 孤儿清 + 逻辑超时清，含 q:{rank} 孤儿）。
         #    C1.6：queue 惰性清从"仅扫 qall"升级为 clock-independent 的 EXISTS 校验 + SCAN q:* 双 ZSET 清。
         self._sweep(now)
-        # 3) 孤儿私房：C1.5 起房间记录迁 Redis(room:{code})，self.rooms 恒空 → 本分支已成 no-op；
-        #    Redis 孤儿房靠 PEXPIRE(ROOM_TTL_MS) 真实时间兜底（C1.6 结论：不加逻辑时钟 room sweep，
-        #    见 _sweep docstring），self.rooms 分支仅为历史兼容保留。
-        for code in [c for c, r in list(self.rooms.items()) if now - r["created_ms"] > ROOM_TTL_MS]:
-            self.rooms.pop(code, None)
 
     def _sweep(self, now: int) -> None:
         # C1.6：Redis 队列惰性清——clock-independent 的 EXISTS 孤儿清 + 逻辑时钟超时清。
@@ -395,6 +390,7 @@ class VersusHub:
         return {"status": "matched", "matchStart": payload}
 
     def cancel(self, ticket: str) -> dict:
+        self._require_redis()
         with self.lock:
             self._drop_ticket(ticket)
             return {"ok": True}
@@ -917,35 +913,6 @@ class VersusHub:
             self.r.delete(k("mstate", mid))
         except Exception:
             logging.exception("pvp mstate 删除失败 match_id=%s", mid)
-
-    def load_active_matches(self) -> int:
-        """进程启动时回放未终局对局到内存（在 serve_forever 之前调用，无并发）。返回回放条数。"""
-        now = self._now()
-        try:
-            with self.db.cursor() as cur:
-                cur.execute("SELECT match_id,uid_a,uid_b,ticket_a,ticket_b,state_json FROM pvp_active_match")
-                rows = cur.fetchall()
-        except Exception:
-            logging.exception("pvp_active_match 回放读取失败，跳过（活跃对局丢失，客户端将重新匹配）")
-            return 0
-        n = 0
-        for row in rows:
-            try:
-                blob = json.loads(row["state_json"])
-                m = _deserialize_match(blob, now)
-                if m.get("ended"):
-                    continue
-                self.matches[m["match_id"]] = m
-                if row.get("ticket_a"):
-                    self.ticket_match[row["ticket_a"]] = (m["match_id"], row["uid_a"])
-                if row.get("ticket_b"):
-                    self.ticket_match[row["ticket_b"]] = (m["match_id"], row["uid_b"])
-                n += 1
-            except Exception:
-                logging.exception("pvp_active_match 单行回放失败 match_id=%s，跳过", row.get("match_id"))
-        if n:
-            logging.info("pvp_active_match 回放 %d 局活跃对局", n)
-        return n
 
 
 # ---- 里程碑 B：活跃对局序列化（持久化用）----

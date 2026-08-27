@@ -30,12 +30,6 @@ def db():
     d = DB(load_config()); d.migrate()
     return d
 
-def test_migrate_creates_pvp_active_match(db):
-    with db.cursor() as cur:
-        cur.execute("SHOW TABLES LIKE 'pvp_active_match'")
-        assert cur.fetchone() is not None
-
-
 def _fake_hub():
     from api_versus import VersusHub
     import contextlib
