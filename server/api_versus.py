@@ -846,8 +846,14 @@ class VersusHub:
         （即它 own 的局），故**不做**跨实例的「DELETE NOT IN」对账（会误删别实例的活跃局）；
         清理靠「终局同步删 mstate（_forget_match_state）」+ 每次写带 PEXPIRE MATCH_REAP_MS 兜底
         （owner 崩溃则状态到点自动过期，与 match:{mid} 轻量记录同寿）。
-        并发纪律沿用 B-core：_flush_lock 串行化整个 flush（与周期 flush / SIGTERM flush 互斥）、
-        self.lock 内做内存快照 + json.dumps、Redis 写在锁外。self.r 为 None（纯内存 ws 测试 hub）直接跳过。"""
+        并发纪律：_flush_lock 串行化整个 flush（与周期 flush / SIGTERM flush 互斥）。
+        **SET/PEXPIRE 与快照同持 self.lock**（不同于 B-core「写在锁外」）——因存在与「终局删 mstate」
+        （_set_result/_set_draw→_forget_match_state 在 self.lock 内 DEL）的复活竞态：若快照在锁内取到
+        未终局的 X、释放锁后另一线程终局 X 并 DEL mstate:X、flush 再在锁外 SET 回活态 blob，则残留
+        ended=False 的僵尸态，TTL 窗口内被别实例 ws_hello 懒加载复活。把 SET/PEXPIRE 移进 self.lock 后，
+        「快照+写」与「终局删」在 self.lock 上互斥（终局先→flush 跳过 X 且 DEL 生效；flush 先→随后终局 DEL 掉 X）。
+        payload 为小 digest（服务端每局只存小摘要，不含 units/大快照），锁内单次 pipeline 往返成本可忽略，
+        与 _sweep 已在锁内做更重 Redis IO 的模式一致。self.r 为 None（纯内存 ws 测试 hub）直接跳过。"""
         if self.r is None:
             return
         with self._flush_lock:
@@ -866,14 +872,14 @@ class VersusHub:
                         snap.append((mid, blob))
                     except Exception:
                         logging.exception("pvp mstate 单局快照失败 match_id=%s，跳过", mid)
-            try:
-                pipe = self.r.pipeline(transaction=False)
-                for mid, blob in snap:
-                    pipe.set(k("mstate", mid), blob)
-                    pipe.pexpire(k("mstate", mid), MATCH_REAP_MS)
-                pipe.execute()
-            except Exception:
-                logging.exception("pvp mstate flush 失败（不影响对局，下轮重试）")
+                try:
+                    pipe = self.r.pipeline(transaction=False)
+                    for mid, blob in snap:
+                        pipe.set(k("mstate", mid), blob)
+                        pipe.pexpire(k("mstate", mid), MATCH_REAP_MS)
+                    pipe.execute()
+                except Exception:
+                    logging.exception("pvp mstate flush 失败（不影响对局，下轮重试）")
 
     def _load_match_from_redis(self, mid: str, now: int) -> Optional[dict]:
         """懒认领：本实例 self.matches 无此局时，从 Redis mstate:{mid} 重建整局运行时并接管 owner。
