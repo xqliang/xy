@@ -30,12 +30,6 @@ def db():
     d = DB(load_config()); d.migrate()
     return d
 
-def test_migrate_creates_pvp_active_match(db):
-    with db.cursor() as cur:
-        cur.execute("SHOW TABLES LIKE 'pvp_active_match'")
-        assert cur.fetchone() is not None
-
-
 def _fake_hub():
     from api_versus import VersusHub
     import contextlib
@@ -109,43 +103,28 @@ def rhub(db):
     from api_versus import VersusHub
     clock = {"ms": 1_000_000}
     seeds = iter(range(1000, 9999))
+    srv = fakeredis.FakeServer()                      # C2：同一后端，供 _reopen 起「第二个 server 实例」
     h = VersusHub(db, now_ms=lambda: clock["ms"],
                   gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
                   pick_map=lambda: "huoyanshan",
-                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
+                  redis_client=fakeredis.FakeStrictRedis(server=srv, decode_responses=True))
+    h._clock = clock
+    h._redis_server = srv                             # reload 测试用它起共享数据的新 hub
+    return h
+
+
+def _reopen(db, srv, start_ms):
+    # 模拟「同一 Redis、新 server 进程」：共享 srv，但内存 self.matches 为空（懒加载从 Redis 重建）。
+    from api_versus import VersusHub
+    clock = {"ms": start_ms}
+    h = VersusHub(db, now_ms=lambda: clock["ms"],
+                  redis_client=fakeredis.FakeStrictRedis(server=srv, decode_responses=True))
     h._clock = clock
     return h
 
 def _mk(hub, ua, ub):
     return hub._make_match({"uid": ua, "rank": 3, "ticket": "t_" + ua},
                            {"uid": ub, "rank": 3, "ticket": "t_" + ub}, hub._now())
-
-def test_flush_then_load_restores_match_and_tickets(rhub, db):
-    mid1 = _mk(rhub, "P1", "P2")
-    mid2 = _mk(rhub, "P3", "P4")
-    rhub.flush_active_matches()
-    from api_versus import VersusHub
-    h2 = VersusHub(db, now_ms=lambda: 2_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
-    h2.load_active_matches()
-    assert mid1 in h2.matches and mid2 in h2.matches
-    assert h2.matches[mid1]["a"]["uid"] == "P1" and h2.matches[mid1]["b"]["uid"] == "P2"
-    assert h2.ticket_match.get("t_P1") == (mid1, "P1")
-    assert h2.ticket_match.get("t_P2") == (mid1, "P2")
-    sent = []
-    res = h2.ws_hello("P1", mid1, lambda t: (sent.append(t), True)[1])
-    assert "error" not in res
-    assert h2.matches[mid1]["a"]["ws_send"] is not None
-    assert h2.matches[mid1]["a"]["gone_ms"] == 0
-
-def test_flush_reconciles_deletes_ended_and_absent(rhub, db):
-    mid = _mk(rhub, "Q1", "Q2")
-    rhub.flush_active_matches()
-    rhub.ws_status("Q1", mid, "surrender")   # 终局 → ended=True
-    rhub.flush_active_matches()              # 对账：活跃集不含 mid → 删行
-    with db.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS c FROM pvp_active_match WHERE match_id=%s", (mid,))
-        assert cur.fetchone()["c"] == 0
-
 
 def test_reap_removes_never_connected_match(rhub, db):
     from api_versus import MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
@@ -164,18 +143,14 @@ def test_reap_keeps_match_if_one_side_connected(rhub, db):
     assert mid in rhub.matches            # 连过的不按"从未连接"退队
 
 
-def test_reload_preserves_connected_ever_so_resumed_match_not_reaped_at_connect_grace(rhub, db):
-    from api_versus import VersusHub, MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
+def test_reload_lazy_preserves_connected_ever(rhub):
+    from api_versus import MATCH_CONNECT_GRACE_MS, REAP_INTERVAL_MS
     mid = _mk(rhub, "R1", "R2")
-    rhub.ws_hello("R1", mid, lambda t: True)   # 一侧连过 → connected_ever=True
+    rhub.ws_hello("R1", mid, lambda t: True)
     rhub.flush_active_matches()
-    h2 = VersusHub(db, now_ms=lambda: 5_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
-    h2.load_active_matches()
-    # 回放后 R1 侧 connected_ever 应被保留为 True（而非被覆盖成 False）
+    h2 = _reopen(rhub.db, rhub._redis_server, 5_000_000)
+    h2.ws_hello("R2", mid, lambda t: True)
     assert h2.matches[mid]["a"]["connected_ever"] is True
-    # 因此即便双方都没再 hello，也不会被 20s「从未连接」分支秒删（改由 IDLE_REAP/DISCONNECT_GRACE 治理）
-    h2._clock = {"ms": 5_000_000}
-    h2._now = lambda: h2._clock["ms"]
     h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + REAP_INTERVAL_MS + 1
     h2.poll("bogus")
     assert mid in h2.matches
@@ -216,24 +191,18 @@ def test_both_never_connect_not_resolved_as_win_still_reaped():
     assert mid not in hub.matches   # 被 reap 删除，而非判胜
 
 
-def test_reload_opponent_no_show_present_side_wins(rhub, db):
-    # I1 路径回归：打空气判胜在"回放恢复的对局"上也成立（最微妙的一环——
-    # 回放把两侧 gone_ms 置 now、connected_ever 按持久化值恢复；在场方重连后过 20s 宽限即判胜）。
-    from api_versus import VersusHub, MATCH_CONNECT_GRACE_MS
+def test_reload_lazy_opponent_no_show_present_side_wins(rhub):
+    from api_versus import MATCH_CONNECT_GRACE_MS
     import json
     mid = _mk(rhub, "PW1", "PW2")
-    rhub.ws_hello("PW1", mid, lambda t: True)   # PW1 连过(connected_ever=True)；PW2 从未连接
+    rhub.ws_hello("PW1", mid, lambda t: True)
     rhub.flush_active_matches()
-    # 模拟重启：新 hub 从库回放
-    h2 = VersusHub(db, now_ms=lambda: 9_000_000, redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
-    h2._clock = {"ms": 9_000_000}; h2._now = lambda: h2._clock["ms"]
-    h2.load_active_matches()
-    # 回放后 PW1 的 connected_ever 应保留 True、PW2 仍 False
+    h2 = _reopen(rhub.db, rhub._redis_server, 9_000_000)
+    sent = []
+    res = h2.ws_hello("PW1", mid, lambda t: (sent.append(t), True)[1])
+    assert "error" not in res
     assert h2.matches[mid]["a"]["connected_ever"] is True
     assert h2.matches[mid]["b"]["connected_ever"] is False
-    # PW1 重连并在过撮合宽限后发快照 → 对手 PW2 从未露面 → PW1 判胜
-    sent = []
-    h2.ws_hello("PW1", mid, lambda t: (sent.append(t), True)[1])
     h2._clock["ms"] += MATCH_CONNECT_GRACE_MS + 1
     base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
     h2.ws_snap("PW1", mid, {"type": "snap", "t": 1, "s": base})
@@ -242,3 +211,64 @@ def test_reload_opponent_no_show_present_side_wins(rhub, db):
     assert m["result"]["a"]["outcome"] == "win"
     assert m["result"]["a"]["reason"] == "opponentDisconnectTimeout"
     assert "result" in [json.loads(t).get("type") for t in sent]
+
+
+def test_flush_writes_mstate_to_redis(rhub):
+    from rediskv import k
+    import json
+    mid = _mk(rhub, "F1", "F2")
+    rhub.flush_active_matches()
+    raw = rhub.r.get(k("mstate", mid))
+    assert raw is not None
+    blob = json.loads(raw)
+    assert blob["state"]["a"]["uid"] == "F1"
+    assert blob["state"]["b"]["uid"] == "F2"
+    assert "ws_send" not in blob["state"]["a"]
+    assert blob["ticket_a"] == "t_F1" and blob["ticket_b"] == "t_F2"
+
+
+def test_mstate_has_ttl(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "T1", "T2")
+    rhub.flush_active_matches()
+    assert rhub.r.pttl(k("mstate", mid)) > 0
+
+
+def test_flush_skips_ended_match(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "S1", "S2")
+    rhub.ws_status("S1", mid, "surrender")
+    rhub.flush_active_matches()
+    assert not rhub.r.exists(k("mstate", mid))
+
+
+def test_flush_then_lazy_load_restores_match_and_tickets(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "P1", "P2")
+    rhub.flush_active_matches()
+    assert rhub.r.exists(k("mstate", mid))
+    h2 = _reopen(rhub.db, rhub._redis_server, 2_000_000)
+    assert mid not in h2.matches
+    sent = []
+    res = h2.ws_hello("P1", mid, lambda t: (sent.append(t), True)[1])
+    assert "error" not in res
+    assert mid in h2.matches
+    assert h2.matches[mid]["a"]["uid"] == "P1" and h2.matches[mid]["b"]["uid"] == "P2"
+    assert h2.ticket_match.get("t_P1") == (mid, "P1")
+    assert h2.ticket_match.get("t_P2") == (mid, "P2")
+    assert h2.matches[mid]["a"]["ws_send"] is not None
+    assert h2.matches[mid]["a"]["gone_ms"] == 0
+
+
+def test_ws_hello_bad_hello_when_no_redis_state(rhub):
+    res = rhub.ws_hello("Z1", "deadbeefdeadbeef", lambda t: True)
+    assert res.get("error") == "bad_hello"
+
+
+def test_end_deletes_redis_mstate(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "E1", "E2")
+    rhub.flush_active_matches()
+    assert rhub.r.exists(k("mstate", mid))
+    rhub.ws_status("E1", mid, "surrender")
+    assert not rhub.r.exists(k("mstate", mid))
