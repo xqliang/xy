@@ -39,6 +39,7 @@ from api_versus import (  # noqa: E402
 from config import load_config  # noqa: E402
 from db import DB  # noqa: E402
 from httputil import send_empty, send_json  # noqa: E402
+from rediskv import make_client  # noqa: E402  # PvP 匹配层共享态用 Redis（VersusHub 注入；生产连 ECS，走 config/XY_REDIS_*）
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -147,7 +148,7 @@ def main() -> None:
 
     BoundHandler.db = db
     BoundHandler.cfg = cfg
-    BoundHandler.versus = VersusHub(db)   # 进程内 PvP 单例：匹配/私房/波次/终局/反作弊（WS 快照模型，HTTP tick 已退役）
+    BoundHandler.versus = VersusHub(db, redis_client=make_client(cfg))   # 进程内 PvP 单例：匹配/私房/波次/终局/反作弊（WS 快照模型，HTTP tick 已退役）。匹配层共享态经注入的 Redis（enqueue/poll/撮合硬依赖 self.r）
     hub = BoundHandler.versus
     restored = hub.load_active_matches()          # 启动回放：把上次未终局对局读回内存
     print(f"pvp active matches restored: {restored}", flush=True)

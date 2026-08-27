@@ -75,7 +75,7 @@ class VersusHub:
         self.r = redis_client
         self.lock = threading.Lock()
         self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM）防两次 flush 的 UPSERT/DELETE 交错丢局
-        self.queue: dict[str, dict] = {}          # ticket -> waiting entry
+        self.queue: dict[str, dict] = {}          # 私房房主挂起票 ticket->entry（随机匹配队列已迁 Redis；self.queue 现仅 room_create/room_join 用，C1.5 迁 Redis）
         self.recent: dict[int, list[tuple[str, int]]] = {}  # rank -> [(uid, ms)]
         self.rooms: dict[str, dict] = {}          # code -> room
         self.matches: dict[str, dict] = {}        # match_id -> Match
@@ -212,6 +212,8 @@ class VersusHub:
             by_rank.setdefault(w["rank"], []).append(w)
         for rank, lst in by_rank.items():
             if len(lst) >= 2:
+                # 返回 k("q",rank) 作 pass-1 的 WATCH 目标：q:{rank} ZSET 仅用于把乐观锁冲突面收窄到本段位
+                # （避免任意入队都撞 WATCH）；等待者成员读取一律走 qall（两者 score 同为 enqueued_ms，分组等价）。
                 return (lst[0], lst[1], k("q", rank))
         # 第二轮：最老的「已过保持窗口」者 a，与任意其他等待者 b（b 取 qall 中最老的非 a 者）
         a = next((w for w in live if now >= w["hold_until_ms"]), None)
@@ -307,7 +309,14 @@ class VersusHub:
             self.rooms.pop(code, None)
 
     # —— 对外匹配 API ——
+    def _require_redis(self) -> None:
+        # fail-fast：匹配层（enqueue/poll/撮合）硬依赖 Redis；漏注入时明确报错，而非到 self.r.pipeline/get 才裸 NoneType。
+        # 生产 server.py 已注入 make_client(cfg)；ws-only 测试 hub 不调 enqueue/poll，不受影响。
+        if self.r is None:
+            raise RuntimeError("PvP matchmaking requires a Redis client (VersusHub(redis_client=...))")
+
     def enqueue(self, uid: str, rank: int) -> dict:
+        self._require_redis()
         # 禁赛拦截（MySQL，锁外）
         if self.is_banned(uid):
             return {"banned": True, "msg": "检测到异常，今日暂停真人匹配"}
@@ -332,6 +341,7 @@ class VersusHub:
             return {"ticket": ticket}
 
     def poll(self, ticket: str) -> dict:
+        self._require_redis()
         with self.lock:
             now = self._now()
             self._reap(now)                    # 惰性回收（最高频入口之一），先清理再处理本请求
