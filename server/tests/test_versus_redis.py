@@ -1,3 +1,4 @@
+import contextlib
 import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,3 +29,38 @@ def test_redis_kwargs_from_env(monkeypatch):
     kw = redis_kwargs(cfg)
     assert kw["host"] == "1.2.3.4" and kw["port"] == 6380 and kw["db"] == 7
     assert kw["decode_responses"] is True
+
+
+# ---------------------------------------------------------------- redis 注入 hub ----
+class _FakeDB:
+    """内存 DB 桩：redis 注入测试不触库，cursor() no-op（_profile 查无此人回默认档）。"""
+    def today(self): return "2026-01-01"
+    def now(self): return 1_000_000
+    @contextlib.contextmanager
+    def cursor(self):
+        class _Cur:
+            def execute(self, *a, **k): pass
+            def fetchone(self): return None
+        yield _Cur()
+
+
+def _redis_hub():
+    # 与其它测试 hub-builder 同款：可控时钟 + 固定 seed/code/map，但额外注入 fakeredis 客户端。
+    import fakeredis
+    from api_versus import VersusHub
+    clock = {"ms": 1_000_000}
+    seeds = iter(range(1000, 9999))
+    h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"], gen_seed=lambda: next(seeds),
+                  gen_code=lambda: "ROOM01", pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
+    h._clock = clock
+    return h
+
+
+def test_hub_accepts_redis_client():
+    h = _redis_hub()
+    assert h.r is not None
+    h.r.set("xy:pvp:probe", "1")
+    assert h.r.get("xy:pvp:probe") == "1"
+    h.reset()                       # reset 应清库（flushdb）而不报错
+    assert h.r.get("xy:pvp:probe") is None

@@ -3,6 +3,7 @@
 import os, sys
 from pathlib import Path
 
+import fakeredis
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +54,8 @@ def _fake_hub():
     seeds = iter(range(1000, 9999))
     h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
                   gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
-                  pick_map=lambda: "huoyanshan")
+                  pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h._clock = clock
     return h
 
@@ -109,7 +111,8 @@ def rhub(db):
     seeds = iter(range(1000, 9999))
     h = VersusHub(db, now_ms=lambda: clock["ms"],
                   gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01",
-                  pick_map=lambda: "huoyanshan")
+                  pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h._clock = clock
     return h
 

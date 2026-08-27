@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import fakeredis
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,8 @@ def hub(db):
     h = VersusHub(db, now_ms=lambda: clock["ms"],
                   gen_seed=lambda: next(seeds),
                   gen_code=lambda: "ROOM01",
-                  pick_map=lambda: "huoyanshan")
+                  pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h._clock = clock  # 测试里推进时钟用
     return h
 
@@ -214,7 +216,8 @@ def _fake_hub():
     clock = {"ms": 1_000_000}
     seeds = iter(range(1000, 9999))
     h = VersusHub(_FakeDB(), now_ms=lambda: clock["ms"],
-                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01", pick_map=lambda: "huoyanshan")
+                  gen_seed=lambda: next(seeds), gen_code=lambda: "ROOM01", pick_map=lambda: "huoyanshan",
+                  redis_client=fakeredis.FakeStrictRedis(decode_responses=True))
     h._clock = clock
     return h
 

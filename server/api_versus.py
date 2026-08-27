@@ -60,12 +60,16 @@ class VersusHub:
                  now_ms: Callable[[], int] | None = None,
                  gen_seed: Callable[[], int] | None = None,
                  gen_code: Callable[[], str] | None = None,
-                 pick_map: Callable[[], str] | None = None):
+                 pick_map: Callable[[], str] | None = None,
+                 redis_client=None):
         self.db = db
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._gen_seed = gen_seed or (lambda: secrets.randbelow(2**31))
         self._gen_code = gen_code or (lambda: secrets.token_hex(3).upper())
         self._pick_map = pick_map or (lambda: secrets.choice(MAPS))
+        # C1.2：注入 Redis 客户端（当前代码尚未使用，C1.3+ 匹配层迁移到 Redis 时经 self.r 读写）。
+        # None 表示未接 Redis（进程内模式/部分单测），使用方须自行判空。
+        self.r = redis_client
         self.lock = threading.Lock()
         self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM）防两次 flush 的 UPSERT/DELETE 交错丢局
         self.queue: dict[str, dict] = {}          # ticket -> waiting entry
@@ -80,6 +84,8 @@ class VersusHub:
             self.queue.clear(); self.recent.clear(); self.rooms.clear()
             self.matches.clear(); self.ticket_match.clear()
             self._last_reap_ms = 0                 # 归零闸门，保证测试后首个 reap 立即触发
+        if self.r is not None:
+            self.r.flushdb()                       # 测试清理：清空注入的 Redis（None 客户端安全跳过）
 
     def is_banned(self, uid: str) -> bool:
         # 当天有 ≥3 个不同对手判定异常 → 禁赛
