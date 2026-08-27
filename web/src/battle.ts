@@ -741,6 +741,17 @@ export interface Burst {
   color: string;
 }
 
+// 「合成神将」浮字特效：武将首次成将那一刻在其上方浮现的黄字横幅（水墨底 + 闪动 + 上浮淡出）。
+// 纯本地视觉（不入快照，同 StealFx 语义）；锚定在武将左格 (c,r)，渲染时向右偏半格、居中于两格之上。
+export interface SynthBanner {
+  c: number;
+  r: number;
+  ttl: number;
+  maxTtl: number;
+  text: string;
+}
+export const SYNTH_BANNER_TTL_S = 1.3; // 浮字生命（秒）：入场弹缩 → 闪动约 3 下 → 末段上浮淡出
+
 // 黄狮精「卷走」预演幽灵：目标在逻辑上已被立即删除（不再攻击/不可交互），
 // 但先以残影形态在被偷格原地闪烁 miniBossStealFlashDur 秒（金色警示框 + 原样重画的立绘/字块/桃树/炸药/阵位），
 // 期满那一刻才爆开金色粒子环——即玩家看到的「真正消失」。目的是让玩家看清被卷走的是哪件。
@@ -1034,6 +1045,8 @@ export class Battle {
   aiErlangDogFx: { mid: number; c: number; r: number; ttl: number; maxTtl: number; tier: number; ang: number; fromC: number; fromR: number }[] = []; // 对手侧二郎 lingering 狗（由快照重建）
   generalStates = new Map<string, GeneralState>(); // 各激活对的经验/冷却（按格子对 key，非武将 id）
   private lastActivePairKeys = new Set<string>(); // 上一帧已激活对，用于检测新激活并重置大招 CD 为满
+  // 已弹过「合成神将」浮字的激活对（按 heroPairKey）：避免同一对每帧刷屏；拆开失活后移出，重合成可再弹。
+  private synthSeenPairKeys = new Set<string>();
   monsters: Monster[] = [];
   fx: HitFx[] = [];
   bursts: Burst[] = []; // 命中/击杀/合成爆发特效
@@ -1045,6 +1058,7 @@ export class Battle {
   bombFx: { c: number; r: number; ttl: number; maxTtl: number; ai: boolean }[] = []; // 引爆爆炸特效
   peachFloats: PeachFloat[] = []; // 击杀蟠桃飘字
   damageFloats: DamageFloat[] = []; // 受击伤害飘字
+  synthBanners: SynthBanner[] = []; // 「合成神将」浮字（首次成将时弹一条，本地视觉，不入快照）
   // —— #2 对手半场战斗反馈本地补演（PvP 专用；见 stepOpponentJuice）——
   // 对手是快照木偶（bridge 每帧整体重建 aiUnits/aiMonsters），其战斗 sim 不在本机跑：
   //   1) 兵器/英雄普攻动效由本地「视觉模拟」驱动——按真实攻击间隔本地出招（只发攻击特效 +
@@ -3365,9 +3379,14 @@ export class Battle {
     return this.unlockedCells().every((c) => !this.cellFree(c.c, c.r));
   }
 
-  /** 铲子用途上限：待挖空位 + 地图桃树（桃树占格时可先挪树再挖） */
+  /**
+   * 铲子用途上限：待挖空位（无树锁定格）+ 地图桃树（桃树占格时可先挪树再挖）。
+   * 特例：若已无「可直接开挖的空位」、只剩桃树占着的未挖格 → 本次征兵最多 1 把铲子
+   *      （无空位供挪树腾挖，铲子再多也只够先处理一棵，避免铲子刷满候选区）。
+   */
   private shovelUsefulSlots(): number {
     const diggable = this.lockedCells().filter((c) => !this.trees.has(cellKey(c.c, c.r))).length;
+    if (diggable === 0 && this.trees.size > 0) return 1;
     return diggable + this.trees.size;
   }
 
@@ -5181,6 +5200,9 @@ export class Battle {
   /**
    * 定海针：开启一个当前锁定的阵位（ai=false 玩家侧 / true 单机 AI 侧）。
    * 开局首开与每 5 波自动开都走此函数。无剩余锁定格时 no-op，返回是否真的开了（用于闪光反馈）。
+   * 玩家侧按贴路顺序跳过「已种桃树」的格（桃树格不可开垦，与洛阳铲 playerAutoDigCell 一致），
+   * 改开第一个「无树」锁定格；若锁定格全被桃树占则本轮不开（返回 false）。
+   * AI 侧无桃树（this.trees 为玩家专用），沿用原逻辑。
    */
   private openDinghaiSlot(ai: boolean): boolean {
     if (ai) {
@@ -5189,7 +5211,7 @@ export class Battle {
       this.aiUnlocked.add(cellKey(lc.c, lc.r));
       return true;
     }
-    const lc = this.lockedCells()[0];
+    const lc = this.lockedCells().find((c) => !this.trees.has(cellKey(c.c, c.r)));
     if (!lc) return false;
     this.unlocked.add(cellKey(lc.c, lc.r));
     return true;
@@ -7668,6 +7690,7 @@ export class Battle {
     this.bombFx = []; // 爆炸残影清掉；已埋未引爆的地雷（bombs/aiBombs）作为玩法状态保留跨波
     this.peachFloats = [];
     this.damageFloats = [];
+    this.synthBanners = []; // 「合成神将」浮字随清波收掉（synthSeenPairKeys 保留：武将仍在场，下波不应重弹）
     this.ultFlash = 0;
     this.ultCenter = null;
     this.palmPushFx = null;
@@ -7680,6 +7703,29 @@ export class Battle {
     for (const g of this.activeGenerals()) {
       g.state.firePulse = 0;
     }
+  }
+
+  /**
+   * 「合成神将」浮字探测：每帧对比当前激活武将对与上次已弹集合——
+   * 新出现的对（首次成将那一刻）→ 在其左格上方生成一条浮字；已消失的对移出集合（拆开后重合成可再弹）。
+   * 放在 updateFx（仅真实帧推进，不受自动布阵规划/回滚影响）；玩家侧专用，对手/AI 不弹。
+   */
+  private detectSynthesis(): void {
+    const now = new Set<string>();
+    for (const g of this.activeGenerals()) {
+      const k = Battle.heroPairKey(g.cells[0], g.cells[1]);
+      now.add(k);
+      if (!this.synthSeenPairKeys.has(k)) {
+        this.synthBanners.push({
+          c: g.cells[0].c,
+          r: g.cells[0].r,
+          ttl: SYNTH_BANNER_TTL_S,
+          maxTtl: SYNTH_BANNER_TTL_S,
+          text: '合成神将',
+        });
+      }
+    }
+    this.synthSeenPairKeys = now;
   }
 
   private updateFx(dt: number): void {
@@ -7704,6 +7750,10 @@ export class Battle {
     }
     for (const bt of this.bursts) bt.ttl -= dt;
     this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    // 「合成神将」浮字：先探测本帧新成将（弹字），再统一衰减、清除到期。
+    this.detectSynthesis();
+    for (const sb of this.synthBanners) sb.ttl -= dt;
+    this.synthBanners = this.synthBanners.filter((sb) => sb.ttl > 0);
     // 黄狮精卷走幽灵：递减闪烁计时；到期那一刻爆金色 death 粒子环 = 真正「消失」
     // （施法瞬间不爆，就是为了让玩家先看清闪的是哪件兵器/字块/桃树）
     for (const s of this.stealFx) s.ttl -= dt;
@@ -8393,6 +8443,9 @@ export class Battle {
     // Set（可重新赋值的）
     this.unlocked = new Set(c.unlocked);
     this.lastActivePairKeys = new Set(c.lastActivePairKeys); this.lastAiActivePairKeys = new Set(c.lastAiActivePairKeys);
+    // 续玩恢复：已激活武将不应触发「合成神将」浮字 —— 用恢复出的激活对给 synthSeenPairKeys 播种。
+    this.synthSeenPairKeys = new Set(this.lastActivePairKeys);
+    this.synthBanners = [];
     this.matchedHeroIdsThisGame = new Set(c.matchedHeroIdsThisGame); this.aiMatchedHeroIdsThisGame = new Set(c.aiMatchedHeroIdsThisGame);
     this.bossWaves = new Set(c.bossWaves);
     // aiUnlocked 是 readonly 绑定：只能清空后逐个 add，不能整体赋值

@@ -1003,6 +1003,7 @@ export function draw(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState): voi
   drawHeroUltFxList(ctx, b.heroUltFx, b.erlangDogFx);      // 玩家半场大招
   drawHeroUltFxList(ctx, b.aiHeroUltFx, b.aiErlangDogFx);  // 对手半场大招（PvP 桥重建；单机为空）
   drawAoeBurst(ctx, b);
+  drawSynthBanners(ctx, b); // 「合成神将」浮字：画在棋盘特效之上、HUD/候选区之下
   drawDanger(ctx, b);
   drawSelection(ctx, b, ui);
   drawHud(ctx, b, ui);
@@ -4179,6 +4180,57 @@ function drawDamageFloats(ctx: CanvasRenderingContext2D, b: Battle) {
     ctx.fillStyle = d.crit ? '#ff5a3c' : d.wuxing === 'adv' ? '#ffd84d' : d.wuxing === 'dis' ? '#9aa0a6' : '#fff8e8';
     ctx.strokeText(text, px, py);
     ctx.fillText(text, px, py);
+    ctx.restore();
+  }
+}
+
+// 「合成神将」浮字：武将首次成将时在其上方浮现的黄字横幅（水墨底 + 闪动约 3 下 + 上浮淡出）。
+// 锚点 sb.(c,r) 是武将左格；向右偏半格居中于两格之上。纯本地视觉，数据由 battle.detectSynthesis 生成。
+function drawSynthBanners(ctx: CanvasRenderingContext2D, b: Battle) {
+  for (const sb of b.synthBanners) {
+    const elapsed = sb.maxTtl - sb.ttl;
+    const p = Math.min(1, Math.max(0, elapsed / sb.maxTtl)); // 生命进度 0→1
+    const fontPx = Math.round(CELL * 0.42);
+    const { x, y } = cellCenterPx(sb.c, sb.r);
+    // 两格中点（左格中心右移半格）；随生命上浮；夹到 HUD 下方与画面内，避免顶格武将把字画进 HUD/出界
+    const half = fontPx * sb.text.length * 0.5 + 6;
+    const cx = Math.min(VIEW_W - half, Math.max(half, x + CELL / 2));
+    const cy = Math.max(HUD_H + fontPx * 0.75, y - CELL * 0.62 - p * CELL * 0.45);
+    // 入场弹缩：前 12% 从 0.6→1.0
+    const popT = Math.min(1, elapsed / (sb.maxTtl * 0.12));
+    const scale = 0.6 + 0.4 * popT;
+    // 闪动约 3 下（2.6/s）；末段 30% 淡出。底晕走较稳的淡出、文字叠加闪动，避免整体强频闪。
+    const blink = Math.sin(elapsed * Math.PI * 2 * 2.6);
+    const fade = p > 0.7 ? Math.max(0, 1 - (p - 0.7) / 0.3) : 1;
+    const textAlpha = fade * (0.7 + 0.3 * Math.max(0, blink));
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // —— 水墨底：半透明墨色径向渐变晕，压扁成柔边椭圆 ——
+    const bgR = CELL * 1.05;
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, bgR);
+    grad.addColorStop(0, `rgba(26,22,20,${0.6 * fade})`);
+    grad.addColorStop(0.65, `rgba(26,22,20,${0.32 * fade})`);
+    grad.addColorStop(1, 'rgba(26,22,20,0)');
+    ctx.save();
+    ctx.scale(1, (fontPx * 1.7) / (bgR * 2)); // 压扁为椭圆
+    ctx.beginPath();
+    ctx.arc(0, 0, bgR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.restore();
+    // —— 文字：金黄 + 深褐描边（对齐参考图） ——
+    ctx.globalAlpha = textAlpha;
+    ctx.font = `bold ${fontPx}px "PingFang SC", sans-serif`;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(3, fontPx * 0.22);
+    ctx.strokeStyle = 'rgba(60,36,12,0.95)';
+    ctx.strokeText(sb.text, 0, 0);
+    ctx.fillStyle = '#ffcf3a';
+    ctx.fillText(sb.text, 0, 0);
     ctx.restore();
   }
 }
