@@ -2,6 +2,8 @@
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
 import { STAMINA_MAX, STAMINA_REGEN_MS } from './stamina';
+import { isWeChat } from './platform';
+import { remainingShares } from './share-quota';
 import {
   MAPS,
   COLS,
@@ -274,8 +276,8 @@ export type StaminaPopupHit =
 
 export function staminaPopupHitAt(x: number, y: number): StaminaPopupHit {
   if (inRect(x, y, STA_CLOSE)) return { kind: 'close' };
-  if (inRect(x, y, STA_AD)) return { kind: 'ad' };
-  if (inRect(x, y, STA_SHARE)) return { kind: 'share' };
+  // 单按钮：微信端=分享好友(真分享)、web 端=看广告；都画在底部 STA_SHARE 位。
+  if (inRect(x, y, STA_SHARE)) return isWeChat ? { kind: 'share' } : { kind: 'ad' };
   if (x >= STA_PX && x <= STA_PX + STA_PW && y >= STA_PY && y <= STA_PY + STA_PH) return null;
   return { kind: 'close' };
 }
@@ -327,8 +329,15 @@ export function drawStaminaPopup(ctx: CanvasRenderingContext2D, stamina: number,
   ctx.font = '13px "PingFang SC", serif';
   ctx.fillText(`未满时每 ${STA_REGEN_MIN} 分钟自动恢复 1 点`, cx, STA_REGEN_Y);
 
-  drawInkActionButton(ctx, STA_AD, '看广告 +10', false, 'accent');
-  drawInkActionButton(ctx, STA_SHARE, '分享好友 +5', false, 'secondary');
+  // 单按钮：微信端「分享好友 +5」(真分享，受每日额度/体力上限影响置灰)；web 端「看广告 +10」(不变)。
+  if (isWeChat) {
+    const full = stamina >= STAMINA_MAX;
+    const noQuota = remainingShares() <= 0;
+    const label = noQuota ? '今日分享已达上限' : full ? '体力已满' : '分享好友 +5';
+    drawInkActionButton(ctx, STA_SHARE, label, full || noQuota, 'secondary');
+  } else {
+    drawInkActionButton(ctx, STA_SHARE, '看广告 +10', false, 'accent');
+  }
 
   if (toast) {
     ctx.fillStyle = '#8a3010';

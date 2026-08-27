@@ -5,6 +5,7 @@ import { STAMINA_COST } from './stamina';
 import { MAX_EQUIPPED_ACTIVES } from './actives';
 import { MAX_EQUIPPED_PASSIVES } from './passives';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
+import { isWeChat } from './platform';
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -201,7 +202,7 @@ export const HELP_BLOCKS: HelpBlock[] = [
   { kind: 'title', text: '体力' },
   {
     kind: 'body',
-    text: `开始游戏消耗 ${STAMINA_COST} 点体力。体力不足时，可点顶栏「+」看广告或分享好友补充；未满时也会随时间自动恢复。`,
+    text: `开始游戏消耗 ${STAMINA_COST} 点体力。体力不足时，可点顶栏「+」${isWeChat ? '分享好友' : '看广告'}补充；未满时也会随时间自动恢复。`,
   },
   { kind: 'link', id: 'stamina', text: '获取体力 ›' },
   { kind: 'gap', h: 14 },

@@ -9,6 +9,9 @@ export type TelemetryType =
   | 'equip'
   | 'ad_click'
   | 'ad_reward'
+  | 'share_click'
+  | 'share_success'
+  | 'share_fail'
   | 'stamina'
   | 'merit'
   | 'fragment';

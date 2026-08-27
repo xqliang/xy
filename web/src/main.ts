@@ -92,7 +92,8 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, onWxShowVersus } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus } from './platform';
+import { canShare, consumeShare } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
   cloudLogin,
@@ -1213,7 +1214,9 @@ function lowStaminaSequence(): TutorialSequence {
       {
         id: 'staminaPlus',
         title: '体力不足',
-        text: '体力不够时无法开始游戏，点这里的【+】可以看广告或分享好友补充体力。',
+        text: isWeChat
+          ? '体力不够时无法开始游戏，点这里的【+】可以分享好友补充体力。'
+          : '体力不够时无法开始游戏，点这里的【+】可以看广告补充体力。',
         getAnchor: () => ({ ...STAMINA_PLUS_BTN }),
       },
     ],
@@ -1669,8 +1672,25 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     return true;
   }
   if (hit.kind === 'share') {
-    stamina = addStamina(stamina, 5);
-    staminaPopupToast = '体力 +5';
+    // 微信端真分享：判定成功后 +5 体力，扣 1 次每日额度；web 端弹窗不画此按钮，不会走到这里。
+    if (!canShare()) { staminaPopupToast = '今日分享已达上限'; return true; }
+    if (stamina.value >= STAMINA_MAX) { staminaPopupToast = '体力已满'; return true; }
+    staminaPopupToast = '正在拉起分享…';
+    track('share_click', { scene: 'stamina' });
+    void shareToFriend({ title: '大圣塔防·助我一臂之力！' }).then((ok) => {
+      if (ok) {
+        consumeShare();
+        stamina = addStamina(stamina, 5);
+        staminaPopupToast = '分享成功，体力 +5';
+        track('share_success', { scene: 'stamina' });
+        track('stamina', { delta: 5, remain: stamina.value });
+        scheduleCloudSync(2000);
+      } else {
+        staminaPopupToast = '未完成分享，未发放体力';
+        track('share_fail', { scene: 'stamina' });
+      }
+      scheduleFrame();
+    });
     return true;
   }
   return true;
