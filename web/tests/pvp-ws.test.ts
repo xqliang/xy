@@ -157,6 +157,16 @@ describe('PvpSocket 握手与消息分发', () => {
     ]);
   });
 
+  it('dispatch：noShow → onNoShow 触发一次（C5：对手打空气→服务端作废本局）', async () => {
+    const onNoShow = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, onNoShow });
+    sock.connect();
+    await tick();
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'noShow' }));
+    expect(onNoShow).toHaveBeenCalledTimes(1);
+    sock.close();
+  });
+
   it('畸形 JSON 不向外抛出；未知 type 被忽略', async () => {
     const onWelcome = vi.fn();
     const onOppSnap = vi.fn();

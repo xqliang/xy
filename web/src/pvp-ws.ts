@@ -15,7 +15,7 @@
 
 
 /** 下行消息 type 字面量（与 server/api_versus.py 推送、spec §3 对齐）。 */
-type DownType = 'welcome' | 'oppSnap' | 'nextWave' | 'result' | 'oppGone' | 'pong';
+type DownType = 'welcome' | 'oppSnap' | 'nextWave' | 'result' | 'oppGone' | 'noShow' | 'pong';
 
 /** result 回调入参：权威终局 outcome + reason。 */
 export interface PvpResult {
@@ -37,6 +37,8 @@ export interface PvpSocketOpts {
   onNextWave?: (wave: number, startAtServerMs: number) => void;
   onResult?: (r: PvpResult) => void;
   onOppGone?: () => void;
+  /** C5：对手全程未应战(打空气) → 服务端作废该局并通知在场方自动重新匹配。 */
+  onNoShow?: () => void;
   // 注入 WebSocket 构造器（单测传 FakeWebSocket）；不传则用全局 WebSocket。
   wsFactory?: (url: string) => PvpWsLike;
   // 注入重连延时调度器（单测传可控假计时器）；不传则用全局 setTimeout。
@@ -210,6 +212,9 @@ export class PvpSocket {
         break;
       }      case 'oppGone':
         this.opts.onOppGone?.();
+        break;
+      case 'noShow':
+        this.opts.onNoShow?.();
         break;
       case 'pong': {
         // 心跳回响：服务端原样回 t=发 ping 时的客户端墙钟 → RTT = 收 pong 时刻 − t。
