@@ -98,7 +98,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '钉耙震地', skillDesc: '群体定身1.5秒，附带0.8×攻轻伤', atk: 3.86, frq: 1.2, rge: 2, targets: 3, skillCd: 10, weight: 1, asset: 'hero-bajie',
     maxTier: 5, atkStyle: '定身控制', family: '八', element: 'water' },
   { id: 'baxian', name: '八仙', chars: ['八', '仙'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '仙缘定身', skillDesc: '小范围定身1.0秒＋0.8×攻（过渡）', atk: 4.55, frq: 1.25, rge: 1.5, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
+    skillName: '仙缘定身', skillDesc: '小范围定身1.0秒＋0.8×攻（过渡）', atk: 4.55, frq: 1.25, rge: 2, targets: 2, skillCd: 12, weight: 3, asset: 'hero-baxian',
     maxTier: 3, atkStyle: '定身控制', family: '八', element: 'water' },
 
   // ——— 牛：冲撞击晕 ———
@@ -106,7 +106,7 @@ export const GENERALS: GeneralDef[] = [
     skillName: '蛮牛冲撞', skillDesc: '冲撞重创2.0×攻，击晕1.5秒', atk: 5.65, frq: 1.0, rge: 2.0, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛', element: 'earth' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
-    skillName: '牛角顶', skillDesc: '撞击2.0×攻，击晕1.0秒（过渡）', atk: 6.6, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
+    skillName: '牛角顶', skillDesc: '撞击2.0×攻，击晕1.0秒（过渡）', atk: 5.5, frq: 1.15, rge: 2, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',
     maxTier: 3, atkStyle: '冲撞击晕', family: '牛', element: 'wood' },
 
   // ——— 铁：狂风击退 ———
