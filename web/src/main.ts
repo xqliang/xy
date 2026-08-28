@@ -93,7 +93,7 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize } from './platform';
 import { canShare, consumeShare, remainingShares } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
@@ -1809,6 +1809,11 @@ function isCoarseMobile(): boolean {
 }
 
 function readViewport(): { w: number; h: number; offsetX: number; offsetY: number } {
+  // 微信小游戏：视口取 wx 窗口信息（window.innerWidth 在小游戏里是 1×1 桩，会把画布算成 2px→整屏糊底）。
+  if (isWeChat) {
+    const { w, h } = getViewportSize();
+    return { w, h, offsetX: 0, offsetY: 0 };
+  }
   const vv = window.visualViewport;
   if (!vv) {
     return { w: window.innerWidth, h: window.innerHeight, offsetX: 0, offsetY: 0 };
@@ -1819,6 +1824,9 @@ function readViewport(): { w: number; h: number; offsetX: number; offsetY: numbe
 /** 首次触摸时尝试进入浏览器全屏（Android 等支持；iOS 需「添加到主屏幕」） */
 let mobileFullscreenTried = false;
 function tryMobileFullscreen(): void {
+  // 微信小游戏本就全屏，且运行时无 document.documentElement（读 .requestFullscreen 会抛
+  // "Cannot read properties of undefined"）——直接跳过。全屏是纯 Web 浏览器的事。
+  if (isWeChat) return;
   if (!isCoarseMobile() || mobileFullscreenTried) return;
   mobileFullscreenTried = true;
   const doc = document as Document & { webkitFullscreenElement?: Element | null };
@@ -2288,10 +2296,16 @@ function onPointerDown(e: PointerEvent) {
     clearBoardSelect(); // 点击空白处取消选中
   }
 }
-canvas.addEventListener('pointerdown', (e) => { tryMobileFullscreen(); onPointerDown(e); scheduleFrame(); });
-canvas.addEventListener('pointermove', onPointerMove);
-canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
-canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
+// Web 用 canvas 的 DOM pointer 事件；微信小游戏走下面的 onWxTouch（wx.onTouch*）。
+// 关键：微信开发者工具（基于 Chrome）里 canvas 也会派发 DOM pointerdown，但真机不会——若两条都注册，
+// DevTools 下同一次点击会「双触发」（如暂停被连点两次=开了又关=看似无反应），且 pointerdown 里的
+// tryMobileFullscreen 在小游戏运行时会抛错。故微信下只保留 onWxTouch 这一条，与真机行为一致。
+if (!isWeChat) {
+  canvas.addEventListener('pointerdown', (e) => { tryMobileFullscreen(); onPointerDown(e); scheduleFrame(); });
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', (e) => { onPointerUp(e); scheduleFrame(); });
+  canvas.addEventListener('pointercancel', (e) => { onPointerUp(e, true); scheduleFrame(); });
+}
 // 小游戏无 pointer 事件：把 wx.onTouch* 合成成 PointerEvent 复用同一套指针逻辑（单指为主，多指取最新触点）。
 if (isWeChat) {
   const synth = (t: { clientX: number; clientY: number; identifier: number }): PointerEvent => ({
@@ -2620,6 +2634,9 @@ function needsContinuousLoop(): boolean {
 
 function frame(now: number): void {
   rafId = null;
+  // 微信自愈：jsbridge 启动时序会让首个 resize() 拿到 1×1（画布退化成 ~2px、整屏被拉成糊底）。
+  // 每帧极廉价地看一眼画布尺寸，退化就重跑 resize()（此时 jsbridge 多已就绪→取到真实屏幕尺寸）；修好即不再触发。
+  if (isWeChat && canvas.width < 32) resize();
   const elapsed = now - last;
   // 连续动画(战斗/结算)限速到 ~60fps；按需唤醒的单帧走 needsContinuousLoop()=false 分支，不受限、立即重绘。
   if (needsContinuousLoop() && elapsed < MIN_FRAME_MS) {

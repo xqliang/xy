@@ -35,6 +35,23 @@ export function getGameCanvas(): HTMLCanvasElement {
   return document.getElementById('game') as HTMLCanvasElement;
 }
 
+// 视口尺寸（像素）：微信小游戏必须取 wx 的窗口信息，而不是 window.innerWidth/Height——
+// 后者在小游戏运行时是 1×1 的桩（且 polyfill 启动早期 jsbridge 未就绪、getSystemInfoSync 抛错，
+// 拿不到真实值），直接用会把主画布算成 ~2px、整屏被拉成糊底（有底色无内容）。
+// jsbridge 就绪后 getWindowInfo/getSystemInfoSync 返回真实屏幕尺寸；未就绪时抛错→回退 window.inner*。
+// Web 端不变：直接用 window.innerWidth/Height。
+export function getViewportSize(): { w: number; h: number } {
+  if (isWeChat) {
+    try {
+      const info = typeof wx.getWindowInfo === 'function' ? wx.getWindowInfo() : wx.getSystemInfoSync();
+      const w = info.windowWidth || info.screenWidth || 0;
+      const h = info.windowHeight || info.screenHeight || 0;
+      if (w > 1 && h > 1) return { w, h };
+    } catch { /* jsbridge 未就绪：回退到 window.inner*（后续帧会自愈重试） */ }
+  }
+  return { w: window.innerWidth || 0, h: window.innerHeight || 0 };
+}
+
 // 音频上下文：Web = AudioContext；微信 = wx.createWebAudioContext()（API 兼容 WebAudio）。
 export function createAudioContext(): AudioContext | null {
   try {
