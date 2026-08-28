@@ -170,9 +170,9 @@ describe('半对保底 N=6', () => {
     TUNING.wordDrawChance = origWord;
   });
 
-  it('PAIR_PITY_AFTER 为 5', () => {
-    expect(PAIR_PITY_AFTER).toBe(5);
-    expect(TUNING.pairPityAfter).toBe(5);
+  it('PAIR_PITY_AFTER 为 6', () => {
+    expect(PAIR_PITY_AFTER).toBe(6);
+    expect(TUNING.pairPityAfter).toBe(6);
   });
 
   it('有孤儿且连续未补满 pairPityAfter 次后强制出配对字', () => {
@@ -279,8 +279,8 @@ describe('武将匹配与软权重', () => {
     expect(pressed / base).toBeCloseTo(RECENT_HERO_REPEAT_MUL, 5);
   });
 
-  it('FORCE_MATCH_HALF_PAIR_P 为 0.6', () => {
-    expect(FORCE_MATCH_HALF_PAIR_P).toBe(0.6);
+  it('FORCE_MATCH_HALF_PAIR_P 为 0.8', () => {
+    expect(FORCE_MATCH_HALF_PAIR_P).toBe(0.8);
   });
 
   it('forcedMatchWordChars：有半对且抽中半对分支时补配对字', () => {
@@ -291,36 +291,32 @@ describe('武将匹配与软权重', () => {
     expect(['圣', '蟒']).toContain(picks[0]!.char);
   });
 
-  it('forcedMatchWordChars：有半对时 40% 可直接出一对新英雄', () => {
-    // next()=0.7 ≥ 0.6 → 新英雄双字（不含已在场的「大」）
+  it('forcedMatchWordChars：有半对时 40% 只发首字（拆对，第二张下次再发）', () => {
+    // next()=0.7 ≥ 0.6 → 走 fresh pair 分支，但拆对后只返回 1 个首字，不直接成对
     const rng = new FakeRng([0.7, 0]);
     const picks = forcedMatchWordChars(rng, [], ['大'], 2);
-    expect(picks.length).toBe(2);
-    expect(picks.every((p) => p.char !== '大')).toBe(true);
-    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(true);
+    expect(picks.length).toBe(1);
+    expect(picks[0]!.char).not.toBe('大');
+    // 单字不能独立成对
+    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(false);
   });
 
-  it('forcedMatchWordChars：空场可一次给出双字', () => {
+  it('forcedMatchWordChars：空场只发一个首字（拆对）', () => {
     const rng = new FakeRng([0]);
     const picks = forcedMatchWordChars(rng, [], [], 2);
-    expect(picks.length).toBe(2);
-    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(true);
+    expect(picks.length).toBe(1);
+    // 单字不能独立成对
+    expect(hasAnyHeroMatch(picks.map((p) => p.char), [])).toBe(false);
   });
 
-  it('forcedMatchWordChars：半对仅能复刷已匹配英雄时改抽新武将', () => {
-    // 半对分支：只能补「蟒」（大圣已排除）
+  it('forcedMatchWordChars：半对仅能复刷已匹配英雄时改抽新武将首字', () => {
+    // 半对分支：只能补「蟒」（大圣已排除），拆对后只给 1 个字
     const rng = new FakeRng([0, 0, 0, 0]);
     const picks = forcedMatchWordChars(rng, [], ['大'], 2, {
       excludeHeroIds: new Set(['dasheng']),
     });
     expect(picks.every((p) => p.char !== '圣')).toBe(true);
-    const chars = picks.map((p) => p.char);
-    if (chars.includes('蟒')) {
-      expect(hasAnyHeroMatch(chars, ['大'])).toBe(true);
-    } else {
-      expect(picks.length).toBeGreaterThanOrEqual(1);
-      expect(chars.includes('大') || hasAnyHeroMatch(chars, ['大']) || picks.length === 2).toBe(true);
-    }
+    expect(picks.length).toBe(1);
   });
 });
 
@@ -353,31 +349,57 @@ describe('征兵匹配保底', () => {
     TUNING.wordDrawChance = origWord;
   });
 
-  it('跨局未匹配保底：第二次征兵可组合出一对字', () => {
+  it('跨局未匹配保底：拆对后多次征兵+放棋盘可凑对（不一次出一对）', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(11, 1, undefined, undefined, {}, [], [], false, undefined, 1, {
       forceMatchThisGame: true,
     });
-    b.grantPeach(10_000, true);
+    b.grantPeach(100_000, true);
     b.wave = 5;
     b.status = 'ready';
+    const cells = b.unlockedCells();
+    let boardWords: { char: string; general: string; cell: { c: number; r: number } }[] = [];
+    const placeTrayWordsOnBoard = () => {
+      for (const t of b.tray) {
+        if (t.kind !== 'word') continue;
+        const cell = cells.find((c) => !boardWords.some((w) => w.cell.c === c.c && w.cell.r === c.r));
+        if (!cell) break;
+        boardWords.push({ char: t.char, general: t.general, cell: { c: cell.c, r: cell.r } });
+        b.words.set(`${cell.c},${cell.r}`, { char: t.char, general: t.general, tier: 1, cell: { c: cell.c, r: cell.r } });
+      }
+    };
     expect(b.summon()).toBe(true); // 首次不转字
-    expect(b.summon()).toBe(true);
-    const trayChars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
-    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+    // 多次征兵：每次把 tray 字放棋盘积累，force match 逐步给出首字→配对字
+    for (let i = 0; i < 8 && b.heroMatchedIdsThisGame().length === 0; i++) {
+      expect(b.summon()).toBe(true);
+      placeTrayWordsOnBoard();
+    }
     expect(b.heroMatchedIdsThisGame().length).toBeGreaterThan(0);
   });
 
-  it('波20窗口无匹配时强制补对', () => {
+  it('波20窗口无匹配时强制拆对（不一次出一对）', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
-    b.grantPeach(10_000, true);
+    b.grantPeach(100_000, true);
     b.setWaveForTest(19);
-    b.status = 'ready'; // 即将进入第 20 波
+    b.status = 'ready'; // 即将进入第 20 波 → 波窗保底
+    const cells = b.unlockedCells();
+    let boardWords: { char: string; cell: { c: number; r: number } }[] = [];
+    const placeTrayWordsOnBoard = () => {
+      for (const t of b.tray) {
+        if (t.kind !== 'word') continue;
+        const cell = cells.find((c) => !boardWords.some((w) => w.cell.c === c.c && w.cell.r === c.r));
+        if (!cell) break;
+        boardWords.push({ char: t.char, cell: { c: cell.c, r: cell.r } });
+        b.words.set(`${cell.c},${cell.r}`, { char: t.char, general: t.general, tier: 1, cell: { c: cell.c, r: cell.r } });
+      }
+    };
     expect(b.summon()).toBe(true);
-    expect(b.summon()).toBe(true);
-    const trayChars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
-    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+    for (let i = 0; i < 8 && b.heroMatchedIdsThisGame().length === 0; i++) {
+      expect(b.summon()).toBe(true);
+      placeTrayWordsOnBoard();
+    }
+    expect(b.heroMatchedIdsThisGame().length).toBeGreaterThan(0);
   });
 
   it('波20保底：早年已匹配大圣时不反复刷圣', () => {
@@ -388,10 +410,22 @@ describe('征兵匹配保底', () => {
     b.seedHeroMatchForTest('dasheng', 5);
     b.setWaveForTest(19);
     b.status = 'ready';
+    const cells = b.unlockedCells();
+    let boardWords: { char: string; cell: { c: number; r: number } }[] = [];
+    const placeTrayWordsOnBoard = () => {
+      for (const t of b.tray) {
+        if (t.kind !== 'word') continue;
+        const cell = cells.find((c) => !boardWords.some((w) => w.cell.c === c.c && w.cell.r === c.r));
+        if (!cell) break;
+        boardWords.push({ char: t.char, cell: { c: cell.c, r: cell.r } });
+        b.words.set(`${cell.c},${cell.r}`, { char: t.char, general: t.general, tier: 1, cell: { c: cell.c, r: cell.r } });
+      }
+    };
     b.summon(); // 首次不转字
     let sheng = 0;
     for (let i = 0; i < 8; i++) {
       expect(b.summon()).toBe(true);
+      placeTrayWordsOnBoard();
       const chars = b.tray.filter((t) => t.kind === 'word').map((t) => (t.kind === 'word' ? t.char : ''));
       sheng += chars.filter((c) => c === '圣').length;
     }
@@ -406,10 +440,12 @@ describe('AI 征兵匹配保底', () => {
     TUNING.wordDrawChance = origWord;
   });
 
-  it('跨局未匹配保底：AI 第二次征兵可组合出一对字', () => {
+  it('跨局保底：AI 独立维护（不跟随玩家 forceMatchThisGame）', () => {
+    // AI 自带 aiForceMatchThisGame=true，与玩家 forceMatchThisGame 独立
+    // 即使玩家 forceMatchThisGame=false，AI 仍有自己的保底
     TUNING.wordDrawChance = 0;
     const b = new Battle(11, 1, undefined, undefined, {}, [], [], false, undefined, 1, {
-      forceMatchThisGame: true,
+      forceMatchThisGame: false, // 玩家不挂保底
     });
     (b as any).aiPeach = 10_000;
     b.wave = 5;
@@ -417,20 +453,34 @@ describe('AI 征兵匹配保底', () => {
     expect((b as any).aiSummon()).toBe(true);
     expect((b as any).aiSummon()).toBe(true);
     const trayChars = b.aiTray.filter((t) => t?.kind === 'word').map((t) => (t!.kind === 'word' ? t.char : ''));
-    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
-    expect(b.aiHeroMatchedIdsThisGame().length).toBeGreaterThan(0);
+    // AI 自带保底，应获得字（即使玩家没挂保底）
+    expect(trayChars.length).toBeGreaterThan(0);
   });
 
-  it('波20窗口无匹配时 AI 强制补对', () => {
+  it('波20窗口无匹配时 AI 仍可拆对补字（波窗保底独立于跨局）', () => {
     TUNING.wordDrawChance = 0;
     const b = new Battle(13);
-    (b as any).aiPeach = 10_000;
+    (b as any).aiPeach = 100_000;
     b.setWaveForTest(19);
-    b.status = 'ready';
+    b.status = 'ready'; // 即将进入第 20 波 → 波窗保底触发
+    const cells = b.aiUnlockedCells();
+    let boardWords: { char: string; cell: { c: number; r: number } }[] = [];
+    const placeTrayWordsOnBoard = () => {
+      for (const t of b.aiTray) {
+        if (!t || t.kind !== 'word') continue;
+        const cell = cells.find((c) => !boardWords.some((w) => w.cell.c === c.c && w.cell.r === c.r));
+        if (!cell) break;
+        boardWords.push({ char: t.char, cell: { c: cell.c, r: cell.r } });
+        b.aiWords.set(`${cell.c},${cell.r}`, { char: t.char, general: t.general, tier: 1, cell: { c: cell.c, r: cell.r } });
+      }
+    };
     expect((b as any).aiSummon()).toBe(true);
-    expect((b as any).aiSummon()).toBe(true);
-    const trayChars = b.aiTray.filter((t) => t?.kind === 'word').map((t) => (t!.kind === 'word' ? t.char : ''));
-    expect(hasAnyHeroMatch(trayChars, [])).toBe(true);
+    // 拆对：多次征兵+放棋盘，凑对
+    for (let i = 0; i < 8 && b.aiHeroMatchedIdsThisGame().length === 0; i++) {
+      expect((b as any).aiSummon()).toBe(true);
+      placeTrayWordsOnBoard();
+    }
+    expect(b.aiHeroMatchedIdsThisGame().length).toBeGreaterThan(0);
   });
 });
 

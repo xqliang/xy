@@ -1,7 +1,7 @@
 // 个人信息弹层：宫檐头部 + 横向卷轴选头像 + 昵称 + UID。
 import { VIEW_W, VIEW_H } from './render';
 import { sprite } from './assets';
-import { AVATARS, unlockHint, type AvatarDef } from './avatar-catalog';
+import { AVATARS, unlockHint, artFrame, type AvatarDef } from './avatar-catalog';
 import { loadProfile } from './profile';
 import { drawInkActionButton, drawInkPopupFrame, inkPopupCloseRect, roundRect } from './menu-ui';
 import { loadUserId } from './user-id';
@@ -326,11 +326,15 @@ function drawAvatarCell(
   ctx.clip();
   if (!unlocked) ctx.globalAlpha = 0.35;
   if (spr) {
-    const sc = Math.min(imgW / spr.width, imgH / spr.height);
+    // 统一大小：按内容框(artFrame)等高铺满 → 所有立绘视觉高度一致，
+    // 水平居中于内容框中心、底部对齐内容框底边（脚踩名字条、超宽的左右对称裁掉）。
+    // 之前的 contain 缩放会让窄画布/多留白的立绘（如琵琶女、小妖）显得明显偏小。
+    const f = artFrame(a.art);
+    const ch = spr.height * f.h;
+    const sc = imgH / ch;
     const dw = spr.width * sc;
     const dh = spr.height * sc;
-    // 底部对齐：头像脚部落在名字上方，少裁脸
-    ctx.drawImage(spr, imgX + (imgW - dw) / 2, imgY + imgH - dh, dw, dh);
+    ctx.drawImage(spr, imgX + imgW / 2 - (f.x + f.w / 2) * dw, imgY + imgH - (f.y + f.h) * dh, dw, dh);
   }
   ctx.restore();
 

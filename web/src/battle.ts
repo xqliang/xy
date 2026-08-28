@@ -115,7 +115,7 @@ export const TUNING = {
   monsterSpd: 0.6, // 格/秒
   dangerRemaining: 5, // 危险提示：怪物距唐僧沿路剩余 ≤ 该格数时触发
   monsterHpBase: 10, // 第 n 波静态公式 HP = base + step*n（爬坡期目标用）
-  monsterHpStep: 13,
+  monsterHpStep: 15,
   monsterHpNoDiffTo: 3, // 波 1–3 用 monsterHpEarlyFixed；其后朝目标血量爬坡
   /** 前 monsterHpNoDiffTo 波绝对血量（不含境界）；爬坡起点取最后一档 */
   monsterHpEarlyFixed: [20, 40, 65],
@@ -163,7 +163,7 @@ export const TUNING = {
   summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.18, // 候选中出现铲子的概率
   shovelPityAfter: 4, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
-  wordDrawChance: 0.15, // 候选中出现武将字牌的概率（每兵槽独立判定）
+  wordDrawChance: 0.12, // 候选中出现武将字牌的概率（每兵槽独立判定）
   wordPityAfter: 8, // 字牌保底：连续 N 次征兵没出字，则下次征兵强制把 1 个兵槽换成字
   pairPityAfter: PAIR_PITY_AFTER, // 半对保底：连续 N 次征兵仍有孤儿未补，则强制出配对字
   // —— 前期征兵配额（按征兵时所在波累计 tray 产出；不含 initialShovels）——
@@ -181,7 +181,7 @@ export const TUNING = {
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
   // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
   endlessWavesPerCycle: 10,
-  endlessCycleStep: 1.05,
+  endlessCycleStep: 1.1,
   aiDpsBase: 8, // AI 对手拦截 DPS 基数
   aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
@@ -249,6 +249,11 @@ export const TUNING = {
   heroStunDmgMul: 0.8, // 定身附带轻伤（牛魔线另乘冲撞倍率）
   heroChargeStunDmgMul: 2.0, // 牛魔/青牛定身附带重创
   heroKnockDmgMul: 1.2, // 击退附带轻伤
+  // —— 控制系 CC 伤害系数（根据控制时长/格数放大输出，让控制收益可量化）——
+  // bonus = baseMul × (1 + ccBonus)；CC 越久/越远，额外伤害越高
+  CC_TIME_BONUS: 0.35, // 每秒定身 +35% 伤害（定住越久，塔白打越多）
+  PUSH_CELL_BONUS: 0.45, // 每击退 1 格 +45% 伤害（推得越远，怪走回来越久）
+  SLOW_TIME_BONUS: 0.25, // 每秒减速 +25% 基础（减速只半效，实际 ×0.5 → +12.5%/秒）
   heroSlowDmgMulMain: 2.8, // 白龙减速附带撕咬（再加强，弥补其单体定位的总量短板）
   heroSlowDmgMulTransit: 1.5, // 太白减速附带轻伤
   heroSlowDur: 3,
@@ -308,12 +313,16 @@ function heroSkillFocusDps(def: GeneralDef, atk: number): number {
     case 'stun': {
       const isCharge = def.id === 'niumowang' || def.id === 'qingniu';
       const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
-      return (atk * dmgMul) / cd;
+      const dur = def.maxTier === 5 ? TUNING.heroStunDurMain : TUNING.heroStunDurTransit;
+      return (atk * dmgMul * (1 + dur * TUNING.CC_TIME_BONUS)) / cd;
     }
-    case 'knock': return (atk * TUNING.heroKnockDmgMul) / cd;
+    case 'knock': {
+      const push = def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
+      return (atk * TUNING.heroKnockDmgMul * (1 + push * TUNING.PUSH_CELL_BONUS)) / cd;
+    }
     case 'slow': {
       const dmgMul = def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
-      return (atk * dmgMul) / cd;
+      return (atk * dmgMul * (1 + TUNING.heroSlowDur * TUNING.SLOW_TIME_BONUS * 0.5)) / cd;
     }
     case 'burn': return (atk * TUNING.heroBurnHitMul + atk * TUNING.heroBurnDpsMul * TUNING.heroBurnDur) / cd;
     case 'heal': return 0;
@@ -411,6 +420,10 @@ export const MINI_BOSS_META: Record<
 
 // 武器侧状态（含小 Boss「倒下」），供 UI 统一取色/图标
 export type UnitStatusId = 'stun' | 'slow' | 'weaken' | 'webbind' | 'knockdown';
+
+// 怪物控制技的落点目标：兵器或神将（神将也能被定身/震倒/减速等，与兵器同口径）
+export type SkillTarget = { kind: 'unit'; u: PlacedUnit } | { kind: 'general'; g: ActiveGeneral };
+
 export const UNIT_STATUS_META: Record<UnitStatusId, { name: string; color: string; icon: string }> = {
   stun: SKILL_META.stun,
   slow: SKILL_META.slow,
@@ -448,8 +461,23 @@ export const MAP_ELEMENT: Record<string, Element> = {
 };
 
 // 候选区令牌：兵种 / 铲子 / 武将字牌 / 桃树（字牌不可互相合并，升阶靠激活继承/喂字/战斗）
+// unit 令牌随身携带增益（仙丹/风火轮/炼丹）：地图→候选区→地图往返不丢；合成时两侧并集继承。
 export type TrayToken =
-  | { kind: 'unit'; type: UnitType; tier: number; /** 地图挤回候选区，布阵待换低阶上板 */ displaced?: boolean }
+  | {
+      kind: 'unit';
+      type: UnitType;
+      tier: number;
+      /** 地图挤回候选区，布阵待换低阶上板 */
+      displaced?: boolean;
+      /** 仙丹：本局攻击 +40%（随兵器在地图/候选区间移动） */
+      pillAtk?: boolean;
+      /** 风火轮：本局攻速 +40% */
+      pillFrq?: boolean;
+      /** 老君/丹君炼丹增益剩余秒数（在候选区期间冻结不衰减，落回地图继续） */
+      buffAtkT?: number;
+      /** 炼丹增益期间生效的攻击倍率（与 buffAtkT 成对） */
+      buffAtkMul?: number;
+    }
   | { kind: 'shovel' }
   | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean }
   | { kind: 'tree'; level: number; growT: number };
@@ -553,25 +581,76 @@ function mergePlacedUnitState(
     tier: merged.tier,
     cooldown: 0,
   };
-  if (survivor.pillAtk || consumed.pillAtk) out.pillAtk = true;
+  // 增益合并语义与候选区合成/跨区交换共用 mergedUnitBuffs：丹/轮并集、炼丹取更久一档
+  const buffs = mergedUnitBuffs(survivor, consumed);
+  if (buffs.pillAtk) out.pillAtk = true;
   else delete out.pillAtk;
-  if (survivor.pillFrq || consumed.pillFrq) out.pillFrq = true;
+  if (buffs.pillFrq) out.pillFrq = true;
   else delete out.pillFrq;
-  const sT = survivor.buffAtkT ?? 0;
-  const cT = consumed.buffAtkT ?? 0;
-  if (sT >= cT && sT > 0) {
-    out.buffAtkT = sT;
-    if (survivor.buffAtkMul != null) out.buffAtkMul = survivor.buffAtkMul;
-    else delete out.buffAtkMul;
-  } else if (cT > 0) {
-    out.buffAtkT = cT;
-    if (consumed.buffAtkMul != null) out.buffAtkMul = consumed.buffAtkMul;
+  if (buffs.buffAtkT != null) {
+    out.buffAtkT = buffs.buffAtkT;
+    if (buffs.buffAtkMul != null) out.buffAtkMul = buffs.buffAtkMul;
     else delete out.buffAtkMul;
   } else {
     delete out.buffAtkT;
     delete out.buffAtkMul;
   }
   return out;
+}
+
+// —— 兵器增益随身（需求：地图获得的风火轮/仙丹/炼丹，移到候选区再放回地图不丢；合成时并集继承）——
+// PlacedUnit 与候选区 unit 令牌都满足该结构，棋盘合成/候选区合成/跨区交换共用同一套合并语义。
+interface UnitBuffHolder {
+  pillAtk?: boolean;
+  pillFrq?: boolean;
+  buffAtkT?: number;
+  buffAtkMul?: number;
+}
+
+/** 合并两侧增益：仙丹/风火轮取并集（A有丹+B有轮 → 两个都有）；炼丹取剩余更久的一档（与棋盘合成同语义） */
+function mergedUnitBuffs(a: UnitBuffHolder, b: UnitBuffHolder): UnitBuffHolder {
+  const out: UnitBuffHolder = {};
+  if (a.pillAtk || b.pillAtk) out.pillAtk = true;
+  if (a.pillFrq || b.pillFrq) out.pillFrq = true;
+  const aT = a.buffAtkT ?? 0;
+  const bT = b.buffAtkT ?? 0;
+  if (aT >= bT && aT > 0) {
+    out.buffAtkT = aT;
+    if (a.buffAtkMul != null) out.buffAtkMul = a.buffAtkMul;
+  } else if (bT > 0) {
+    out.buffAtkT = bT;
+    if (b.buffAtkMul != null) out.buffAtkMul = b.buffAtkMul;
+  }
+  return out;
+}
+
+/** 棋盘兵器 → 候选区令牌：随身带上增益（仙丹/风火轮/炼丹剩余时间） */
+function trayUnitFromPlaced(u: PlacedUnit, opts?: { displaced?: boolean }): Extract<TrayToken, { kind: 'unit' }> {
+  const t: Extract<TrayToken, { kind: 'unit' }> = { kind: 'unit', type: u.type, tier: u.tier };
+  if (opts?.displaced) t.displaced = true;
+  if (u.pillAtk) t.pillAtk = true;
+  if (u.pillFrq) t.pillFrq = true;
+  if ((u.buffAtkT ?? 0) > 0) {
+    t.buffAtkT = u.buffAtkT;
+    if (u.buffAtkMul != null) t.buffAtkMul = u.buffAtkMul;
+  }
+  return t;
+}
+
+/** 候选区令牌 → 棋盘兵器：makePlacedUnit 基础上还原随身增益 */
+function placedUnitFromTray(
+  t: Extract<TrayToken, { kind: 'unit' }>,
+  cell: Cell,
+  faceToward?: Cell,
+): PlacedUnit {
+  const u = makePlacedUnit(t.type, t.tier, cell, faceToward);
+  if (t.pillAtk) u.pillAtk = true;
+  if (t.pillFrq) u.pillFrq = true;
+  if ((t.buffAtkT ?? 0) > 0) {
+    u.buffAtkT = t.buffAtkT;
+    if (t.buffAtkMul != null) u.buffAtkMul = t.buffAtkMul;
+  }
+  return u;
 }
 
 // 棋盘上的单个武将字牌（占一格，带阶数；同字同阶可合并升阶）
@@ -676,6 +755,21 @@ export interface GeneralState {
   buffAtkMul?: number;
   /** 该武将对首次组成时的波次（满3→满5 切换爬坡用：相对此波次后续 4-10 波提升同门满5非共享字权重） */
   formedWave?: number;
+  // —— 怪物减益（需求：定身/震倒/减速等对神将也生效）——
+  // 语义与兵器侧 PlacedUnit 同口径：stun/knockdown 期间无法攻击（冷却/大招都不推进），
+  // slow 拉长攻击间隔，weaken 削弱普攻伤害，rangeCut(缠丝) 削减射程。
+  // 可选字段：旧存档/旧 PvP 快照里的 GeneralState 没有这些键，读取按 0 处理（undefined > 0 恒 false，天然兼容）。
+  stunT?: number; // 定身剩余(秒)
+  slowT?: number; // 迟滞剩余(秒)
+  weakenT?: number; // 降攻剩余(秒)
+  rangeCutT?: number; // 缠丝剩余(秒)
+  knockdownT?: number; // 倒下剩余(秒)
+  // 同种减益免疫剩余(秒)：>0 时再被同类型控制无效（防连续施法无限控）
+  stunImmuneT?: number;
+  slowImmuneT?: number;
+  weakenImmuneT?: number;
+  rangeCutImmuneT?: number;
+  knockdownImmuneT?: number;
 }
 
 // 由「左右紧邻的两个同将字牌」激活的武将（占两格，带金框）
@@ -1326,7 +1420,7 @@ export class Battle {
           this.restoreQueuedAutoPlaceToken(d);
           break;
         }
-        this.units.set(k, makePlacedUnit(t.type, t.tier, cell, this.unitFaceGate()));
+        this.units.set(k, placedUnitFromTray(t, cell, this.unitFaceGate())); // 增益随身还原
         break;
       }
       case 'placeWord': {
@@ -1354,7 +1448,7 @@ export class Battle {
             this.restoreQueuedAutoPlaceToken(d);
             break;
           }
-          this.units.set(k, makePlacedUnit(t.type, t.tier, cell, this.unitFaceGate()));
+          this.units.set(k, placedUnitFromTray(t, cell, this.unitFaceGate())); // 增益随身还原
           break;
         }
         if (!canMerge({ type: exist.type, tier: exist.tier }, { type: t.type, tier: t.tier })) {
@@ -1362,7 +1456,7 @@ export class Battle {
           break;
         }
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: t.type, tier: t.tier });
-        this.units.set(k, mergePlacedUnitState(exist, makePlacedUnit(t.type, t.tier, cell), merged));
+        this.units.set(k, mergePlacedUnitState(exist, placedUnitFromTray(t, cell), merged)); // 增益并集继承
         this.bursts.push({ kind: 'merge', c: d.c, r: d.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         break;
       }
@@ -1487,7 +1581,16 @@ export class Battle {
   private cloneTrayToken(t: TrayToken): TrayToken {
     switch (t.kind) {
       case 'unit':
-        return { kind: 'unit', type: t.type, tier: t.tier, ...(t.displaced ? { displaced: true } : {}) };
+        // 深拷贝随身增益（仙丹/风火轮/炼丹）：快照/回放/自动布阵克隆都不能丢
+        return {
+          kind: 'unit',
+          type: t.type,
+          tier: t.tier,
+          ...(t.displaced ? { displaced: true } : {}),
+          ...(t.pillAtk ? { pillAtk: true } : {}),
+          ...(t.pillFrq ? { pillFrq: true } : {}),
+          ...((t.buffAtkT ?? 0) > 0 ? { buffAtkT: t.buffAtkT, ...(t.buffAtkMul != null ? { buffAtkMul: t.buffAtkMul } : {}) } : {}),
+        };
       case 'word':
         return { kind: 'word', char: t.char, general: t.general, tier: t.tier, ...(t.fabaofuBoosted ? { fabaofuBoosted: true } : {}), ...(t.displaced ? { displaced: true } : {}) };
       case 'shovel':
@@ -2422,7 +2525,9 @@ export class Battle {
     this.pvp = pvpInit?.enabled ?? false;
     this.aiAdjustIntervalScale = aiAdjustIntervalScale;
     this.forceMatchThisGame = !!heroMatch?.forceMatchThisGame;
-    this.aiForceMatchThisGame = !!heroMatch?.forceMatchThisGame;
+    // AI 独立维护自己的跨局匹配保底（不与玩家 forceMatchThisGame 联动）
+    // AI 每局自带保底，直到凑出第一个武将对为止
+    this.aiForceMatchThisGame = true;
     this.recentMatchedHeroIds = heroMatch?.recentMatchedHeroIds ?? [];
     this.versusBand = this.pvp
       ? versusRubberBand(0, 0) // PvP 无跨局强度调节，rubber-band 中性化
@@ -3062,7 +3167,7 @@ export class Battle {
       const u = this.units.get(k);
       if (u) {
         this.units.delete(k);
-        this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier };
+        this.tray[slot] = trayUnitFromPlaced(u); // 增益随身：收回候选区不丢，再上板还原
         this.message = `${UNITS[u.type].name} 已收回候选区`;
         this.emit('place');
         this.clearAutoPlaceLayoutMemory();
@@ -3085,7 +3190,8 @@ export class Battle {
     const mergeUnit = this.units.get(k);
     if (mergeUnit && occupy.kind === 'unit' && occupy.type === mergeUnit.type && occupy.tier === mergeUnit.tier && mergeUnit.tier < MAX_TIER) {
       this.units.delete(k);
-      this.tray[slot] = { kind: 'unit', type: mergeUnit.type, tier: mergeUnit.tier + 1 };
+      // 棋盘兵并入候选令牌：增益并集继承（A有风火轮+B有仙丹 → 合成后两个都有）
+      this.tray[slot] = { kind: 'unit', type: mergeUnit.type, tier: mergeUnit.tier + 1, ...mergedUnitBuffs(occupy, mergeUnit) };
       this.message = `候选区合成 ${UNITS[mergeUnit.type].name} ${mergeUnit.tier + 1} 阶`;
       this.emit('merge');
       this.clearAutoPlaceLayoutMemory();
@@ -3109,19 +3215,19 @@ export class Battle {
       return false;
     }
 
-    // 棋盘件 → 候选槽
+    // 棋盘件 → 候选槽（兵器随身带上增益）
     const recalled: TrayToken = boardWord
       ? trayWordFromPlaced(boardWord)
-      : { kind: 'unit', type: boardUnit!.type, tier: boardUnit!.tier };
+      : trayUnitFromPlaced(boardUnit!);
 
-    // 候选件 → 棋盘格（先清格再落子，保证 maps 一致）
+    // 候选件 → 棋盘格（先清格再落子，保证 maps 一致；兵器还原随身增益）
     if (boardWord) this.words.delete(k);
     if (boardUnit) this.units.delete(k);
 
     if (occupy.kind === 'word') {
       this.words.set(k, placedWordFromTray(occupy, { c: from.c, r: from.r }));
     } else {
-      this.units.set(k, makePlacedUnit(occupy.type, occupy.tier, { c: from.c, r: from.r }, this.unitFaceGate()));
+      this.units.set(k, placedUnitFromTray(occupy, { c: from.c, r: from.r }, this.unitFaceGate()));
     }
     this.tray[slot] = recalled;
 
@@ -3172,7 +3278,7 @@ export class Battle {
       const slot = this.firstEmptyTraySlot();
       if (slot === null) return false;
       this.units.delete(k);
-      this.tray[slot] = { kind: 'unit', type: u.type, tier: u.tier, displaced: true };
+      this.tray[slot] = trayUnitFromPlaced(u, { displaced: true }); // 增益随身
       return true;
     }
     return true;
@@ -3193,7 +3299,7 @@ export class Battle {
       if (this.aiTray.length >= TUNING.traySize) return false;
       const u = this.aiUnits[ui]!;
       this.aiUnits.splice(ui, 1);
-      this.aiTray.push({ kind: 'unit', type: u.type, tier: u.tier, displaced: true });
+      this.aiTray.push(trayUnitFromPlaced(u, { displaced: true })); // 增益随身（AI 侧同口径）
       return true;
     }
     return true;
@@ -3503,7 +3609,7 @@ export class Battle {
         this.message = '候选区只有同型同级可合并';
         return false;
       }
-      this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+      this.tray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1, ...mergedUnitBuffs(a, b) }; // 增益并集继承
       this.clearTraySlot(from);
       this.message = `候选区合成 ${UNITS[b.type].name} ${b.tier + 1} 阶`;
       this.emit('merge');
@@ -3750,7 +3856,7 @@ export class Battle {
     if (wOnCell) {
       if (this.aiActiveGenerals().some((g) => g.cells.some((c) => c.c === to.c && c.r === to.r))) return false;
       this.aiWords.delete(k);
-      this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate(true)));
+      this.aiUnits.push(placedUnitFromTray(token, { c: to.c, r: to.r }, this.unitFaceGate(true))); // 增益随身还原
       if (!this.aiSummonWordPolicyNow().maxWordSlots) {
         this.aiTray.splice(index, 1);
       } else {
@@ -3769,7 +3875,7 @@ export class Battle {
     if (ex) {
       if (canMerge({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier })) {
         const m = mergeUnits({ type: ex.type, tier: ex.tier }, { type: token.type, tier: token.tier });
-        Object.assign(ex, mergePlacedUnitState(ex, makePlacedUnit(token.type, token.tier, ex.cell), m));
+        Object.assign(ex, mergePlacedUnitState(ex, placedUnitFromTray(token, ex.cell), m)); // 增益并集继承
         this.aiTray.splice(index, 1);
         this.spawnPlaceDropFx('ai', to, {
           kind: 'unit',
@@ -3783,7 +3889,7 @@ export class Battle {
       return false;
     }
     if (!this.aiCellFree(to.c, to.r)) return false;
-    this.aiUnits.push(makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate(true)));
+    this.aiUnits.push(placedUnitFromTray(token, { c: to.c, r: to.r }, this.unitFaceGate(true))); // 增益随身还原
     this.aiTray.splice(index, 1);
     this.spawnPlaceDropFx('ai', to, {
       kind: 'unit',
@@ -4581,7 +4687,7 @@ export class Battle {
     const b = this.aiTray[to];
     if (!a || !b || a.kind !== 'unit' || b.kind !== 'unit') return false;
     if (!canMerge({ type: a.type, tier: a.tier }, { type: b.type, tier: b.tier })) return false;
-    this.aiTray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1 };
+    this.aiTray[to] = { kind: 'unit', type: b.type, tier: b.tier + 1, ...mergedUnitBuffs(a, b) }; // 增益并集继承
     this.aiTray.splice(from, 1);
     return true;
   }
@@ -4728,7 +4834,7 @@ export class Battle {
       if (uexist) {
         this.units.delete(cellKey(to.c, to.r));
         this.words.set(cellKey(to.c, to.r), placedWordFromTray(token, { c: to.c, r: to.r }));
-        this.tray[index] = { kind: 'unit', type: uexist.type, tier: uexist.tier };
+        this.tray[index] = trayUnitFromPlaced(uexist); // 增益随身：换下的兵不丢增益
         this.message = `与 ${UNITS[uexist.type].name} 交换`;
         return true;
       }
@@ -4759,7 +4865,7 @@ export class Battle {
     const wexist = this.words.get(cellKey(to.c, to.r));
     if (wexist) {
       this.words.delete(cellKey(to.c, to.r));
-      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
+      this.units.set(cellKey(to.c, to.r), placedUnitFromTray(token, { c: to.c, r: to.r }, this.unitFaceGate())); // 增益随身还原
       this.tray[index] = trayWordFromPlaced(wexist);
       this.message = `与字牌「${wexist.char}」交换`;
       return true;
@@ -4771,7 +4877,7 @@ export class Battle {
           return this.queueAutoPlaceDrag(index, to, token, 'mergeUnit', 'merge');
         }
         const merged = mergeUnits({ type: exist.type, tier: exist.tier }, { type: token.type, tier: token.tier });
-        this.units.set(cellKey(to.c, to.r), mergePlacedUnitState(exist, makePlacedUnit(token.type, token.tier, exist.cell), merged));
+        this.units.set(cellKey(to.c, to.r), mergePlacedUnitState(exist, placedUnitFromTray(token, exist.cell), merged)); // 增益并集继承
         this.bursts.push({ kind: 'merge', c: to.c, r: to.r, ttl: 0.35, maxTtl: 0.35, big: false, color: '#ffd76a' });
         this.clearTraySlot(index);
         this.message = `合成 ${UNITS[merged.type].name} ${merged.tier} 阶`;
@@ -4784,16 +4890,16 @@ export class Battle {
         });
         return true;
       }
-      // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除）
-      this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
-      this.tray[index] = { kind: 'unit', type: exist.type, tier: exist.tier };
+      // 不可合并 → 交换：候选区令牌落格，原格单位回到候选区该槽（绝不删除；增益各自随身）
+      this.units.set(cellKey(to.c, to.r), placedUnitFromTray(token, { c: to.c, r: to.r }, this.unitFaceGate()));
+      this.tray[index] = trayUnitFromPlaced(exist);
       this.message = `与 ${UNITS[exist.type].name} 交换`;
       return true;
     }
     if (this.playerUseAutoPlaceDrag()) {
       return this.queueAutoPlaceDrag(index, to, token, 'placeUnit', 'place');
     }
-    this.units.set(cellKey(to.c, to.r), makePlacedUnit(token.type, token.tier, { c: to.c, r: to.r }, this.unitFaceGate()));
+    this.units.set(cellKey(to.c, to.r), placedUnitFromTray(token, { c: to.c, r: to.r }, this.unitFaceGate())); // 增益随身还原
     this.clearTraySlot(index);
     this.message = `布置了 ${UNITS[token.type].name}`;
     this.spawnPlaceDropFx('player', to, {
@@ -5742,7 +5848,10 @@ export class Battle {
     const optimalDps = this.estimateOptimalPower().optimalDps;
     let hp = this.fixedMonsterHp(TUNING.monsterHpNoDiffTo);
     for (let i = TUNING.monsterHpNoDiffTo + 1; i <= w; i++) {
-      hp = Math.min(this.targetMonsterHp(i, optimalDps), hp + this.monsterHpRampMaxStep(i));
+      const target = this.targetMonsterHp(i, optimalDps);
+      const maxStep = hp + this.monsterHpRampMaxStep(i);
+      // 保底每波至少 +1：防止武器调整（如拆塔）导致盘面战力下降、血量反而缩水
+      hp = Math.max(hp + 1, Math.min(target, maxStep));
     }
     return hp;
   }
@@ -6098,16 +6207,33 @@ export class Battle {
       const s = g.state;
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
       s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
+      // 怪物减益计时衰减（与玩家侧 updateGenerals / 兵器侧 updateAiUnits 同口径）
+      if ((s.stunT ?? 0) > 0) s.stunT = Math.max(0, s.stunT! - dt);
+      if ((s.slowT ?? 0) > 0) s.slowT = Math.max(0, s.slowT! - dt);
+      if ((s.weakenT ?? 0) > 0) s.weakenT = Math.max(0, s.weakenT! - dt);
+      if ((s.rangeCutT ?? 0) > 0) s.rangeCutT = Math.max(0, s.rangeCutT! - dt);
+      if ((s.knockdownT ?? 0) > 0) s.knockdownT = Math.max(0, s.knockdownT! - dt);
+      if ((s.stunImmuneT ?? 0) > 0) s.stunImmuneT = Math.max(0, s.stunImmuneT! - dt);
+      if ((s.slowImmuneT ?? 0) > 0) s.slowImmuneT = Math.max(0, s.slowImmuneT! - dt);
+      if ((s.weakenImmuneT ?? 0) > 0) s.weakenImmuneT = Math.max(0, s.weakenImmuneT! - dt);
+      if ((s.rangeCutImmuneT ?? 0) > 0) s.rangeCutImmuneT = Math.max(0, s.rangeCutImmuneT! - dt);
+      if ((s.knockdownImmuneT ?? 0) > 0) s.knockdownImmuneT = Math.max(0, s.knockdownImmuneT! - dt);
       if ((s.buffAtkT ?? 0) > 0) {
         s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
         if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
       }
+      // 定身/倒下：本帧无法攻击（普攻冷却与大招冷却都不推进）
+      if ((s.stunT ?? 0) > 0 || (s.knockdownT ?? 0) > 0) continue;
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
+      // 缠丝：有效射程 -0.5 格（最低 rangeTolerance）
+      const effRge = (s.rangeCutT ?? 0) > 0
+        ? Math.max(TUNING.rangeTolerance, this.aiGeneralRge(g) - TUNING.webbindRangeCut)
+        : this.aiGeneralRge(g);
       const inRange = this.sortCombatTargets(
         this.aiMonsters
           .map((m) => ({ m, p: posAlong(this.aiPath, m.dist) }))
-          .filter((x) => inAttackRange(ax, ay, this.aiGeneralRge(g), x.p)),
+          .filter((x) => inAttackRange(ax, ay, effRge, x.p)),
       );
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
@@ -6124,7 +6250,7 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.aiRng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(this.aiGeneralAtk(g));
+      const dmg = damage(this.aiGeneralAtk(g) * ((s.weakenT ?? 0) > 0 ? TUNING.weakenAtkMul : 1));
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -6139,7 +6265,8 @@ export class Battle {
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit), true);
       }
       const frq = stat.frq * (1 + (this.aiWeaponBonuses[g.def.id]?.frq ?? 0));
-      s.cooldown = 1 / (frq * this.aiMods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1));
+      // 迟滞减速：拉长攻击间隔（与玩家侧/兵器侧同口径）
+      s.cooldown = (1 / (frq * this.aiMods.frqMul * (g.pillFrq ? TUNING.frqBuffMul : 1))) * ((s.slowT ?? 0) > 0 ? TUNING.slowCooldownMul : 1);
     }
   }
 
@@ -6665,16 +6792,33 @@ export class Battle {
       const s = g.state;
       s.firePulse = Math.max(0, s.firePulse - dt * 6);
       s.skillFlash = Math.max(0, s.skillFlash - dt * 3);
+      // 怪物减益计时衰减（与兵器侧 updateUnits 同口径；字段可能来自旧快照缺省，按 0 处理）
+      if ((s.stunT ?? 0) > 0) s.stunT = Math.max(0, s.stunT! - dt);
+      if ((s.slowT ?? 0) > 0) s.slowT = Math.max(0, s.slowT! - dt);
+      if ((s.weakenT ?? 0) > 0) s.weakenT = Math.max(0, s.weakenT! - dt);
+      if ((s.rangeCutT ?? 0) > 0) s.rangeCutT = Math.max(0, s.rangeCutT! - dt);
+      if ((s.knockdownT ?? 0) > 0) s.knockdownT = Math.max(0, s.knockdownT! - dt);
+      if ((s.stunImmuneT ?? 0) > 0) s.stunImmuneT = Math.max(0, s.stunImmuneT! - dt);
+      if ((s.slowImmuneT ?? 0) > 0) s.slowImmuneT = Math.max(0, s.slowImmuneT! - dt);
+      if ((s.weakenImmuneT ?? 0) > 0) s.weakenImmuneT = Math.max(0, s.weakenImmuneT! - dt);
+      if ((s.rangeCutImmuneT ?? 0) > 0) s.rangeCutImmuneT = Math.max(0, s.rangeCutImmuneT! - dt);
+      if ((s.knockdownImmuneT ?? 0) > 0) s.knockdownImmuneT = Math.max(0, s.knockdownImmuneT! - dt);
       if ((s.buffAtkT ?? 0) > 0) {
         s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
         if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
       }
+      // 定身/倒下：本帧无法攻击（普攻冷却与大招冷却都不推进），与兵器侧同口径
+      if ((s.stunT ?? 0) > 0 || (s.knockdownT ?? 0) > 0) continue;
       const ax = (g.cells[0].c + g.cells[1].c) / 2;
       const ay = (g.cells[0].r + g.cells[1].r) / 2;
+      // 缠丝：有效射程 -0.5 格（最低 rangeTolerance），与兵器侧同口径
+      const effRge = (s.rangeCutT ?? 0) > 0
+        ? Math.max(TUNING.rangeTolerance, this.generalRge(g) - TUNING.webbindRangeCut)
+        : this.generalRge(g);
       const inRange = this.sortCombatTargets(
         this.monsters
           .map((m) => ({ m, p: posAtDistance(this.map, m.dist) }))
-          .filter((x) => inAttackRange(ax, ay, this.generalRge(g), x.p)),
+          .filter((x) => inAttackRange(ax, ay, effRge, x.p)),
       );
 
       if (g.def.skill !== 'none' && g.def.skillCd > 0) {
@@ -6693,7 +6837,8 @@ export class Battle {
       const base = Math.floor(stat.targets);
       const extra = this.rng.next() < stat.targets - base ? 1 : 0;
       const maxTargets = Math.max(1, base + extra);
-      const dmg = damage(this.generalAtk(g));
+      // 降攻减益只削普攻伤害（大招 castGeneralSkill 内另行取 atk，不受影响）
+      const dmg = damage(this.generalAtk(g) * ((s.weakenT ?? 0) > 0 ? TUNING.weakenAtkMul : 1));
       let hit = 0;
       for (const t of inRange) {
         if (hit >= maxTargets) break;
@@ -6707,7 +6852,8 @@ export class Battle {
         this.addGeneralCombatExp(g, Battle.combatExpFromHits(dmg, hit));
         this.tryRollFragmentOnHeroAttack();
       }
-      s.cooldown = 1 / this.generalFrq(g);
+      // 迟滞减速：拉长攻击间隔（与兵器侧 slowCooldownMul 同口径）
+      s.cooldown = (1 / this.generalFrq(g)) * ((s.slowT ?? 0) > 0 ? TUNING.slowCooldownMul : 1);
     }
   }
 
@@ -6784,6 +6930,7 @@ export class Battle {
         const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
         for (const t of inRange) {
           t.m.stunT = Math.max(t.m.stunT, dur);
+          // CC 价值只进盘面战力估算（heroSkillFocusDps），实际伤害只用基础倍率，避免重复扣血
           hurt(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
@@ -6792,6 +6939,7 @@ export class Battle {
         const push = g.def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
         for (const t of inRange) {
           t.m.dist = Math.max(entranceDist, t.m.dist - push);
+          // CC 价值只进盘面战力估算，实际伤害只用基础倍率
           hurt(t.m, damage(atk * TUNING.heroKnockDmgMul), t.p, 0.12);
         }
         break;
@@ -6800,6 +6948,7 @@ export class Battle {
         const dmgMul = g.def.maxTier === 5 ? TUNING.heroSlowDmgMulMain : TUNING.heroSlowDmgMulTransit;
         for (const t of inRange) {
           t.m.slowT = Math.max(t.m.slowT, TUNING.heroSlowDur);
+          // CC 价值只进盘面战力估算，实际伤害只用基础倍率
           hurt(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
         break;
@@ -6940,32 +7089,44 @@ export class Battle {
     return lo + this.rng.int(hi - lo + 1);
   }
 
-  /** 半径内按距离取最近的若干兵器（至多 count 把）。units 显式传入：玩家侧传 this.units.values()，AI 侧传 this.aiUnits */
-  private nearestUnitsInRadius(units: Iterable<PlacedUnit>, c: number, r: number, radius: number, count: number): PlacedUnit[] {
+  /** 半径内按距离取最近的若干目标（至多 count 个）：怪物控制技目标池 = 兵器 + 神将 */
+  private skillTargetsInRadius(
+    ai: boolean,
+    c: number,
+    r: number,
+    radius: number,
+    count: number,
+  ): SkillTarget[] {
     const max = Math.max(0, Math.floor(count));
     if (max <= 0) return [];
-    const hit: { u: PlacedUnit; d: number }[] = [];
-    for (const u of units) {
-      const d = Math.hypot(c - u.cell.c, r - u.cell.r);
-      if (d > radius) continue;
-      hit.push({ u, d });
+    const hit: { t: SkillTarget; d: number }[] = [];
+    const add = (cc: number, rr: number, t: SkillTarget) => {
+      const d = Math.hypot(c - cc, r - rr);
+      if (d <= radius) hit.push({ t, d });
+    };
+    if (ai) {
+      for (const u of this.aiUnits) add(u.cell.c, u.cell.r, { kind: 'unit', u });
+      for (const g of this.aiActiveGenerals()) add((g.cells[0].c + g.cells[1].c) / 2, (g.cells[0].r + g.cells[1].r) / 2, { kind: 'general', g });
+    } else {
+      for (const u of this.units.values()) add(u.cell.c, u.cell.r, { kind: 'unit', u });
+      for (const g of this.activeGenerals()) add((g.cells[0].c + g.cells[1].c) / 2, (g.cells[0].r + g.cells[1].r) / 2, { kind: 'general', g });
     }
     hit.sort((a, b) => a.d - b.d);
-    return hit.slice(0, max).map((x) => x.u);
+    return hit.slice(0, max).map((x) => x.t);
   }
 
-  /** 单次怪物控制技：随机 1~2 把，在 skillRadius 内取最近 */
-  private pickSkillTargets(c: number, r: number): PlacedUnit[] {
+  /** 单次怪物控制技：随机 1~2 个目标（兵器或神将），在 skillRadius 内取最近 */
+  private pickSkillTargets(c: number, r: number): SkillTarget[] {
     const want = this.rollSkillTargetCount();
-    return this.nearestUnitsInRadius(this.units.values(), c, r, TUNING.skillRadius, want);
+    return this.skillTargetsInRadius(false, c, r, TUNING.skillRadius, want);
   }
 
-  /** AI 半场版目标选取：aiUnits + AI 独立随机流（不扰动玩家 rng / 对战回放确定性） */
-  private pickAiSkillTargets(c: number, r: number): PlacedUnit[] {
+  /** AI 半场版目标选取：aiUnits + aiActiveGenerals + AI 独立随机流（不扰动玩家 rng / 对战回放确定性） */
+  private pickAiSkillTargets(c: number, r: number): SkillTarget[] {
     const lo = TUNING.skillTargetMin;
     const hi = TUNING.skillTargetMax;
     const want = hi <= lo ? lo : lo + this.aiRng.int(hi - lo + 1);
-    return this.nearestUnitsInRadius(this.aiUnits, c, r, TUNING.skillRadius, want);
+    return this.skillTargetsInRadius(true, c, r, TUNING.skillRadius, want);
   }
 
   private castMiniBossSkill(m: Monster): void {
@@ -6981,7 +7142,7 @@ export class Battle {
         // 对兵器的控制：与精英同口径——半径内随机 1~2 把最近 + 同种免疫
         const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
         for (const target of this.pickSkillTargets(mp.c, mp.r)) {
-          if (this.applyUnitStatus(target, status)) affected++;
+          if (this.applySkillStatus(target, status)) affected++;
         }
         break;
       }
@@ -7136,7 +7297,7 @@ export class Battle {
       const mp = this.aiMonsterPos(m);
       let affected = 0;
       for (const target of this.pickAiSkillTargets(mp.c, mp.r)) {
-        if (this.applyUnitStatus(target, m.skill)) affected++;
+        if (this.applySkillStatus(target, m.skill)) affected++;
       }
       if (affected > 0) {
         m.castFlash = 1;
@@ -7159,7 +7320,7 @@ export class Battle {
       case 'quake': {
         const status: UnitStatusId = kind === 'frost' ? 'slow' : kind === 'blight' ? 'weaken' : 'knockdown';
         for (const target of this.pickAiSkillTargets(mp.c, mp.r)) {
-          if (this.applyUnitStatus(target, status)) affected++;
+          if (this.applySkillStatus(target, status)) affected++;
         }
         break;
       }
@@ -7261,13 +7422,57 @@ export class Battle {
     }
   }
 
-  private applyDebuff(u: PlacedUnit, skill: MonsterSkill): boolean {    switch (skill) {
-      case 'stun': return this.applyUnitStatus(u, 'stun');
-      case 'slow': return this.applyUnitStatus(u, 'slow');
-      case 'weaken': return this.applyUnitStatus(u, 'weaken');
-      case 'webbind': return this.applyUnitStatus(u, 'webbind');
+  /** 对控制技目标（兵器或神将）施加地图减益；同种免疫期内返回 false */
+  private applyDebuff(t: SkillTarget, skill: MonsterSkill): boolean {
+    switch (skill) {
+      case 'stun': return this.applySkillStatus(t, 'stun');
+      case 'slow': return this.applySkillStatus(t, 'slow');
+      case 'weaken': return this.applySkillStatus(t, 'weaken');
+      case 'webbind': return this.applySkillStatus(t, 'webbind');
       default: {
         const _exhaustive: never = skill;
+        void _exhaustive;
+        return false;
+      }
+    }
+  }
+
+  /** 状态分发：兵器走 applyUnitStatus，神将走 applyGeneralStatus */
+  private applySkillStatus(t: SkillTarget, status: UnitStatusId): boolean {
+    return t.kind === 'unit' ? this.applyUnitStatus(t.u, status) : this.applyGeneralStatus(t.g, status);
+  }
+
+  /** 对神将施加状态；同种免疫期内返回 false（时长/免疫窗口与兵器侧完全同口径） */
+  private applyGeneralStatus(g: ActiveGeneral, status: UnitStatusId): boolean {
+    const s = g.state;
+    switch (status) {
+      case 'stun':
+        if ((s.stunImmuneT ?? 0) > 0) return false;
+        s.stunT = Math.max(s.stunT ?? 0, TUNING.stunDur);
+        s.stunImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'slow':
+        if ((s.slowImmuneT ?? 0) > 0) return false;
+        s.slowT = Math.max(s.slowT ?? 0, TUNING.slowDur);
+        s.slowImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'weaken':
+        if ((s.weakenImmuneT ?? 0) > 0) return false;
+        s.weakenT = Math.max(s.weakenT ?? 0, TUNING.weakenDur);
+        s.weakenImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'webbind':
+        if ((s.rangeCutImmuneT ?? 0) > 0) return false;
+        s.rangeCutT = Math.max(s.rangeCutT ?? 0, TUNING.webbindDur);
+        s.rangeCutImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      case 'knockdown':
+        if ((s.knockdownImmuneT ?? 0) > 0) return false;
+        s.knockdownT = Math.max(s.knockdownT ?? 0, TUNING.knockdownDur);
+        s.knockdownImmuneT = TUNING.debuffImmuneDur;
+        return true;
+      default: {
+        const _exhaustive: never = status;
         void _exhaustive;
         return false;
       }

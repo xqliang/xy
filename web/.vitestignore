@@ -1,0 +1,3 @@
+# 忽略 worktree 残留测试（缺 @core/node_modules）
+../.claude/worktrees/
+../.worktrees/

@@ -13,7 +13,7 @@ export default defineConfig({
   },
   test: {
     root: __dirname,
-    include: ['tests/**/*.test.ts'],
+    dir: './tests',
     // 排除 git worktree（.worktrees/、.claude/worktrees/）里的重复测试，避免缺 node_modules 的旧 worktree 污染发现
     exclude: ['**/.worktrees/**', '**/.claude/worktrees/**', '**/node_modules/**', '**/dist/**'],
   },

@@ -376,10 +376,10 @@ describe('Battle 接入压力规划', () => {
     expect(hp(1)).toBeCloseTo(20, 5);
     expect(hp(2)).toBeCloseTo(40, 5);
     expect(hp(3)).toBeCloseTo(65, 5);
-    // target4 = 62×1.5 = 93；maxStep = 13×2+(4−4)=26 → min(93, 65+26)=91
-    expect(maxRamp(4)).toBe(26);
-    expect(maxRamp(5)).toBe(27);
-    expect(hp(4)).toBeCloseTo(91, 5);
+    // target4 = 62×1.5 = 93；maxStep = 15×2+(4−4)=30 → min(93, 65+30)=95
+    expect(maxRamp(4)).toBe(30);
+    expect(maxRamp(5)).toBe(31);
+    expect(hp(4)).toBeCloseTo(95, 5);
     expect(hp(4)).toBeCloseTo(expectedHp(b, 4), 5);
     expect(hp(5)).toBeCloseTo(expectedHp(b, 5), 5);
     expect(hp(8)).toBeCloseTo(expectedHp(b, 8), 5);

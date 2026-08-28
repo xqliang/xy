@@ -115,7 +115,7 @@ export function drawInkPopupFrame(
   //       使「檐梁两端」正好压在弹窗左右侧边、翘角凸出到弹窗外（用户要求：屋顶下边缘对齐弹窗两边、屋角凸出）。
   // 素材未加载时回退矢量 drawPalaceRoof（同样造型，无细节纹理）。
   const band = sprite('palace-roof-band');
-  const bandH = 104; // 显示高（v3 水墨檐带更扁）
+  const bandH = 119; // 显示高（v3 水墨檐带更扁；用户要求再加高 15px：104→119，檐顶更高耸、宫檐更厚重）
   const bandLift = BAND_LIFT; // 整体上移量：檐口压进弹窗顶、盖住顶部圆角边角
   const baseBandW = w / ROOF_BEAM_SPAN; // 檐梁恰好 = 弹窗宽 w 时的基础宽
   const bandW = baseBandW + ROOF_EXTRA_W * 2; // 用户要求宫檐左右各再宽 5px

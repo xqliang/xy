@@ -24,7 +24,7 @@ const TARGET = {
   'monster-boss-liushahe.png': 210,
   'monster-boss-pansidong.png': 210,
   'monster-boss-huangfengling.png': 210,
-  'monster-minion.png': 150,
+  'monster-minion.png': 300, // 小妖：头像卡片等高缩放需放大到 124px 高，300 源图避免糊（路径小妖绘制远小于此）
   'monster-minion-baiguling.png': 150,
   'monster-minion-huoyanshan.png': 150,
   'monster-minion-liushahe.png': 150,

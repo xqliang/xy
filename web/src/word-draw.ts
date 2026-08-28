@@ -13,7 +13,7 @@ import {
   type GeneralRole,
 } from './generals';
 
-export const PAIR_PITY_AFTER = 5;
+export const PAIR_PITY_AFTER = 6;
 /** 半对保底聚焦：场上独特单字 ≥ 该数时，随机选一个提高其配对权重 */
 export const PAIR_PITY_FOCUS_MIN_ORPHANS = 3;
 /** 半对保底：聚焦孤儿所需配对字的相对权重 */
@@ -50,7 +50,7 @@ export const YIN_SUPPORT_CHARS = new Set(['观', '音', '梵']);
 /** 被音系软压的门派 */
 export const YIN_PRESS_FAMILIES = new Set(['君', '殊']);
 /** 匹配保底：有半对可补时，补场上单字的概率；其余直接出一对新英雄 */
-export const FORCE_MATCH_HALF_PAIR_P = 0.6;
+export const FORCE_MATCH_HALF_PAIR_P = 0.8;
 
 /** 波段对满3/满5的相对权重（需压过满3基础 weight≈3、满5≈1 的差距） */
 export function phaseWeight(wave: number, maxTier: 3 | 5): number {
@@ -439,8 +439,8 @@ export function charCompletesNewHeroMatch(
 
 /**
  * 保底推进匹配：有半对可补时 `FORCE_MATCH_HALF_PAIR_P` 补场上单字，否则（及无半对时）
- * 尽量一次给出某未匹配武将双字（slots≥2）或首字。
- * 返回 0–2 个尚未在 tray 中的字（调用方负责写入 tray）。
+ * 只发一个首字（拆对：第二张下次征兵自然补出，不再一次出一对）。
+ * 返回 0–1 个尚未在 tray 中的字（调用方负责写入 tray）。
  */
 export function forcedMatchWordChars(
   rng: Rng,
@@ -510,7 +510,7 @@ function pickForcedFreshHeroPair(
   excludeHeroes: ReadonlySet<string>,
   field: ReadonlyMap<string, number> | undefined,
 ): WordPick[] {
-  if (slotsLeft < 2) return [];
+  if (slotsLeft < 1) return [];
   const candidates = GENERALS.filter((g) => {
     if (excludeHeroes.has(g.id)) return false;
     if (t5Only && g.maxTier < 5) return false;
@@ -524,9 +524,9 @@ function pickForcedFreshHeroPair(
   });
   if (candidates.length === 0) return [];
   const g = rng.pick(candidates);
+  // 拆对：只发首字，第二张下次征兵自然补出（首字成孤儿 → 配对字进入 pending → 60% 分支补出）
   return [
     { char: g.chars[0]!, general: g.id },
-    { char: g.chars[1]!, general: g.id },
   ];
 }
 
@@ -564,12 +564,8 @@ function pickForcedIncompleteHeroChars(
     out.push({ char: c, general: g.id });
   };
   if (!hasA && !hasB) {
-    if (slotsLeft >= 2) {
-      tryPush(a);
-      tryPush(b);
-    } else {
-      tryPush(a);
-    }
+    // 拆对：即使两字都不在场也只发首字，第二张下次征兵自然补出
+    tryPush(a);
   } else if (!hasA) {
     tryPush(a);
   } else if (!hasB) {

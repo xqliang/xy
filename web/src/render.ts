@@ -380,12 +380,13 @@ function drawStatusRow(
   items.forEach((it, i) => drawStatusChip(ctx, startX + i * gap, cy, it.icon, it.color, r));
 }
 
+/** 兵器/神将共用的减益+增益图标行。字段可选：神将侧 GeneralState 的减益键可能缺省（旧快照），按 0 处理 */
 function unitStatusItems(u: {
-  stunT: number;
-  slowT: number;
-  weakenT: number;
-  rangeCutT: number;
-  knockdownT: number;
+  stunT?: number;
+  slowT?: number;
+  weakenT?: number;
+  rangeCutT?: number;
+  knockdownT?: number;
   buffAtkT?: number;
   pillAtk?: boolean;
   pillFrq?: boolean;
@@ -396,11 +397,11 @@ function unitStatusItems(u: {
   if (u.pillFrq) items.push({ icon: '轮', color: '#ffb830' });
   const order: UnitStatusId[] = ['knockdown', 'stun', 'slow', 'weaken', 'webbind'];
   const on: Record<UnitStatusId, boolean> = {
-    knockdown: u.knockdownT > 0,
-    stun: u.stunT > 0,
-    slow: u.slowT > 0,
-    weaken: u.weakenT > 0,
-    webbind: u.rangeCutT > 0,
+    knockdown: (u.knockdownT ?? 0) > 0,
+    stun: (u.stunT ?? 0) > 0,
+    slow: (u.slowT ?? 0) > 0,
+    weaken: (u.weakenT ?? 0) > 0,
+    webbind: (u.rangeCutT ?? 0) > 0,
   };
   items.push(...order.filter((id) => on[id]).map((id) => UNIT_STATUS_META[id]));
   return items;
@@ -830,7 +831,7 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       // 连击(combo>0)：抬高收回下限到 0.70，只回 1/4 就再刺出，配合更快衰减营造密集连刺威力感
       const rest = combo > 0 ? 0.70 : 0.25;
       const reach = s * (rest + (0.85 - rest) * pulse);
-      ctx.strokeStyle = '#8a5a2b';
+      ctx.strokeStyle = '#1e1e1e'; // 枪杠：黑色（需求：枪兵枪杠改黑，与攻击特效一致）
       ctx.lineWidth = Math.max(2, s * 0.07);
       ctx.beginPath(); ctx.moveTo(-s * 0.18, 0); ctx.lineTo(reach, 0); ctx.stroke();
       ctx.strokeStyle = '#c8392b'; // 红缨
@@ -1288,6 +1289,12 @@ function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: numbe
   } else {
     // 立绘尺寸与地图上单位保持一致(同用 CELL*0.72)，避免 tray 里显得更大
     drawUnit(ctx, token.type, token.tier, x, y, CELL * 0.72);
+    // 随身增益小徽标（仙丹/风火轮/炼丹）：候选区里也能看到增益跟着兵器走，不丢失感
+    const buffBadges: { icon: string; color: string }[] = [];
+    if (token.pillAtk) buffBadges.push({ icon: '丹', color: '#ff6040' });
+    if (token.pillFrq) buffBadges.push({ icon: '轮', color: '#ffb830' });
+    if ((token.buffAtkT ?? 0) > 0) buffBadges.push({ icon: '炼', color: '#e8a830' });
+    if (buffBadges.length > 0) drawStatusRow(ctx, x, y - s * 0.42, buffBadges, Math.max(6, s * 0.14));
     if (token.displaced) {
       ctx.save();
       ctx.strokeStyle = '#d87818';
@@ -8330,6 +8337,17 @@ function drawWordSelection(
   ctx.fillStyle = 'rgba(255,230,176,0.82)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 34);
+  // 五行克制影响：克图 +25% / 被图克 -25%（与盘面战力估算同口径）
+  if (wuxingEnabled() && MAP_ELEMENT[b.map.id]) {
+    const rel = counterRelation(def.element, MAP_ELEMENT[b.map.id], TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
+    if (rel === 'adv') {
+      ctx.fillStyle = '#ffd84d';
+      ctx.fillText(`克${def.element} +25% 伤害`, px + 12, py + 50);
+    } else if (rel === 'dis') {
+      ctx.fillStyle = '#9aa0a6';
+      ctx.fillText(`被${def.element}克 -25% 伤害`, px + 12, py + 50);
+    }
+  }
   // 技能（未激活时置灰）
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
   ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 52);
@@ -8980,10 +8998,8 @@ function drawActiveGeneralGroup(
     ctx.restore();
   }
   // 武将增益状态图标：老君炼丹（炼）/ 仙丹（丹）/ 风火轮（轮），与兵器侧同一套图标，显示在名号中间上方
-  const heroBuffs: { icon: string; color: string }[] = [];
-  if ((g.state.buffAtkT ?? 0) > 0) heroBuffs.push({ icon: '炼', color: '#e8a830' });
-  if (g.state.pillAtk) heroBuffs.push({ icon: '丹', color: '#ff6040' });
-  if (g.state.pillFrq) heroBuffs.push({ icon: '轮', color: '#ffb830' });
+  // 怪物减益（倒/定/迟/弱/网）也走同一套图标行——需求：定身/震倒/减速等对神将生效，状态需可见
+  const heroBuffs = unitStatusItems(g.state);
   if (heroBuffs.length > 0) {
     // 羁绊武将顶部已有名号徽标，状态图标再上移一档避免遮挡
     const bondOffset = opts?.showBondLabel && g.def.id === BOND_GENERAL ? CELL * 0.2 : 0;
@@ -10034,7 +10050,7 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         ctx.translate(a.x, a.y);
         ctx.rotate(ang);
         // 枪杆
-        ctx.strokeStyle = '#9a6f3a';
+        ctx.strokeStyle = '#1e1e1e'; // 枪杠：黑色（需求：枪兵枪杠改黑，与常驻兵器一致）
         ctx.lineWidth = 2 + tier * 0.5;
         ctx.beginPath(); ctx.moveTo(tipD - shaftLen, 0); ctx.lineTo(tipD - 8, 0); ctx.stroke();
         // 红缨

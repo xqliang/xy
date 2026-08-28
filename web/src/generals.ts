@@ -103,7 +103,7 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 牛：冲撞击晕 ———
   { id: 'niumowang', name: '牛魔', chars: ['牛', '魔'], role: '控制', rank: 'T1', skill: 'stun',
-    skillName: '蛮牛冲撞', skillDesc: '冲撞重创2.0×攻，击晕1.5秒', atk: 5.65, frq: 1.0, rge: 1.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
+    skillName: '蛮牛冲撞', skillDesc: '冲撞重创2.0×攻，击晕1.5秒', atk: 5.65, frq: 1.0, rge: 2.0, targets: 2, skillCd: 10, weight: 1, asset: 'hero-niumowang',
     maxTier: 5, atkStyle: '冲撞击晕', family: '牛', element: 'earth' },
   { id: 'qingniu', name: '青牛', chars: ['青', '牛'], role: '过渡', rank: 'T2', skill: 'stun',
     skillName: '牛角顶', skillDesc: '撞击2.0×攻，击晕1.0秒（过渡）', atk: 6.6, frq: 1.15, rge: 1.5, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-qingniu',

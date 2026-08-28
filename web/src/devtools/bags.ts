@@ -153,6 +153,7 @@ export const TUNING_SKILL_KEYS = new Set([
   'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
   'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',
+  'CC_TIME_BONUS', 'PUSH_CELL_BONUS', 'SLOW_TIME_BONUS', // CC 伤害系数（时长/格数放大输出）
   'heroBurnHitMul', 'heroBurnDpsMul', 'heroBurnDur',
   'heroBuffAtkMulMain', 'heroBuffAtkMulTransit', 'heroBuffDurMain', 'heroBuffDurTransit',
   'heroCdrSecMain', 'heroCdrSecTransit', 'tangsengHurtImmuneDur',
