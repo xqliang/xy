@@ -18,7 +18,7 @@ import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
-import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY } from '@core';
+import { UNITS, getUnitStat, damage, canMerge, MAX_TIER, ECONOMY, ELEMENT_ZH } from '@core';
 import type { UnitType } from '@core';
 import { sprite, unitAsset, monsterSprite, cavalrySprite, miniBossSprite } from './assets';
 import { getBestWave } from './endless';
@@ -8215,6 +8215,8 @@ export interface GeneralPanelOpts {
   pillCount?: number;
   /** 技能描述折行多出的高度（每多一行 15px） */
   descExtra?: number;
+  /** 是否展示「五行克制」那一行（克/被克才有）——占一行高，需顺移下方所有行 */
+  wuxingLine?: boolean;
   showBondDetail?: boolean;
   equippedWeapon?: boolean;
   /** 未激活：可搭子数量（>1 时加宽面板放提示） */
@@ -8227,7 +8229,7 @@ export function generalPanelMetrics(o: GeneralPanelOpts): { pw: number; ph: numb
   const buffs = o.buffCount ?? 0;
   const descExtra = o.descExtra ?? 0;
   const statTop = GENERAL_PANEL_STAT_TOP_BASE
-    + (o.showBondDetail ? 24 : 0) + (o.equippedWeapon ? 16 : 0) + descExtra;
+    + (o.wuxingLine ? 16 : 0) + (o.showBondDetail ? 24 : 0) + (o.equippedWeapon ? 16 : 0) + descExtra;
   const rowN = (o.active ? 7 : 5) + buffs + pills;
   const rowsEnd = statTop + rowN * 16;
   // 激活：底边距 10（保证末行芯片底距面板底 ≥18px）；未激活：底部还要画一行橙色提示，再多留一行高
@@ -8306,10 +8308,17 @@ function drawWordSelection(
   // 多出的行高 descExtra 要顺移下方所有行并计入面板高度 ph，避免溢出弹窗。
   const skillDescLines = wrapText(ctx, def.skillDesc, pw - 24);
   const descExtra = (skillDescLines.length - 1) * 15;
+  // 五行克制行：仅「克/被克」才会画（无关系不画）。它占标题区一行（py+50），
+  // 需据此顺移下方 技能/技能描述/羁绊 各行，并让面板高度 ph、属性起点 statTop 计入这一行。
+  const wuxRel = (wuxingEnabled() && MAP_ELEMENT[b.map.id])
+    ? counterRelation(def.element, MAP_ELEMENT[b.map.id], TUNING.wuxingAdvMul, TUNING.wuxingDisMul)
+    : 'none';
+  const wuxLine = wuxRel === 'adv' || wuxRel === 'dis';
+  const wuxOffset = wuxLine ? 16 : 0;
   // 激活多「大招」+「经验」；未激活也展示配置 CD
   const { ph, statTop } = generalPanelMetrics({
     active: !!active, pillCount: pills.length, buffCount: buffLines.length, descExtra,
-    showBondDetail, equippedWeapon: !!equippedWeapon,
+    wuxingLine: wuxLine, showBondDetail, equippedWeapon: !!equippedWeapon,
   });
   const px = BOARD_X + (COLS * CELL) / 2 - pw / 2;
   const py = infoPanelTop(ph, panelHalf);
@@ -8337,27 +8346,25 @@ function drawWordSelection(
   ctx.fillStyle = 'rgba(255,230,176,0.82)';
   ctx.font = '12px "PingFang SC", sans-serif';
   ctx.fillText(`${def.atkStyle} · 满级${def.maxTier}`, px + 12, py + 34);
-  // 五行克制影响：克图 +25% / 被图克 -25%（与盘面战力估算同口径）
-  if (wuxingEnabled() && MAP_ELEMENT[b.map.id]) {
-    const rel = counterRelation(def.element, MAP_ELEMENT[b.map.id], TUNING.wuxingAdvMul, TUNING.wuxingDisMul);
-    if (rel === 'adv') {
-      ctx.fillStyle = '#ffd84d';
-      ctx.fillText(`克${def.element} +25% 伤害`, px + 12, py + 50);
-    } else if (rel === 'dis') {
-      ctx.fillStyle = '#9aa0a6';
-      ctx.fillText(`被${def.element}克 -25% 伤害`, px + 12, py + 50);
-    }
+  // 五行克制影响：克图 +25% / 被图克 -25%（与盘面战力估算同口径）。占标题区一行(py+50)，
+  // 下方 技能/描述/羁绊 由 wuxOffset 统一顺移，避免与技能行重叠。
+  if (wuxRel === 'adv') {
+    ctx.fillStyle = '#ffd84d';
+    ctx.fillText(`克${ELEMENT_ZH[def.element!]} +25% 伤害`, px + 12, py + 50);
+  } else if (wuxRel === 'dis') {
+    ctx.fillStyle = '#9aa0a6';
+    ctx.fillText(`被${ELEMENT_ZH[def.element!]}克 -25% 伤害`, px + 12, py + 50);
   }
-  // 技能（未激活时置灰）
+  // 技能（未激活时置灰）——有五行行时整体下移 wuxOffset
   ctx.fillStyle = active ? '#9ad8ff' : 'rgba(154,216,255,0.4)';
-  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 52);
+  ctx.fillText(`技能「${def.skillName}」`, px + 12, py + 52 + wuxOffset);
   ctx.fillStyle = active ? 'rgba(255,240,210,0.7)' : 'rgba(255,240,210,0.32)';
-  skillDescLines.forEach((ln, i) => ctx.fillText(ln, px + 12, py + 68 + i * 15));
+  skillDescLines.forEach((ln, i) => ctx.fillText(ln, px + 12, py + 68 + wuxOffset + i * 15));
   if (showBondDetail) {
     ctx.fillStyle = '#f0c860';
-    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 84 + descExtra);
+    ctx.fillText(`羁绊「${BOND_NAME}」`, px + 12, py + 84 + descExtra + wuxOffset);
     ctx.fillStyle = 'rgba(255,240,210,0.75)';
-    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98 + descExtra);
+    ctx.fillText(`大圣激活·全队攻击${bondAtkPctLabel()}`, px + 12, py + 98 + descExtra + wuxOffset);
   }
   // 神兵行画在属性行起点上方 16px（有神兵时 statTop 已含这 16px，见 generalPanelMetrics）
   let weaponRowY = statTop - 16;
