@@ -504,14 +504,17 @@ export function skillRarityColor(cost: number): { label: string; color: string; 
 }
 
 // —— 弹窗几何（与 menu-popups 同套 drawInkPopupFrame） —— //
-const PW = 504;
+const PW = 474; // 原 504，整体收窄 30px
 const PH = 868;
 const PX = (VIEW_W - PW) / 2;
-const PY = (VIEW_H - PH) / 2 - 8;
+const PY = (VIEW_H - PH) / 2 + 22; // 居中基础上再下移 30px（原 -8 → +22）
 const CLOSE_R = inkPopupCloseRect(PX, PY);
 const BODY = PY + 58;
-const TAB_SHOP = { x: PX + 18, y: BODY + 6, w: 228, h: 34 };
-const TAB_LOTTERY = { x: PX + 258, y: BODY + 6, w: 228, h: 34 };
+// 两个 Tab 随 PW 自适应：左右各 18 边距 + 中间 12 间距（PW=504 时 w=228，与原一致）；
+// 收窄 PW 后不再溢出面板右缘。
+const TAB_W = (PW - 48) / 2;
+const TAB_SHOP = { x: PX + 18, y: BODY + 6, w: TAB_W, h: 34 };
+const TAB_LOTTERY = { x: PX + 30 + TAB_W, y: BODY + 6, w: TAB_W, h: 34 };
 const MERIT_BAR = { x: PX + 18, y: BODY + 48, w: 148, h: 26 };
 const CONTENT_TOP = BODY + 92;
 const CONTINUE_H = 40;
