@@ -21,24 +21,26 @@ export function drawInkVeil(ctx: CanvasRenderingContext2D, w: number, h: number,
 export const INK_POPUP_HEAD_H = 46;
 /** 宫檐整体上移量：檐口压到弹窗顶内、盖住弹窗顶部圆角边角（drawInkPopupFrame 用）。用户两轮要求上移：5→10 */
 const BAND_LIFT = 10;
-/** 关闭按钮随宫檐整体上移量（与宫檐同步，压在瓦面上） */
-const CLOSE_LIFT = 0;
+/** 关闭按钮随宫檐整体上移量（与宫檐同步，压在瓦面上）。用户逐轮上移：0→3→5 */
+const CLOSE_LIFT = 5;
 /** 宫檐横带素材实测比例（tools/seeddream/_process-roof.mjs 量得，v3 水墨檐带）：
  *  檐梁只占素材宽的 ~90%（两端各内缩 ~5%），翘角外缘伸到素材两侧边。
  *  据此把檐梁两端对齐弹窗左右侧边（x / x+w），翘角自然外挑到弹窗外。 */
 const ROOF_BEAM_SPAN = 0.902; // bandW 基础 = w / ROOF_BEAM_SPAN
 const ROOF_BEAM_LEFT = 0.051; // bandLeft = x - ROOF_BEAM_LEFT * baseBandW - ROOF_EXTRA_W
-/** 宫檐在「檐梁对齐弹窗侧边」基础上左右各再外扩的像素（用户要求整体再宽 5px/边） */
-const ROOF_EXTRA_W = 5;
+/** 宫檐在「檐梁对齐弹窗侧边」基础上左右各再外扩的像素。
+ *  用户逐轮要求加宽：5 → 20（整体再宽约 30px，让檐梁底部红条正好压到弹窗 body 两侧边）。
+ *  注：三段式绘制只拉伸中间檐梁段，故加宽只加宽平直红梁、翘角随之外挑，不变形。 */
+const ROOF_EXTRA_W = 20;
 
 export function inkPopupCloseRect(
   popX: number,
   popY: number,
-  btnW = 36,
-  btnH = 30,
+  btnW = 34, // 方形命中区：便于画正圆关闭键，且比旧的 36×30 更大更好点
+  btnH = 34,
 ): { x: number; y: number; w: number; h: number } {
   return {
-    x: popX + 10,
+    x: popX + 4, // 用户逐轮左移：10→6→4
     y: popY + (INK_POPUP_HEAD_H - btnH) / 2 - CLOSE_LIFT,
     w: btnW,
     h: btnH,
@@ -91,17 +93,47 @@ export function drawInkPopupFrame(
   // 半透明压暗底层界面（菜单/战场），卷轴浮在其上（小游戏下同时记录蒙层色，帧尾给黑边补色）
   fillViewScrim(ctx, 'rgba(28,22,16,0.38)');
 
-  roundRect(ctx, x, y, w, h, 14);
-  const body = ctx.createLinearGradient(x, y, x, y + h);
+  // —— 弹窗外框：四边包一圈朱红木边，与顶部宫檐檐梁同色，构成「檐梁 + 四边」连续红框 ——
+  // 做法：先把整块弹窗填成朱红（外框底色），再在内缩 FRAME_W 处铺米色纸面 body，
+  //       露出的四边红色即为边框；顶边被宫檐盖住，与檐梁自然连成一圈红。
+  const FRAME_W = 9;          // 红木边框厚度（px）
+  const OUTER_R = 14;         // 弹窗外圆角
+  const BODY_R = 8;           // 内层米色纸面圆角
+  // 1) 外框底：朱红木纵向渐变（顶部受光偏亮、底部背光偏深）→ 边框自带上下明暗立体
+  roundRect(ctx, x, y, w, h, OUTER_R);
+  const frameG = ctx.createLinearGradient(x, y, x, y + h);
+  frameG.addColorStop(0, '#d24e2a');   // 顶：鲜亮朱红（受光）
+  frameG.addColorStop(0.5, '#b23418');
+  frameG.addColorStop(1, '#8a2410');   // 底：深朱红（背光）
+  ctx.fillStyle = frameG;
+  ctx.fill();
+  // 2) 外缘深棕描边：压住边框外沿，与身后界面分离
+  roundRect(ctx, x, y, w, h, OUTER_R);
+  ctx.strokeStyle = 'rgba(52,24,10,0.8)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // 3) 外缘内侧一圈暖金高光细线：红木边像被打了光、微微「抬起」（立体感来源之一）
+  roundRect(ctx, x + 1.5, y + 1.5, w - 3, h - 3, OUTER_R - 1.5);
+  ctx.strokeStyle = 'rgba(255,206,140,0.42)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // 4) 内层米色纸面 body（四周内缩 FRAME_W，露出上面填好的红框）
+  const bx = x + FRAME_W, by = y + FRAME_W, bw = w - FRAME_W * 2, bh = h - FRAME_W * 2;
+  roundRect(ctx, bx, by, bw, bh, BODY_R);
+  const body = ctx.createLinearGradient(bx, by, bx, by + bh);
   body.addColorStop(0, '#f0e6d0');
   body.addColorStop(1, '#dcc9a4');
   ctx.fillStyle = body;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,30,0.55)';
-  ctx.lineWidth = 2;
+  // 5) 红↔米交界处深棕阴影线：纸面像「凹嵌」进红木框里（立体感主来源）
+  roundRect(ctx, bx, by, bw, bh, BODY_R);
+  ctx.strokeStyle = 'rgba(70,38,16,0.55)';
+  ctx.lineWidth = 1.5;
   ctx.stroke();
-  roundRect(ctx, x + 6, y + 6, w - 12, h - 12, 10);
-  ctx.strokeStyle = 'rgba(180,140,90,0.35)';
+  // 6) 纸面内侧再补一圈极淡高光：纸面微反光，凹陷更可信
+  roundRect(ctx, bx + 1.2, by + 1.2, bw - 2.4, bh - 2.4, Math.max(1, BODY_R - 1));
+  ctx.strokeStyle = 'rgba(255,250,235,0.5)';
   ctx.lineWidth = 1;
   ctx.stroke();
 
@@ -137,7 +169,7 @@ export function drawInkPopupFrame(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const titleCx = x + w / 2;
-  const titleCy = y + 11; // 匾中心（相对弹窗顶固定，与宫檐上移解耦；用户逐轮上移：19→17→14→11）
+  const titleCy = y + 8; // 匾中心（相对弹窗顶固定，与宫檐上移解耦；用户逐轮上移：19→17→14→11→8）
   const innerW = drawTitlePlaque(ctx, titleCx, titleCy);
   // 题字：默认 20px，超过匾木面宽则按比例缩小字号适配（长标题如「继续上次对局？」）
   let fs = 24; // 题字字号（原 20，用户要求稍微放大）
@@ -155,28 +187,58 @@ export function drawInkPopupFrame(
   ctx.fillStyle = '#ffe9b8';
   ctx.fillText(title, titleCx, titleCy);
 
-  roundRect(ctx, closeR.x, closeR.y, closeR.w, closeR.h, 6);
-  ctx.fillStyle = 'rgba(48,28,12,0.55)';
+  // —— 关闭按钮：立体圆形朱红键（宫门铜环风），替换旧的半透明方块，更醒目 ——
+  // 命中区 closeR 现为方形（见 inkPopupCloseRect），据此取内切圆。
+  const ccx = closeR.x + closeR.w / 2;
+  const ccy = closeR.y + closeR.h / 2;
+  const cr = Math.min(closeR.w, closeR.h) / 2 - 1; // 内切圆半径（留 1px 描边余量）
+  // 1) 落地投影：把圆键从背景「托起」，立体第一层
+  ctx.beginPath();
+  ctx.arc(ccx, ccy + 2, cr, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,220,160,0.45)';
-  ctx.lineWidth = 1.5;
+  // 2) 键面：朱红球面径向渐变（光源在左上→左上最亮、右下最暗）→ 圆润立体
+  const cg = ctx.createRadialGradient(ccx - cr * 0.4, ccy - cr * 0.45, cr * 0.1, ccx, ccy, cr);
+  cg.addColorStop(0, '#e0704a');   // 高光亮朱
+  cg.addColorStop(0.5, '#c33f22');
+  cg.addColorStop(1, '#7f2410');   // 边缘深红
+  ctx.beginPath();
+  ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+  ctx.fillStyle = cg;
+  ctx.fill();
+  // 3) 金环：与背景红瓦 / 金翘角都拉开对比，是「醒目」的关键
+  ctx.beginPath();
+  ctx.arc(ccx, ccy, cr - 0.8, 0, Math.PI * 2);
+  ctx.strokeStyle = '#ffd98a';
+  ctx.lineWidth = 2;
   ctx.stroke();
-  // × 用两条对角线描出（几何居中），不依赖字体 textBaseline——微信真机 'middle' 基线与浏览器不一致会让字形偏上。
-  {
-    const cx = closeR.x + closeR.w / 2;
-    const cy = closeR.y + closeR.h / 2;
-    const r = Math.min(closeR.w, closeR.h) * 0.26;
-    ctx.strokeStyle = '#ffe8c0';
-    ctx.lineWidth = 2.4;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx - r, cy - r);
-    ctx.lineTo(cx + r, cy + r);
-    ctx.moveTo(cx - r, cy + r);
-    ctx.lineTo(cx + r, cy - r);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-  }
+  // 4) 顶部弧形高光：釉面反光，强化球面立体
+  ctx.beginPath();
+  ctx.arc(ccx, ccy - cr * 0.12, cr * 0.58, Math.PI * 1.18, Math.PI * 1.82);
+  ctx.strokeStyle = 'rgba(255,246,228,0.6)';
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  // 5) × 叉：奶白粗线（几何居中，不依赖字体基线——微信真机 'middle' 基线偏上），
+  //    下方叠一层深红投影线让叉「浮」在键面上。
+  const xr = cr * 0.4;
+  ctx.strokeStyle = 'rgba(70,20,8,0.45)';
+  ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(ccx - xr, ccy - xr + 0.8);
+  ctx.lineTo(ccx + xr, ccy + xr + 0.8);
+  ctx.moveTo(ccx - xr, ccy + xr + 0.8);
+  ctx.lineTo(ccx + xr, ccy - xr + 0.8);
+  ctx.stroke();
+  ctx.strokeStyle = '#fff4e2';
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.moveTo(ccx - xr, ccy - xr);
+  ctx.lineTo(ccx + xr, ccy + xr);
+  ctx.moveTo(ccx - xr, ccy + xr);
+  ctx.lineTo(ccx + xr, ccy - xr);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
 
   return y + headH + 12;
 }

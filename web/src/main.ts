@@ -600,10 +600,16 @@ void (async () => {
       if (ok) track('login');
       scheduleFrame();
     });
+  } catch (err) {
+    // 加固：启动流程任一步异常（弱网 / 域名未配 / 微信 jsbridge 未就绪 / 存储或登录异常等）
+    // 也绝不把玩家永久卡在加载页。记录后「兜底进首页」——缺图有背景+按钮 fallback、
+    // 缺登录态时 apiFetch 自动回退匿名 X-Uid，均可正常显示与游玩。
+    console.error('[boot] 启动流程异常，兜底进入首页：', err);
+    if (screen === 'loading') screen = 'menu';
   } finally {
     window.clearTimeout(showUiTimer);
+    scheduleFrame(); // 无论成功 / 失败 / 超时：务必排一帧，把当前界面（首页或续玩战斗）画出来
   }
-  scheduleFrame();
   // 神秘商人几乎每局结算后必弹出：首屏就绪后空闲预取分包，避免结算时才现拉取造成等待。
   const prefetchMerchantChunk = (): void => { void merchantLazy.prefetch(); };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(prefetchMerchantChunk, { timeout: 4000 });
@@ -2587,6 +2593,16 @@ function scheduleFrame(): void {
   if (rafId === null) rafId = requestAnimationFrame(frame);
 }
 
+// 加固：帧内异常上报（节流）。首 3 次必报、之后每 ~120 帧(约 2s)一次，
+// 避免持续抛错刷爆控制台，同时保证「第一现场」的报错一定被看到（含微信开发者工具）。
+let frameErrCount = 0;
+function reportFrameError(err: unknown): void {
+  frameErrCount++;
+  if (frameErrCount <= 3 || frameErrCount % 120 === 0) {
+    console.error('[frame] 渲染/逻辑异常（已兜底，循环继续）：', err);
+  }
+}
+
 // 当前界面是否需要连续动画：战斗一直跑；结算星级动画期间跑；菜单大圣待机动画需持续重绘。
 function needsContinuousLoop(): boolean {
   if (screen === 'loading') return loadingUiVisible;
@@ -2613,6 +2629,10 @@ function frame(now: number): void {
   let dt = elapsed / 1000;
   last = now;
   if (dt > 0.05) dt = 0.05; // 防卡顿跳步
+  // 加固：整帧的「仿真 + 绘制」全部包进 try——任何一处抛错（缺图 drawImage、某页绘制 bug、
+  // 小游戏运行时缺失的全局等）都不再中断循环；帧尾 catch 复位画布、finally 照常重排下一帧，
+  // 绝不因单帧异常而永久定格白屏（此前无外层 try，一次抛错就让 rAF 停摆）。
+  try {
   // 帧率自适应特效档位：连续动画中测平滑帧时(EMA)，过慢降灼烧/冰冻粒子密度、恢复则复原（迟滞防抖）。
   // 忽略切前台/入场的巨帧(elapsed≥120ms)。阈值参照 60fps 上限(MIN_FRAME_MS≈12.7ms)：>26ms(≈<38fps)降、<19ms(≈>52fps)复。
   if (needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
@@ -2956,7 +2976,14 @@ function frame(now: number): void {
     }
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
-  if (needsContinuousLoop()) scheduleFrame();
+  } catch (err) {
+    // 加固：仿真/绘制中途抛错——先记录（节流），再撤掉可能残留的 save/clip/transform
+    // （restore 到空栈是 no-op，安全），使下一帧从干净状态重画；循环由 finally 续上。
+    reportFrameError(err);
+    for (let i = 0; i < 4; i++) { try { ctx.restore(); } catch { break; } }
+  } finally {
+    if (needsContinuousLoop()) scheduleFrame();
+  }
 }
 scheduleFrame();
 
@@ -3020,6 +3047,8 @@ interface GameHook {
   buildDefense: (peach?: number) => void;
   snapshot: () => ReturnType<Battle['snapshot']>;
   curScreen: () => string;
+  // 预览/回归截图：直接打开首页某个菜单弹窗（settings/stamina/map/help/profile），供 popup 截图工具用。
+  openMenuPopup: (name: MenuPopup) => void;
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 渲染桥。
   // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
   // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
@@ -3156,6 +3185,10 @@ const hook: GameHook = {
   },
   snapshot: () => battle.snapshot(),
   curScreen: () => screen,
+  // 预览/回归截图：切到首页并打开指定菜单弹窗（经 lazy 模块 ensure，与真实入口 openSettingsPopup 同源）。
+  openMenuPopup: (name: MenuPopup) => {
+    menuPopupsLazy.ensure(() => { screen = 'menu'; menuPopup = name; scheduleFrame(); });
+  },
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 对手快照渲染桥。
   // 注（Task 5）：对手半场现由 WS 快照重建，不在本机确定性重放；fabricated matchId 连不上真实服务端时
   // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。
