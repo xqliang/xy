@@ -19,7 +19,7 @@ const mkSolo = () =>
 describe('pvp 关本地自动开波', () => {
   it('pvp 下 step 很久也不本地开波（wave 恒 0、status 恒 ready）', () => {
     const b = mkPvp();
-    // INTRO_DUR=6s + waveGapSec=5s：单人下这段时间足以 intro 结束并自动开第 1 波。
+    // INTRO_DUR=6s + waveGapSec=4s：单人下这段时间足以 intro 结束并自动开第 1 波。
     for (let i = 0; i < 400; i++) b.step(1 / 30); // 400/30 ≈ 13.3s
     expect(b.wave).toBe(0);              // 本地没自动开波
     expect(b.status).toBe('ready');      // 仍停在备战

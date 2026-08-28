@@ -148,19 +148,10 @@ export const TUNING = {
   cavalryRatioLateHi: 0.7,
   cavalrySpdMul: 1.2, // 骑兵移速倍率：比普通妖快 20%
   cavalryHpMul: 0.8, // 骑兵血量倍率：比普通妖低 1/5（快怪用薄血换速度，避免 HP×移速 威胁翻倍）
-  // —— 后期堆量：怪物数量在经济基准(9+n)之上，后期按超出波数额外叠加（越后越密，贴合"按战力堆量"）——
-  lateWaveFrom: 6, // 第 6 波起开始额外堆量
-  lateWaveExtraPerWave: 5, // 每超出一波额外 +5 只（越到后期越密，波6:+5 … 波12:+35）
-  // —— 前期减量：开局前几波压低出怪数，降低上手压力（波1=7, 波2=9）——
-  earlyWaveTo: 2, // 前 2 波享受减量
-  earlyWaveReduce: 2, // 每提前一波多减 2 只（波2:-2, 波1:-4）；波1 另见 wave1Bonus
-  wave1Bonus: 1, // 第一波在减量后再 +1
-  minWaveMonsters: 5, // 单波出怪数下限（防止减量后过少）
   spawnInterval: 1.25, // 秒/批（基础出怪节奏；同批可随机 1..N 只）
   spawnIntervalMin: 0.35, // 出怪间隔下限
   summonCostStart: 10, // 首次征兵成本
   summonCostStep: 2, // 每次征兵后 +2（抽卡成本递增）
-  summonDraws: 5, // 每次征兵产出 5 个候选（放入候选区）
   shovelDrawChance: 0.18, // 候选中出现铲子的概率
   shovelPityAfter: 4, // 铲子保底：连续 N 次征兵没出铲，则下次征兵强制出 1 把铲（避免没空位放兵）
   wordDrawChance: 0.12, // 候选中出现武将字牌的概率（每兵槽独立判定）
@@ -179,11 +170,12 @@ export const TUNING = {
   traySize: 5, // 候选区容量
   initialShovels: 2, // 开局赠送铲子数
   initialOpenSlots: 6, // 初始 6 个阵位（照搬原作初始6格）
-  // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×endlessCycleStep ——
-  endlessWavesPerCycle: 10,
-  endlessCycleStep: 1.1,
-  aiDpsBase: 8, // AI 对手拦截 DPS 基数
-  aiDpsPerWave: 4, // AI 拦截 DPS 每波增量
+  // —— 分圈难度（对战/无尽共用）：每 10 波为一圈，每进一圈怪物强度 ×cycleStrengthMul ——
+  // 前 10 波恒 ×1（保护上手）；第 10 波后按 cycleStrengthMul^((wave−10)/10) 连续加压。
+  // 1.55：第 15 波 ×1.24、第 20 波 ×1.55、第 30 波 ×2.40——后期加压，强玩家约 12–15 波收束
+  //（原 1.1 太温柔：要到第 20 波才 ×1.1，后期怪物血量追不上玩家战力，导致强玩家打不完）。
+  wavesPerCycle: 10,
+  cycleStrengthMul: 1.55,
   // —— 怪物等级与技能（精英/BOSS 会对附近武将释放减益，不改动基础数值，仅施加临时计时器）——
   eliteFromWave: 4, // 第 4 波起可能刷出精英妖（略推迟控场，降低开局秒杀感）
   eliteChance: 0.2, // 非 BOSS 怪成为精英的概率
@@ -222,10 +214,8 @@ export const TUNING = {
   hasteDur: 4, // 疾风：周围妖怪加速持续（秒）
   hasteSpdMul: 1.20, // 疾风光环：周围妖怪加速期间移速倍率
   healPct: 0.08, // 血泉：每次回复目标最大生命的比例
-  // —— AI 清场 / 紧箍咒 ——
-  aiClearChargeTime: 20, // AI 从空到满的蓄力秒数
+  // —— AI 清场 / 紧箍咒作用半径（蓄力已退役、择时改走 aiOffensiveActive*；伤害走 jingguDmgMul）——
   aiClearRadius: 2.5, // AI 清场 / 紧箍咒作用半径（格）
-  aiClearDmgMul: 2.3, // 清场伤害 = 当前波基础怪血 × 有效难度 × 该系数
   // —— 主动技能数值 ——
   palmPushCells: 7, // 如来神掌沿路击退格数（不再重置到 0）
   meteorDmgMul: 2.2, // 主动陨石：波基础怪血 × 有效难度 × 该系数
@@ -285,18 +275,14 @@ export const TUNING = {
   // 命中判定/范围环显示的半格外扩：攻击圆半径 = (rge + 0.5) 格。判定采用「圆与目标方格相交」
   // (见 inAttackRange)，显示环半径同为 (rge + 0.5)*CELL，两者一致。0.5 即半个格子。
   rangeTolerance: 0.5,
-  // AI 对手每波部署的新单位数(基数 + 波次×系数)，使 AI 战力与玩家大致对称(伪竞技公平性)
-  aiDeployBase: 8,
-  aiDeployPerWave: 1.5,
-  aiDeployInterval: 2.2, // AI 逐个部署的间隔(秒)：模拟人手动从候选区往地图放，不再开波瞬间铺满(总量不变，只拉长过程)
   // —— 双雄及以上：波中额外刷大 Boss（妖王）；间隔随机 ∈ [min, maxBase - min(shrinkCap, 英雄数-1)] ——
   heroBossFromCount: 2, // 至少几名已配对英雄才触发
   heroBossIntervalMin: 8, // 间隔下界（秒）
   heroBossIntervalMaxBase: 15, // 间隔上界基数（秒）
   heroBossIntervalShrinkCap: 4, // 英雄越多上界越压，最多压 shrinkCap 秒
   heroBossMaxPerWave: 4, // 每波最多额外引妖王次数（与英雄数取 min，防长波连刷）
-  /** 清波后自动开下一波的等待秒数 */
-  waveGapSec: 5,
+  /** 清波后自动开下一波的等待秒数（即每波之间的出怪间隔） */
+  waveGapSec: 4,
 };
 
 /**
@@ -5743,15 +5729,15 @@ export class Battle {
   }
 
   // 有效怪物强度系数：对战/无尽均为境界系数 × 分圈难度曲线。
-  // 圈系数 = endlessCycleStep ^ (max(0, wave-10) / endlessWavesPerCycle)：
+  // 圈系数 = cycleStrengthMul ^ (max(0, wave-10) / wavesPerCycle)：
   //   波 1-10 恒为 ×1（前 10 波保护），其后随波次「连续」爬升（不再台阶式跳升）。
   //   在每圈末与旧台阶对齐：波 20 = ×STEP、波 30 = ×STEP²…，
   //   但去掉了波 11 / 21 的悬崖跳变——前面缓、后面越来越陡，手感更平滑。
   effectiveDifficulty(wave: number = this.wave): number {
     const w = Math.max(1, wave);
     // 连续圈系数：前 10 波为 0，其后每满 1 波 +0.1 圈（波 20=1 圈、波 30=2 圈）
-    const cycle = Math.max(0, w - TUNING.endlessWavesPerCycle) / TUNING.endlessWavesPerCycle;
-    return this.difficultyMul * TUNING.endlessCycleStep ** cycle;
+    const cycle = Math.max(0, w - TUNING.wavesPerCycle) / TUNING.wavesPerCycle;
+    return this.difficultyMul * TUNING.cycleStrengthMul ** cycle;
   }
 
   /** 确保妖王波排程覆盖到 wave（含）；按段懒生成，确定性可复现。 */
@@ -5773,7 +5759,7 @@ export class Battle {
       return;
     }
     const start = this.bossScheduleThrough + 1;
-    const end = this.bossScheduleThrough + TUNING.endlessWavesPerCycle;
+    const end = this.bossScheduleThrough + TUNING.wavesPerCycle;
     const pool: number[] = [];
     for (let w = start; w <= end; w++) pool.push(w);
     const span = TUNING.bossSegMax - TUNING.bossSegMin + 1;
@@ -5832,7 +5818,7 @@ export class Battle {
 
   /** 第 wave 波爬坡上限增量：monsterHpStep×rampMul(cycle) + (wave − 起始波) */
   private monsterHpRampMaxStep(wave: number): number {
-    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.wavesPerCycle);
     const mul = TUNING.monsterHpRampMulByCycle[Math.min(cycle, TUNING.monsterHpRampMulByCycle.length - 1)]!;
     return TUNING.monsterHpStep * mul + (wave - this.monsterHpRampFromWave());
   }

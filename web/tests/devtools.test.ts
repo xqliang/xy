@@ -45,7 +45,7 @@ describe('devtools bags', () => {
   it('resetAllBags 不抛错', () => {
     TUNING.waveGapSec = 9;
     resetAllBags();
-    expect(TUNING.waveGapSec).toBe(5);
+    expect(TUNING.waveGapSec).toBe(4);
   });
 
   it('DPS 估算返回武将与兵器行；神兵为增益量而非总伤', () => {

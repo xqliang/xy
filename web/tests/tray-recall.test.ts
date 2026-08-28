@@ -198,6 +198,6 @@ describe('征兵清空候选区', () => {
 
     b.summon();
     expect(b.tray[2]?.kind).not.toBe('tree');
-    expect(b.tray.filter(Boolean)).toHaveLength(TUNING.summonDraws);
+    expect(b.tray.filter(Boolean)).toHaveLength(TUNING.traySize);
   });
 });

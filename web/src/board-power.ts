@@ -18,7 +18,7 @@ export const BOARD_POWER = {
   /** 第几波起按最优输出抬高出怪数 */
   PRESSURE_FROM_WAVE: 6,
   /** 门口路段长度（格） */
-  ENTRANCE_ZONE_LEN: 2.5,
+  ENTRANCE_ZONE_LEN: 4,
   /** 出怪间隔下限（秒） */
   SPAWN_INTERVAL_MIN: 0.35,
   /** 门口秒杀判定血量比例 */

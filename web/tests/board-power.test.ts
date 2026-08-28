@@ -339,7 +339,7 @@ describe('Battle 接入压力规划', () => {
   };
   const rampFrom = () => TUNING.monsterHpNoDiffTo + 1;
   const maxRamp = (wave: number) => {
-    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.endlessWavesPerCycle);
+    const cycle = Math.floor((Math.max(1, wave) - 1) / TUNING.wavesPerCycle);
     const mul = TUNING.monsterHpRampMulByCycle[Math.min(cycle, TUNING.monsterHpRampMulByCycle.length - 1)]!;
     return TUNING.monsterHpStep * mul + (wave - rampFrom());
   };
@@ -416,7 +416,7 @@ describe('Battle 接入压力规划', () => {
     (b as unknown as { bossWaves: Set<number> }).bossWaves = new Set([1]);
     expect(b.startNextWave()).toBe(true);
     const planned = b.snapshot().waveCount!;
-    expect(planned).toBeGreaterThanOrEqual(TUNING.minWaveMonsters);
+    expect(planned).toBeGreaterThanOrEqual(5); // 空板保底数量下限（原 TUNING.minWaveMonsters，已退役）
     let guard = 0;
     while (b.monsters.length < planned && guard++ < 400) b.step(0.5);
     const boss = b.monsters.find((m) => m.isBoss);

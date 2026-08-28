@@ -106,9 +106,8 @@ export function exportChangedConfig(): Record<string, Record<string, { from: unk
 export const TUNING_MONSTER_WAVE_KEYS = new Set([
   'monsterSpd', 'dangerRemaining',
   'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMulByCycle',
-  'lateWaveFrom', 'lateWaveExtraPerWave', 'earlyWaveTo', 'earlyWaveReduce',
-  'wave1Bonus', 'minWaveMonsters', 'spawnInterval', 'spawnIntervalMin',
-  'endlessWavesPerCycle', 'endlessCycleStep',
+  'spawnInterval', 'spawnIntervalMin',
+  'wavesPerCycle', 'cycleStrengthMul',
 ]);
 
 /** 出怪：妖王 / 骑兵 / 精英 / 小 Boss / 双雄引妖王 */
@@ -216,7 +215,7 @@ export const TUNING_HERO_ULT_KEYS = new Set(GENERALS.flatMap((g) => heroUltTunin
 
 /** 征兵 AI Tab：征兵成本 / 字铲保底 / 候选区 */
 export const TUNING_SUMMON_KEYS = new Set([
-  'summonCostStart', 'summonCostStep', 'summonDraws',
+  'summonCostStart', 'summonCostStep',
   'shovelDrawChance', 'shovelPityAfter', 'wordDrawChance', 'wordPityAfter', 'pairPityAfter',
   'earlyWordCapWave', 'earlyWordCap', 'earlyWordGuaranteeWave', 'earlyWordGuarantee',
   'earlyShovelWave', 'earlyShovelMin', 'earlyShovelMax',
@@ -226,9 +225,7 @@ export const TUNING_SUMMON_KEYS = new Set([
 
 /** 征兵 AI Tab：AI 部署 / 清场 / 主动择时 */
 export const TUNING_AI_KEYS = new Set([
-  'aiDpsBase', 'aiDpsPerWave',
-  'aiClearChargeTime', 'aiClearRadius', 'aiClearDmgMul',
-  'aiDeployBase', 'aiDeployPerWave', 'aiDeployInterval',
+  'aiClearRadius',
   'aiOffensiveActiveMinDist', 'aiOffensiveActiveDelayMax',
 ]);
 

@@ -40,7 +40,7 @@ describe('字牌征兵保底', () => {
     const shovels = b.tray.filter((t) => t.kind === 'shovel');
     expect(words.length).toBeGreaterThanOrEqual(1);
     expect(shovels.length).toBeGreaterThanOrEqual(1);
-    expect(b.tray).toHaveLength(TUNING.summonDraws);
+    expect(b.tray).toHaveLength(TUNING.traySize);
   });
 
   it('shovelPityAfter 为 4', () => {

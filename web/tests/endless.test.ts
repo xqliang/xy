@@ -50,7 +50,7 @@ describe('endless difficulty curve', () => {
 
   it('effectiveDifficulty 连续爬升：前10波×1、每圈末与旧台阶对齐、无悬崖跳变', () => {
     const b = new Battle(1, 1, undefined, undefined, {}, [], [], true);
-    const S = TUNING.endlessCycleStep;
+    const S = TUNING.cycleStrengthMul;
     // 前 10 波保护：恒为 ×1
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1, 5);
     expect(b.effectiveDifficulty(10)).toBeCloseTo(1, 5);
@@ -65,7 +65,7 @@ describe('endless difficulty curve', () => {
 
   it('对战模式 effectiveDifficulty 同样分圈加压', () => {
     const b = new Battle(1, 1.5, undefined, undefined, {}, [], [], false);
-    const S = TUNING.endlessCycleStep;
+    const S = TUNING.cycleStrengthMul;
     expect(b.effectiveDifficulty(1)).toBeCloseTo(1.5, 5);
     expect(b.effectiveDifficulty(30)).toBeCloseTo(1.5 * S * S, 5);
   });
