@@ -115,15 +115,21 @@ PvP/PvE **共用**底层「全状态序列化 + 输入触发 + 节流写入 + `a
 
 ### 5.1 性能基准（实测，2026-08-29）
 
-用 `vite-node` 跑真实 `Battle.serialize()` 测（进行中战斗、激活武将、出若干波怪）：
+**测量方法**：`vite-node` 跑真实 `Battle.serialize()`。构造一局「进行中」战斗（`new Battle(seed,1,mapById('pansidong'))` → 放字牌激活武将「铁扇」→ `status='playing'` → 多次 `summon()`+`autoPlaceTray()` 布兵 → `startNextWave()` + 步进）。每项测 **50 次取中位数**（`performance.now()` 差值）。
 
-| 指标 | 实测值 | 说明 |
+**实测实体规模**（该进行中战斗）：`{monsters:1, aiMonsters:5, units:3, aiUnits:5, words:2, generalStates:1}`，序列化 JSON **7.7 KB**。（注：本方 units 受 `summon` 经济门限未拉满；真实中后期战斗单位/怪更多，但单次成本量级不变，见下。）
+
+| 指标 | 中位耗时 | 说明 |
 |---|---|---|
-| `serialize()` 本身 | ~0.002 ms | 近乎零开销（纯字段收集） |
-| `JSON.stringify(serialize())` | **~0.016 ms**（约 7.7 KB 状态） | 主线程同步开销的**唯一实质项** |
-| 内存 `localStorage.set` | ~0.0002 ms | 可忽略（wx `setStorageSync` 同步写小数据亦 negligible） |
+| `battle.serialize()` | **0.002 ms** | 近乎零开销（纯字段收集，无深拷贝） |
+| `JSON.stringify({config, core})` | **0.016 ms** | 主线程同步开销的**唯一实质项** |
+| 内存 `localStorage.setItem(json)` | **0.0002 ms** | 可忽略（wx `setStorageSync` 同步写小数据同样 negligible） |
 
-**结论**：单次全状态序列化的主线程成本极低（<0.1ms，即使实体数放大数倍仍远低于 16.7ms 帧预算）。**瓶颈不在单次快慢，而在写入频率**——故节流策略（输入触发 + `SESSION_SAVE_MIN_INTERVAL_MS=500ms` / `MAX=2000ms`）是为避免输入风暴时反复 stringify，而非单次延迟。这把既有「ready-only + 每窗一次」升级为「全状态 + 节流」是安全的。注：本基准实体规模受 `summon` 经济门限未拉满，但量级与趋势对频率策略已具决定性。
+**结论**：单次全状态序列化的主线程成本极低——**即使实体数放大 5~10 倍（~40-80 KB），`JSON.stringify` 也就 ~0.1-0.2 ms，仍远低于 16.7 ms（60fps）帧预算**。因此「全状态序列化」本身**不是**性能风险。
+
+**真正的风险是写入频率，不是单次快慢**：若每个输入/每帧都触发 stringify+写，输入风暴下会累积无谓开销。故采用**节流**：输入触发置 `dirty`，帧尾仅当 `dirty` 且距上次写入 ≥ `SESSION_SAVE_MIN_INTERVAL_MS`(500ms) 才落盘，或距上次 ≥ `SESSION_SAVE_MAX_INTERVAL_MS`(2000ms) 无条件落盘。这把既有「ready-only + 每波一次」升级为「全状态 + 节流」，单次安全 + 频率受控，整体掉帧风险可忽略。
+
+> 复现：`web/tools/` 下可用 `vite-node` 跑等价脚本（构造 Battle → `performance.now()` 测 serialize/stringify/set 各 50 次中位）。实现阶段应在真机（微信 DevTools + 中后期战斗）复测 `wx.setStorageSync` 同步写耗时，确认小游戏端同样可忽略。
 
 ## 6. 风险与已确认事实（实现前已核实）
 
