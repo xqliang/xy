@@ -206,19 +206,23 @@ class VersusHub:
     def _choose_pair(self, live: list[dict], now: int):
         # 纯计算：复现现有两趟算法，返回本轮该成局的 (a, b, watch_key) 或 None。
         # live 已按 enqueued_ms 升序。第一趟同段位 FIFO；第二趟过 hold 窗后跨段位放宽。
-        # 第一轮：同段位最老两个（by_rank 的插入序=各段位在 qall 中首现序；跨段位成对与否互不影响最终对集）
+        # 关键：两侧必须是不同 uid——同一玩家可能因「匹配中刷新/连点/重试」在队列里留下多张 ticket，
+        #       不排除就会把他配给自己（自己打自己）。故各趟选搭档时都跳过同 uid。
         by_rank: dict[int, list[dict]] = {}
         for w in live:
             by_rank.setdefault(w["rank"], []).append(w)
+        # 第一轮：同段位内最老者 a，配「首个 uid 不同」的 b；同段位若全是同一 uid 则本段位无对，继续看下段位。
         for rank, lst in by_rank.items():
             if len(lst) >= 2:
-                # 返回 k("q",rank) 作 pass-1 的 WATCH 目标：q:{rank} ZSET 仅用于把乐观锁冲突面收窄到本段位
-                # （避免任意入队都撞 WATCH）；等待者成员读取一律走 qall（两者 score 同为 enqueued_ms，分组等价）。
-                return (lst[0], lst[1], k("q", rank))
-        # 第二轮：最老的「已过保持窗口」者 a，与任意其他等待者 b（b 取 qall 中最老的非 a 者）
-        a = next((w for w in live if now >= w["hold_until_ms"]), None)
-        if a is not None:
-            b = next((w for w in live if w["ticket"] != a["ticket"]), None)
+                a = lst[0]
+                b = next((w for w in lst[1:] if w["uid"] != a["uid"]), None)
+                if b is not None:
+                    # 返回 k("q",rank) 作 pass-1 的 WATCH 目标：q:{rank} ZSET 仅用于把乐观锁冲突面收窄到本段位
+                    # （避免任意入队都撞 WATCH）；等待者成员读取一律走 qall（两者 score 同为 enqueued_ms，分组等价）。
+                    return (a, b, k("q", rank))
+        # 第二轮：过保持窗口者 a（按 FIFO 逐个试），与 qall 中最老的「uid 不同」者 b 跨段位放宽配对。
+        for a in (w for w in live if now >= w["hold_until_ms"]):
+            b = next((w for w in live if w["uid"] != a["uid"]), None)  # uid 不同即保证 b≠a
             if b is not None:
                 return (a, b, k("qall"))
         return None
@@ -345,6 +349,12 @@ class VersusHub:
             now = self._now()
             self._prune_recent(now)
             self._reap(now)                    # 惰性回收终局/孤儿状态，防无界增长
+            # 去重：先移除该 uid 已在随机池里的旧 ticket（匹配中刷新/连点/重试会残留多张）。
+            # 否则同 uid 多票会被 _choose_pair 配到一起（自匹配），或陈旧票与真人成局后对方「打空气」。
+            # _live_waiters 只含随机池 ticket（私房 host 带 room 标记已跳过），故不误伤私房。
+            for w in self._live_waiters():
+                if w["uid"] == uid:
+                    self._drop_ticket(w["ticket"])
             # recent/自适应窗口仍进程内算（启发式，非正确性关键，多实例各算可接受）
             self.recent.setdefault(rank, []).append((uid, now))
             n = self._recent_distinct(rank, uid, now)

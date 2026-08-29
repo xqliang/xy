@@ -233,3 +233,42 @@ def test_sweep_removes_timed_out_ticket():
     assert h.r.exists(k("tk", t)) == 0
     assert h.r.zscore(k("qall"), t) is None
     assert h.r.zscore(k("q", 5), t) is None
+
+
+# ---------------------------------------------------------------- 自匹配防护（同 uid 不成对） ----
+def test_choose_pair_excludes_same_uid():
+    # _choose_pair 纯计算：两侧必须不同 uid。同一玩家多张 ticket（匹配中刷新/连点残留）绝不能配到一起。
+    h = _redis_hub()
+    now = 1_000_000
+    def w(tk, uid, rank, past_hold=True):
+        return {"ticket": tk, "uid": uid, "rank": rank,
+                "enqueued_ms": now, "hold_until_ms": now - 1 if past_hold else now + 10_000}
+    # 同 uid 两张、同段位 → 第一趟无跨 uid 搭档，第二趟也被 uid 守卫挡下 → None
+    assert h._choose_pair([w("t1", "u1", 3), w("t2", "u1", 3)], now) is None
+    # 同 uid 两张、跨段位且过 hold → 第二趟放宽仍不成对 → None
+    assert h._choose_pair([w("t1", "u1", 3), w("t2", "u1", 9)], now) is None
+    # 混合：u1 两张 + u2 一张（同段位）→ 选到 (u1, u2)，绝不选 (u1, u1)
+    pair = h._choose_pair([w("t1", "u1", 3), w("t2", "u1", 3), w("t3", "u2", 3)], now)
+    assert pair is not None
+    a, b, _ = pair
+    assert {a["uid"], b["uid"]} == {"u1", "u2"}
+
+
+def test_same_uid_reenqueue_dedups_no_self_match():
+    # 同一 uid 因「匹配中刷新/连点」二次入队：enqueue 先丢弃其旧 ticket，队列只剩一张 → 不会自匹配。
+    from rediskv import k
+    h = _redis_hub()
+    t1 = h.enqueue("u1", 3)["ticket"]
+    assert h.poll(t1)["status"] == "waiting"
+    t2 = h.enqueue("u1", 3)["ticket"]            # 同 uid 再入队（模拟刷新后重新匹配）
+    assert t2 != t1
+    assert h.r.exists(k("tk", t1)) == 0          # 旧票已被去重丢弃
+    assert h.poll(t1)["status"] == "timeout"     # 旧票查不到
+    assert h.poll(t2)["status"] == "waiting"     # 新票仍在等待——没有把自己配给自己
+    # 另一个真实玩家进来才成局，且是 u1 对 u2（不同 uid）
+    t3 = h.enqueue("u2", 3)["ticket"]
+    p3 = h.poll(t3)
+    assert p3["status"] == "matched"
+    p2 = h.poll(t2)
+    assert p2["status"] == "matched"
+    assert p2["matchStart"]["matchId"] == p3["matchStart"]["matchId"]  # 同一局：u1 vs u2
