@@ -647,6 +647,15 @@ void (async () => {
       bootstrapAuth(),
       new Promise<void>((resolve) => setTimeout(resolve, 4000)),
     ]);
+    // 登录 + 云存档拉取先行：必须放在下方续玩短路（return）之前。cloudLogin 异步拉服务端 profile
+    // （昵称/头像）与云存档（段位/功德/背包），并在成功后 track('login')。若放在 return 之后，续玩局会
+    // 整个 app 会话都不执行 cloudLogin——丢失登录遥测 + 跨设备云存档拉取（旧 tryResumeLocalBattle 落空到
+    // 此处是会调用的，故这是相对旧行为的回归修复）。恢复局用的是本地存档，云拉取异步更新 rank/merit/bag
+    // 模块态、波间生效可接受（与旧「续玩后 cloudLogin 更新段位」行为一致）。两分支都在此调用一次、仅一次。
+    void cloudLogin().then((ok) => {
+      if (ok) track('login');
+      scheduleFrame();
+    });
     // 续玩恢复优先（PvP/PvE 统一）：有有效未终局快照则恢复进战斗、跳过首页；否则走原首页逻辑。
     // PvP 深链（versusCode 非空）优先于本地续玩：保留原 `versusCode == null` 守卫——此时不恢复本地局，
     // 直接进 PvP 匹配（见下方 enterPvpMatching），避免点了对战邀请却被塞回旧的单人局。
@@ -657,10 +666,6 @@ void (async () => {
     }
     screen = 'menu';
     if (versusCode) enterPvpMatching('join', versusCode);
-    void cloudLogin().then((ok) => {
-      if (ok) track('login');
-      scheduleFrame();
-    });
   } catch (err) {
     // 加固：启动流程任一步异常（弱网 / 域名未配 / 微信 jsbridge 未就绪 / 存储或登录异常等）
     // 也绝不把玩家永久卡在加载页。记录后「兜底进首页」——缺图有背景+按钮 fallback、
