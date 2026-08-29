@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  buildSessionSave, readSession, clearSessionSave,
+  buildSessionSave, readSession, clearSessionSave, restoreBattle,
   sessionSaveCheckpoint, SESSION_SAVE_MIN_INTERVAL_MS, SESSION_SAVE_MAX_INTERVAL_MS,
   type SessionSaveV1,
 } from '../src/pvp-save';
@@ -68,5 +68,23 @@ describe('pvp-save 节流', () => {
     expect(sessionSaveCheckpoint('pve', b, base, { now: 1000 + SESSION_SAVE_MIN_INTERVAL_MS - 1, dirty: true })).toBe(false);
     expect(localStorage.getItem('dasheng.session')).toBe(first);
     expect(sessionSaveCheckpoint('pve', b, base, { now: 1000 + SESSION_SAVE_MAX_INTERVAL_MS + 1 })).toBe(true);
+  });
+});
+
+describe('pvp-save restoreBattle 还原构造参数', () => {
+  it('从 config 还原 difficultyMul / aiAdjustIntervalScale（非默认值不丢）', () => {
+    // 用非 1 的 difficultyMul(1.5) 与 aiAdjustIntervalScale(2) 构造：这两项只在 config、不在 core，
+    // 若 restoreBattle 硬编码 1 就会丢失（怪物强度/AI 节奏走样）。此用例锁死「按 config 还原」。
+    const b = new Battle(7, 1.5, mapById('pansidong'), undefined, undefined, undefined, undefined, false, undefined, 2);
+    b.startNextWave();
+    for (let i = 0; i < 60; i++) b.step(1 / 30);
+    const save = buildSessionSave('pve', b, { seed: 7, mapId: 'pansidong' });
+    // 先确认 serialize 如实捕获了非默认 config
+    expect(save.config.difficultyMul).toBe(1.5);
+    expect(save.config.aiAdjustIntervalScale).toBe(2);
+    const rb = restoreBattle(save);
+    // difficultyMul 为 public readonly，直接读；aiAdjustIntervalScale 在 Battle 上是 private，用断言读其内部值
+    expect(rb.difficultyMul).toBe(save.config.difficultyMul);
+    expect((rb as unknown as { aiAdjustIntervalScale: number }).aiAdjustIntervalScale).toBe(save.config.aiAdjustIntervalScale);
   });
 });

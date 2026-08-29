@@ -205,8 +205,8 @@ export function sessionSaveCheckpoint(
  *
  * 构造参数取舍（与 ./battle-save#loadResumeBattle 同思路）：
  *   - seed 供构造播种（RNG 随后被 core 覆盖，值不敏感）；
- *   - difficultyMul / aiAdjustIntervalScale 传中性 1（按 Task 1 规格；如后续需要严格还原
- *     config 中的原值，由 Task 2/3 决定，见交付说明）；
+ *   - difficultyMul / aiAdjustIntervalScale 从 config 还原：二者只存在于 config、不在 core 中，
+ *     applyCoreState 不会覆盖，故必须在此按原值构造，否则续玩会退回默认 1（怪物强度/AI 节奏走样）；
  *   - meta/weapons/actives/passives/aiSkill 传 undefined 走构造默认，避免二次叠加；
  *   - PvP 传 { enabled: true } 打开 isPvp（影响 rubber-band/对手侧处理），PvE 传 undefined。
  *
@@ -216,12 +216,12 @@ export function sessionSaveCheckpoint(
 export function restoreBattle(save: SessionSaveV1): Battle {
   const b = new Battle(
     save.seed,
-    1,                                  // difficultyMul：构造用中性值
+    save.config.difficultyMul,          // 从 config 还原（core 不含此字段）
     mapById(save.mapId),
     undefined, undefined, undefined, undefined, // meta / weapons / actives / passives 用默认
     save.config.endless,
     undefined,                          // aiSkill 用默认
-    1,                                  // aiAdjustIntervalScale：构造用中性值
+    save.config.aiAdjustIntervalScale,  // 从 config 还原（core 不含此字段）
     undefined,                          // heroMatch
     save.kind === 'pvp' ? { enabled: true } : undefined, // pvpInit
   );
