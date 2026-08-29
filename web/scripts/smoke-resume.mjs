@@ -57,30 +57,42 @@ async function startVite() {
 }
 
 // 推进到 wave≥1、含单位、非终局的落档并返回该存档概要（PvE 单机）。
-async function reachMidBattleSave(page) {
-  await page.evaluate(() => window.__game.markNotFirstGame()); // 不押后首波：intro 完即开波
-  await page.evaluate(() => window.__game.buildDefense(3000)); // 布强防线（避免快进期间被打穿终局）
-  await page.evaluate(() => window.__game.fastForward(7));     // 过 6s 入场 → 进入 wave1 playing
-  let live = { status: '', wave: 0, units: 0 };
-  for (let i = 0; i < 40; i++) {
-    live = await page.evaluate(() => {
-      const b = window.__game.battle;
-      if (b.status === 'playing' && b.units.size < 6) window.__game.buildDefense(1500); // 补防线
-      return { status: b.status, wave: b.wave, units: b.units.size };
-    });
-    if (live.status === 'won' || live.status === 'lost') fail('对局在检查点前已终局：' + JSON.stringify(live));
-    if (live.wave >= 1 && (live.status === 'playing' || live.status === 'ready')) break;
-    await page.evaluate(() => window.__game.fastForward(1));
-  }
-  if (!(live.wave >= 1)) fail('fastForward 未到 wave≥1：' + JSON.stringify(live));
-  // 踢生产 frame() 落档：首帧 MAX 心跳立即写、之后 2s 心跳；轮询直到 dasheng.session 写出 wave≥1 含单位档。
+// 关键（消除 flakiness）：restart→markNotFirstGame→fastForward→buildDefense 全部放进【同一个】page.evaluate 同步执行，
+// 期间不让 rAF 插入一个「wave0 帧」——否则那一帧会先落一份 wave0 档并把 lastWriteMs 顶到当前时刻，随后 wave1 的落档就只能
+// 等 2s MAX 心跳，与轮询时序竞态。restart 内部 clearSessionSave 已把 lastWriteMs 归 0，同步驱动后首个生产帧即以 MAX 心跳
+// （since=now-0=巨大）立刻落 wave1 档，稳定命中。
+async function reachMidBattleSave(page, seed) {
+  await page.evaluate((seedArg) => {
+    const g = window.__game;
+    g.restart(seedArg, 1, undefined, false); // 起本地 versus（非 PvP，isPvp=false → 落 'pve' 档）；内部 clearSessionSave → lastWriteMs=0
+    g.markNotFirstGame();                     // 不押后首波：intro 完即开波
+    g.buildDefense(3000);                     // 先在 wave0/ready 布强防线（此时可征兵/布阵；单位随后带入 wave1）
+    g.fastForward(7);                         // 过 6s 入场 → 进入 wave1 playing（带着上面布好的防线）
+  }, seed);
+  const live = await page.evaluate(() => { const b = window.__game.battle; return { status: b.status, wave: b.wave, units: b.units.size }; });
+  if (live.status === 'won' || live.status === 'lost') fail('对局在检查点前已终局：' + JSON.stringify(live));
+  if (!(live.wave >= 1 && live.units > 0)) fail('同步驱动未到 wave≥1 含单位：' + JSON.stringify(live));
+  // 踢生产 frame() 落档：lastWriteMs=0 → 首帧即以 MAX 心跳立即写；轮询直到 dasheng.session 写出 wave≥1 含单位档。
   for (let i = 0; i < 20; i++) {
     await page.evaluate(() => window.__game.enterBattle()); // scheduleFrame → frame() 帧尾 sessionCheckpointNow
-    await sleep(300);
+    await sleep(250);
     const saved = await readSave(page);
     if (saved && saved.wave >= 1 && saved.units > 0 && saved.status !== 'won' && saved.status !== 'lost') return saved;
   }
   fail('生产 frame() 未在 wave≥1 落含单位档；最后 live=' + JSON.stringify(live) + '，存档=' + JSON.stringify(await readSave(page)));
+}
+
+// 轮询 curScreen 直到等于目标或超时；返回最终 screen。避免固定 sleep 与 boot 的 await bootstrapAuth
+// （dev 站 /api 走代理到未运行的 :8082，ECONNREFUSED 失败耗时不定）竞态——恢复须等 boot 那段 await 结束才切屏。
+async function waitForScreen(page, target, timeoutMs) {
+  const t0 = Date.now();
+  let cur = '';
+  while (Date.now() - t0 < timeoutMs) {
+    cur = await page.evaluate(() => (window.__game && window.__game.curScreen ? window.__game.curScreen() : '(no __game)'));
+    if (cur === target) return cur;
+    await sleep(150);
+  }
+  return cur;
 }
 
 const vite = await startVite();
@@ -99,14 +111,13 @@ try {
   await page.evaluate(() => { try { localStorage.removeItem('dasheng.session'); } catch { /* ignore */ } });
 
   // ── Part A：PvE 单机 落档（wave≥1 含单位）→ 刷新 → 自动续玩到同波 + 弹 resumePopup 模态 ──
-  await page.evaluate(() => window.__game.restart(20260828, 1, undefined, false)); // 起一局本地 versus（非 PvP，isPvp=false → 落 'pve' 档）
-  const saved = await reachMidBattleSave(page);
+  const saved = await reachMidBattleSave(page, 20260828); // restart+驱动同步进行（见函数注释：消除落档时序 flakiness）
   console.log('reload 前存档：', JSON.stringify(saved));
   if (saved.kind !== 'pve') fail('存档 kind 应为 pve，实际：' + saved.kind);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction('window.__game && window.__game.battle');
-  await sleep(500);
+  await page.waitForFunction('window.__game && window.__game.battle && window.__game.resumeProbe');
+  const screenA = await waitForScreen(page, 'battle', 8000); // 轮询等 boot 完成恢复（不用固定 sleep）
   const after = await page.evaluate(() => {
     const b = window.__game.battle;
     const trayInfo = (arr) => ({ len: arr.length, nulls: arr.filter((x) => x === null).length });
@@ -114,7 +125,7 @@ try {
   });
   console.log('reload 后：', JSON.stringify(after));
   if (!after.p.hasSave) fail('刷新后 resumeProbe().hasSave 应为 true（读 dasheng.session）');
-  if (after.p.screen !== 'battle') fail('刷新后未自动进入战斗界面（screen=' + after.p.screen + '）');
+  if (screenA !== 'battle' || after.p.screen !== 'battle') fail('刷新后未自动进入战斗界面（screen=' + screenA + '）');
   if (after.p.status === 'won' || after.p.status === 'lost') fail('续玩后状态不应为终局，实际：' + after.p.status);
   if (after.p.wave !== saved.wave) fail(`续玩波数与存档不一致：存档 ${saved.wave} → 恢复 ${after.p.wave}`);
   if (after.units <= 0) fail('续玩后盘面为空——applyCoreState 未恢复单位');
@@ -131,7 +142,8 @@ try {
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction('window.__game && window.__game.battle');
-  await sleep(300);
+  const screenB = await waitForScreen(page, 'battle', 8000); // 等恢复完成再读 serialize（否则读到 boot 前的默认 battle）
+  if (screenB !== 'battle') fail('Part B：刷新后未恢复进战斗（screen=' + screenB + '）');
   const frag = await page.evaluate(() => {
     const c = window.__game.battle.serialize().core;
     return { dropped: c.battleFragmentDropped, id: c.battleFragmentDropId };
@@ -150,10 +162,10 @@ try {
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction('window.__game && window.__game.resumeProbe');
-  await sleep(400);
+  const screenC = await waitForScreen(page, 'menu', 8000); // 终局档：boot restoreBattle 判 lost → clearSessionSave + 回首页
   const term = await page.evaluate(() => ({ screen: window.__game.curScreen(), hasSave: window.__game.resumeProbe().hasSave }));
   console.log('终局存档刷新后：', JSON.stringify(term));
-  if (term.screen === 'battle') fail('终局存档不应恢复进战斗（应清档回首页），实际 screen=battle');
+  if (screenC === 'battle' || term.screen === 'battle') fail('终局存档不应恢复进战斗（应清档回首页），实际 screen=battle');
   if (term.hasSave !== false) fail('终局存档刷新后应已清档（hasSave=false），实际：' + term.hasSave);
   console.log('✅ Part C 通过：终局存档刷新即清档回首页，不误恢复');
 
