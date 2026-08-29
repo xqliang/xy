@@ -43,6 +43,11 @@ export interface PvpSocketOpts {
   // 对局已结束/被回收，或 uid 不属于该局（服务端 bad_hello 后不回 welcome，随后关连接）。
   // 恢复路径据此清快照回首页；普通对局不注入（此时该分支不重连，交由看门狗兜底）。
   onHelloFail?: () => void;
+  // hello 确认超时（ms，可选）：自首次 connect 起，若在此时限内仍未收到 welcome → 判 hello 失败（触发 onHelloFail）。
+  // 必需，因为服务端对「对局已不存在」的 bad_hello 既不回 welcome、也不关连接（且客户端 2s 心跳会一直喂活服务端
+  // 5s 读超时，令其 idle-reap 永不触发），仅靠 close 的 onHelloFail 永不触发→恢复会永久卡 loading。一次性截止（不随
+  // 重连重置），覆盖「连不上/连上不 welcome/服务端挂起」三种。仅恢复路径设置；普通对局不设（undefined=不启用）。
+  welcomeTimeoutMs?: number;
   // 注入 WebSocket 构造器（单测传 FakeWebSocket）；不传则用全局 WebSocket。
   wsFactory?: (url: string) => PvpWsLike;
   // 注入重连延时调度器（单测传可控假计时器）；不传则用全局 setTimeout。
@@ -121,6 +126,11 @@ export class PvpSocket {
   private opened = false;
   // 是否收到过 welcome（服务端确认 hello 成功、对局有效）。一旦为真，之后任何断开都走正常重连。
   private gotWelcome = false;
+  // hello 已判失败（一次性）：close 路径与 welcome 超时路径共用，经 failHello 置真，防重复回调 onHelloFail。
+  private helloFailed = false;
+  // welcome 截止计时器句柄 + 是否已武装（一次性，自首次 connect 起算，不随重连重置）。
+  private welcomeTimer: unknown = null;
+  private welcomeArmed = false;
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
   private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
@@ -144,6 +154,7 @@ export class PvpSocket {
   /** 建立连接：创建 socket、绑定三事件。幂等保护——已手动关闭则不再连。 */
   connect(): void {
     if (this.closed) return;
+    this.armWelcomeDeadlineOnce(); // 一次性武装 welcome 截止（自首次连接起算，覆盖 never-open/连上不 welcome/服务端挂起）
     this.state = 'connecting';
     const sock = this.factory(buildWsUrl(this.matchId, this.uid, this.currentToken()));
     this.sock = sock;
@@ -206,6 +217,7 @@ export class PvpSocket {
     switch (type as DownType) {
       case 'welcome':
         this.gotWelcome = true; // 服务端确认 hello 成功、对局有效——之后任何断开都走正常重连（非 hello 失败）
+        this.clearWelcomeTimer(); // 已确认 → 撤销 welcome 截止计时器
         this.opts.onWelcome?.((msg as { serverMs: number }).serverMs);
         break;
       case 'oppSnap':
@@ -248,10 +260,11 @@ export class PvpSocket {
   private handleClose(): void {
     if (this.closed) return;
     // hello 失败：本连接已完成握手（opened）却在收到 welcome 前被服务端关闭——对局已结束/被回收，
-    // 或 uid 不属于该局（服务端 bad_hello 后不回 welcome，最终关连接）。非我方主动关闭 → 不重连，
-    // 回调上层（恢复路径据此清快照回首页）。注：纯传输层失败（从未 open，opened=false）不算此列，
-    // 仍走下面的退避重连——保住弱网 resilience（首连丢包/切基站等瞬断仍能自愈）。
-    if (this.opened && !this.gotWelcome) { this.opts.onHelloFail?.(); return; }
+    // 或 uid 不属于该局。非我方主动关闭 → 不重连，经 failHello 一次性回调 onHelloFail（恢复路径据此清快照回首页）。
+    // 注：纯传输层失败（从未 open，opened=false）不算此列，仍走下面的退避重连——保住弱网 resilience。
+    // 另注：服务端对「对局已不存在」的 bad_hello 通常不关连接（见 welcomeTimeoutMs），故 close 这条路径实际
+    // 只覆盖「服务端主动关」的少数情形；「连上却永不 welcome」由 welcome 截止计时器兜底。
+    if (this.opened && !this.gotWelcome) { this.failHello(); return; }
     this.clearPingTimer(); // 连接断了：停心跳、清过期 ping 计时器（重连 open 后会重排）
     this.rttMs = null; // 旧连接的 RTT 失效：下次首 pong 前一直显示 --
     this.sock = null;
@@ -266,6 +279,46 @@ export class PvpSocket {
       clearTimeout(this.pingTimer as ReturnType<typeof setTimeout>);
     }
     this.pingTimer = null;
+  }
+
+  /** 一次性武装 welcome 截止计时器：到点仍未收到 welcome（且未关/未确认）→ failHello。
+   *  自首次 connect 起算、不随重连重置（welcomeArmed 守卫），故「反复连不上而重连」也会被这个总截止兜底。 */
+  private armWelcomeDeadlineOnce(): void {
+    const ms = this.opts.welcomeTimeoutMs;
+    if (ms == null || this.welcomeArmed) return;
+    this.welcomeArmed = true;
+    this.welcomeTimer = this.schedule(() => {
+      this.welcomeTimer = null;
+      if (this.closed || this.gotWelcome) return; // 已手动关 / 已确认 → 忽略
+      this.failHello(); // 截止到点仍未 welcome → 判 hello 失败
+    }, ms);
+  }
+
+  /** 清 welcome 截止计时器（收到 welcome / 终止时调）。 */
+  private clearWelcomeTimer(): void {
+    if (this.welcomeTimer !== null && this.welcomeTimer !== undefined) {
+      clearTimeout(this.welcomeTimer as ReturnType<typeof setTimeout>);
+    }
+    this.welcomeTimer = null;
+  }
+
+  /** hello 失败一次性收尾：停重连/心跳/welcome 计时器、关底层 socket、回调 onHelloFail（仅一次）。
+   *  close 路径（连上被主动关）与 welcome 超时路径共用；复用 closed 语义彻底停活（防残留心跳空转 / 重连）。 */
+  private failHello(): void {
+    if (this.helloFailed || this.closed) return; // 一次性；已手动关则不再回调
+    this.helloFailed = true;
+    this.closed = true;          // 复用 closed：停重连、停心跳重排、入队丢弃（放弃这条连接）
+    this.reconnectGen++;         // 让挂起的退避计时器过期
+    this.clearPingTimer();
+    this.clearWelcomeTimer();
+    if (this.timer !== null && this.timer !== undefined) {
+      clearTimeout(this.timer as ReturnType<typeof setTimeout>);
+    }
+    this.timer = null;
+    this.state = 'closed';
+    this.sock?.close();
+    this.sock = null;
+    this.opts.onHelloFail?.();
   }
 
   /** 重连退避：首试 300ms 快试，之后 1s→2s→4s→封顶 5s；用代数让过期计时器失效。 */
@@ -372,6 +425,7 @@ export class PvpSocket {
     this.pending = [];
     this.reconnectGen++; // 让任何挂起的重连计时器失效
     this.clearPingTimer(); // 让任何挂起的心跳计时器过期（onclose→handleClose 因 closed 早退，这里兜底清）
+    this.clearWelcomeTimer(); // 让任何挂起的 welcome 截止计时器失效（手动关 → 不再判 hello 失败）
     if (this.timer !== null && this.timer !== undefined) {
       clearTimeout(this.timer as ReturnType<typeof setTimeout>);
     }

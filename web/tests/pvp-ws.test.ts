@@ -642,8 +642,73 @@ describe('PvpSocket hello 确认与 onHelloFail', () => {
     sock.connect();
     await tick();                                     // open，无 welcome
     FakeWebSocket.last().close();
-    expect(calls.some((c) => c.ms === 300)).toBe(false); // 可选链 no-op；仍不重连（无 300ms 首试）
-    expect(sock.state).toBe('open');                  // handleClose 早退，未进入 reconnecting
+    expect(calls.some((c) => c.ms === 300)).toBe(false); // onHelloFail 可选链 no-op；仍不重连（无 300ms 首试）
+    expect(sock.state).toBe('closed');                // failHello 收尾：彻底停活（不残留 open 态心跳空转）
+  });
+});
+
+// ============================================================================
+//  welcomeTimeoutMs：hello 确认截止（对局已亡时服务端不回 welcome 也不关连接的兜底）
+//  服务端对已不存在的对局收到 hello 后既不回 welcome、也不关连接（bad_hello 只忽略），且客户端 2s 心跳
+//  一直喂活服务端 5s 读超时使其 idle-reap 永不触发 → 连接无限挂着、close 触发的 onHelloFail 永不来。
+//  故恢复必须靠这个客户端截止：到点仍无 welcome → 判 hello 失败。用 7000 作截止值以在 calls 里与
+//  重连(300/1000/2000/4000/5000)、心跳(2000)区分。
+// ============================================================================
+describe('PvpSocket welcomeTimeoutMs（hello 确认截止）', () => {
+  it('open 后截止到点仍无 welcome → onHelloFail 一次 + 关闭，不重连', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail, welcomeTimeoutMs: 7000 });
+    sock.connect();
+    await tick();                                    // open + hello（服务端不回 welcome、不关连接）
+    const welcome = calls.find((c) => c.ms === 7000);
+    expect(welcome).toBeTruthy();                    // connect 即武装截止计时器
+    welcome!.fn();                                   // 截止到点：仍无 welcome
+    expect(onHelloFail).toHaveBeenCalledTimes(1);
+    expect(sock.state).toBe('closed');               // failHello 收尾
+    expect(calls.some((c) => c.ms === 300)).toBe(false); // 未重连
+  });
+
+  it('welcome 及时到达 → 撤销截止；即便触发过期计时器也不误判失败', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const onWelcome = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail, onWelcome, welcomeTimeoutMs: 7000 });
+    sock.connect();
+    await tick();
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 1 }));
+    expect(onWelcome).toHaveBeenCalledTimes(1);
+    calls.find((c) => c.ms === 7000)?.fn();          // 强行触发被捕获的旧截止 fn：gotWelcome 守卫 → no-op
+    expect(onHelloFail).not.toHaveBeenCalled();
+    sock.close();
+  });
+
+  it('截止一次性、自 connect 起算：never-open 反复重连也被兜底判失败', () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail, welcomeTimeoutMs: 7000 });
+    sock.connect();
+    FakeWebSocket.last().close();                    // 未 open 即断（传输失败）→ 退避重连（opened=false，非 hello 失败）
+    expect(calls.filter((c) => c.ms === 7000).length).toBe(1); // 首次 connect 武装一次
+    calls.find((c) => c.ms === 300)!.fn();           // 重连：建第二个 socket
+    FakeWebSocket.last().close();                    // 再次未 open 即断
+    expect(calls.filter((c) => c.ms === 7000).length).toBe(1); // 重连不重复武装（welcomeArmed 一次性）
+    calls.find((c) => c.ms === 7000)!.fn();          // 总截止到点：一直没连上
+    expect(onHelloFail).toHaveBeenCalledTimes(1);    // 也被兜底判失败（不会永久卡 loading）
+    expect(sock.state).toBe('closed');
+  });
+
+  it('未设 welcomeTimeoutMs（普通对局）→ 不武装截止计时器', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();                                    // open：只排心跳 2000，无 welcome 截止
+    expect(calls.some((c) => c.ms === 7000)).toBe(false);
+    expect(calls.filter((c) => c.ms === 2000).length).toBe(1); // 仅心跳
     sock.close();
   });
 });

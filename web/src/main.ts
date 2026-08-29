@@ -1501,14 +1501,21 @@ function tryResumeSession(session: SessionSaveV1): boolean {
   return true;
 }
 
+/** 恢复时等待服务端 welcome 的截止（ms）：覆盖 WS 连接 + 首个 welcome（正常亚秒级，8s 极宽松）。
+ *  到点仍无 welcome → 判对局已亡（服务端对已不存在的局不回 welcome 也不关连接，见 resumePvpSession），回首页。 */
+const RESUME_WELCOME_TIMEOUT_MS = 8000;
 /**
  * PvP 刷新恢复（Task 3）：连 WS 发 hello → 服务端确认对局仍在则回 welcome，据此重建本方半场并
- * 「无输入快进」到服务端当前 tick（catch up）后进战斗屏；若对局已结束/被回收（hello 失败，无 welcome
- * 后被关）则清快照回首页、不进战斗。
+ * 「无输入快进」到服务端当前 tick（catch up）后进战斗屏；若对局已结束/被回收则清快照回首页、不进战斗。
+ *
+ * 「对局已亡」的判定靠 welcomeTimeoutMs（RESUME_WELCOME_TIMEOUT_MS）而非 WS 关闭：服务端对已不存在的
+ * 对局收到 hello 后既不回 welcome、也不关连接（bad_hello 只是忽略），且客户端 2s 心跳会一直喂活服务端 5s
+ * 读超时使其 idle-reap 永不触发——故连接会无限挂着，仅靠 close 触发的 onHelloFail 永远不来。改由 PvpSocket
+ * 的 welcome 截止计时器：自 connect 起 8s 内没等到 welcome → 触发 onHelloFail=goHome。
  *
  * 时序：boot IIFE 里 tryResumeSession 立即返回 true 短路首页，此函数只发起 WS 连接就返回；屏幕暂停在
- * 'loading'，待 onWelcome（→'battle'）或 onHelloFail（→'menu'）异步切换。这段 loading 是 WS 连接 +
- * 快进的短暂窗口（正常亚秒级；对局已亡时因服务端 bad_hello 后惰性关连接，最长约 ~10s 才回首页）。
+ * 'loading'，待 onWelcome（→'battle'）或 onHelloFail（→'menu'）异步切换。这段 loading 是 WS 连接 + 快进
+ * 的短暂窗口（正常亚秒级；对局已亡/服务端挂起时最长 RESUME_WELCOME_TIMEOUT_MS 后回首页）。
  *
  * 已知简化（对手档案）：存档未持久化对手昵称/头像/段位，恢复时 pvpOpponent=null；对手半场从其后续
  * WS 快照重建渲染即可，结算屏对手信息缺省。持久化对手档案属后续任务（Task 6/未来）可选增强，不阻塞恢复。
@@ -1566,15 +1573,17 @@ function resumePvpSession(save: SessionSaveV1): void {
 
   // 连 WS 校验对局是否仍在：共用 makePvpCallbacks（onOppSnap/onNextWave/onResult/onOppGone/onNoShow + 鉴权），
   // 覆盖 onWelcome=快进、追加 onHelloFail=回首页。uid 用存档记录值（与本机 ensureUserId 同源）。
+  // welcomeTimeoutMs：对局已亡时服务端不回 welcome 也不关连接（见函数头注释），必须靠此截止兜底回首页，否则永卡 loading。
   pvpSock = new PvpSocket({
     matchId: meta.matchId,
     uid: meta.uid,
     ...makePvpCallbacks(),
     onWelcome: fastForward,
     onHelloFail: goHome,
+    welcomeTimeoutMs: RESUME_WELCOME_TIMEOUT_MS,
   });
   pvpSock.connect();
-  // 屏幕保持 'loading'（boot 已短路首页）：welcome→fastForward 切 'battle'；hello 失败→goHome 切 'menu'。
+  // 屏幕保持 'loading'（boot 已短路首页）：welcome→fastForward 切 'battle'；hello 失败/超时→goHome 切 'menu'。
 }
 
 function abortBattleToMenu(): void {
