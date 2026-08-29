@@ -2995,12 +2995,14 @@ function frame(now: number): void {
       pvpNetDeadStart = 0;
     }
     beginNetDeadCountdown(now); // 判死瞬间记倒计时起点（幂等）
-    // 冻结战斗（不 step）：结算弹层 / 暂停 / 引导 / 我方断线(pvpNetDead) / 对方断线倒计时(pvpOppGone)。
+    // 冻结战斗（不 step）：结算弹层 / 暂停 / 引导 / 我方断线判死(pvpNetDead)。
     // 仍连续重绘以播动画（断线时定格画面 + 弹窗倒计时）。
+    // Task 4：**移除**了「对方断线(pvpOppGone) 也冻结本方」——对手掉线时我方半场照常打（对手半场定格在最后快照）。
+    // 对手若重连则恢复同步；若超时则我方胜(DisconnectTimeout，见下方 oppGone 倒计时/兜底)。只有「我方自己」断线判死才冻结。
     // Task 9.5：步进门控用 shouldStepSim()——入参只有 paused/tutorial/settleOpen/netDead，
     // **不含** pvpExitPopup。故 PvP 退出弹窗开着时(pvpExitPopup=true、ui.paused=false) 仿真照常步进，
     // 实现「弹窗不暂停对局」。单人暂停(paused=true)则仍冻结。
-    if (!resumePopup && shouldStepSim({ paused: ui.paused, tutorial: !!tutorialOverlay, settleOpen: isSettleOpen(), netDead: pvpNetDead || pvpOppGone })) {
+    if (!resumePopup && shouldStepSim({ paused: ui.paused, tutorial: !!tutorialOverlay, settleOpen: isSettleOpen(), netDead: pvpNetDead })) {
       try {
         if (pvpSock && !pvpResult) {
           // PvP（Model C）：本方半场本地权威。累计真实时间，按 1/30 固定子步多次 step（确定性、帧率无关）。
@@ -3118,7 +3120,10 @@ function frame(now: number): void {
       // PvP 终局即时清档（保留，非冗余）：本块不经 endPvpSession（那要等玩家点结算屏「返回」才走 leaveSettleToMenu），
       // 在此 result 一到就清，避免玩家停留结算屏期间刷新去重连一局已结束的对局。与单人终局块对称、幂等。
       clearSessionSave();
-      const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave);
+      // Task 4：服务端把「我方唐僧死时对手正断线/未连」的失败标为 selfTangsengDeadOppGone → 免扣段位
+      //（对手跑路不该偷我段位）。我方自己刷新/掉线致死仍是 selfTangsengDead → 正常扣减。功德不受影响。
+      const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave,
+        { noPenalty: pvpResult.reason === 'selfTangsengDeadOppGone' });
       if (rankChange) rank = rankChange.state; // 胜/负动段位（recordWin/Lose 内部已持久化）；平局 rankChange=null 不动
       merit = addMerit(merit, meritGain);      // 累加并持久化功德（封顶 300，同单人）
       pendingMerchant = true;                  // 回首页弹神秘商人（同单人）

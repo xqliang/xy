@@ -37,4 +37,23 @@ describe('pvpSettle', () => {
     expect(pvpSettle('win', rank(), 1).meritGain).toBe(20 + 1 * 2); // 22
     expect(pvpSettle('draw', rank(), 0).meritGain).toBe(5 + 1 * 2); // 7（meritReward 内 wave 下限 1）
   });
+
+  // Task 4（反滥用）：对手断线/未连致我方失败时免扣段位（noPenalty）。
+  it('负 + noPenalty：不扣段位（rankChange=null），功德照给参与档', () => {
+    const out = pvpSettle('lose', rank({ stars: 2 }), 6, { noPenalty: true });
+    expect(out.rankChange).toBeNull();                  // 对手跑路：不调 recordLose，不掉星
+    expect(out.meritGain).toBe(5 + 6 * 2);              // 17：功德不受影响
+  });
+
+  it('负 + noPenalty:false（默认）：仍正常扣减（对照我方自己刷新致死）', () => {
+    expect(pvpSettle('lose', rank({ stars: 2 }), 6).rankChange).not.toBeNull();          // 不传 opts
+    expect(pvpSettle('lose', rank({ stars: 2 }), 6, {}).rankChange).not.toBeNull();       // 空 opts
+    expect(pvpSettle('lose', rank({ stars: 2 }), 6, { noPenalty: false }).rankChange).not.toBeNull();
+  });
+
+  it('胜 + noPenalty：不影响胜方（仍加星，noPenalty 只作用于 lose）', () => {
+    const out = pvpSettle('win', rank(), 6, { noPenalty: true });
+    expect(out.rankChange).not.toBeNull();
+    expect(out.rankChange!.starDelta).toBe(1);
+  });
 });

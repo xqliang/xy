@@ -13,6 +13,9 @@ describe('pvpReasonText', () => {
     expect(pvpReasonText('selfSurrender')).toBe('你已认输');
     expect(pvpReasonText('selfDisconnect')).toBe('你已掉线');
   });
+  it('Task 4：对手断线致我方失败 → 提示免扣段位', () => {
+    expect(pvpReasonText('selfTangsengDeadOppGone')).toBe('你的唐僧被消灭（对手掉线·不扣段位）');
+  });
   it('平局 reason', () => {
     expect(pvpReasonText('draw')).toBe('势均力敌');
   });

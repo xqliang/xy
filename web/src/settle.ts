@@ -290,6 +290,8 @@ export function pvpReasonText(reason: string): string {
   switch (reason) {
     case 'opponentTangsengDead': return '对手唐僧被消灭';
     case 'selfTangsengDead': return '你的唐僧被消灭';
+    // Task 4：我方唐僧死时对手正断线/未连 → 失败但不扣段位（对手跑路免扣）。
+    case 'selfTangsengDeadOppGone': return '你的唐僧被消灭（对手掉线·不扣段位）';
     case 'opponentSurrender': return '对手认输';
     case 'selfSurrender': return '你已认输';
     case 'opponentDisconnectTimeout': return '对手掉线';

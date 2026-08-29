@@ -15,10 +15,13 @@ export interface PvpSettleOutcome {
 }
 
 // outcome：服务端 result.outcome；rank：结算前段位态；wave：本局抵达波数（进度近似）。
-export function pvpSettle(outcome: PvpOutcome, rank: RankState, wave: number): PvpSettleOutcome {
+// opts.noPenalty（Task 4 反滥用）：仅对 outcome==='lose' 生效——为 true 时不调 recordLose、rankChange=null
+//   （不扣段位）。用于「我方唐僧死时对手正断线/未连」的失败(reason=selfTangsengDeadOppGone)：对手跑路
+//   不该偷走我的段位。功德(meritGain)不受影响，参与档照给。我方自己刷新/掉线致死则 noPenalty=false，照常扣减。
+export function pvpSettle(outcome: PvpOutcome, rank: RankState, wave: number, opts?: { noPenalty?: boolean }): PvpSettleOutcome {
   const meritGain = meritReward(outcome === 'win', wave);
   let rankChange: RankChange | null = null;
   if (outcome === 'win') rankChange = recordWin(rank, { freezeDifficulty: true });
-  else if (outcome === 'lose') rankChange = recordLose(rank, { freezeDifficulty: true });
+  else if (outcome === 'lose' && !opts?.noPenalty) rankChange = recordLose(rank, { freezeDifficulty: true });
   return { rankChange, meritGain };
 }

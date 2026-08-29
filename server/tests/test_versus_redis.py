@@ -272,3 +272,56 @@ def test_same_uid_reenqueue_dedups_no_self_match():
     p2 = h.poll(t2)
     assert p2["status"] == "matched"
     assert p2["matchStart"]["matchId"] == p3["matchStart"]["matchId"]  # 同一局：u1 vs u2
+
+
+# ---------------------------------------------------------------- Task 4：断线致败免扣段位 ----
+# _set_result 在 TangsengDead 判负时，若「胜方」不在场（已断线未恢复/全程未连），把负方 reason 改成
+# selfTangsengDeadOppGone（前端据此免扣段位，反滥用：对手跑路不该偷段位）。胜方在线则仍 selfTangsengDead。
+def _mk_match(h, ua="A1", ub="B1", rank=3):
+    # 直连成局（跳过 enqueue/poll 的 DB 读），返回 (mid, match_dict)。a=负方、b=胜方 供下列断言取用。
+    e1 = {"uid": ua, "rank": rank, "ticket": "tA"}
+    e2 = {"uid": ub, "rank": rank, "ticket": "tB"}
+    mid = h._make_match(e1, e2, h._now())
+    return mid, h.matches[mid]
+
+
+def test_tangsengdead_winner_disconnected_is_penalty_free():
+    # 胜方(b)刚断线(gone_ms 已置、曾连过)，此刻负方(a)唐僧被吃 → 负方 reason=selfTangsengDeadOppGone（免扣）。
+    h = _redis_hub()
+    _mid, m = _mk_match(h)
+    m["b"]["connected_ever"] = True
+    m["b"]["gone_ms"] = h._now()                 # 胜方处于断线宽限中（未恢复）
+    h._set_result(m, "a", "TangsengDead", h._now())
+    assert m["result"]["a"] == {"outcome": "lose", "reason": "selfTangsengDeadOppGone"}
+    assert m["result"]["b"] == {"outcome": "win", "reason": "opponentTangsengDead"}  # 胜方 reason 不变
+
+
+def test_tangsengdead_winner_never_connected_is_penalty_free():
+    # 胜方(b)全程未连接(connected_ever=False，撮合后跑路) → 同样免扣（selfTangsengDeadOppGone）。
+    h = _redis_hub()
+    _mid, m = _mk_match(h)
+    m["a"]["connected_ever"] = True              # 负方在场
+    # m["b"]["connected_ever"] 保持建局默认 False、gone_ms=0
+    h._set_result(m, "a", "TangsengDead", h._now())
+    assert m["result"]["a"]["reason"] == "selfTangsengDeadOppGone"
+
+
+def test_tangsengdead_winner_connected_deducts_normally():
+    # 对照：胜方(b)在线（曾连过、当前 gone_ms=0）→ 负方 reason 仍 selfTangsengDead（正常扣减，堵刷新逃负）。
+    h = _redis_hub()
+    _mid, m = _mk_match(h)
+    m["b"]["connected_ever"] = True
+    m["b"]["gone_ms"] = 0                         # 在线
+    h._set_result(m, "a", "TangsengDead", h._now())
+    assert m["result"]["a"]["reason"] == "selfTangsengDead"
+    assert m["result"]["b"]["reason"] == "opponentTangsengDead"
+
+
+def test_surrender_winner_disconnected_unaffected():
+    # 守卫：免扣只作用于 TangsengDead。认输(Surrender)即便胜方断线，负方 reason 仍 selfSurrender（不改写）。
+    h = _redis_hub()
+    _mid, m = _mk_match(h)
+    m["b"]["connected_ever"] = True
+    m["b"]["gone_ms"] = h._now()                 # 胜方断线
+    h._set_result(m, "a", "Surrender", h._now())
+    assert m["result"]["a"]["reason"] == "selfSurrender"

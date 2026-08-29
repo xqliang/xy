@@ -507,6 +507,8 @@ class VersusHub:
 
     # reason_kind → (胜方 reason, 负方 reason)。显式查表，避免字符串拼接 + magic 特判；
     # 这些字符串是对前端的契约，前端按值分支展示「对手认输/唐僧被吃/断线超时」等文案。
+    # 另有一个派生负方 reason「selfTangsengDeadOppGone」不在此表：由 _set_result 在 TangsengDead
+    # 且胜方不在场（断线/未连）时改写得到，前端据此免扣段位（见 pvp-settle.ts noPenalty）。
     REASON = {
         "Surrender":         ("opponentSurrender",         "selfSurrender"),
         "TangsengDead":      ("opponentTangsengDead",      "selfTangsengDead"),
@@ -519,6 +521,14 @@ class VersusHub:
             return
         winner = "b" if loser_side_key == "a" else "a"
         win_reason, lose_reason = self.REASON[reason_kind]
+        # Task 4（反滥用）：唐僧被吃判负时，若「胜方」此刻并不在场——即已断线未恢复(gone_ms 已置)
+        # 或全程从未连接(connected_ever=False，如撮合后跑路)——则本次失败给负方改用 selfTangsengDeadOppGone，
+        # 前端据此跳过 recordLose、不扣段位（对手跑路不该偷走我的段位）；胜方 reason 不变(opponentTangsengDead)。
+        # 反之（胜方在线，即我方自己刷新/掉线致唐僧死）仍是 selfTangsengDead → 正常扣减，杜绝「刷新逃负」。
+        # 时序关键(spec §6)：此处读 m[winner] 的 gone_ms/connected_ever 必须在下方 _forget_match_state 之前——
+        # 后者只删 Redis mstate、不动内存 side 态，且 _forget_match_state 在本方法末尾才调，故这两字段此刻仍有效。
+        if reason_kind == "TangsengDead" and (m[winner].get("gone_ms") or not m[winner].get("connected_ever")):
+            lose_reason = "selfTangsengDeadOppGone"
         m["result"] = {
             winner: {"outcome": "win", "reason": win_reason},
             loser_side_key: {"outcome": "lose", "reason": lose_reason},
