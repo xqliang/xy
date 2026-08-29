@@ -742,6 +742,22 @@ def test_hello_resets_next_wave_marker_for_reannounce():
     assert nxt == [("nextWave", 1), ("nextWave", 1)]  # 重连后重新宣告一次
 
 
+def test_hello_resets_anticheat_delta_baseline():
+    # Task 5：ws_hello 重置反作弊 delta 基线（me["prev_digest"]=None）。
+    # 重连（含刷新恢复的本地快进）后首条快照相对断线前可能已推进多波/击杀跳变，若仍与陈旧 prev_digest
+    # 做 delta 会误报 wave_ahead / kills_over_ceiling。置 None → _anticheat 首快照跳过 delta 校验、
+    # 以自身为新基线（见 api_versus._anticheat 的 `if prev is not None`）。本用例不依赖 DB。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    me, _opp = hub._sides(hub.matches[mid], "A1")
+    hub.ws_hello("A1", mid, lambda t: True)
+    # 首快照建立 delta 基线：prev 为 None 故跳过 delta 校验、不落库，仅写 prev_digest。
+    hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}})
+    assert me.get("prev_digest") is not None            # 快照后已建立 delta 基线
+    hub.ws_hello("A1", mid, lambda t: True)              # 模拟重连
+    assert me.get("prev_digest") is None                 # 重连必须清空 delta 基线
+
+
 def test_wave_cleared_then_snap_no_double_announce():
     # 清波排程 wave 2（ws_wave_cleared 已直推两侧并同步 last_next_wave）→ 后续快照
     # 不因去重标记未同步而重复宣告同一 nextWave（两条推送路径共享一个标记防双推）。

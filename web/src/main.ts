@@ -418,6 +418,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   pvpSock.connect();
   // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
+  pvpSaveDirty = false;                  // 新对局从干净脏标起步，避免上一局残留脏标为新局提前触发落档
   pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 新对局从干净态开始（上次对局若被判死，endPvpSession 已清；这里再兜底一次）
   pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
   // 座位 side：MatchStart 未下发座位（服务端按 uid+matchId 识别，不靠 side），且 restoreBattle 不按 side 分支，
@@ -444,6 +445,7 @@ function endPvpSession(): void {
   pvpSurrendered = false; pvpStatusReported = false;
   pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 清断线看门狗标志（下次进对局从干净态开始）
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpMatchStartMs = 0;
+  pvpSaveDirty = false;        // 结束对局清脏标，避免离开 battle 屏后残留脏标（防御，帧尾落档本就门控 screen==='battle'）
   pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   pvpSide = null; // 离开对局：清座位（下次进对局由 onPvpMatched/resumePvpSession 重置）
   // 离开对局统一作废续玩快照：本函数是所有「离开 battle 屏」路径的必经清理，集中在此清档可避免各出口散落
@@ -728,6 +730,12 @@ let pvpSock: PvpSocket | null = null;   // 非空=当前在线 PvP 对局中（W
 let pvpAcc = 0;                        // 固定步长累加器余量（本方半场 fixed-step，保留）
 let oppView: PvpOppView | null = null; // 对手半场双缓冲插值视图（WS 快照 → bridgeOpponentFromSnap）
 let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引（maybeOpenPvpWave 时钟基准；每对局 reset）
+// 落档「输入脏标」（Task 5，PvP/PvE 共用同一存档槽故共用一个标志）：任一玩家输入（征兵/部署/合并/铲地/
+// 主动技）置真，帧尾 sessionSaveCheckpoint 据此在 500ms MIN 节流下尽快落档，而非干等 2s MAX 心跳。
+// 消费策略见帧尾：仅当 checkpoint 真正写入（返回 true）才清零——若因未过 MIN 被节流（返回 false）则保留脏标，
+// 使写入在 MIN 到点时触发（否则 ~60fps 下几乎每次输入都会在下一帧被无写入地清掉、退回 2s 心跳，失去「尽快」意义）。
+// 跨对局在 onPvpMatched / endPvpSession / newGame / 两条恢复路径重置，避免陈旧脏标为新局/已结束局触发写入。
+let pvpSaveDirty = false;
 let pvpLastSnapMs = 0;                  // 上次发本方快照的墙钟 ms（100ms 节流）
 let pvpLastSnapRecv = 0;                // 最近一次收到对手快照的墙钟 ms（对方断线倒计时期间据此判重连撤弹窗）
 let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 服务端下一波（WS nextWave 缓存，Task 9 用）
@@ -1427,6 +1435,7 @@ function newGame() {
   endHandled = false;
   clearBattleSave(); // 开新局：作废旧续玩存档（首个 ready 会写新档）
   clearSessionSave(); // 开新局：作废统一续玩快照（PvE/PvP 共用槽位）
+  pvpSaveDirty = false; // 开新局清脏标，避免上一局残留脏标为新局提前触发落档
   clearBattleToasts(); // 清残留续玩 toast
   endlessResult = null;
   settleChange = null;
@@ -1493,6 +1502,7 @@ function tryResumeSession(session: SessionSaveV1): boolean {
   // 破坏「恢复后前向确定性」（rng 走样）。故续玩恢复严禁调 bindBattleWeaponPickup()。
   injectWeaponPickupVisible();
   endHandled = false;
+  pvpSaveDirty = false; // 恢复的 PvE 局从干净脏标起步（首帧尾靠 MAX 心跳补写，无需继承旧脏标）
   pendingMerchant = false;
   endlessResult = null;
   settleChange = null;
@@ -1542,6 +1552,7 @@ function resumePvpSession(save: SessionSaveV1): void {
     // 对局态 reset（镜像 onPvpMatched 的 reset 块，但不重扣体力、不重置 matchStart 为 0）。
     pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
     pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false;
+    pvpSaveDirty = false;                     // 恢复的 PvP 局从干净脏标起步（快进后由帧尾 MAX 心跳补写，无需继承旧脏标）
     pvpOpponent = null;                      // 已知简化：存档无对手档案，置 null（见函数头注释）
     pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
     pvpSide = meta.side;                      // 恢复落档时的真实座位（覆盖 onPvpMatched 默认 'a'）
@@ -2173,16 +2184,17 @@ function handleButton(x: number, y: number): boolean {
       if (!btn.id.startsWith('pas')) playSfx('click');
       if (btn.id === 'summon') {
         if (battle.summon()) {
+          pvpSaveDirty = true; // 征兵成功改动战斗态 → 尽快落档
           pendingFirstSummonTutorial = true;
           // 首局引导：玩家成功征兵 → 记录（供 updateFirstGameGuide 把箭头从「征兵」切到「部署」阶段）
           if (guidePhase === 'summon') playerSummonedThisGame = true;
         }
-      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); }
+      } else if (btn.id === 'autoplace') { battle.autoPlaceTray(); pvpSaveDirty = true; } // 一键布阵改动部署态 → 尽快落档
       else if (btn.id === 'act0' || btn.id === 'act1') {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
         if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
-        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); }
+        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); pvpSaveDirty = true; } // 主动技释放改动战斗态 → 尽快落档
         else {
           ui.activePopup = i;
           ui.activePopupUntil = performance.now() + 2500;
@@ -2388,7 +2400,7 @@ function onPointerDown(e: PointerEvent) {
     shareShovelPopup = null;
     if (wasSuccess) {
       // shareDigBest 内 push digFx 播挖坑动画；挖到才扣 1 次铲子额度（先挖后扣，无可挖格不扣）
-      if (battle.shareDigBest()) consumeShare('shovel');
+      if (battle.shareDigBest()) { pvpSaveDirty = true; consumeShare('shovel'); } // 开格改动棋盘 → 尽快落档
       else battle.message = '暂无可开垦阵位';
     }
     scheduleFrame();
@@ -2749,6 +2761,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         const actId = battle.activeSlots[ui.dragActiveSlot]?.id;
         if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); }
         else { battle.applyPillActive(ui.dragActiveSlot, target); }
+        pvpSaveDirty = true; // 炸药预埋 / 仙丹·风火轮拖放施放改动战斗态 → 尽快落档
       }
     }
   } else if (ui.dragPos) {
@@ -2765,15 +2778,17 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
       } else if (target) {
         // 托盘→棋盘优先，避免落点被候选区命中抢先导致「拖到武将格不交换」
         battle.placeFromTray(ui.dragTrayIndex, target);
+        pvpSaveDirty = true; // 部署 / 铲地开格（shovel 令牌走同一 placeFromTray）改动战斗态 → 尽快落档
         ui.selectedTrayIndex = null;
       } else if (trayTarget !== null && trayTarget !== ui.dragTrayIndex) {
         battle.mergeTrayTokens(ui.dragTrayIndex, trayTarget);
+        pvpSaveDirty = true; // 候选区合并升阶改动战斗态 → 尽快落档
         ui.selectedTrayIndex = null;
       }
     } else if (ui.dragFrom) {
       // 棋盘→候选区：空槽放入；同型同级槽位合并升阶；其它武器/字牌槽则交换（见 Battle.recallToTray）
       if (trayTarget !== null) {
-        if (battle.recallToTray(ui.dragFrom, trayTarget)) { clearBoardSelect(); }
+        if (battle.recallToTray(ui.dragFrom, trayTarget)) { pvpSaveDirty = true; clearBoardSelect(); } // 回收到候选区改动战斗态 → 尽快落档
       } else if (target) {
         if (target.c === ui.dragFrom.c && target.r === ui.dragFrom.r) {
           // 未移动 = 点击：切换选中（显示/隐藏该单位信息面板与攻击范围）
@@ -2783,6 +2798,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
           else selectBoardCell(target);
         } else {
           battle.dragBoard(ui.dragFrom, target);
+          pvpSaveDirty = true; // 棋盘内移动/交换单位改动部署态 → 尽快落档
           clearBoardSelect();
         }
       }
@@ -3258,7 +3274,10 @@ function frame(now: number): void {
       // !pvpResult 门控：PvP 终局由服务端 result 权威判定（非 endHandled，那是单人概念），result 一到即停止落档——
       // match 已结束，不应再留可恢复快照（否则刷新会尝试恢复一局已亡对局，虽最终 onHelloFail 回首页但白等）。
       if (!pvpResult) {
-        sessionSaveCheckpoint('pvp', battle, {
+        // dirty 传输入脏标：有玩家输入时在 500ms MIN 节流下尽快落档；无输入则靠 2s MAX 心跳。
+        // 仅当 checkpoint 真正写入（返回 true）才清脏标——若因未过 MIN 被节流（返回 false）须保留脏标，
+        // 使写入在 MIN 到点后触发；无条件清会让 ~60fps 下的输入在下一帧被无写入地清掉、退回 2s 心跳。
+        if (sessionSaveCheckpoint('pvp', battle, {
           seed: 1,
           pvp: {
             matchId: pvpSock.matchId,
@@ -3267,10 +3286,11 @@ function frame(now: number): void {
             startAtServerMs: pvpMatchStartMs,
             localSimTick,
           },
-        }, { dirty: false });
+        }, { dirty: pvpSaveDirty })) pvpSaveDirty = false;
       }
     } else {
-      sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: false }); // TODO(Task5): 传入输入 dirty
+      // PvE 同 PvP：传输入脏标，仅在真正写入时清零（见上 PvP 分支注释）。
+      if (sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: pvpSaveDirty })) pvpSaveDirty = false;
     }
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
