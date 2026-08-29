@@ -3,6 +3,8 @@ import { Battle, TUNING, MAP_ELEMENT, findTrayIndex, traySome, trayTokens } from
 import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
 // 统一「刷新续玩」全状态持久化（PvP/PvE 共用）。Task 2 接 PvE：开机恢复 + 帧尾落档 + 终局清档。
 // 注意：旧 ./battle-save 的 loadResumeBattle/tryResumeLocalBattle 路径已在本任务弃用（仅保留定义待 Task 6 清理）。
+// saveResumeCheckpoint（旧 key dasheng.battleSave 的每波写入）亦已无读取方（boot 只从 dasheng.session 恢复），
+// 属死写，待 Task 6 随 battle-save 一并清理；此前先保留调用（smoke/probe 仍可能触旧 key）。
 import { readSession, restoreBattle, sessionSaveCheckpoint, clearSessionSave, type SessionSaveV1 } from './pvp-save';
 import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
@@ -675,11 +677,13 @@ void (async () => {
   } finally {
     window.clearTimeout(showUiTimer);
     scheduleFrame(); // 无论成功 / 失败 / 超时：务必排一帧，把当前界面（首页或续玩战斗）画出来
+    // 神秘商人几乎每局结算后必弹出：首屏就绪后空闲预取分包，避免结算时才现拉取造成等待。
+    // 放进 finally：续玩短路 return 也会经 finally，故恢复局与首页路径都预取——恢复的中途局正是会命中
+    // 结算开商人的场景，若不预取会在首次结算时现连拉取卡顿。
+    const prefetchMerchantChunk = (): void => { void merchantLazy.prefetch(); };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(prefetchMerchantChunk, { timeout: 4000 });
+    else window.setTimeout(prefetchMerchantChunk, 1500);
   }
-  // 神秘商人几乎每局结算后必弹出：首屏就绪后空闲预取分包，避免结算时才现拉取造成等待。
-  const prefetchMerchantChunk = (): void => { void merchantLazy.prefetch(); };
-  if (typeof requestIdleCallback === 'function') requestIdleCallback(prefetchMerchantChunk, { timeout: 4000 });
-  else window.setTimeout(prefetchMerchantChunk, 1500);
 })();
 
 let rank: RankState = safePersisted(loadRank, { level: 0, stars: 0, difficulty: 1 });
