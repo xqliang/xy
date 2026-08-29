@@ -6,6 +6,10 @@
 //   2) PvP / PvE 走同一份存档结构（kind 区分，PvP 另带一段对局元信息 pvp）；
 //   3) 写入采用「输入触发 + 节流」策略（见 sessionSaveCheckpoint），把落盘抖动压到最低。
 //
+// 持久化统一走 ./storage 的 storeGet/storeSet/storeRemove（跨平台：Web=localStorage、
+// 微信小游戏=wx storage）。切勿直接调 localStorage——微信端无 localStorage，直调会被
+// try/catch 静默吞掉，导致本功能在主力平台上「读恒 null、写恒失败」而无声失效。
+//
 // 本模块只负责「读 / 写 / 重建」这三件事，不含任何主循环接线与开机恢复逻辑——
 // 那些由后续任务（Task 2/3）在本模块之上搭建。
 //
@@ -14,8 +18,10 @@
 import { Battle } from './battle';
 import type { BattleSaveConfig, BattleCoreState } from './battle';
 import { mapById } from './board';
+import { storeGet, storeSet, storeRemove } from './storage';
+import { APP_VERSION } from './version';
 
-/** localStorage 键名（PvP/PvE 共用同一槽位，同一时刻只有一局在进行）。 */
+/** 跨平台存储键名（走 ./storage）。PvP/PvE 共用同一槽位，同一时刻只有一局在进行。 */
 export const SESSION_KEY = 'dasheng.session';
 /** 存档结构版本；结构不兼容时 +1，readSession 遇到旧版本直接判废。 */
 export const SESSION_VERSION = 1;
@@ -52,7 +58,7 @@ export interface PvpSessionMeta {
 export interface SessionSaveV1 {
   /** 结构版本，须等于 SESSION_VERSION。 */
   v: number;
-  /** 落档时的游戏版本；跨版本不续玩（结构可能漂移）。 */
+  /** 落档时的游戏版本（APP_VERSION）；跨版本不续玩（结构可能漂移）。 */
   gameVersion: string;
   /** 落档时刻（epoch ms），预留陈旧度判断。 */
   savedAt: number;
@@ -60,20 +66,18 @@ export interface SessionSaveV1 {
   kind: SessionKind;
   /** 仅 PvP 携带；PvE 恒为 undefined（不写该字段）。 */
   pvp?: PvpSessionMeta;
-  /** 构造种子（RNG 会被 core 覆盖，此处仅供重建时播种）。 */
+  /** 构造种子（RNG 会被 core 覆盖，此处仅供重建时播种）。注意：seed 不在 config 内，故独立保存。 */
   seed: number;
-  /** 地图 ID（重建时 mapById 用）。 */
-  mapId: string;
-  /** 重建对局几何/骨架所需的构造参数。 */
+  /** 重建对局几何/骨架所需的构造参数（含 mapId/difficultyMul/endless/aiAdjustIntervalScale）。 */
   config: BattleSaveConfig;
   /** 全量核心可变状态（Battle.serialize() 产物）。 */
   core: BattleCoreState;
 }
 
-/** buildSessionSave / sessionSaveCheckpoint 的公共入参：种子 + 地图 + 可选 PvP 元信息。 */
+/** buildSessionSave / sessionSaveCheckpoint 的公共入参：种子 + 可选 PvP 元信息。
+ *  （mapId 无需在此传：它已随 Battle.serialize() 落入 config.mapId，避免与之重复。） */
 export interface SessionSaveOpts {
   seed: number;
-  mapId: string;
   pvp?: PvpSessionMeta;
 }
 
@@ -88,32 +92,19 @@ export interface SessionSaveCheckpointIo {
 }
 
 /**
- * 取当前游戏版本。构建期由 Vite 注入 globalThis.__APP_VERSION__；
- * 测试等未注入场景回退 'dev'。buildSessionSave 与 readSession 都走本函数，
- * 保证同一环境下「写入版本」与「校验版本」一致，round-trip 可通过。
- */
-function appVersion(): string {
-  try {
-    return (globalThis as any).__APP_VERSION__ ?? 'dev';
-  } catch {
-    return 'dev';
-  }
-}
-
-/**
- * 由当前 Battle 构造一份 v1 存档（纯函数，不触碰 localStorage）。
+ * 由当前 Battle 构造一份 v1 存档（纯函数，不触碰存储）。
  * pvp 仅在 opts.pvp 存在时才落入结构（PvE 不写该字段）。
+ * gameVersion 取 ./version 的 APP_VERSION（发布时由 start.sh 写入），供跨版本判废。
  */
 export function buildSessionSave(kind: SessionKind, b: Battle, opts: SessionSaveOpts): SessionSaveV1 {
   const { config, core } = b.serialize();
   const save: SessionSaveV1 = {
     v: SESSION_VERSION,
-    gameVersion: appVersion(),
+    gameVersion: APP_VERSION,
     savedAt: Date.now(),
     kind,
     seed: opts.seed,
-    mapId: opts.mapId,
-    config,
+    config, // config.mapId 即地图 id，restoreBattle 从这里取
     core,
   };
   if (opts.pvp) save.pvp = opts.pvp; // 仅 PvP 携带对局元信息
@@ -125,12 +116,7 @@ export function buildSessionSave(kind: SessionKind, b: Battle, opts: SessionSave
  * 缺 core / kind 非法 / PvP 缺 pvp 元信息）一律返回 null，绝不抛出。
  */
 export function readSession(): SessionSaveV1 | null {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(SESSION_KEY);
-  } catch {
-    return null; // localStorage 不可用（隐私模式等）
-  }
+  const raw = storeGet(SESSION_KEY); // storeGet 内部已 try/catch：不存在/存储异常均返回 null
   if (!raw) return null;
 
   let save: SessionSaveV1;
@@ -142,7 +128,7 @@ export function readSession(): SessionSaveV1 | null {
 
   if (!save || typeof save !== 'object') return null;
   if (save.v !== SESSION_VERSION) return null;         // 结构版本不符
-  if (save.gameVersion !== appVersion()) return null;  // 跨游戏版本不续
+  if (save.gameVersion !== APP_VERSION) return null;    // 跨游戏版本不续
   if (!save.core) return null;                          // 缺核心状态
   if (save.kind !== 'pvp' && save.kind !== 'pve') return null; // kind 非法
   if (save.kind === 'pvp' && !save.pvp) return null;    // PvP 必须带对局元信息
@@ -154,16 +140,12 @@ let lastWriteMs = 0;
 
 /** 清除存档并重置节流时钟（下次 checkpoint 视为首写）。 */
 export function clearSessionSave(): void {
-  try {
-    localStorage.removeItem(SESSION_KEY);
-  } catch {
-    // localStorage 不可用时忽略
-  }
+  storeRemove(SESSION_KEY); // storeRemove 内部已 try/catch
   lastWriteMs = 0;
 }
 
 /**
- * 主循环检查点：按「输入触发 + 节流」决定是否落档。返回是否实际写入。
+ * 主循环检查点：按「输入触发 + 节流」决定是否落档。返回是否按节流决定进行了写入。
  *
  * 规则：
  *   - 终局（won/lost）绝不写：无续玩语义，且 serialize 在飞行中实体上会别名，续玩不安全；
@@ -171,8 +153,9 @@ export function clearSessionSave(): void {
  *       · io.force            —— 强制写（关键节点）；
  *       · io.dirty 且 距上次写入 ≥ MIN —— 有输入变更且过了下限节流；
  *       · 距上次写入 ≥ MAX    —— 保底心跳（即便无输入也定期落被动变化）。
- *   - 仅在「实际写入成功」时推进 lastWriteMs；setItem 失败（配额/存储不可用）吞错返回 false，
- *     且不推进 lastWriteMs，以便下次尽快重试。
+ *
+ * 注：storeSet 为 best-effort（内部吞配额/wx 异常，不抛错），与 battle-save 一致；
+ *     故返回值表达「本次是否按节流决定落档」，而非物理写入是否持久成功。
  */
 export function sessionSaveCheckpoint(
   kind: SessionKind,
@@ -190,23 +173,19 @@ export function sessionSaveCheckpoint(
     since >= SESSION_SAVE_MAX_INTERVAL_MS;
   if (!shouldWrite) return false;
 
-  try {
-    const save = buildSessionSave(kind, b, opts);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(save));
-  } catch {
-    return false; // 配额超限/存储不可用：本次放弃，lastWriteMs 不推进
-  }
+  storeSet(SESSION_KEY, JSON.stringify(buildSessionSave(kind, b, opts)));
   lastWriteMs = now;
   return true;
 }
 
 /**
- * 由有效存档重建本地 Battle 实例：先用中性构造参数搭骨架，再 applyCoreState 覆盖全量状态。
+ * 由有效存档重建本地 Battle 实例：先用构造参数搭骨架，再 applyCoreState 覆盖全量状态。
  *
  * 构造参数取舍（与 ./battle-save#loadResumeBattle 同思路）：
  *   - seed 供构造播种（RNG 随后被 core 覆盖，值不敏感）；
  *   - difficultyMul / aiAdjustIntervalScale 从 config 还原：二者只存在于 config、不在 core 中，
  *     applyCoreState 不会覆盖，故必须在此按原值构造，否则续玩会退回默认 1（怪物强度/AI 节奏走样）；
+ *   - mapId 取 config.mapId（serialize 写入的即地图 id）；
  *   - meta/weapons/actives/passives/aiSkill 传 undefined 走构造默认，避免二次叠加；
  *   - PvP 传 { enabled: true } 打开 isPvp（影响 rubber-band/对手侧处理），PvE 传 undefined。
  *
@@ -217,7 +196,7 @@ export function restoreBattle(save: SessionSaveV1): Battle {
   const b = new Battle(
     save.seed,
     save.config.difficultyMul,          // 从 config 还原（core 不含此字段）
-    mapById(save.mapId),
+    mapById(save.config.mapId),         // 地图 id 取自 config
     undefined, undefined, undefined, undefined, // meta / weapons / actives / passives 用默认
     save.config.endless,
     undefined,                          // aiSkill 用默认
