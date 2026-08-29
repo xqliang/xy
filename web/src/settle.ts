@@ -285,13 +285,18 @@ export interface PvpSettleResult {
   merit: number;
 }
 
+// Task 4 契约串（单点定义，防三处 magic string 漂移）：服务端在「我方唐僧死时对手正断线/未连」的
+// 失败上下发此 reason；客户端据它免扣段位。此处与 main.ts 的 noPenalty 比较共用同一常量，
+// 而下方 settle.pvp 单测钉住本串对应的中文文案 → 传递性地钉住 main.ts 分支比较的确切值（该分支无单测覆盖）。
+export const REASON_SELF_TANGSENG_DEAD_OPP_GONE = 'selfTangsengDeadOppGone';
+
 // reason 契约串 → 中文文案（纯函数，可单测）。解释「为什么结束」，与结算屏的段位/功德展示并列。
 export function pvpReasonText(reason: string): string {
   switch (reason) {
     case 'opponentTangsengDead': return '对手唐僧被消灭';
     case 'selfTangsengDead': return '你的唐僧被消灭';
     // Task 4：我方唐僧死时对手正断线/未连 → 失败但不扣段位（对手跑路免扣）。
-    case 'selfTangsengDeadOppGone': return '你的唐僧被消灭（对手掉线·不扣段位）';
+    case REASON_SELF_TANGSENG_DEAD_OPP_GONE: return '你的唐僧被消灭（对手掉线·不扣段位）';
     case 'opponentSurrender': return '对手认输';
     case 'selfSurrender': return '你已认输';
     case 'opponentDisconnectTimeout': return '对手掉线';

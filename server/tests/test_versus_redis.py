@@ -317,6 +317,19 @@ def test_tangsengdead_winner_connected_deducts_normally():
     assert m["result"]["b"]["reason"] == "opponentTangsengDead"
 
 
+def test_tangsengdead_winner_reconnected_then_my_death_deducts():
+    # 重连边界（显式记录意图）：胜方(b)曾断线(gone_ms 置) → 又重连（ws_hello 清 gone_ms=0、connected_ever=True）
+    # → 此后我方(a)唐僧才被吃。此刻胜方在场，故负方 reason 仍 selfTangsengDead → 正常扣减（对手已回来，不豁免）。
+    # 与 winner_connected 控制用例的终态字段等价，但这里用「断线→重连」序列显式钉住重连后不再免扣的语义。
+    h = _redis_hub()
+    _mid, m = _mk_match(h)
+    m["b"]["connected_ever"] = True
+    m["b"]["gone_ms"] = h._now()                  # ① 胜方一度断线
+    m["b"]["gone_ms"] = 0                          # ② 重连恢复在场（镜像 ws_hello 清零）
+    h._set_result(m, "a", "TangsengDead", h._now())
+    assert m["result"]["a"]["reason"] == "selfTangsengDead"
+
+
 def test_surrender_winner_disconnected_unaffected():
     # 守卫：免扣只作用于 TangsengDead。认输(Surrender)即便胜方断线，负方 reason 仍 selfSurrender（不改写）。
     h = _redis_hub()

@@ -74,7 +74,7 @@ import {
 import { isPausePopupOpen as isPausePopupOpenPure, shouldStepSim, pausePopupContext } from './pvp-pause';
 import { drawInkPopupFrame, drawPlainPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮；续玩弹窗用简化普通框（无宫檐）
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
-import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult } from './settle';
+import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult, REASON_SELF_TANGSENG_DEAD_OPP_GONE } from './settle';
 import { pvpSettle } from './pvp-settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, STAMINA_COST, type Stamina } from './stamina';
@@ -3123,7 +3123,7 @@ function frame(now: number): void {
       // Task 4：服务端把「我方唐僧死时对手正断线/未连」的失败标为 selfTangsengDeadOppGone → 免扣段位
       //（对手跑路不该偷我段位）。我方自己刷新/掉线致死仍是 selfTangsengDead → 正常扣减。功德不受影响。
       const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave,
-        { noPenalty: pvpResult.reason === 'selfTangsengDeadOppGone' });
+        { noPenalty: pvpResult.reason === REASON_SELF_TANGSENG_DEAD_OPP_GONE });
       if (rankChange) rank = rankChange.state; // 胜/负动段位（recordWin/Lose 内部已持久化）；平局 rankChange=null 不动
       merit = addMerit(merit, meritGain);      // 累加并持久化功德（封顶 300，同单人）
       pendingMerchant = true;                  // 回首页弹神秘商人（同单人）

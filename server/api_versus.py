@@ -525,8 +525,9 @@ class VersusHub:
         # 或全程从未连接(connected_ever=False，如撮合后跑路)——则本次失败给负方改用 selfTangsengDeadOppGone，
         # 前端据此跳过 recordLose、不扣段位（对手跑路不该偷走我的段位）；胜方 reason 不变(opponentTangsengDead)。
         # 反之（胜方在线，即我方自己刷新/掉线致唐僧死）仍是 selfTangsengDead → 正常扣减，杜绝「刷新逃负」。
-        # 时序关键(spec §6)：此处读 m[winner] 的 gone_ms/connected_ever 必须在下方 _forget_match_state 之前——
-        # 后者只删 Redis mstate、不动内存 side 态，且 _forget_match_state 在本方法末尾才调，故这两字段此刻仍有效。
+        # 时序（spec §6，防御性）：在 m 仍权威（本方法持 self.lock、终局态刚定）时读 m[winner] 的
+        # gone_ms/connected_ever。_forget_match_state 当前只清 Redis mstate、不动内存 side 态，故顺序上
+        # 并无强依赖；但仍把读取放在它之前，避免日后 _forget_match_state 若扩展为清 side 态时被动踩坑。
         if reason_kind == "TangsengDead" and (m[winner].get("gone_ms") or not m[winner].get("connected_ever")):
             lose_reason = "selfTangsengDeadOppGone"
         m["result"] = {
