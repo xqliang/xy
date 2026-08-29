@@ -39,6 +39,10 @@ export interface PvpSocketOpts {
   onOppGone?: () => void;
   /** C5：对手全程未应战(打空气) → 服务端作废该局并通知在场方自动重新匹配。 */
   onNoShow?: () => void;
+  // hello 确认失败（刷新恢复用）：本连接已完成握手却在收到 welcome 前被服务端关闭——
+  // 对局已结束/被回收，或 uid 不属于该局（服务端 bad_hello 后不回 welcome，随后关连接）。
+  // 恢复路径据此清快照回首页；普通对局不注入（此时该分支不重连，交由看门狗兜底）。
+  onHelloFail?: () => void;
   // 注入 WebSocket 构造器（单测传 FakeWebSocket）；不传则用全局 WebSocket。
   wsFactory?: (url: string) => PvpWsLike;
   // 注入重连延时调度器（单测传可控假计时器）；不传则用全局 setTimeout。
@@ -112,6 +116,11 @@ export class PvpSocket {
   // 已判令牌失效标记。恒有 authFatal ⟹ closed（failAuth 里二者同置），故重连门控实际由 closed 完成；
   // 保留本字段是为「显式标记 auth 致命短路意图」的自文档 / 防御（万一将来 closed 与 auth-fatal 语义分家），非死代码，勿删。
   private authFatal = false;
+  // 是否曾完成过一次 WS 握手（onopen 触发过）。用于区分「传输层从未连上」（应继续退避重连）
+  // 与「连上了但服务端没 welcome 就关」（hello 失败 → 不重连，回调 onHelloFail）。单调置真、不重置。
+  private opened = false;
+  // 是否收到过 welcome（服务端确认 hello 成功、对局有效）。一旦为真，之后任何断开都走正常重连。
+  private gotWelcome = false;
   private reconnectGen = 0; // 代数：每次调度/关闭递增，用于让挂起的过期计时器失效
   private timer: unknown = null; // 挂起的重连计时器句柄（真实 setTimeout 句柄；注入 scheduler 返回 void→undefined）
   private pingGen = 0; // 心跳代数：close/重调度时递增，让挂起的过期 ping 计时器失效
@@ -146,6 +155,7 @@ export class PvpSocket {
   /** open：握手成功，退避重置、发 hello，状态置 open。 */
   private handleOpen(): void {
     if (this.closed) return; // 握手完成前已被手动关：丢弃，不 hello、不标 open
+    this.opened = true; // 标记「至少完成过一次握手」——供 handleClose 区分传输失败 vs hello 失败
     this.retryCount = 0; // 成功 open → 重连序列重置（下次断线再从 300ms 快试起）
     this.state = 'open';
     this.lastInboundAt = Date.now(); // 连上即视为刚收到（避免刚 open 就被看门狗误判）
@@ -195,6 +205,7 @@ export class PvpSocket {
     const type = (msg as { type?: unknown }).type;
     switch (type as DownType) {
       case 'welcome':
+        this.gotWelcome = true; // 服务端确认 hello 成功、对局有效——之后任何断开都走正常重连（非 hello 失败）
         this.opts.onWelcome?.((msg as { serverMs: number }).serverMs);
         break;
       case 'oppSnap':
@@ -236,6 +247,11 @@ export class PvpSocket {
   /** 非手动断开：清 socket、清心跳计时器、按退避调度重连。手动关闭由 handleClose 前短路，永不进这里。 */
   private handleClose(): void {
     if (this.closed) return;
+    // hello 失败：本连接已完成握手（opened）却在收到 welcome 前被服务端关闭——对局已结束/被回收，
+    // 或 uid 不属于该局（服务端 bad_hello 后不回 welcome，最终关连接）。非我方主动关闭 → 不重连，
+    // 回调上层（恢复路径据此清快照回首页）。注：纯传输层失败（从未 open，opened=false）不算此列，
+    // 仍走下面的退避重连——保住弱网 resilience（首连丢包/切基站等瞬断仍能自愈）。
+    if (this.opened && !this.gotWelcome) { this.opts.onHelloFail?.(); return; }
     this.clearPingTimer(); // 连接断了：停心跳、清过期 ping 计时器（重连 open 后会重排）
     this.rttMs = null; // 旧连接的 RTT 失效：下次首 pong 前一直显示 --
     this.sock = null;

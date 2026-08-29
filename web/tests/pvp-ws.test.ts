@@ -238,10 +238,11 @@ describe('PvpSocket 指数退避重连', () => {
     calls[3]!.fn(); dropLast();
     expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000, 5000]); // 8000 封顶 5s
 
-    // 第 6 次重连：让它真正 open 成功（冲刷微任务），退避应重置回首试 300ms。
+    // 第 6 次重连：让它真正 open 成功（冲刷微任务）+ 收到 welcome（确认对局有效），退避应重置回首试 300ms。
     calls[4]!.fn();
     await tick();
     expect(FakeWebSocket.last().readyState).toBe(OPEN);
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 1 })); // 确认对局有效：之后断开走正常重连（非 hello 失败）
     // open 成功会顺带排一次心跳 ping（2000ms）—— captured scheduler 里多这一条。
     expect(calls.map((c) => c.ms)).toEqual([300, 1000, 2000, 4000, 5000, 2000]); // 5 条重连退避 + 心跳 ping
     dropLast(); // open 成功后再断
@@ -301,6 +302,7 @@ describe('PvpSocket 指数退避重连', () => {
     const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
     sock.connect();
     await tick();                       // open 成功
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 1 })); // 确认对局有效：断开走正常重连
     expect(sock.reconnectAttempt).toBe(0);
     FakeWebSocket.last().close();        // 断 → 第 1 次重连排程（retryCount→1）
     expect(sock.reconnectAttempt).toBe(1);
@@ -429,7 +431,11 @@ describe('PvpSocket 应用层心跳 ping / RTT / 入站时间戳', () => {
 // ============================================================================
 describe('PvpSocket 弱网事件补发队列', () => {
   // 便捷：open 成功 → 服务器断开（进入 reconnecting，挂起一个重连计时器）。
+  // Task「PvP 刷新恢复」后：open 后须先收到 welcome（对局确认有效），断开才走正常重连；
+  // 「open 但从未 welcome 即被关」现被判为 hello 失败（不重连，回调 onHelloFail）。补发队列面向的是
+  // 已确认在打的对局中途断线，故这里先喂一条 welcome 再断，贴合真实场景。
   function dropAfterOpen(sock: PvpSocket, calls: Array<{ fn: () => void; ms: number }>): void {
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 1 })); // 先确认对局有效
     FakeWebSocket.last().close();          // 服务器断 → handleClose → 调度重连（calls 尾部）
     expect(sock.state).toBe('reconnecting');
     void calls;
@@ -575,6 +581,69 @@ describe('PvpSocket 鉴权失败探测短路', () => {
     const before = FakeWebSocket.instances.length;
     calls.filter((c) => c.ms === 2000).forEach((c) => c.fn()); // 触发挂起的重连
     expect(FakeWebSocket.instances.length).toBeGreaterThan(before); // 确实又建了新 socket=继续重连
+    sock.close();
+  });
+});
+
+// ============================================================================
+//  PvP 刷新恢复：hello 确认（welcome）与 onHelloFail
+//  - 恢复路径连上后若服务端确认对局有效 → 回 welcome；否则 bad_hello 后不回 welcome、最终关连接。
+//  - 连接层据此区分三类断开：①连上且已 welcome 断开 → 正常重连；②连上但从未 welcome 被关 →
+//    hello 失败（回调 onHelloFail、不重连）；③从未连上（传输失败）→ 仍退避重连（保弱网自愈）。
+// ============================================================================
+describe('PvpSocket hello 确认与 onHelloFail', () => {
+  it('open 后收到 welcome 再断 → 正常重连，不触发 onHelloFail', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail });
+    sock.connect();
+    await tick();                                     // open + hello
+    FakeWebSocket.last().receive(JSON.stringify({ type: 'welcome', serverMs: 42 })); // 对局确认有效
+    FakeWebSocket.last().close();                     // 已 welcome 后断线
+    expect(onHelloFail).not.toHaveBeenCalled();       // 非 hello 失败
+    expect(sock.state).toBe('reconnecting');          // 走正常重连
+    expect(calls.some((c) => c.ms === 300)).toBe(true);
+    sock.close();
+  });
+
+  it('open 后从未收到 welcome 即被关 → 触发 onHelloFail 一次，不重连', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail });
+    sock.connect();
+    await tick();                                     // open + hello（服务端 bad_hello：不回 welcome）
+    const before = FakeWebSocket.instances.length;
+    FakeWebSocket.last().close();                     // 服务端关连接（对局已结束/被回收）
+    expect(onHelloFail).toHaveBeenCalledTimes(1);     // hello 失败回调
+    expect(calls.some((c) => c.ms === 300)).toBe(false); // 未调度重连（首试恒 300ms）；仅 handleOpen 排的 2000ms 心跳
+    expect(FakeWebSocket.instances.length).toBe(before); // 未建新 socket
+    sock.close();
+  });
+
+  it('从未 open（纯传输失败）即被关 → 不算 hello 失败，仍退避重连', () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const onHelloFail = vi.fn();
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler, onHelloFail });
+    sock.connect();
+    FakeWebSocket.last().close();                     // open 微任务触发前即关（readyState→CLOSED，onopen 空转）
+    expect(onHelloFail).not.toHaveBeenCalled();       // 传输失败 ≠ hello 失败
+    expect(sock.state).toBe('reconnecting');          // 保弱网自愈：继续重连
+    expect(calls.map((c) => c.ms)).toEqual([300]);
+    sock.close();
+  });
+
+  it('onHelloFail 未注入时 hello 失败也不重连（普通对局：交由看门狗兜底）', async () => {
+    const calls: Array<{ fn: () => void; ms: number }> = [];
+    const scheduler = (fn: () => void, ms: number) => calls.push({ fn, ms });
+    const sock = new PvpSocket({ matchId: 'm', uid: 'u', wsFactory: fakeFactory, scheduler });
+    sock.connect();
+    await tick();                                     // open，无 welcome
+    FakeWebSocket.last().close();
+    expect(calls.some((c) => c.ms === 300)).toBe(false); // 可选链 no-op；仍不重连（无 300ms 首试）
+    expect(sock.state).toBe('open');                  // handleClose 早退，未进入 reconnecting
     sock.close();
   });
 });

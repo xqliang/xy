@@ -291,7 +291,7 @@ const merchantLazy = lazyModule(() => import('./merchant'));
 const pvpMatchLazy = lazyModule(() => import('./pvp-match'));
 const pvpScreenLazy = lazyModule(() => import('./pvp-screen'));
 import { drainFixedSteps, PVP_SIM_DT, pvpWaveStartTick } from './pvp-fixedstep'; // PvP 固定步长累加器 + 波起始纪元→tick（Task 9；DELAY_TICKS 延迟重放已随确定性重放拆除）
-import { PvpSocket } from './pvp-ws';                                 // PvP WS 连接层（Task 3）：连/重连/消息分发 + 上行发送
+import { PvpSocket, type PvpSocketOpts } from './pvp-ws';                                 // PvP WS 连接层（Task 3）：连/重连/消息分发 + 上行发送
 import { netDead, netRecovered } from './pvp-netwatch';             // PvP 断线看门狗纯判定（>10s 无入站→判死 / 恢复→解冻；Task 7.6 + A1-lite）
 import { PvpOppView, normalizeSnapClock } from './pvp-snap';            // 对手双缓冲插值视图 + 跨机时钟归一（Task 4/Task 5）
 import type { PvpSnap } from './pvp-snap';                             // 快照类型（onOppSnap 归一化入参类型标注）
@@ -342,23 +342,17 @@ const pvpNet = {
 // 集成缝：匹配成功 → 真正开一局 PvP 对局（Plan C Task 5，WS 快照模型）。
 // 本方 battle 本地权威实时 step；建对手插值视图 + PvpSocket（每 100ms 发本方快照、收对手快照/波次/终局）、
 // 扣体力、切战斗屏。确定性重放机器（oppBattle/PvpSync/1s tick）已拆除，单人不走此函数。
-function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
-  pvpController = null;
-  const map = mapById(ms.map) ?? currentMap;
-  const meta = metaBonuses(merit), wb = weaponBonuses(bag);
-  // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
-  // 本方 battle 用本方 meta/wb/equipped/passives（本方侧权威）。
-  // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
-  battle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
-  bindBattleWeaponPickup();
-  battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
-  // 对手半场 = WS 快照插值视图（不再确定性重放）。PvpOppView 双缓冲，每收到一份对手快照 ingest 一份。
-  oppView = new PvpOppView();
-  // WS 连接：本方权威半场每 100ms 发快照；下行 oppSnap→插值视图、nextWave→开波排程、result→结算、oppGone→提示。
-  // uid 复用 user-id 的 ensureUserId（与 apiFetch 的 X-Uid 同源，不另起存储）。
-  pvpSock = new PvpSocket({
-    matchId: ms.matchId,
-    uid: ensureUserId(),
+//
+// PvpSocket 的下行回调集合（除 matchId/uid 外）被 onPvpMatched 与 resumePvpSession（刷新恢复）共用，
+// 抽到 makePvpCallbacks() 一处定义避免复制粘贴漂移；恢复路径在其上覆盖 onWelcome（快进）并追加 onHelloFail（回首页）。
+/**
+ * 构造 onPvpMatched / resumePvpSession 共用的 PvpSocket 回调集合。
+ * 这些闭包引用模块级可变态（oppView/pvpResult/battle/pvpMatchStartMs/pvpWaveStartTicks…），
+ * 仅在运行期（对局中，模块已初始化）被调用，故不涉 TDZ。返回不含 matchId/uid/onHelloFail——
+ * 前二者每次调用不同、后者仅恢复路径需要（普通对局不重连交看门狗兜底）。
+ */
+function makePvpCallbacks(): Partial<PvpSocketOpts> {
+  return {
     // A4：每次连接取最新 token（重连也刷新），避免烘焙的旧 token 过期后连不上。
     tokenProvider: () => getToken() ?? undefined,
     // A4：连续重连达阈值时探活——打一个 require_auth 的轻量 GET；401=令牌失效。
@@ -404,12 +398,31 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
       if (pvpResult) return;
       pvpNoShow = true;
     },
-  });
+  };
+}
+function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
+  pvpController = null;
+  const map = mapById(ms.map) ?? currentMap;
+  const meta = metaBonuses(merit), wb = weaponBonuses(bag);
+  // PvP 固定 difficulty=1（两端同 seed→同怪，跨机确定；强弱由各自 loadout/战力经 wavePressure 体现=各算各的）。
+  // 本方 battle 用本方 meta/wb/equipped/passives（本方侧权威）。
+  // aiSkill=undefined→DEFAULT_AI_SKILL；heroMatch=undefined；pvpInit 关本地 AI（pvp 时本机不收 AI）。
+  battle = new Battle(ms.seed, 1, map, meta, wb, loadout.equipped, loadout.passives, false, undefined, 1, undefined, { enabled: true });
+  bindBattleWeaponPickup();
+  battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
+  // 对手半场 = WS 快照插值视图（不再确定性重放）。PvpOppView 双缓冲，每收到一份对手快照 ingest 一份。
+  oppView = new PvpOppView();
+  // WS 连接：本方权威半场每 100ms 发快照；下行 oppSnap→插值视图、nextWave→开波排程、result→结算、oppGone→提示。
+  // uid 复用 user-id 的 ensureUserId（与 apiFetch 的 X-Uid 同源，不另起存储）。回调集合与恢复路径共用（makePvpCallbacks）。
+  pvpSock = new PvpSocket({ matchId: ms.matchId, uid: ensureUserId(), ...makePvpCallbacks() });
   pvpSock.connect();
   // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
   pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 新对局从干净态开始（上次对局若被判死，endPvpSession 已清；这里再兜底一次）
   pvpOpponent = ms.opponent; pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
+  // 座位 side：MatchStart 未下发座位（服务端按 uid+matchId 识别，不靠 side），且 restoreBattle 不按 side 分支，
+  // 故 side 仅供存档/恢复对称性，无实际战斗分流意义 → 默认 'a'（恢复时由 save.pvp.side 覆盖为真值）。
+  pvpSide = 'a';
   pvpMatchStartMs = ms.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   // 真正开打才扣体力（入口 gate 已保证 value ≥ COST，这里再花一次）
   const sp = spendStamina(stamina);
@@ -432,6 +445,7 @@ function endPvpSession(): void {
   pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false; // 清断线看门狗标志（下次进对局从干净态开始）
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpMatchStartMs = 0;
   pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
+  pvpSide = null; // 离开对局：清座位（下次进对局由 onPvpMatched/resumePvpSession 重置）
 }
 
 // —— Task 7.6：PvP 断线看门狗（弹窗「网络已断开」+ 单按钮「返回首页」）——
@@ -717,6 +731,9 @@ let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = nul
 let pvpStatusReported = false;          // 终局 status 已上报一次性标志（surrender / tangsengDead 各只经 WS 发一次）
 // —— Task 9：先清者定波次（服务端 nextWave 权威排程，本机按 tick 确定性开波）——
 let pvpMatchStartMs = 0;                        // 开局纪元（服务端 startAtServerMs）：波次纪元→tick 的零点
+// 本方座位（a/b）：仅供刷新存档/恢复对称，服务端按 uid+matchId 识别、restoreBattle 不按 side 分支，故战斗无分流意义。
+// onPvpMatched 置默认 'a'（MatchStart 未下发座位）；resumePvpSession 用 save.pvp.side 覆盖为落档时的真值。null=非对局中。
+let pvpSide: 'a' | 'b' | null = null;
 const pvpWaveStartTicks = new Map<number, number>(); // 波号→该波本地开波 tick（缓存：两端各按自己 wave+1 查表）
 let pvpPrevWaveActive = false;                  // 本方上一帧 waveActive（下降沿检测：true→false = 刚清波，立即经 WS 上报）
 // matched 后先播「匹配成功」对阵卡动画（双方头像/昵称/等级），动画播完才真正开局——
@@ -1454,7 +1471,11 @@ function tryResumeLocalBattle(): boolean {
 // 仅启动 IIFE 调用：此时各 ui.*Popup / 引导态 / tutorialOverlay 尚为初始默认值，故这里只复位与 newGame/
 // tryResumeLocalBattle 对称的核心循环/结算标志。抽成函数（声明在模块级 let 之后）亦为避开 boot IIFE 的 TDZ。
 function tryResumeSession(session: SessionSaveV1): boolean {
-  if (session.kind !== 'pve') return false; // PvP 跨刷新恢复由 Task 3 的 resumePvpSession 接入，此处不处理
+  // Task 3：PvP 跨刷新恢复——连 WS 确认对局仍在（welcome）→ 无输入快进续打；hello 失败 → 回首页。
+  // resumePvpSession 内部异步（等 welcome/close），此处立即 return true 让 boot 短路首页逻辑；
+  // 屏幕在 welcome 到达前停留 'loading'（WS 连接 + 快进的短暂窗口），随后切 'battle' 或 'menu'。
+  if (session.kind === 'pvp') { resumePvpSession(session); return true; }
+  if (session.kind !== 'pve') return false; // 未知 kind：不恢复
   // 直接恢复：离线战斗墙钟不走，序列化状态即最新
   const rb = restoreBattle(session);
   if (rb.status === 'won' || rb.status === 'lost') {
@@ -1478,6 +1499,82 @@ function tryResumeSession(session: SessionSaveV1): boolean {
   resumePopup = true; // 复用现有「继续 / 回到首页」选择弹窗（模态、冻结仿真）
   scheduleFrame();
   return true;
+}
+
+/**
+ * PvP 刷新恢复（Task 3）：连 WS 发 hello → 服务端确认对局仍在则回 welcome，据此重建本方半场并
+ * 「无输入快进」到服务端当前 tick（catch up）后进战斗屏；若对局已结束/被回收（hello 失败，无 welcome
+ * 后被关）则清快照回首页、不进战斗。
+ *
+ * 时序：boot IIFE 里 tryResumeSession 立即返回 true 短路首页，此函数只发起 WS 连接就返回；屏幕暂停在
+ * 'loading'，待 onWelcome（→'battle'）或 onHelloFail（→'menu'）异步切换。这段 loading 是 WS 连接 +
+ * 快进的短暂窗口（正常亚秒级；对局已亡时因服务端 bad_hello 后惰性关连接，最长约 ~10s 才回首页）。
+ *
+ * 已知简化（对手档案）：存档未持久化对手昵称/头像/段位，恢复时 pvpOpponent=null；对手半场从其后续
+ * WS 快照重建渲染即可，结算屏对手信息缺省。持久化对手档案属后续任务（Task 6/未来）可选增强，不阻塞恢复。
+ *
+ * 已知简化（gap 内波次）：快进时 pvpWaveStartTicks 为空（刚 clear），maybeOpenPvpWave 不会开断线期间
+ * 本应开的波——那些波由重连后服务端重新宣告的 nextWave 驱动补开（ws_hello 清 last_next_wave，重连首快照
+ * 会重推 nextWave）。快进主职是推进落档时的活动波 + 对齐本地时钟，与「真·跨刷新逐波重放」的差距可接受
+ * （见记忆：真·跨刷新恢复不可行，本方案为尽力而为的确认+快进）。
+ */
+function resumePvpSession(save: SessionSaveV1): void {
+  const meta = save.pvp;
+  if (!meta) { clearSessionSave(); screen = 'menu'; scheduleFrame(); return; } // 防御：readSession 已保证 pvp 存在，兜底回首页
+
+  // welcome：服务端确认对局仍在 → 重建本方半场 + 无输入快进 + 进战斗屏。
+  const fastForward = (serverMs: number): void => {
+    battle = restoreBattle(save);            // 用 config（difficultyMul/endless/mapId…）+ pvpInit{enabled:true} 重建，再 applyCoreState
+    currentMap = mapById(save.config.mapId); // 氛围音/HUD 对齐存档地图
+    // 只重挂注入型可见性判定，不重跑碎片掉落规划（planBattleFragmentDrop 会消耗 rng 破坏前向确定性）——同 PvE 恢复。
+    injectWeaponPickupVisible();
+    // 对局态 reset（镜像 onPvpMatched 的 reset 块，但不重扣体力、不重置 matchStart 为 0）。
+    pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
+    pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false;
+    pvpOpponent = null;                      // 已知简化：存档无对手档案，置 null（见函数头注释）
+    pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
+    pvpSide = meta.side;                      // 恢复落档时的真实座位（覆盖 onPvpMatched 默认 'a'）
+    pvpMatchStartMs = meta.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
+    // —— 无输入快进：把本方 sim 从落档 tick 推进到服务端当前 tick ——
+    // 步序（开波→step→tick++）与主循环 PvP 分支一致，保 rng 消费序；pvpWaveStartTicks 为空故不开新波（见头注释）。
+    const targetTick = pvpWaveStartTick(serverMs, meta.startAtServerMs);
+    let tick = meta.localSimTick;
+    while (tick < targetTick && battle.status === 'playing') {
+      maybeOpenPvpWave(battle, tick);
+      battle.step(PVP_SIM_DT);
+      tick++;
+    }
+    localSimTick = tick;
+    oppView = new PvpOppView();               // 全新对手视图：待对手后续 WS 快照填充
+    // 战斗 UI reset（镜像 onPvpMatched；不重扣体力、不 arm 开局「征兵→部署」提示——玩家已在对局中途）。
+    endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pvpExitPopup = false; pausePhase = 'main';
+    ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null;
+    // 快进后本方唐僧已死（我方刷新期间空转推进被吃穿）→ 本地先置判负 result：frame() 结算门控据此冻结定格并走
+    // PvP 结算（段位/功德正常扣减）。服务端权威 result（tangsengDead/看门狗）到达时因 pvpResult 已非空不再重复结算。
+    if (battle.status === 'lost') pvpResult = { outcome: 'lose', reason: 'selfTangsengDead' };
+    screen = 'battle';
+    scheduleFrame();
+  };
+
+  // hello 失败：服务端未确认对局（已结束/被回收，或 uid 不属于该局）→ 清对局态 + 清快照 + 回首页，不进战斗。
+  const goHome = (): void => {
+    endPvpSession();     // 关这条已死 WS + 清 pvpSock/oppView 等（避免残留心跳/重连空转）
+    clearSessionSave();  // 作废快照：这一局已不存在，别再尝试恢复
+    screen = 'menu';
+    scheduleFrame();
+  };
+
+  // 连 WS 校验对局是否仍在：共用 makePvpCallbacks（onOppSnap/onNextWave/onResult/onOppGone/onNoShow + 鉴权），
+  // 覆盖 onWelcome=快进、追加 onHelloFail=回首页。uid 用存档记录值（与本机 ensureUserId 同源）。
+  pvpSock = new PvpSocket({
+    matchId: meta.matchId,
+    uid: meta.uid,
+    ...makePvpCallbacks(),
+    onWelcome: fastForward,
+    onHelloFail: goHome,
+  });
+  pvpSock.connect();
+  // 屏幕保持 'loading'（boot 已短路首页）：welcome→fastForward 切 'battle'；hello 失败→goHome 切 'menu'。
 }
 
 function abortBattleToMenu(): void {
@@ -3000,6 +3097,7 @@ function frame(now: number): void {
     // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里结算段位/功德/商人
     // （与单人一致，差别：段位冻结单人 AI 难度、平局不动段位，见 pvp-settle.ts）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
     if (pvpSock && pvpResult && !pvpSettleResult) {
+      clearSessionSave(); // PvP 终局：作废统一续玩快照（与单人终局块对称；防刷新后误恢复已结束的一局，onHelloFail 兜底之外的即时清理）
       const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave);
       if (rankChange) rank = rankChange.state; // 胜/负动段位（recordWin/Lose 内部已持久化）；平局 rankChange=null 不动
       merit = addMerit(merit, meritGain);      // 累加并持久化功德（封顶 300，同单人）
@@ -3122,13 +3220,33 @@ function frame(now: number): void {
       }
     }
   }
-  // 续玩落档（PvE；PvP 由 Task 3 接入）：帧尾按节流写入全状态快照。
-  // 仅本地对局（!pvpSock）且未终局（!endHandled）时落档；终局清档由结算块的 clearSessionSave 负责。
-  if (screen === 'battle' && !pvpSock && !endHandled) {
+  // 续玩落档（PvP/PvE 统一，Task 2 接 PvE、Task 3 接 PvP）：帧尾按节流写入全状态快照。
+  // 未终局（!endHandled）时落档；PvP 另带对局元信息（matchId/uid/side/开局纪元/本地 tick）供恢复对齐服务端。
+  // 终局清档：PvE 由结算块的 clearSessionSave；PvP 由离开 battle 屏的 abortBattleToMenu/leaveSettleToMenu（endPvpSession 路径）负责。
+  if (screen === 'battle' && !endHandled) {
     // seed 传中性常量 1：Battle 不暴露构造种子，且恢复走 restoreBattle+applyCoreState 会覆盖全部 RNG 态，
-    // 故构造空壳所用 seed 与恢复正确性无关（未来任务如需真实 seed 可再补，当前不需要）。
-    // mapId 无需在 opts 传：serialize 已把它落入 config.mapId（SessionSaveOpts 仅 {seed; pvp?}，无 mapId 字段）。
-    sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: false }); // TODO(Task5): 传入输入 dirty
+    // 故构造空壳所用 seed 与恢复正确性无关。mapId 无需在 opts 传：serialize 已把它落入 config.mapId。
+    if (pvpSock) {
+      // matchId/uid 直接取自当前 WS（PvpSocket.matchId/uid 均 public readonly），与在连的对局身份零漂移。
+      // side 用 pvpSide（onPvpMatched 默认 'a'、resume 覆盖为落档真值）；?? 'a' 仅防御 null（对局中不会为 null）。
+      // localSimTick=本方已完成步数（恢复后据此 + 服务端当前 tick 快进对齐）；PvP 不吃 dirty 节流也无妨（走 MAX 心跳保底）。
+      // !pvpResult 门控：PvP 终局由服务端 result 权威判定（非 endHandled，那是单人概念），result 一到即停止落档——
+      // match 已结束，不应再留可恢复快照（否则刷新会尝试恢复一局已亡对局，虽最终 onHelloFail 回首页但白等）。
+      if (!pvpResult) {
+        sessionSaveCheckpoint('pvp', battle, {
+          seed: 1,
+          pvp: {
+            matchId: pvpSock.matchId,
+            uid: pvpSock.uid,
+            side: pvpSide ?? 'a',
+            startAtServerMs: pvpMatchStartMs,
+            localSimTick,
+          },
+        }, { dirty: false });
+      }
+    } else {
+      sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: false }); // TODO(Task5): 传入输入 dirty
+    }
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   } catch (err) {
