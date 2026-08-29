@@ -446,6 +446,10 @@ function endPvpSession(): void {
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpMatchStartMs = 0;
   pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
   pvpSide = null; // 离开对局：清座位（下次进对局由 onPvpMatched/resumePvpSession 重置）
+  // 离开对局统一作废续玩快照：本函数是所有「离开 battle 屏」路径的必经清理，集中在此清档可避免各出口散落
+  // （尤其断线倒计时退出 main.ts:2283 之前会漏清，留下陈旧 dasheng.session 让下次刷新去重连一局已弃对局）。
+  // 幂等（storeRemove 对已删键无副作用）；PvE 终局/开新局等不经本函数的路径仍各自显式 clearSessionSave。
+  clearSessionSave();
 }
 
 // —— Task 7.6：PvP 断线看门狗（弹窗「网络已断开」+ 单按钮「返回首页」）——
@@ -1552,21 +1556,27 @@ function resumePvpSession(save: SessionSaveV1): void {
       tick++;
     }
     localSimTick = tick;
+    // 从恢复后的实际波次态起步下降沿检测：否则快进结束时若正处 waveActive，首个 post-resume step 的
+    // 清波下降沿(true→false)会被漏判 → 那一波的 sendWaveCleared 不发（主循环仅在 pvpPrevWaveActive && !waveActive 时发）。
+    pvpPrevWaveActive = battle.waveActive;
     oppView = new PvpOppView();               // 全新对手视图：待对手后续 WS 快照填充
     // 战斗 UI reset（镜像 onPvpMatched；不重扣体力、不 arm 开局「征兵→部署」提示——玩家已在对局中途）。
     endHandled = false; endlessResult = null; settleChange = null; ui.paused = false; pvpExitPopup = false; pausePhase = 'main';
     ui.passivePopup = null; ui.passivePopupUntil = 0; ui.activePopup = null; ui.aiItemPopup = null; ui.peachPopup = false; ui.bombPopup = null;
-    // 快进后本方唐僧已死（我方刷新期间空转推进被吃穿）→ 本地先置判负 result：frame() 结算门控据此冻结定格并走
-    // PvP 结算（段位/功德正常扣减）。服务端权威 result（tangsengDead/看门狗）到达时因 pvpResult 已非空不再重复结算。
-    if (battle.status === 'lost') pvpResult = { outcome: 'lose', reason: 'selfTangsengDead' };
+    // 快进后本方唐僧已死（我方刷新期间空转推进被吃穿）→ ①立即经 WS 上报 tangsengDead（一次性，镜像主循环终局上报），
+    // 让服务端据权威模型即时结算对手、不必干等断线计时器；②本地先置判负 result：frame() 结算门控据此冻结定格并走
+    // PvP 结算（我方刷新致死是正常扣减）。服务端权威 result 到达时因 pvpResult 已非空不再重复结算。
+    if (battle.status === 'lost') {
+      if (pvpSock && !pvpStatusReported) { pvpSock.sendStatus('tangsengDead'); pvpStatusReported = true; }
+      pvpResult = { outcome: 'lose', reason: 'selfTangsengDead' };
+    }
     screen = 'battle';
     scheduleFrame();
   };
 
-  // hello 失败：服务端未确认对局（已结束/被回收，或 uid 不属于该局）→ 清对局态 + 清快照 + 回首页，不进战斗。
+  // hello 失败：服务端未确认对局（已结束/被回收，或 uid 不属于该局）→ 清对局态（含清快照）+ 回首页，不进战斗。
   const goHome = (): void => {
-    endPvpSession();     // 关这条已死 WS + 清 pvpSock/oppView 等（避免残留心跳/重连空转）
-    clearSessionSave();  // 作废快照：这一局已不存在，别再尝试恢复
+    endPvpSession();     // 关这条已死 WS + 清 pvpSock/oppView 等；内部已 clearSessionSave（作废这一局快照，别再重连）
     screen = 'menu';
     scheduleFrame();
   };
@@ -1587,9 +1597,8 @@ function resumePvpSession(save: SessionSaveV1): void {
 }
 
 function abortBattleToMenu(): void {
-  endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
-  clearBattleSave(); // 主动退出对局：作废续玩存档
-  clearSessionSave(); // 主动退出对局：作废统一续玩快照
+  endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等）；内部已 clearSessionSave（作废统一续玩快照）。单人调用无副作用（幂等）
+  clearBattleSave(); // 主动退出对局：作废旧 battle-save 续玩存档（dasheng.session 由 endPvpSession 清）
   clearBattleToasts(); // 清残留续玩 toast
   ui.paused = false;
   pvpExitPopup = false;
@@ -3106,7 +3115,9 @@ function frame(now: number): void {
     // 与单人块互斥（单人块已加 && !pvpSock）。result 一到：本方半场已在 step 门控冻结，这里结算段位/功德/商人
     // （与单人一致，差别：段位冻结单人 AI 难度、平局不动段位，见 pvp-settle.ts）。不设 endHandled（那是单人概念），PvP 用 pvpSettleResult 开关。
     if (pvpSock && pvpResult && !pvpSettleResult) {
-      clearSessionSave(); // PvP 终局：作废统一续玩快照（与单人终局块对称；防刷新后误恢复已结束的一局，onHelloFail 兜底之外的即时清理）
+      // PvP 终局即时清档（保留，非冗余）：本块不经 endPvpSession（那要等玩家点结算屏「返回」才走 leaveSettleToMenu），
+      // 在此 result 一到就清，避免玩家停留结算屏期间刷新去重连一局已结束的对局。与单人终局块对称、幂等。
+      clearSessionSave();
       const { rankChange, meritGain } = pvpSettle(pvpResult.outcome, rank, battle.wave);
       if (rankChange) rank = rankChange.state; // 胜/负动段位（recordWin/Lose 内部已持久化）；平局 rankChange=null 不动
       merit = addMerit(merit, meritGain);      // 累加并持久化功德（封顶 300，同单人）
