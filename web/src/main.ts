@@ -1,6 +1,6 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, MAP_ELEMENT, findTrayIndex, traySome, trayTokens } from './battle';
-import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
+import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle } from './battle-save';
 // 统一「刷新续玩」全状态持久化（PvP/PvE 共用）。Task 2 接 PvE：开机恢复 + 帧尾落档 + 终局清档。
 // 注意：旧 ./battle-save 的 loadResumeBattle/tryResumeLocalBattle 路径已在本任务弃用（仅保留定义待 Task 6 清理）。
 // saveResumeCheckpoint（旧 key dasheng.battleSave 的每波写入）亦已无读取方（boot 只从 dasheng.session 恢复），
@@ -414,7 +414,7 @@ function onPvpMatched(ms: import('./api/pvp-client').MatchStart): void {
   oppView = new PvpOppView();
   // WS 连接：本方权威半场每 100ms 发快照；下行 oppSnap→插值视图、nextWave→开波排程、result→结算、oppGone→提示。
   // uid 复用 user-id 的 ensureUserId（与 apiFetch 的 X-Uid 同源，不另起存储）。回调集合与恢复路径共用（makePvpCallbacks）。
-  pvpSock = new PvpSocket({ matchId: ms.matchId, uid: ensureUserId(), ...makePvpCallbacks() });
+  pvpSock = new PvpSocket({ matchId: ms.matchId, uid: ensureUserId(), ...makePvpCallbacks(), wsFactory: pvpWsFactoryOverride ?? undefined });
   pvpSock.connect();
   // 对局态 reset：本方权威时钟归零、终局/波次/认输/结算归零。
   pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
@@ -727,6 +727,16 @@ let pvpCopied = false;
 // Model C（Plan C）：本方半场本地权威实时 step；每 100ms 经 WS 发本方快照；对手半场由 WS 快照
 // → PvpOppView 双缓冲插值 → bridgeOpponentFromSnap 渲染。pvpSock 非空即「在线对局中」的唯一哨兵。
 let pvpSock: PvpSocket | null = null;   // 非空=当前在线 PvP 对局中（WS 已连）；本方权威发快照，终局后冻结
+// —— 冒烟注入点（仅测试用；生产恒 null，零副作用）——
+// PvP WebSocket 工厂覆盖：非 null 时 onPvpMatched / resumePvpSession 建 PvpSocket 都用它替代真实全局 WebSocket，
+// 供 headless 冒烟（tools/pvp-refresh-smoke.mjs）在无 Python 服务端时脚本化「welcome+oppSnap」或「静默不 welcome」
+// 两条恢复链路。默认取自 window.__pvpWsFactory——刷新恢复的 resumePvpSession 在 boot IIFE（await 之后）即建 socket，
+// 早于任何 page.evaluate 能调用 setPvpWsFactory 的时机，故恢复路径的注入须由 page.evaluateOnNewDocument 在页面脚本
+// 之前把工厂挂到 window，从而在本模块初始化时被读入。生产环境 window 无该字段 → 恒 null → 走真实 WebSocket。
+let pvpWsFactoryOverride: PvpSocketOpts['wsFactory'] | null =
+  (typeof window !== 'undefined'
+    ? ((window as unknown as { __pvpWsFactory?: PvpSocketOpts['wsFactory'] }).__pvpWsFactory ?? null)
+    : null);
 let pvpAcc = 0;                        // 固定步长累加器余量（本方半场 fixed-step，保留）
 let oppView: PvpOppView | null = null; // 对手半场双缓冲插值视图（WS 快照 → bridgeOpponentFromSnap）
 let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引（maybeOpenPvpWave 时钟基准；每对局 reset）
@@ -1604,6 +1614,7 @@ function resumePvpSession(save: SessionSaveV1): void {
     onWelcome: fastForward,
     onHelloFail: goHome,
     welcomeTimeoutMs: RESUME_WELCOME_TIMEOUT_MS,
+    wsFactory: pvpWsFactoryOverride ?? undefined,
   });
   pvpSock.connect();
   // 屏幕保持 'loading'（boot 已短路首页）：welcome→fastForward 切 'battle'；hello 失败/超时→goHome 切 'menu'。
@@ -3385,6 +3396,11 @@ interface GameHook {
   // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
   // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
   enterPvp: (seed: number) => void;
+  // 冒烟注入钩子（Part B）：运行期覆盖 PvP WebSocket 工厂（供无 Python 服务端时脚本化 WS 链路）。
+  // 注意：刷新恢复（resumePvpSession）在 boot 期就建 socket，早于本钩子可被调用的时机——恢复路径的注入须改用
+  // page.evaluateOnNewDocument 把工厂挂到 window.__pvpWsFactory（模块初始化时读入，见 pvpWsFactoryOverride 注释）。
+  // 本钩子适用于运行期路径（如先调用它、再 enterPvp）。传 undefined/null 可清除覆盖。
+  setPvpWsFactory: (f: PvpSocketOpts['wsFactory']) => void;
   // 冒烟钩子：不经真实服务端直接摆出匹配屏阶段（queuing 匹配中 / matched 对阵卡动画窗口），
   // 供 headless 验证匹配屏渲染与「动画播完自动开局」。matched 会走真实开局路径（MATCHED_SHOW_MS 后切战斗屏）。
   fakePvpMatch: (phase: 'queuing' | 'matched') => void;
@@ -3419,7 +3435,7 @@ interface GameHook {
   // 自测探针：境界/功德（冒烟验证 PvP 终局也结算 rank/merit，与单人一致）。
   rankMerit: () => { rankLevel: number; merit: number };
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
-  resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null; toast: string | null };
+  resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null; toast: string | null; resumePopup: boolean };
   // 自测探针：唐僧入场走跳（冒烟验证 introT 推进 + hopY 振荡、归位后归零）。
   tangsengIntro: () => { t: number; done: boolean; hopY: number };
 }
@@ -3546,6 +3562,8 @@ const hook: GameHook = {
     } as import('./api/pvp-client').MatchStart;
     onPvpMatched(ms);
   },
+  // 冒烟注入钩子（Part B）：运行期覆盖/清除 PvP WS 工厂。恢复路径的注入见 window.__pvpWsFactory（该变量注释）。
+  setPvpWsFactory: (f) => { pvpWsFactoryOverride = f ?? null; },
   fakePvpMatch: (phase) => {
     // 复用真实 pvpNet 构造 controller 但不调 startRandom/startInvite（不触发网络）：
     // queuing 态 ticket 为 null → pump 不轮询；matched 态 pump 直接短路。
@@ -3635,7 +3653,10 @@ const hook: GameHook = {
     return { left: true };
   },
   // 续玩冒烟：读当前 screen / 是否有存档 / 当前 battle 波数，供 smoke-resume.mjs 断言。
-  resumeProbe: () => ({ screen, hasSave: !!readBattleSave(), wave: battle.wave, status: battle.status, toast: peekBattleToast() }),
+  // hasSave 现读统一续玩存档 dasheng.session（readSession），与开机恢复的真相源一致——旧 readBattleSave
+  // （dasheng.battleSave）已无读取方（boot 只从 dasheng.session 恢复），继续读它会让探针与实际恢复源脱节。
+  // resumePopup：新恢复 UX 是「继续 / 回到首页」模态弹窗（替代旧 toast），供 PvE 续玩冒烟断言弹窗已弹出。
+  resumeProbe: () => ({ screen, hasSave: !!readSession(), wave: battle.wave, status: battle.status, toast: peekBattleToast(), resumePopup }),
   // 自测探针：唐僧入场走跳（hopY 与 drawTangseng 同源 introHopY，供 headless 冒烟验证）。
   tangsengIntro: () => ({ t: battle.introT, done: battle.introDone, hopY: introHopY(battle) }),
 };
