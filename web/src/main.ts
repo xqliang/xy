@@ -2012,6 +2012,10 @@ function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
   battle.pendingWeaponPickups.splice(idx, 1);
+  // 领取神兵碎片是「改动已序列化战斗态(pendingWeaponPickups)」的玩家输入：碎片立即入 bag(saveBag)，
+  // 但若不尽快落档，节流窗口内刷新会恢复旧 pendingWeaponPickups（拾取重现）而 bag 已记账 → 可反复领取
+  // 刷取重复碎片。置脏标使落档在 500ms MIN 内跟上，收窄该刷取窗口。
+  pvpSaveDirty = true;
   playSfx('click');
   const r = addWeaponFragment(bag, id);
   bag = r.state;
