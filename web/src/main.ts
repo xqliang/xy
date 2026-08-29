@@ -1,6 +1,9 @@
 // 引导 + 游戏循环 + 指针交互 + 自测钩子（window.__game）。
 import { Battle, TUNING, MAP_ELEMENT, findTrayIndex, traySome, trayTokens } from './battle';
 import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave } from './battle-save';
+// 统一「刷新续玩」全状态持久化（PvP/PvE 共用）。Task 2 接 PvE：开机恢复 + 帧尾落档 + 终局清档。
+// 注意：旧 ./battle-save 的 loadResumeBattle/tryResumeLocalBattle 路径已在本任务弃用（仅保留定义待 Task 6 清理）。
+import { readSession, restoreBattle, sessionSaveCheckpoint, clearSessionSave, type SessionSaveV1 } from './pvp-save';
 import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
 import { canMerge, ELEMENT_ZH } from '@core';
@@ -644,10 +647,15 @@ void (async () => {
       bootstrapAuth(),
       new Promise<void>((resolve) => setTimeout(resolve, 4000)),
     ]);
-    // 本地对局续玩：无 PvP 深链且存在有效未终局存档时，直接恢复进战斗、跳过首页。
-    if (!(versusCode == null && tryResumeLocalBattle())) {
-      screen = 'menu';
+    // 续玩恢复优先（PvP/PvE 统一）：有有效未终局快照则恢复进战斗、跳过首页；否则走原首页逻辑。
+    // PvP 深链（versusCode 非空）优先于本地续玩：保留原 `versusCode == null` 守卫——此时不恢复本地局，
+    // 直接进 PvP 匹配（见下方 enterPvpMatching），避免点了对战邀请却被塞回旧的单人局。
+    // 恢复逻辑抽到 tryResumeSession()（声明在各模块级 let 之后）以避开 TDZ；PvP 快照由 Task 3 接入。
+    const session = versusCode == null ? readSession() : null;
+    if (session && tryResumeSession(session)) {
+      return; // 已恢复进战斗，短路首页逻辑（finally 仍会排一帧画出续玩局）
     }
+    screen = 'menu';
     if (versusCode) enterPvpMatching('join', versusCode);
     void cloudLogin().then((ok) => {
       if (ok) track('login');
@@ -1388,6 +1396,7 @@ function newGame() {
   battle.rollIntroSpeech(Math.random()); // 开局唐僧出场气泡：50% 概率随机一句（展示层掷随机，不占 sim RNG）
   endHandled = false;
   clearBattleSave(); // 开新局：作废旧续玩存档（首个 ready 会写新档）
+  clearSessionSave(); // 开新局：作废统一续玩快照（PvE/PvP 共用槽位）
   clearBattleToasts(); // 清残留续玩 toast
   endlessResult = null;
   settleChange = null;
@@ -1431,9 +1440,41 @@ function tryResumeLocalBattle(): boolean {
   return true;
 }
 
+// PvE 刷新续玩（统一存档 pvp-save）：读有效未终局 PvE 快照→重建 battle→进战斗界面（不扣体力、跳过首页）。
+// 返回 true=已恢复进战斗（调用方短路首页逻辑）；false=不可恢复（PvP 快照留给 Task 3；终局 PvE 已就地清档）。
+// 仅启动 IIFE 调用：此时各 ui.*Popup / 引导态 / tutorialOverlay 尚为初始默认值，故这里只复位与 newGame/
+// tryResumeLocalBattle 对称的核心循环/结算标志。抽成函数（声明在模块级 let 之后）亦为避开 boot IIFE 的 TDZ。
+function tryResumeSession(session: SessionSaveV1): boolean {
+  if (session.kind !== 'pve') return false; // PvP 跨刷新恢复由 Task 3 的 resumePvpSession 接入，此处不处理
+  // 直接恢复：离线战斗墙钟不走，序列化状态即最新
+  const rb = restoreBattle(session);
+  if (rb.status === 'won' || rb.status === 'lost') {
+    clearSessionSave(); // 续玩前一刻已终局 → 清快照回首页（避免弹终局结算的复杂路径）
+    return false;
+  }
+  battle = rb;
+  currentMap = mapById(session.config.mapId); // 氛围音/HUD 对齐存档地图
+  // 只重挂注入型函数字段：与 tryResumeLocalBattle 一致，走 injectWeaponPickupVisible() 而非
+  // bindBattleWeaponPickup()——后者会 planBattleFragmentDrop() 消耗 rng 并覆盖已恢复的碎片掉落态，
+  // 破坏「恢复后前向确定性」（rng 走样）。故续玩恢复严禁调 bindBattleWeaponPickup()。
+  injectWeaponPickupVisible();
+  endHandled = false;
+  pendingMerchant = false;
+  endlessResult = null;
+  settleChange = null;
+  ui.paused = false;
+  pvpExitPopup = false;
+  pausePhase = 'main';
+  screen = 'battle';
+  resumePopup = true; // 复用现有「继续 / 回到首页」选择弹窗（模态、冻结仿真）
+  scheduleFrame();
+  return true;
+}
+
 function abortBattleToMenu(): void {
   endPvpSession(); // Task 10：统一清理 PvP 对局态（关 WS、清 pvpSock/oppView/pvpSettleResult 等），单人调用无副作用（幂等）
   clearBattleSave(); // 主动退出对局：作废续玩存档
+  clearSessionSave(); // 主动退出对局：作废统一续玩快照
   clearBattleToasts(); // 清残留续玩 toast
   ui.paused = false;
   pvpExitPopup = false;
@@ -2883,6 +2924,7 @@ function frame(now: number): void {
     if (!endHandled && (battle.status === 'won' || battle.status === 'lost') && !pvpSock) {
       endHandled = true;
       clearBattleSave(); // 本局终局：作废续玩存档
+      clearSessionSave(); // 本局终局：作废统一续玩快照（PvE；防刷新后误恢复已结束的一局）
       pendingMerchant = true;
       recordHeroMatchGame(battle.heroMatchedIdsThisGame());
       // Task 10：单人到达终局 → 标记「已玩过一局」，据此解锁 PvP 入口。
@@ -3070,6 +3112,14 @@ function frame(now: number): void {
         ctx.fillRect(VIEW_W, 0, bx, VIEW_H); // 右黑边
       }
     }
+  }
+  // 续玩落档（PvE；PvP 由 Task 3 接入）：帧尾按节流写入全状态快照。
+  // 仅本地对局（!pvpSock）且未终局（!endHandled）时落档；终局清档由结算块的 clearSessionSave 负责。
+  if (screen === 'battle' && !pvpSock && !endHandled) {
+    // seed 传中性常量 1：Battle 不暴露构造种子，且恢复走 restoreBattle+applyCoreState 会覆盖全部 RNG 态，
+    // 故构造空壳所用 seed 与恢复正确性无关（未来任务如需真实 seed 可再补，当前不需要）。
+    // mapId 无需在 opts 传：serialize 已把它落入 config.mapId（SessionSaveOpts 仅 {seed; pvp?}，无 mapId 字段）。
+    sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: false }); // TODO(Task5): 传入输入 dirty
   }
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   } catch (err) {
