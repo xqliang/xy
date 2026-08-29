@@ -1,20 +1,22 @@
-# PvP 刷新重连恢复 + 对手断线续打 + 断线负不扣段位 —— 设计
+# PvP/PvE 全状态续玩：刷新恢复到最新 + 对手断线续打 + 断线负不扣段位 —— 设计
 
 日期：2026-08-29
 分支：`worktree-pvp-refresh-recovery`
-关联：`2026-08-26-pvp-disconnect-resilience-design.md`（A1 降级「解冻续打」）、`2026-08-21-online-pvp-ws-state-sync-design.md`（Model C 本方权威半场）
+关联：`2026-08-26-pvp-disconnect-resilience-design.md`（A1 降级「解冻续打」）、`2026-08-21-online-pvp-ws-state-sync-design.md`（Model C 本方权威半场）、`2026-08-23-battle-resume-save-design.md`（既有单人续玩）
 
 ## 1. 目标与非目标
 
 ### 目标
-1. **刷新恢复**：PvP 对局中刷新页面，重连后若对局仍在，恢复本方半场并「快进」追上服务端当前进度，继续对局；对局已结束则直接回首页（不进战斗页）。
-2. **对手断线续打**：对手断线期间本方不再冻结，继续战斗（对手半场以最后快照定格）；对手重连则恢复同步，超时未回则本方判胜。
-3. **断线负不扣段位**：因**对手断线**导致本方唐僧死亡而负的，不扣段位；因**本方刷新/断线**导致本方唐僧死亡而负的，照常扣段位（防刷新逃判负）。
+**统一一套「全状态序列化 + 节流持久化 + 刷新恢复」机制，PvP 与 PvE（单人闯关/无尽）共用**，刷新后恢复到最新状态：
+1. **PvE 刷新恢复**（离线，更简单）：刷新后恢复本方战斗到最新序列化状态，直接继续（无需网络/快进，墙钟不走）。
+2. **PvP 刷新恢复**：刷新后重连，若对局仍在，恢复本方半场并「快进」追上服务端当前进度，继续对局；对局已结束则直接回首页（不进战斗页）。
+3. **对手断线续打**：对手断线期间本方不再冻结，继续战斗（对手半场以最后快照定格）；对手重连则恢复同步，超时未回则本方判胜。
+4. **断线负不扣段位**：因**对手断线**导致本方唐僧死亡而负的，不扣段位；因**本方刷新/断线**导致本方唐僧死亡而负的，照常扣段位（防刷新逃判负）。
 
 ### 非目标（YAGNI）
-- 不做「种子 + 输入逐帧重放」式完美确定性恢复（成本高、长对局重放慢、非确定性风险大）。改用全状态序列化快照 + 快进。
-- 不改动单人续玩（`battle-save.ts`）既有 ready-only 语义。
-- 不解决「跨实例水平扩展后 match 运行时在别的实例」——`ws_hello` 已按 matchId+uid 在本实例 matches 里查；刷新重连仍走同一 matchId，若该局已 reaped 或 match 不在此实例则 `bad_hello` → 回首页（安全兜底）。
+- 不做「种子 + 输入逐帧重放」式完美确定性恢复（成本高、长对局重放慢、非确定性风险大）。改用全状态序列化快照 +（PvP）快进。
+- **解除既有单人续玩的 ready-only 保守限制**：`battle-save.ts` 现状只在 `status==='ready'`（两波之间）存档、刷新丢 ready 窗内布置；本设计把它升级为「全状态 + 输入触发 + 节流」，PvE 恢复到最新一帧。这是对既有功能的增强（含回归面，见 §7）。
+- 不解决「跨实例水平扩展后 match 运行时在别的实例」——`ws_hello` 已支持跨实例 `_load_match_from_redis` 懒认领；刷新重连仍走同一 matchId，若该局已 reaped 或 uid 不属于则 hello 失败 → 回首页（安全兜底）。
 
 ## 2. 背景与关键约束
 
@@ -25,56 +27,61 @@
 
 ## 3. 设计总览
 
+PvP/PvE **共用**底层「全状态序列化 + 输入触发 + 节流写入 + `applyCoreState` 恢复」，仅**恢复流程分叉**（PvE 直接恢复；PvP 多「ws_hello 确认 + 快进对齐服务端 tick」）。
+
 ```
-[PvP 战斗中]                        [刷新 / 关页]
-  每帧帧尾：满足写入门槛→写              ↓
-  localStorage pvp 续玩快照        页面重载
-  {matchId,uid,side,seed,map,        ↓
-   startAtServerMs,                 [启动] 发现 PvP 续玩快照
-   localSimTick, core}                ↓
-                                    直连 WS + ws_hello(matchId,uid)
-                                         ├─ 对局存在(返回 serverMs)
-                                         │    → 恢复本方 battle + 快进到目标 tick
-                                         │    → 我方唐僧快进中死 → 负·扣段位(我方刷新导致)
-                                         │    → 否则 → 进战斗页，正常对战
-                                         └─ bad_hello(对局已结束/不在此实例)
-                                              → 清快照 → 回首页(不进战斗)
+[战斗中：PvP 或 PvE]                 [刷新 / 关页]
+  帧尾：dirty + 过间隔 → 写            ↓
+  localStorage 续玩快照            页面重载
+  {kind:pvp|pve, …, core}             ↓
+                                   [启动] 发现续玩快照
+                                     ├─ kind=pve（离线）
+                                     │    → restoreBattle(save) + screen='battle'，直接继续
+                                     │    （无需网络/快进；墙钟不走，状态即最新）
+                                     └─ kind=pvp
+                                          → 直连 WS + ws_hello(matchId,uid)
+                                             ├─ 对局存在(返回 serverMs)
+                                             │    → 恢复本方 battle + 快进到目标 tick
+                                             │    → 我方唐僧快进中死 → 负·扣段位(我方刷新导致)
+                                             │    → 否则 → 进战斗页，正常对战
+                                             └─ 对局不存在(onWelcome 未到就 onclose)
+                                                  → 清快照 → 回首页(不进战斗)
 ```
 
 ## 4. 详细设计
 
-### 4.1 客户端：PvP 续玩快照持久化
+### 4.1 统一续玩快照持久化（PvP/PvE 共用）
 
-**新文件 `web/src/pvp-save.ts`**（独立于 `battle-save.ts`，不复用单人 `SAVE_KEY`，键名 `dasheng.pvp.session`）：
+**新文件 `web/src/pvp-save.ts`**（取代并增强 `battle-save.ts` 的续玩职责；单键 `dasheng.session`，`kind` 字段区分 pvp/pve）。
 
-- 数据结构 `PvpSessionSaveV1`：
+- 数据结构 `SessionSaveV1`：
   - `v: 1`、`gameVersion`、`savedAt`
-  - `matchId: string`、`uid: string`、`side: 'a'|'b'`
-  - `seed: number`、`mapId: string`
-  - `startAtServerMs: number`（= 现有 `pvpMatchStartMs`）
-  - `localSimTick: number`（存档时的本方时钟）
-  - `config: BattleSaveConfig`、`core: BattleCoreState`（直接取自 `battle.serialize()`）
-- **写入门槛**（帧尾 `frame()` 里调用 `pvpSaveCheckpoint(battle)`）：
-  - 仅 `isPvp` 对局、`status` ∈ {`playing`,`ready`}（终局 won/lost 不写；快照生命周期=「对局进行中」）。
-  - **输入触发 + 时间节流**：我方任一有效输入（征兵/部署/合并/铲地/主动技/大招）立即置 `dirty`；帧尾若 `dirty` 且距上次写入 ≥ `PVP_SAVE_MIN_INTERVAL_MS`(建议 500ms) 才落盘，或距上次写入 ≥ `PVP_SAVE_MAX_INTERVAL_MS`(建议 2000ms) 无条件落盘。节流避免每帧 stringify 大对象。
-  - `storeSet` 吞错（配额/wx 存储失败）best-effort，与单人一致。
-- **清除时机**：对局正常终局（收到 `result`/`leaveSettleToMenu`）、`endPvpSession()`、刷新恢复时回首页分支。调用方显式 `clearPvpSave()`。
-- **读取校验** `readPvpSession()`：`JSON.parse` 容错、`v`/`gameVersion` 校验、字段齐全、`core` 非空；无效返回 null。
-- **恢复构造** `restorePvpBattle(save)`：`new Battle(save.seed, 1, mapById(save.mapId), /*meta*/undefined, /*weapons*/undefined, /*equipped*/undefined, /*passives*/undefined, save.config.endless, /*aiSkill*/undefined, 1, /*heroMatch*/undefined, /*pvpInit*/{enabled:true})` → `applyCoreState(save.core)`。PvP battle 不用 meta/weapons/passives/heroMatch（全由 core 覆盖，见 §6.1）。seed 用存档里的原值，避免与对手半场 seed 分叉。
+  - `kind: 'pvp' | 'pve'`
+  - PvP 专有：`matchId`、`uid`、`side: 'a'|'b'`、`startAtServerMs`（= `pvpMatchStartMs`）、`localSimTick`
+  - 共用：`seed`、`mapId`、`config: BattleSaveConfig`、`core: BattleCoreState`（直接取自 `battle.serialize()`）
+- **写入门槛**（帧尾调用 `sessionSaveCheckpoint(battle, kind)`）：
+  - `status` ∈ {`playing`,`ready`}（终局 won/lost 不写；快照生命周期=「对局进行中」）。**这解除了既有 ready-only 限制**——PvE 进行中（playing）也存，刷新恢复到最新一帧。
+  - **输入触发 + 时间节流**：我方任一有效输入（征兵/部署/合并/铲地/主动技/大招）置 `dirty`；帧尾若 `dirty` 且距上次写入 ≥ `SESSION_SAVE_MIN_INTERVAL_MS`(建议 500ms) 落盘，或距上次写入 ≥ `SESSION_SAVE_MAX_INTERVAL_MS`(建议 2000ms) 无条件落盘。节流依据见 §4.6 性能基准。
+  - `storeSet` 吞错 best-effort。
+- **清除时机**：对局正常终局（PvP 收 `result`/`leaveSettleToMenu`；PvE won/lost 结算）、`endPvpSession()`、刷新恢复时回首页分支。`clearSessionSave()`。
+- **读取校验** `readSession()`：`JSON.parse` 容错、`v`/`gameVersion` 校验、字段齐全、`core` 非空；无效返回 null。
+- **恢复构造** `restoreBattle(save)`：`new Battle(save.seed, 1, mapById(save.mapId), /*meta*/undefined, /*weapons*/undefined, /*equipped*/undefined, /*passives*/undefined, save.config.endless, /*aiSkill*/undefined, 1, /*heroMatch*/undefined, /*pvpInit*/save.kind==='pvp'?{enabled:true}:undefined)` → `applyCoreState(save.core)`。PvP 不用 meta/weapons/passives/heroMatch（全由 core 覆盖，见 §6.1）；PvE 的这几个也由 core 覆盖，构造传中性值。seed 用存档原值。
+- **既有单人续玩的处置**：`battle-save.ts`（ready-only、`dasheng.battle.save` 旧键）**退役**——其续玩职责由本机制接管；`migrateCoreGeneralIds` 等迁移逻辑并入新 `readSession`。保留旧键读取做一次性迁移可选（实现时定，倾向直接作废旧档，因版本校验 `gameVersion` 变更即失效）。
 
-### 4.2 启动恢复（boot）
+### 4.2 启动恢复（boot，PvE/PvP 分叉）
 
-- 位置：`main.ts` 启动 IIFE 内，**在 `bootstrapAuth` 之后、单人 `tryResumeLocalBattle()` 之前**，或独立一段（优先 PvP，因为 PvP 对局有时效性）。
+- 位置：`main.ts` 启动 IIFE 内，`bootstrapAuth` 之后（优先续玩恢复，因为对局有时效性；其次才是原有首页/单人逻辑）。
 - 流程：
-  1. `save = readPvpSession()`；无则跳过（走原有单人/首页逻辑）。
-  2. 有 → 直连 PvP WS（`enterPvpMatching` 不用，而是新路径 `resumePvpSession(save)`）：建 `PvpSocket(matchId, uid)` + `onWelcome`。
-  3. `onWelcome(serverMs)`：
-     - **快进恢复**：`restorePvpBattle(save)` 建 battle，`screen='battle'`；目标 tick `targetTick = pvpWaveStartTick(serverMs, save.startAtServerMs)`（用存档的 `startAtServerMs`，不用实时 `pvpMatchStartMs` 以免零点漂移）；若 `targetTick > save.localSimTick`，`battle` 以 `PVP_SIM_DT` 步进 `targetTick - save.localSimTick` 步（**无新输入**，防御自动战斗=我方不在时的自然演进），每步 `maybeOpenPvpWave(battle, tick)`。设 `localSimTick = targetTick`、`pvpMatchStartMs = save.startAtServerMs`、`pvpAcc=0`。随后恢复正常 `frame()` 对战循环。
-     - **快进中我方唐僧死**（`battle.status==='lost'`）：直接走 PvP 负结算 `pvpSettle('lose', rank, wave)` → **扣段位**（我方刷新导致，规则 §4.4），弹结算屏，不清快照由结算流程收尾。
-     - **对局不存在**（连上后未收到 `onWelcome` 就 `onclose`，即 §6.4 的 `onHelloFail`）：`clearPvpSave()` → `screen='menu'`（首页），**不进战斗页**。对局已正常结束/被 reaper 回收都走此兜底。
-  4. 加载态：恢复期间 `screen` 保持 loading 或新中间态，避免闪战斗页；`pvpSock`/`pvpController` 状态按现有 `onPvpMatched` 等价初始化（`pvpOpponent` 等）。
-
-- **与单人的衔接**：PvP 续玩优先；若 `readPvpSession()` 返回 null 再走 `tryResumeLocalBattle()`。二者键不同、互斥（PvP 对局期间不写单人存档，`saveResumeCheckpoint` 的 `isPvp` 守卫已在）。
+  1. `save = readSession()`；无则跳过（走原有首页逻辑）。
+  2. 按 `save.kind` 分叉：
+     - **`kind='pve'`（离线，直接恢复）**：`battle = restoreBattle(save)`、`screen='battle'`，按现有单人进战斗的初始化（`endHandled=false` 等）。**无需网络、无需快进**——离线战斗墙钟不走，序列化状态即最新，`applyCoreState` 后直接接 `frame()` 继续。若 `core.status` 已是 won/lost（续玩前一刻终局）→ 走正常结算而非进战斗。
+     - **`kind='pvp'`**：直连 PvP WS（新路径 `resumePvpSession(save)`，不走 `enterPvpMatching`）：建 `PvpSocket(matchId, uid)` + `onWelcome` + `onHelloFail`（§6.4）。
+  3. PvP 的 `onWelcome(serverMs)`：
+     - **快进恢复**：`restoreBattle(save)` 建 battle，`screen='battle'`；目标 tick `targetTick = pvpWaveStartTick(serverMs, save.startAtServerMs)`（用存档的 `startAtServerMs`，不用实时 `pvpMatchStartMs` 以免零点漂移）；若 `targetTick > save.localSimTick`，`battle` 以 `PVP_SIM_DT` 步进 `targetTick - save.localSimTick` 步（**无新输入**，防御自动战斗=我方不在时的自然演进），每步 `maybeOpenPvpWave(battle, tick)`。设 `localSimTick = targetTick`、`pvpMatchStartMs = save.startAtServerMs`、`pvpAcc=0`。随后恢复正常 `frame()` 对战循环。
+     - **快进中我方唐僧死**（`battle.status==='lost'`）：走 PvP 负结算 `pvpSettle('lose', rank, wave)` → **扣段位**（我方刷新导致，规则 §4.4），弹结算屏。
+     - **对局不存在**（`onHelloFail`，即连上后未收 `onWelcome` 就 `onclose`，§6.4）：`clearSessionSave()` → `screen='menu'`（首页），**不进战斗页**。对局已正常结束/被 reaper 回收都走此兜底。
+  4. 加载态：恢复期间 `screen` 保持 loading 或新中间态，避免闪战斗页；PvP 的 `pvpSock`/`pvpController`/`pvpOpponent` 等按现有 `onPvpMatched` 等价初始化。
+- **与旧单人续玩的衔接**：本机制**取代** `battle-save.ts` 的续玩职责（同键 `dasheng.session`，PvE 也走它）；`tryResumeLocalBattle`/旧 `SAVE_KEY` 退役（§4.1）。刷新恢复统一走 `readSession()`。
 
 ### 4.3 对手断线续打（去掉冻结）
 
@@ -106,21 +113,34 @@
 - **RNG 一致**：`applyCoreState` 恢复 4 个 RNG state（`rngS/aiRngS/aiSpawnRngS/bossScheduleRngS`），快进续跑与「未断线的确定性演进」逐位一致（前提：快进步数与 `targetTick - save.localSimTick` 精确相等）。
 - **tick 只增不减**：`localSimTick` 存档值 ≤ 目标；恢复后取其大者续跑，不倒拨。
 
+### 5.1 性能基准（实测，2026-08-29）
+
+用 `vite-node` 跑真实 `Battle.serialize()` 测（进行中战斗、激活武将、出若干波怪）：
+
+| 指标 | 实测值 | 说明 |
+|---|---|---|
+| `serialize()` 本身 | ~0.002 ms | 近乎零开销（纯字段收集） |
+| `JSON.stringify(serialize())` | **~0.016 ms**（约 7.7 KB 状态） | 主线程同步开销的**唯一实质项** |
+| 内存 `localStorage.set` | ~0.0002 ms | 可忽略（wx `setStorageSync` 同步写小数据亦 negligible） |
+
+**结论**：单次全状态序列化的主线程成本极低（<0.1ms，即使实体数放大数倍仍远低于 16.7ms 帧预算）。**瓶颈不在单次快慢，而在写入频率**——故节流策略（输入触发 + `SESSION_SAVE_MIN_INTERVAL_MS=500ms` / `MAX=2000ms`）是为避免输入风暴时反复 stringify，而非单次延迟。这把既有「ready-only + 每窗一次」升级为「全状态 + 节流」是安全的。注：本基准实体规模受 `summon` 经济门限未拉满，但量级与趋势对频率策略已具决定性。
+
 ## 6. 风险与已确认事实（实现前已核实）
 
-1. ~~`Battle` 构造的 `pvpInit`~~ **已确认**：`PvpInit = { enabled: boolean }`（battle.ts:1016），只一个布尔，无需 matchId/side。`restorePvpBattle` 用 `pvpInit={enabled:true}`。PvP battle 既有构造（main.ts:331 `onPvpMatched`）为 `new Battle(ms.seed, 1, map, meta, wb, equipped, passives, /*endless*/false, /*aiSkill*/undefined, 1, /*heroMatch*/undefined, {enabled:true})`——**PvP 不用 meta/weapons/passives/heroMatch，全部由 `applyCoreState(core)` 覆盖**，故恢复时这些构造参数传中性值即可。
+1. ~~`Battle` 构造的 `pvpInit`~~ **已确认**：`PvpInit = { enabled: boolean }`（battle.ts:1016），只一个布尔，无需 matchId/side。`restoreBattle` 对 pvp 用 `pvpInit={enabled:true}`。PvP battle 既有构造（main.ts:331 `onPvpMatched`）为 `new Battle(ms.seed, 1, map, meta, wb, equipped, passives, /*endless*/false, /*aiSkill*/undefined, 1, /*heroMatch*/undefined, {enabled:true})`——**PvP 不用 meta/weapons/passives/heroMatch，全部由 `applyCoreState(core)` 覆盖**，故恢复时这些构造参数传中性值即可。
 2. **非 ready 状态恢复**：`serialize` 存了 `status`/`waveActive`/飞行实体，`applyCoreState` 全量覆盖；单人限 ready 是保守策略（丢弃 ready 窗内临时布置）。PvP 快进恢复 `playing` 态：特效字段（fx/damageFloats/bursts）`applyCoreState` 留空由 `step()` 重建（现有注释），实现时首帧自测无残留/不崩。
 3. **对手重连 puppet 接续**：对手断线期间我方继续 step，我方半场持续发快照；对手重连后其 `oppView` 从新快照接续——`PvpOppView` 的棘轮/外推对「长时间断流后接新快照」需验证不跳变。
-4. **hello 失败的客户端判定（重要）**：`ws_hello`（api_versus.py:669）已支持**跨实例 `_load_match_from_redis` 懒认领**，仅当该局真不存在（未认领到 + uid 不属于）才返回 `{"error":"bad_hello"}` 并由服务端关连接。但 `hello` 是 `PvpSocket` **send-only**，客户端**无显式 error 回调**——bad_hello 表现为「连接被服务端关闭」→ `onclose` 触发，而成功的 hello 会先收到 `welcome{serverMs}`。故恢复流程的「对局不存在」判定 = **连上后未收到 `onWelcome` 就 `onclose`（且非我方主动 close）** → `clearPvpSave()` + 回首页。需给 `PvpSocket` 增一个可选的 `onHelloFail?: () => void`（在 `handleClose` 里若 `!this.gotWelcome && !this.closed` 时回调），恢复路径据此兜底。
+4. **hello 失败的客户端判定（重要）**：`ws_hello`（api_versus.py:669）已支持**跨实例 `_load_match_from_redis` 懒认领**，仅当该局真不存在（未认领到 + uid 不属于）才返回 `{"error":"bad_hello"}` 并由服务端关连接。但 `hello` 是 `PvpSocket` **send-only**，客户端**无显式 error 回调**——bad_hello 表现为「连接被服务端关闭」→ `onclose` 触发，而成功的 hello 会先收到 `welcome{serverMs}`。故恢复流程的「对局不存在」判定 = **连上后未收到 `onWelcome` 就 `onclose`（且非我方主动 close）** → `clearSessionSave()` + 回首页。需给 `PvpSocket` 增一个可选的 `onHelloFail?: () => void`（在 `handleClose` 里若 `!this.gotWelcome && !this.closed` 时回调），恢复路径据此兜底。
 5. **段位扣除的终局时刻依赖**：「对手断线我方输不扣」要求 `_set_result` 在**终局时刻**读胜方 side 的 `gone_ms`/`connected_ever`。`_set_result` 在持锁内同步执行、`_forget_match_state` 在其后，故判定时刻这些 side 字段仍有效——实现时加测试锁死该时序。
 6. **`serverMs` 与快进 tick 精度**：`onWelcome(serverMs)` = 服务端 `self._now()`（毫秒墙钟）。`targetTick = pvpWaveStartTick(serverMs, save.startAtServerMs)`。因双方 `startAtServerMs` 同值（match 级共享），且本机按 `PVP_SIM_DT=1/30` 推进，`(serverMs - startAtServerMs) * 30 / 1000` 即服务端认为当前应在的 tick。两端各跑各的半场，无需逐帧一致，只需**我方波次时钟不偏离服务端纪元**（`maybeOpenPvpWave` 用 `pvpWaveStartTick` 校准）。
 
 ## 7. 测试策略
 
-- **`web/tools/pvp-refresh-smoke.mjs`**（新，puppeteer + 真实 server/fakeredis 环境）：构造 PvP 对局→写续玩快照→模拟刷新（重载页）→断言 `readPvpSession` 存在→mock `ws_hello` 返回 serverMs→断言恢复进战斗 + 快进步数 = 目标 tick - 存档 tick；断言 `bad_hello` → 回首页。
+- **`web/tools/pvp-refresh-smoke.mjs`**（新，puppeteer + 真实 server/fakeredis 环境）：PvP 对局→写续玩快照→模拟刷新（重载页）→断言 `readSession` 存在→mock `ws_hello` 返回 serverMs→断言恢复进战斗 + 快进步数 = 目标 tick - 存档 tick；断言对局不存在（onWelcome 未到+onclose）→ 回首页。
+- **`web/tools/pve-resume-smoke.mjs`**（新）：PvE 单人/无尽进行中→写快照→重载页→断言 `readSession().kind='pve'`→断言直接恢复进战斗、状态（wave/units/HP）与存档一致（playing 态全状态恢复）。
 - **单测**：
-  - `pvp-save.ts`：读写往返、`v`/版本校验、非 PvP 不写、终局不写、节流门槛（用假时钟）。
-  - 快进目标 tick：`pvpWaveStartTick(serverMs, startAt)` 与在线一致（已有 `pvp-fixedstep` 测试扩展）。
+  - `pvp-save.ts`：读写往返、`v`/版本校验、终局不写、节流门槛（假时钟）、pvp/pve 的 `kind` 分流。
+  - 快进目标 tick：`pvpWaveStartTick(serverMs, startAt)` 与在线一致（扩展 `pvp-fixedstep` 测试）。
   - `pvp-pause`：去掉 `pvpOppGone` 后 `shouldStepSim` 在对手断线时返回 true（我方继续）。
   - 段位：`pvpSettle` 对 `selfTangsengDeadOppGone` 不返回 rankChange。
 - **服务端 pytest**：`_set_result` 对 TangsengDead + 胜方 gone/未连接 → reason=`selfTangsengDeadOppGone`；`ws_hello` 重置 digest 基线；既有 `test_versus_ws`/`test_versus_redis` 全绿。
@@ -129,9 +149,13 @@
 
 ## 8. 落地顺序（供 plan 参考）
 
-1. `pvp-save.ts` 持久化 + 写入节流 + 清除（纯客户端，可先单测）。
-2. 启动恢复 + 快进（`restorePvpBattle` + `resumePvpSession` + bad_hello 兜底），`PvpSocket` 透传 hello error。
-3. 对手断线续打（`shouldStepSim` 去 `pvpOppGone`）。
-4. 断线负不扣段位（服务端 `_set_result` reason 区分 + 客户端 `pvpSettle` 分流）。
-5. 反作弊重连基线重置（`ws_hello`）。
-6. 冒烟 + 单测 + 门禁 + wx bundle 重建。
+**先 PvE 后 PvP**——PvE 恢复无网络依赖、可先验证全状态序列化正确性，给 PvP 打底。
+
+1. `pvp-save.ts` 统一持久化 + 写入节流 + 清除（纯客户端，PvP/PvE 共用；可先单测读写/节流）。
+2. **PvE 刷新恢复**（`restoreBattle` + `readSession().kind='pve'` 分支 + `screen='battle'`），退役 `battle-save.ts` 续玩职责；单测 + 浏览器冒烟验证序列化正确性（全状态、playing 态恢复）。
+3. **PvP 刷新恢复**：`resumePvpSession` + 快进（`restoreBattle` + `targetTick` 追赶）+ `onHelloFail` 兜底回首页，`PvpSocket` 增 `onHelloFail`。
+4. 对手断线续打（`shouldStepSim` 去 `pvpOppGone`）。
+5. 断线负不扣段位（服务端 `_set_result` reason 区分 + 客户端 `pvpSettle` 分流）。
+6. 反作弊重连基线重置（`ws_hello`）。
+7. 冒烟 + 单测 + 门禁（server pytest / web vitest / web tsc）+ wx bundle 重建。
+
