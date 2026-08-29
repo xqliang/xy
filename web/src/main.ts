@@ -5,7 +5,7 @@ import { saveResumeCheckpoint, clearBattleSave, loadResumeBattle, readBattleSave
 // 注意：旧 ./battle-save 的 loadResumeBattle/tryResumeLocalBattle 路径已在本任务弃用（仅保留定义待 Task 6 清理）。
 // saveResumeCheckpoint（旧 key dasheng.battleSave 的每波写入）亦已无读取方（boot 只从 dasheng.session 恢复），
 // 属死写，待 Task 6 随 battle-save 一并清理；此前先保留调用（smoke/probe 仍可能触旧 key）。
-import { readSession, restoreBattle, sessionSaveCheckpoint, clearSessionSave, type SessionSaveV1 } from './pvp-save';
+import { readSession, restoreBattle, sessionSaveCheckpoint, clearSessionSave, type SessionSaveV1, type SessionSaveCheckpointIo } from './pvp-save';
 import { pushBattleToast, updateBattleToasts, drawBattleToasts, clearBattleToasts, peekBattleToast } from './battle-toast';
 import { activeById, isBombActiveEffect, isDragActiveEffect } from './actives';
 import { canMerge, ELEMENT_ZH } from '@core';
@@ -731,10 +731,12 @@ let pvpAcc = 0;                        // 固定步长累加器余量（本方�
 let oppView: PvpOppView | null = null; // 对手半场双缓冲插值视图（WS 快照 → bridgeOpponentFromSnap）
 let localSimTick = 0;                   // 本方 battle 已完成的固定步数 = 下一步 tick 索引（maybeOpenPvpWave 时钟基准；每对局 reset）
 // 落档「输入脏标」（Task 5，PvP/PvE 共用同一存档槽故共用一个标志）：任一玩家输入（征兵/部署/合并/铲地/
-// 主动技）置真，帧尾 sessionSaveCheckpoint 据此在 500ms MIN 节流下尽快落档，而非干等 2s MAX 心跳。
+// 主动技/领取碎片）置真，帧尾 sessionSaveCheckpoint 据此在 500ms MIN 节流下尽快落档，而非干等 2s MAX 心跳。
 // 消费策略见帧尾：仅当 checkpoint 真正写入（返回 true）才清零——若因未过 MIN 被节流（返回 false）则保留脏标，
 // 使写入在 MIN 到点时触发（否则 ~60fps 下几乎每次输入都会在下一帧被无写入地清掉、退回 2s 心跳，失去「尽快」意义）。
 // 跨对局在 onPvpMatched / endPvpSession / newGame / 两条恢复路径重置，避免陈旧脏标为新局/已结束局触发写入。
+// ⚠️ 新增任何「改动序列化战斗态」的玩家输入路径时，务必在该处设 pvpSaveDirty=true（漏置只由 2s MAX 心跳
+//    兜底——非数据丢失但会丢该输入最近 ≤2s 的改动；见 Battle.serialize 的落档字段范围）。
 let pvpSaveDirty = false;
 let pvpLastSnapMs = 0;                  // 上次发本方快照的墙钟 ms（100ms 节流）
 let pvpLastSnapRecv = 0;                // 最近一次收到对手快照的墙钟 ms（对方断线倒计时期间据此判重连撤弹窗）
@@ -2008,14 +2010,45 @@ function visibleWeaponPickups(): string[] {
   return battle.pendingWeaponPickups.filter((id) => !isWeaponFragmentsComplete(bag, id));
 }
 
+/**
+ * 关键节点/帧尾统一落档：按当前是否在线 PvP 选 kind 与 opts，写入受 io（dirty/force/now 节流）控制，返回是否真正写入。
+ * 仅在「可续玩战斗」中有效：screen==='battle' 且 !endHandled；PvP 终局（pvpResult 到达）后即停（match 已结束不留
+ * 可恢复快照，否则刷新会尝试恢复一局已亡对局）。其余情形（非战斗屏/已终局/PvP 已判定）为 no-op 返回 false。
+ * 集中于此，避免帧尾与关键节点（如领取碎片强制落档）两处各自构造 PvP 元信息而漂移。
+ *
+ * seed 传中性常量 1：Battle 不暴露构造种子，恢复走 restoreBattle+applyCoreState 覆盖全部 RNG 态，故 seed 与恢复无关。
+ * mapId 无需在 opts 传：serialize 已把它落入 config.mapId。PvP 元信息：matchId/uid 取自当前 WS（public readonly，
+ * 身份零漂移），side 用 pvpSide（?? 'a' 仅防御 null，对局中不会为 null），localSimTick=本方已完成步数（恢复后据此
+ * + 服务端当前 tick 快进对齐）。
+ */
+function sessionCheckpointNow(io: SessionSaveCheckpointIo): boolean {
+  if (screen !== 'battle' || endHandled) return false;
+  if (pvpSock) {
+    if (pvpResult) return false;             // PvP 终局：result 一到即停止落档
+    return sessionSaveCheckpoint('pvp', battle, {
+      seed: 1,
+      pvp: {
+        matchId: pvpSock.matchId,
+        uid: pvpSock.uid,
+        side: pvpSide ?? 'a',
+        startAtServerMs: pvpMatchStartMs,
+        localSimTick,
+      },
+    }, io);
+  }
+  return sessionSaveCheckpoint('pve', battle, { seed: 1 }, io);
+}
+
 function claimWeaponPickup(id: string): void {
   const idx = battle.pendingWeaponPickups.indexOf(id);
   if (idx < 0) return;
   battle.pendingWeaponPickups.splice(idx, 1);
-  // 领取神兵碎片是「改动已序列化战斗态(pendingWeaponPickups)」的玩家输入：碎片立即入 bag(saveBag)，
-  // 但若不尽快落档，节流窗口内刷新会恢复旧 pendingWeaponPickups（拾取重现）而 bag 已记账 → 可反复领取
-  // 刷取重复碎片。置脏标使落档在 500ms MIN 内跟上，收窄该刷取窗口。
+  // 领取神兵碎片是「改动已序列化战斗态(pendingWeaponPickups)」的玩家输入：碎片立即入 bag(addWeaponFragment→saveBag)，
+  // 而 pendingWeaponPickups 若不同刻落档，节流窗口内刷新会恢复旧拾取（拾取重现）而 bag 已记账 → 可反复领取刷重复碎片。
+  // 领取低频（无写风暴风险），故除置脏标外再强制立即落档一次，把 pendingWeaponPickups 与 bag 落到同一刻、彻底关闭该窗口；
+  // 强制写成功即清脏标，免帧尾重复写。非可续玩战斗（如结算屏领取，terminal-gated）中 force 落档为 no-op，脏标留待兜底、无害。
   pvpSaveDirty = true;
+  if (sessionCheckpointNow({ force: true })) pvpSaveDirty = false;
   playSfx('click');
   const r = addWeaponFragment(bag, id);
   bag = r.state;
@@ -3265,38 +3298,11 @@ function frame(now: number): void {
       }
     }
   }
-  // 续玩落档（PvP/PvE 统一，Task 2 接 PvE、Task 3 接 PvP）：帧尾按节流写入全状态快照。
-  // 未终局（!endHandled）时落档；PvP 另带对局元信息（matchId/uid/side/开局纪元/本地 tick）供恢复对齐服务端。
-  // 终局清档：PvE 由结算块的 clearSessionSave；PvP 由离开 battle 屏的 abortBattleToMenu/leaveSettleToMenu（endPvpSession 路径）负责。
-  if (screen === 'battle' && !endHandled) {
-    // seed 传中性常量 1：Battle 不暴露构造种子，且恢复走 restoreBattle+applyCoreState 会覆盖全部 RNG 态，
-    // 故构造空壳所用 seed 与恢复正确性无关。mapId 无需在 opts 传：serialize 已把它落入 config.mapId。
-    if (pvpSock) {
-      // matchId/uid 直接取自当前 WS（PvpSocket.matchId/uid 均 public readonly），与在连的对局身份零漂移。
-      // side 用 pvpSide（onPvpMatched 默认 'a'、resume 覆盖为落档真值）；?? 'a' 仅防御 null（对局中不会为 null）。
-      // localSimTick=本方已完成步数（恢复后据此 + 服务端当前 tick 快进对齐）；PvP 不吃 dirty 节流也无妨（走 MAX 心跳保底）。
-      // !pvpResult 门控：PvP 终局由服务端 result 权威判定（非 endHandled，那是单人概念），result 一到即停止落档——
-      // match 已结束，不应再留可恢复快照（否则刷新会尝试恢复一局已亡对局，虽最终 onHelloFail 回首页但白等）。
-      if (!pvpResult) {
-        // dirty 传输入脏标：有玩家输入时在 500ms MIN 节流下尽快落档；无输入则靠 2s MAX 心跳。
-        // 仅当 checkpoint 真正写入（返回 true）才清脏标——若因未过 MIN 被节流（返回 false）须保留脏标，
-        // 使写入在 MIN 到点后触发；无条件清会让 ~60fps 下的输入在下一帧被无写入地清掉、退回 2s 心跳。
-        if (sessionSaveCheckpoint('pvp', battle, {
-          seed: 1,
-          pvp: {
-            matchId: pvpSock.matchId,
-            uid: pvpSock.uid,
-            side: pvpSide ?? 'a',
-            startAtServerMs: pvpMatchStartMs,
-            localSimTick,
-          },
-        }, { dirty: pvpSaveDirty })) pvpSaveDirty = false;
-      }
-    } else {
-      // PvE 同 PvP：传输入脏标，仅在真正写入时清零（见上 PvP 分支注释）。
-      if (sessionSaveCheckpoint('pve', battle, { seed: 1 }, { dirty: pvpSaveDirty })) pvpSaveDirty = false;
-    }
-  }
+  // 续玩落档（PvP/PvE 统一，Task 2 接 PvE、Task 3 接 PvP）：帧尾按节流写入全状态快照；kind/opts 与终局门控见 sessionCheckpointNow。
+  // dirty 传输入脏标：有玩家输入时在 500ms MIN 节流下尽快落档；无输入靠 2s MAX 心跳保底。仅当 checkpoint 真正写入
+  // （返回 true）才清脏标——若因未过 MIN 被节流（返回 false）须保留脏标，使写入在 MIN 到点后触发；无条件清会让 ~60fps
+  // 下的输入在下一帧被无写入地清掉、退回 2s 心跳。终局清档：PvE 结算块 clearSessionSave / PvP endPvpSession 路径。
+  if (sessionCheckpointNow({ dirty: pvpSaveDirty })) pvpSaveDirty = false;
   // 仅在需要动画时排下一帧；静态界面画完即停，等待输入唤醒。
   } catch (err) {
     // 加固：仿真/绘制中途抛错——先记录（节流），再撤掉可能残留的 save/clip/transform

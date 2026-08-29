@@ -710,10 +710,11 @@ class VersusHub:
             me["last_tick_ms"] = now                 # 刷 liveness，防 IDLE_REAP 中途回收
             me["last_next_wave"] = None              # 清零去重标记，重连后首快照重新宣告 nextWave
             # 反作弊 delta 基线重置（Task 5）：重连（含刷新恢复路径——客户端会本地快进 sim）后，首条快照
-            # 相对断线前可能已推进多波、击杀数跳变。若仍与断线前的陈旧 prev_digest 做 delta，会误报
-            # wave_ahead / kills_over_ceiling。置 None → _anticheat 的 `if prev is not None`(见其正文)
-            # 跳过首次 delta 校验、改以本条重连后快照为新基线。注意只重置 delta 基线 prev_digest，
-            # 不动 last_digest（那是终局摘要存储，非 delta 基线）；wave_ahead 无状态基线故无需重置。
+            # 相对断线前可能击杀数跳变、唐僧血因重建而变化。若仍与断线前的陈旧 prev_digest 做 delta，会误报
+            # kills_over_ceiling / tangsengHP_increased（仅这两项 delta 检查读 prev_digest）。置 None →
+            # _anticheat 的 `if prev is not None`(见其正文) 跳过首次 delta 校验、改以本条重连后快照为新基线。
+            # 注意只重置 delta 基线 prev_digest，不动 last_digest（那是终局摘要存储，非 delta 基线）；
+            # wave_ahead 是无状态校验（比 snapshot wave 与 m["wave_schedule"]，不读 prev_digest）故无需重置。
             me["prev_digest"] = None
             return {"serverMs": now}
 
