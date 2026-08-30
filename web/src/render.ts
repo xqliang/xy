@@ -10747,7 +10747,7 @@ function shareShovelBtnVisible(b: Battle): boolean {
   return isWeChat
     && b.wave >= 6
     && (b.status === 'ready' || b.status === 'playing')
-    && remainingShares() > 0
+    && remainingShares('shovel') > 0
     && b.hasDiggableCell();
 }
 

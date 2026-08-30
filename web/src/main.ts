@@ -303,7 +303,7 @@ function openSettingsPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'settings'; scheduleFrame(); });
 }
 function openStaminaPopup(): void {
-  menuPopupsLazy.ensure(() => { staminaPopupToast = ''; staminaSharesLeft = remainingShares(); menuPopup = 'stamina'; scheduleFrame(); });
+  menuPopupsLazy.ensure(() => { staminaPopupToast = ''; staminaSharesLeft = remainingShares('stamina'); menuPopup = 'stamina'; scheduleFrame(); });
 }
 function openMapPopup(): void {
   menuPopupsLazy.ensure(() => { menuPopup = 'map'; mapScrollY = 0; scheduleFrame(); });
@@ -483,6 +483,43 @@ function resumePopupHitAt(x: number, y: number): 'continue' | 'home' | null {
   if (inR(RESUME_CONTINUE_BTN)) return 'continue';
   if (inR(RESUME_HOME_BTN)) return 'home';
   return null; // 模态：点其他处不关闭，必须二选一（简化版无 × 关闭）
+}
+
+// —— 铲子分享结果弹窗（微信 tray 铲子分享回来后）：明确告知成功/失败；成功「确认开辟」后才挖格（播挖坑动画）——
+let shareShovelPopup: 'success' | 'fail' | null = null;
+const SHARE_POP_W = 320;
+const SHARE_POP_H = 210;
+const SHARE_POP_X = (VIEW_W - SHARE_POP_W) / 2;
+const SHARE_POP_Y = Math.round((VIEW_H - SHARE_POP_H) / 2);
+const SHARE_POP_BTN = {
+  x: SHARE_POP_X + (SHARE_POP_W - 168) / 2,
+  y: SHARE_POP_Y + SHARE_POP_H - 46 - 22,
+  w: 168,
+  h: 46,
+};
+
+function drawShareShovelPopup(ctx: CanvasRenderingContext2D): void {
+  const ok = shareShovelPopup === 'success';
+  const bodyTop = drawPlainPopupFrame(ctx, SHARE_POP_X, SHARE_POP_Y, SHARE_POP_W, SHARE_POP_H, ok ? '分享成功' : '分享未完成');
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#5a3a12';
+  ctx.font = '15px "PingFang SC", serif';
+  const cx = SHARE_POP_X + SHARE_POP_W / 2;
+  if (ok) {
+    ctx.fillText('感谢好友助力！', cx, bodyTop + 22);
+    ctx.fillText('点「确认开辟」为你铲开一个新阵位', cx, bodyTop + 48);
+  } else {
+    ctx.fillText('未检测到有效分享', cx, bodyTop + 22);
+    ctx.fillText('本次不消耗铲子次数，可再试一次', cx, bodyTop + 48);
+  }
+  drawInkActionButton(ctx, SHARE_POP_BTN, ok ? '确认开辟' : '知道了', false, ok ? 'primary' : 'secondary');
+}
+
+function shareShovelPopupHitAt(x: number, y: number): 'ok' | null {
+  const r = SHARE_POP_BTN;
+  if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return 'ok';
+  return null; // 模态：点窗外不关闭，必须点按钮
 }
 
 /** 我方断线弹窗：上半区「我方连不上服务器」+ 10s 倒计时，结束自动退出。
@@ -1385,6 +1422,7 @@ function abortBattleToMenu(): void {
   ui.paused = false;
   pvpExitPopup = false;
   resumePopup = false; // 退出对局：清续玩选择弹窗态
+  shareShovelPopup = null; // 退出对局：清铲子分享结果弹窗态
   pausePhase = 'main';
   ui.passivePopup = null;
   ui.passivePopupUntil = 0;
@@ -1408,12 +1446,20 @@ function handleVersionSecretTap(): void {
   if (versionTapCount < VERSION_SECRET_TAPS) return;
   versionTapCount = 0;
   playSfx('click');
+  // DevTools 面板是 DOM 实现（document.createElement/<style>/<input>…），微信小游戏运行时无 DOM，
+  // 触到 document 会抛 ReferenceError；旧代码 .then 无 .catch → 连点 7 下静默无反应（用户反馈「显示不出来」）。
+  // 微信端明确提示不可用（应在网页端调参、真机只做验证）；.catch 兜底任何加载/构造错误。
+  if (isWeChat) {
+    menuToast = 'DevTools 仅网页端可用（微信小游戏无 DOM）';
+    scheduleFrame();
+    return;
+  }
   // DevTools 面板体积较大且仅调试用，动态导入让它独立分包，不进主包体积（非循环依赖规避，纯代码分割）
   void import('./devtools').then(({ openDevTools }) => {
     openDevTools({ onUserApplied: applyDevUserResult });
     menuToast = '已打开 DevTools';
     scheduleFrame();
-  });
+  }).catch(() => { menuToast = 'DevTools 打开失败'; scheduleFrame(); });
 }
 
 function applyDevUserResult(r: ApplyUserResult): void {
@@ -1688,14 +1734,14 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
   }
   if (hit.kind === 'share') {
     // 微信端真分享：判定成功后 +5 体力，扣 1 次每日额度；web 端此位画的是看广告(hit 映射为 'ad')，不会进本分支。
-    if (!canShare()) { staminaPopupToast = '今日分享已达上限'; return true; }
+    if (!canShare('stamina')) { staminaPopupToast = '今日分享已达上限'; return true; }
     if (stamina.value >= STAMINA_MAX) { staminaPopupToast = '体力已满'; return true; }
     staminaPopupToast = '正在拉起分享…';
     track('share_click', { scene: 'stamina' });
     void shareToFriend({ title: '大圣塔防·助我一臂之力！' }).then((ok) => {
       if (ok) {
-        consumeShare();
-        staminaSharesLeft = remainingShares();
+        consumeShare('stamina');
+        staminaSharesLeft = remainingShares('stamina');
         stamina = addStamina(stamina, 5);
         staminaPopupToast = '分享成功，体力 +5';
         track('share_success', { scene: 'stamina' });
@@ -1974,24 +2020,15 @@ function handleButton(x: number, y: number): boolean {
   return false;
 }
 
-// tray 铲子分享按钮点击：微信真分享→成功则自动挖最优格并扣 1 次额度（先挖后扣，无可挖格不扣）。
+// tray 铲子分享按钮点击：微信真分享 → 回来弹「分享结果」弹窗（成功/失败都明确告知）。
+// 成功后不立即挖格，改由弹窗「确认开辟」按钮触发 shareDigBest（播挖坑动画）并扣 1 次铲子额度（见 onPointerDown）。
 async function handleShareShovel(): Promise<void> {
-  if (!canShare()) return; // 双保险（按钮已按额度隐藏）
+  if (!canShare('shovel')) return; // 双保险（按钮已按铲子额度隐藏）
   if (!battle.hasDiggableCell()) { battle.message = '暂无可开垦阵位'; scheduleFrame(); return; } // 无可挖不发起分享
   track('share_click', { scene: 'shovel' });
   const ok = await shareToFriend({ title: '大圣塔防·助我一铲之力！' });
-  if (!ok) {
-    battle.message = '未完成分享';
-    track('share_fail', { scene: 'shovel' });
-    scheduleFrame();
-    return;
-  }
-  track('share_success', { scene: 'shovel' }); // 分享成功即记(与体力弹窗口径一致);挖格是后续奖励
-  if (battle.shareDigBest()) {
-    consumeShare(); // 挖到才扣次数(先挖后扣);shareDigBest 内已设 message
-  } else {
-    battle.message = '暂无可开垦阵位'; // 极少见:分享期间棋盘变满,不扣次数
-  }
+  track(ok ? 'share_success' : 'share_fail', { scene: 'shovel' });
+  shareShovelPopup = ok ? 'success' : 'fail'; // 弹明显结果窗口；成功挖格挪到「确认」按钮
   scheduleFrame();
 }
 
@@ -2158,6 +2195,21 @@ function onPointerDown(e: PointerEvent) {
     resumePopup = false;
     if (hit === 'home') abortBattleToMenu(); // 回到首页：清续玩存档 + 回主界面
     else if (battle.status === 'ready') battle.startNextWave(); // 继续即开打：跳过恢复后的开波等待(waveGap 倒计时/入场)，不必再点一次页面
+    scheduleFrame();
+    return;
+  }
+  // —— 铲子分享结果弹窗：模态，只响应「确认」按钮；成功「确认」后才挖格（播挖坑动画）——
+  if (shareShovelPopup) {
+    const hit = shareShovelPopupHitAt(x, y);
+    if (hit === null) return; // 点窗外不关闭
+    playSfx('click');
+    const wasSuccess = shareShovelPopup === 'success';
+    shareShovelPopup = null;
+    if (wasSuccess) {
+      // shareDigBest 内 push digFx 播挖坑动画；挖到才扣 1 次铲子额度（先挖后扣，无可挖格不扣）
+      if (battle.shareDigBest()) consumeShare('shovel');
+      else battle.message = '暂无可开垦阵位';
+    }
     scheduleFrame();
     return;
   }
@@ -2962,6 +3014,7 @@ function frame(now: number): void {
     // 暂停/退出弹窗：与结算、断线互斥（ settle > net-dead > pause 的视觉优先级靠下面的 !isSettleOpen()/!pvpNetDead 保证）。
     if (isPausePopupOpenPure(ui.paused, pvpExitPopup) && !isSettleOpen() && !pvpNetDead) drawPausePopup(ctx, pausePhase, pausePopupContext(!!pvpSock));
     if (resumePopup) drawResumePopup(ctx); // 中途恢复的「继续/回到首页」选择弹窗（最顶层）
+    if (shareShovelPopup) drawShareShovelPopup(ctx); // 铲子分享结果弹窗（成功/失败，最顶层）
   }
   if (tutorialOverlay) drawTutorialOverlay(ctx, tutorialOverlay, now);
   // Task 10 首局动态引导：非模态箭头 + 「跳过」。仅 battle 屏、引导活跃、且无 modal 教程时画
@@ -3066,6 +3119,8 @@ interface GameHook {
   curScreen: () => string;
   // 预览/回归截图：直接打开首页某个菜单弹窗（settings/stamina/map/help/profile），供 popup 截图工具用。
   openMenuPopup: (name: MenuPopup) => void;
+  // 预览/截图：在战斗屏弹出铲子分享结果弹窗（success/fail）。
+  previewShareResult: (ok: boolean) => void;
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 渲染桥。
   // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
   // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
@@ -3206,6 +3261,8 @@ const hook: GameHook = {
   openMenuPopup: (name: MenuPopup) => {
     menuPopupsLazy.ensure(() => { screen = 'menu'; menuPopup = name; scheduleFrame(); });
   },
+  // 预览/截图：在战斗屏弹出铲子分享结果弹窗（success/fail），供 popupshot 验证。
+  previewShareResult: (ok: boolean) => { screen = 'battle'; shareShovelPopup = ok ? 'success' : 'fail'; scheduleFrame(); },
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 对手快照渲染桥。
   // 注（Task 5）：对手半场现由 WS 快照重建，不在本机确定性重放；fabricated matchId 连不上真实服务端时
   // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。
