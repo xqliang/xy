@@ -24,11 +24,20 @@ function normalize(raw: unknown): ProfileState | null {
   return { nickname, avatarId, unlockedAvatars };
 }
 
+// 模块级缓存：主循环每帧都会读 profile（菜单顶栏头像、PvP 匹配页昵称），
+// 每次都走同步存储读 + JSON.parse 会白白消耗 CPU（微信端 wx.getStorageSync 还要跨 JS-bridge）。
+// 结果几乎不变，缓存一份；所有写入都经 saveProfile/applyServerProfile（全代码库唯一写入口），
+// 写时同步刷新缓存，故不会读到脏数据。
+let profileCache: ProfileState | null = null;
+
 export function loadProfile(): ProfileState {
-  return parseStoredJson(storeGet(KEY), normalize, { ...DEFAULT });
+  if (profileCache) return profileCache;
+  profileCache = parseStoredJson(storeGet(KEY), normalize, { ...DEFAULT });
+  return profileCache;
 }
 
 export function saveProfile(p: ProfileState): void {
+  profileCache = p; // 写时同步缓存，读侧立即可见
   storeSet(KEY, JSON.stringify(p));
 }
 

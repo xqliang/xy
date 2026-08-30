@@ -28,7 +28,7 @@ import { drawSkillGlyph, skillAssetKey } from './skill-icon';
 import { drawPeachIcon } from './peach-icon';
 import { drawElementBadge, drawCounterBadge, counterRelation, softenElementColor } from './wuxing-ui';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
-import { isWeChat } from './platform';
+import { isWeChat, createOffscreenCanvas } from './platform';
 import { remainingShares } from './share-quota';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
@@ -1721,7 +1721,50 @@ function drawSummonRibbon(
   ctx.restore();
 }
 
+// —— 棋盘格底图层缓存 ——
+// 80 格的底色/纹理/水斑是 (地图, 双方解锁集, 五行开关) 的纯静态函数，却是全游戏最重的
+// 渐变来源：drawUnlockedCellFace 每格 3~8 个径向渐变（实测开局每帧 28.5 个渐变 + 96 次
+// save/restore，后期更多），外加每帧 new Set + 80 个模板字符串。整层画进离屏画布缓存，
+// 仅在签名变化（解锁推进/换图/开关五行/缩放变化）时重画一次。
+let boardLayerCache: { canvas: HTMLCanvasElement; sig: string } | null = null;
+
+// 离屏层按主画布当前光栅倍率（web=dpr；微信=fit×dpr）绘制，缩放贴回不糊。
+// 微信旧内核可能缺 getTransform，鸭子类型探测、失败按 2x 兜底。
+function boardRasterScale(ctx: CanvasRenderingContext2D): number {
+  try {
+    const t = (ctx as CanvasRenderingContext2D & { getTransform?: () => { a: number } }).getTransform?.();
+    if (t && Number.isFinite(t.a) && t.a > 0) return Math.min(3, Math.max(1, t.a));
+  } catch { /* 缺方法：走兜底 */ }
+  return 2;
+}
+
+/** 把 80 格底色/纹理画到离屏层（坐标系与主画布一致：平移掉 BOARD 偏移 + 放大 scale）。 */
+function renderBoardLayer(b: Battle, scale: number): HTMLCanvasElement {
+  const w = COLS * CELL, h = ROWS * CELL;
+  const cv = createOffscreenCanvas(Math.max(1, Math.ceil(w * scale)), Math.max(1, Math.ceil(h * scale)));
+  const c2 = cv.getContext('2d')!;
+  c2.setTransform(scale, 0, 0, scale, -BOARD_X * scale, -BOARD_Y * scale);
+  drawBoardCells(c2, b);
+  return cv;
+}
+
 function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
+  // 签名 = 地图(主题/路径) + 双方解锁规模 + 五行开关 + 光栅倍率。
+  // 解锁只增不减（单局内单调扩张），规模即可代表内容；跨局同地图同规模内容也一致。
+  const scl = boardRasterScale(ctx);
+  const sig = `${b.map.id}|${b.unlockedCells().length}|${b.aiUnlocked.size}|${wuxingEnabled() ? 1 : 0}|${scl.toFixed(2)}`;
+  if (!boardLayerCache || boardLayerCache.sig !== sig) {
+    boardLayerCache = { canvas: renderBoardLayer(b, scl), sig };
+  }
+  ctx.drawImage(boardLayerCache.canvas, BOARD_X, BOARD_Y, COLS * CELL, ROWS * CELL);
+  drawPathDiggableBorders(ctx, b);
+  drawBoardOuterBorder(ctx);
+  drawBorderMotif(ctx, b);
+  drawFence(ctx, b);
+}
+
+/** 80 格循环本体（从 drawBoard 抽出，供离屏缓存层调用；纯静态输出）。 */
+function drawBoardCells(ctx: CanvasRenderingContext2D, b: Battle) {
   const unlocked = new Set(b.unlockedCells().map((c) => `${c.c},${c.r}`));
   const aiUnlocked = b.aiUnlocked;
   const th = b.map.theme;
@@ -1780,10 +1823,6 @@ function drawBoard(ctx: CanvasRenderingContext2D, b: Battle, _ui: UiState) {
       }
     }
   }
-  drawPathDiggableBorders(ctx, b);
-  drawBoardOuterBorder(ctx);
-  drawBorderMotif(ctx, b);
-  drawFence(ctx, b);
 }
 
 // 棋盘最外缘黑色加粗框，把整图包起来

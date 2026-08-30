@@ -202,6 +202,12 @@ const ctx = canvas.getContext('2d')!;
 let last = performance.now();
 let rafId: number | null = null;
 const MIN_FRAME_MS = 1000 / 60 - 4;
+// 静置菜单/匹配页的目标帧间隔（~30fps）：这两个界面里真正动的只有大圣 ±5px 浮动和
+// 开始按钮扫光，其余全是静态像素；60fps 满帧重绘纯烧电（手机发热主因之一）。
+// 交互（触摸/滚轮）后 1s 内恢复 60fps，保证按下反馈/拖动跟手。
+const MENU_FRAME_MS = 1000 / 30 - 2;
+let lastMenuInputAt = -1e9; // 上次菜单交互时刻（performance.now 基）；初始远古→开机即 30fps
+const MENU_INPUT_BURST_MS = 1000;
 // 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，fxQualityLevel=当前档位(1=满/0.4=省)。
 let frameMsEma = 0;
 let fxQualityLevel = 1;
@@ -210,6 +216,16 @@ let fxQualityLevel = 1;
 // 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
 onAppHide(() => pauseLoop());
 onAppShow(() => { resumeLoop(); pvpSock?.reconnectNow(); }); // 回前台：若 PvP 断线等退避，跳过等待立即重连（弱网优化③）
+
+// 菜单降频的交互唤醒：capture 阶段监听指针/滚轮（只打时间戳，不开销），用于
+// 「静置 30fps、交互后 1s 内 60fps」的帧预算切换。所有游戏输入都落在 canvas 上，
+// 挂在 canvas 上即可；passive 保证不阻塞滚动/合成。
+if (typeof canvas.addEventListener === 'function') {
+  const markMenuInput = () => { lastMenuInputAt = performance.now(); };
+  canvas.addEventListener('pointerdown', markMenuInput, { capture: true, passive: true });
+  canvas.addEventListener('pointermove', markMenuInput, { capture: true, passive: true });
+  canvas.addEventListener('wheel', markMenuInput, { capture: true, passive: true });
+}
 
 let loadProgress: AssetLoadProgress = { loaded: 0, total: 1, phase: 'images' };
 /** 资源已在加载，但进度页延迟显示，避免本地缓存命中时闪一下 */
@@ -2659,6 +2675,14 @@ function scheduleFrame(): void {
   if (rafId === null) rafId = requestAnimationFrame(frame);
 }
 
+// 当前帧预算（帧间隔上限）：战斗/结算等 60fps；静置的菜单/匹配页 30fps 省电，
+// 交互后 1s 内（按 lastMenuInputAt）回到 60fps 保跟手。按需唤醒的单帧不受此限。
+function frameBudgetMs(now: number): number {
+  if ((screen === 'menu' || screen === 'pvpMatching')
+    && now - lastMenuInputAt >= MENU_INPUT_BURST_MS) return MENU_FRAME_MS;
+  return MIN_FRAME_MS;
+}
+
 // 加固：帧内异常上报（节流）。首 3 次必报、之后每 ~120 帧(约 2s)一次，
 // 避免持续抛错刷爆控制台，同时保证「第一现场」的报错一定被看到（含微信开发者工具）。
 let frameErrCount = 0;
@@ -2690,8 +2714,9 @@ function frame(now: number): void {
   // 每帧极廉价地看一眼画布尺寸，退化就重跑 resize()（此时 jsbridge 多已就绪→取到真实屏幕尺寸）；修好即不再触发。
   if (isWeChat && canvas.width < 32) resize();
   const elapsed = now - last;
-  // 连续动画(战斗/结算)限速到 ~60fps；按需唤醒的单帧走 needsContinuousLoop()=false 分支，不受限、立即重绘。
-  if (needsContinuousLoop() && elapsed < MIN_FRAME_MS) {
+  // 连续动画(战斗/结算)限速到 ~60fps、静置菜单/匹配页 30fps（见 frameBudgetMs）；
+  // 按需唤醒的单帧走 needsContinuousLoop()=false 分支，不受限、立即重绘。
+  if (needsContinuousLoop() && elapsed < frameBudgetMs(now)) {
     scheduleFrame(); // 距上一帧太近，跳过本帧的 step/draw，仅重新排帧
     return;
   }
@@ -2704,7 +2729,8 @@ function frame(now: number): void {
   try {
   // 帧率自适应特效档位：连续动画中测平滑帧时(EMA)，过慢降灼烧/冰冻粒子密度、恢复则复原（迟滞防抖）。
   // 忽略切前台/入场的巨帧(elapsed≥120ms)。阈值参照 60fps 上限(MIN_FRAME_MS≈12.7ms)：>26ms(≈<38fps)降、<19ms(≈>52fps)复。
-  if (needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
+  // 仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
+  if (screen === 'battle' && needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
     frameMsEma = frameMsEma <= 0 ? elapsed : frameMsEma * 0.9 + elapsed * 0.1;
     if (fxQualityLevel > 0.5 && frameMsEma > 26) { fxQualityLevel = 0.4; setFxQuality(0.4); }
     else if (fxQualityLevel < 0.9 && frameMsEma < 19) { fxQualityLevel = 1; setFxQuality(1); }

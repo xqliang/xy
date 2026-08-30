@@ -3,7 +3,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const browser = await puppeteer.launch({ executablePath: CHROME, headless:'new', args:['--no-sandbox'] });
 const page = await browser.newPage();
 const errs=[]; page.on('pageerror',e=>errs.push('[pageerror] '+e.message)); page.on('console',m=>{ if(m.type()==='error') errs.push('[console.error] '+m.text()); });
-await page.goto('http://127.0.0.1:5180/?seed=7',{waitUntil:'networkidle0'});
+await page.goto(process.env.PERF_URL || 'http://127.0.0.1:5180/?seed=7',{waitUntil:'networkidle0'});
 await page.waitForFunction('window.__game && window.__game.snapshot');
 await page.waitForFunction('window.__assetsReady===true',{timeout:15000}).catch(()=>{});
 // 全流程：菜单各屏 + 一整局到通关

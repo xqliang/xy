@@ -1080,6 +1080,23 @@ export interface BattleCoreState {
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
 
+/**
+ * 原地压缩数组：保留谓词为真的元素（保序、零分配）。
+ * updateFx 等每帧跑的清理逻辑以前用 `arr = arr.filter(...)`，即使没有元素过期
+ * 也会整表重建一个新数组——十来个特效列表每帧各 new 一个，是 GC 压力的主要来源
+ * （实测桌面端 ~1.5 次 GC/秒，手机端表现为「偶尔顿一下」）。此助手改成写指针
+ * 原地覆盖，语义与 filter 等价（谓词可带副作用，副作用发生次序也与 filter 一致）。
+ */
+function compactInPlace<T>(arr: T[], keep: (x: T) => boolean): T[] {
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const x = arr[i]!;
+    if (keep(x)) arr[w++] = x;
+  }
+  arr.length = w;
+  return arr;
+}
+
 // tray/aiTray 是稀疏数组（空位由 clearTraySlot 的 delete 挖成洞）。JSON 往返会把洞变成 null，
 // 而 forEach/map 等原生方法跳过洞却会对 null 触发回调（如 firstMergeableAnchor 读 t.kind），
 // 导致续玩后每帧崩。恢复时把 null/undefined 槽重新挖成洞，保持与实时对局一致的稀疏语义。
@@ -7940,7 +7957,7 @@ export class Battle {
 
   private updateFx(dt: number): void {
     for (const f of this.fx) f.ttl -= dt;
-    this.fx = this.fx.filter((f) => f.ttl > 0);
+    compactInPlace(this.fx, (f) => f.ttl > 0);
     // 开火脉冲/连击衰减：在所有状态(含波间'ready')推进，避免单位兵器卡在槽位一直显示
     // 连击(combo>0)时衰减更快(9 vs 6)，出招/收招更迅捷，视觉更密集（不改实际攻击频率/DPS）
     for (const u of this.units.values()) {
@@ -7959,15 +7976,17 @@ export class Battle {
       if (u.firePulse <= 0.02) u.combo = 0;
     }
     for (const bt of this.bursts) bt.ttl -= dt;
-    this.bursts = this.bursts.filter((bt) => bt.ttl > 0);
+    compactInPlace(this.bursts, (bt) => bt.ttl > 0);
     // 「合成神将」浮字：先探测本帧新成将（弹字），再统一衰减、清除到期。
     this.detectSynthesis();
     for (const sb of this.synthBanners) sb.ttl -= dt;
-    this.synthBanners = this.synthBanners.filter((sb) => sb.ttl > 0);
+    compactInPlace(this.synthBanners, (sb) => sb.ttl > 0);
     // 黄狮精卷走幽灵：递减闪烁计时；到期那一刻爆金色 death 粒子环 = 真正「消失」
     // （施法瞬间不爆，就是为了让玩家先看清闪的是哪件兵器/字块/桃树）
     for (const s of this.stealFx) s.ttl -= dt;
-    this.stealFx = this.stealFx.filter((s) => {
+    // 注意：谓词带副作用——到期那一刻爆金色 death 粒子环（真正的「消失」时刻），
+    // compactInPlace 与 filter 的副作用触发次序一致（都是逐个元素从前往后判定）。
+    compactInPlace(this.stealFx, (s) => {
       if (s.ttl > 0) return true;
       this.bursts.push({
         kind: 'death',
@@ -7982,7 +8001,7 @@ export class Battle {
     });
     for (const uf of this.heroUltFx) uf.ttl -= dt;
     // 二郎哮天犬：被咬怪物死亡则狗立即消失（否则跟随 3s）；玩家/AI 怪物分属两数组，都要查
-    this.heroUltFx = this.heroUltFx.filter((uf) => {
+    compactInPlace(this.heroUltFx, (uf) => {
       if (uf.ttl <= 0) return false;
       if (uf.biteMid != null) {
         const m = this.monsters.find((mm) => mm.id === uf.biteMid)
@@ -7993,7 +8012,7 @@ export class Battle {
     });
     // 二郎哮天犬跟随特效：3s 递减；被咬怪物死亡则立即移除
     for (const d of this.erlangDogFx) d.ttl -= dt;
-    this.erlangDogFx = this.erlangDogFx.filter((d) => {
+    compactInPlace(this.erlangDogFx, (d) => {
       if (d.ttl <= 0) return false;
       const m = this.monsters.find((mm) => mm.id === d.mid)
         ?? this.aiMonsters.find((mm) => mm.id === d.mid);
@@ -8004,7 +8023,7 @@ export class Battle {
       p.y += p.vy * dt;
       if (p.y < p.peakY) p.peakY = p.y;
     }
-    this.peachFloats = this.peachFloats.filter((p) => p.y < p.peakY + PEACH_FLOAT_FALL);
+    compactInPlace(this.peachFloats, (p) => p.y < p.peakY + PEACH_FLOAT_FALL);
     for (const d of this.damageFloats) {
       d.age += dt;
       d.vy += (d.crit ? DAMAGE_FLOAT_GRAVITY_CRIT : DAMAGE_FLOAT_GRAVITY) * dt;
@@ -8012,7 +8031,7 @@ export class Battle {
       d.x += d.vx * dt;
       if (d.y < d.peakY) d.peakY = d.y;
     }
-    this.damageFloats = this.damageFloats.filter((d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);
+    compactInPlace(this.damageFloats, (d) => d.y < d.peakY + DAMAGE_FLOAT_FALL);
     // 挖坑：时长内铲两下；第一铲在开挖瞬间 emit，半程再播第二铲
     const digHalf = PLACE_TIMING.digDur * 0.5;
     for (const d of this.digFx) {
@@ -8020,13 +8039,13 @@ export class Battle {
       d.t += dt;
       if (prev < digHalf && d.t >= digHalf) this.emit('shovel');
     }
-    this.digFx = this.digFx.filter((d) => d.t < PLACE_TIMING.digDur);
+    compactInPlace(this.digFx, (d) => d.t < PLACE_TIMING.digDur);
     for (const d of this.aiDigFx) {
       const prev = d.t;
       d.t += dt;
       if (prev < digHalf && d.t >= digHalf) this.emit('shovel');
     }
-    this.aiDigFx = this.aiDigFx.filter((d) => d.t < PLACE_TIMING.digDur);
+    compactInPlace(this.aiDigFx, (d) => d.t < PLACE_TIMING.digDur);
     for (let i = this.autoPlaceDragFx.length - 1; i >= 0; i--) {
       const d = this.autoPlaceDragFx[i]!;
       d.t += dt;
@@ -8046,7 +8065,7 @@ export class Battle {
         if (d.playSfx !== false) this.emit(d.sfx);
       }
     }
-    this.placeDropFx = this.placeDropFx.filter((d) => d.delay > 0 || d.t < PLACE_TIMING.dropDur + 0.04);
+    compactInPlace(this.placeDropFx, (d) => d.delay > 0 || d.t < PLACE_TIMING.dropDur + 0.04);
     this.tickAutoPlacePlayback(dt);
     this.tickAiAutoPlacePlayback(dt);
     this.updatePendingPlace(); // 开格动画结束后落下预占的兵/字牌
