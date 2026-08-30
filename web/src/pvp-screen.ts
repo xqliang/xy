@@ -167,18 +167,17 @@ export function drawPvpMatching(ctx: CanvasRenderingContext2D, view: PvpMatching
   if (!isWeChat) {
     if (bg && bg.naturalWidth) {
       ctx.drawImage(bg, 0, 0, VIEW_W, VIEW_H);
+      // 顶部暗化渐晕（让顶部标题文字更清楚）：仅 web 在此画。
+      // 小游戏下改由 drawScreenBackdrop 连同顶部黑边一起画（否则黑边露亮底、VIEW 顶出现接缝，且会与本层双重压暗）。
+      const dim = ctx.createLinearGradient(0, 0, 0, 200);
+      dim.addColorStop(0, 'rgba(60,42,20,0.30)');
+      dim.addColorStop(1, 'rgba(60,42,20,0)');
+      ctx.fillStyle = dim;
+      ctx.fillRect(0, 0, VIEW_W, 200);
     } else {
       ctx.fillStyle = '#efe3c6';
       ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     }
-  }
-  // 顶部暗化渐晕（画在背景之上，两端平台一致）：让顶部标题文字更清楚。
-  if (bg && bg.naturalWidth) {
-    const dim = ctx.createLinearGradient(0, 0, 0, 200);
-    dim.addColorStop(0, 'rgba(60,42,20,0.30)');
-    dim.addColorStop(1, 'rgba(60,42,20,0)');
-    ctx.fillStyle = dim;
-    ctx.fillRect(0, 0, VIEW_W, 200);
   }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

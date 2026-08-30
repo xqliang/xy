@@ -910,6 +910,15 @@ export function drawScreenBackdrop(
       const scale = Math.max(w / bg.width, h / bg.height);
       const dw = bg.width * scale, dh = bg.height * scale;
       ctx.drawImage(bg, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+      // 顶部暗化渐晕：从整屏顶（含上黑边，y<0）保持 0.30 到 VIEW 顶(y=0)，再渐隐到 VIEW y=200。
+      // 与 pvp-screen 内标题区暗化同色同刻度 → 小游戏顶部黑边不再露亮底、VIEW 顶无接缝（本函数仅 wx 调用）。
+      const dim = ctx.createLinearGradient(0, y, 0, 200);
+      const zeroStop = 200 - y > 0 ? Math.min(1, -y / (200 - y)) : 0; // VIEW y=0 在渐变中的位置：黑边区保持满暗
+      dim.addColorStop(0, 'rgba(60,42,20,0.30)');
+      dim.addColorStop(zeroStop, 'rgba(60,42,20,0.30)');
+      dim.addColorStop(1, 'rgba(60,42,20,0)');
+      ctx.fillStyle = dim;
+      ctx.fillRect(x, y, w, 200 - y);
     } else {
       ctx.fillStyle = '#efe3c6';
       ctx.fillRect(x, y, w, h);
