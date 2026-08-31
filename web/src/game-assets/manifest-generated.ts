@@ -116,7 +116,7 @@ export const HASHED_URLS: Record<string, string> = {
   "skill-pas-yunshi.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-pas-yunshi-a6f964b4.png",
   "skill-pas-zhaoxian.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-pas-zhaoxian-3fb4054d.png",
   "skill-pas-zhuwang.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/skill-pas-zhuwang-65c09294.png",
-  "tangseng.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/tangseng-4ef058f7.png",
+  "tangseng.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/tangseng-38140c79.png",
   "unit-archer.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/unit-archer-9c313d60.png",
   "unit-cavalry.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/unit-cavalry-3b044730.png",
   "unit-monkey.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/unit-monkey-4602fe4c.png",
