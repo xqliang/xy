@@ -216,9 +216,8 @@ const MENU_INPUT_BURST_MS = 1000;
 let frameMsEma = 0;
 let fxQualityLevel = 1;
 
-// 切后台暂停：停 rAF 循环与背景音，回前台再唤醒（pauseLoop/resumeLoop 见游戏循环处，函数声明已提升）。
-// 微信小游戏走 onAppHide/onAppShow；Web 端这两者为 no-op，改由下方 visibilitychange 处理，二者不重叠。
-onAppHide(() => pauseLoop());
+// 切后台暂停：停 rAF 循环与背景音；若在匹配屏则放弃匹配（cancel 服务端 ticket，防残留被别人匹配到）。
+onAppHide(() => { pauseLoop(); abandonPvpMatching(); });
 onAppShow(() => { resumeLoop(); pvpSock?.reconnectNow(); }); // 回前台：若 PvP 断线等退避，跳过等待立即重连（弱网优化③）
 
 // 菜单降频的交互唤醒：capture 阶段监听指针/滚轮（只打时间戳，不开销），用于
@@ -640,6 +639,18 @@ function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string, not
       scheduleFrame();
     });
   });
+}
+
+/** 放弃当前匹配（若在匹配屏）：cancel 服务端队列 ticket 并回首页。
+ *  用于「点退出按钮」与「切后台/锁屏」——后者若不 cancel，ticket 会在服务端队列残留最长
+ *  ~2.5 分钟(QUEUE_TTL_MS)，期间别人匹配会匹配到这个已离开的玩家、成局后对手看到其从不加入。
+ *  cancel 后再 pump 的在途 poll 因 phase 已转 idle 会被守卫丢弃，不会误触发 onMatched 开局。 */
+function abandonPvpMatching(): void {
+  if (screen !== 'pvpMatching' || !pvpController) return;
+  void pvpController.cancel(); // 异步发 cancel；phase 立即转 idle，防在途 poll 误 matched
+  pvpController = null;
+  screen = 'menu';
+  scheduleFrame();
 }
 
 // 先加载资源，再进首页；进度页延迟 LOADING_UI_DELAY_MS，缓存秒进则不闪进度 UI
@@ -2321,7 +2332,7 @@ function onPointerDown(e: PointerEvent) {
     if (!view) { screen = 'menu'; scheduleFrame(); return; }
     const hit = sc.pvpMatchingHitAt(x, y, view);
     if (hit === 'exit') {
-      playSfx('click'); void pvpController.cancel(); pvpController = null; screen = 'menu'; scheduleFrame();
+      playSfx('click'); abandonPvpMatching(); // 复用：cancel 服务端 ticket + 回首页
     } else if (hit === 'ok') {
       pvpController = null; screen = 'menu'; scheduleFrame();
     } else if (hit === 'copy' && pvpController.state.code) {
@@ -3312,7 +3323,7 @@ function resumeLoop(): void {
 }
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) pauseLoop();
+    if (document.hidden) { pauseLoop(); abandonPvpMatching(); } // 切后台：停循环 + 放弃匹配(清服务端 ticket)
     else { resumeLoop(); pvpSock?.reconnectNow(); } // 回前台：PvP 断线时跳过退避立即重连（弱网优化③）
   });
 }
