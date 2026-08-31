@@ -11,9 +11,10 @@ const AFTER = process.env.AFTER_URL || 'http://127.0.0.1:5191/?seed=7';
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
 
 // 同一份确定性布阵：restart(seed) → 征兵+自动布阵 25 轮（不 startWave，画面静止无随机动画）
-const setup = () => {
+const ENDLESS = process.env.MODE === 'endless';
+const setup = (endless) => {
   const g = window.__game;
-  g.restart(7, 1); g.enterBattle();
+  g.restart(7, 1, undefined, endless); g.enterBattle();
   for (let k = 0; k < 25; k++) { if (!g.summon()) { g.autoPlace(); if (!g.summon()) break; } g.autoPlace(); }
   return { status: g.battle.status, units: g.battle.units.size, wave: g.battle.wave };
 };
@@ -24,7 +25,7 @@ async function shot(url) {
   await page.goto(url, { waitUntil: 'networkidle0' });
   await page.waitForFunction('window.__game && window.__game.snapshot');
   await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
-  const state = await page.evaluate(setup);
+  const state = await page.evaluate(setup, ENDLESS);
   await sleep(6000); // 等 intro 入场/召唤闪光等一切瞬态动画彻底衰减完
   const png = await page.screenshot({ encoding: 'base64' });
   await page.close();

@@ -10287,40 +10287,63 @@ function clipAiHalfPath(ctx: CanvasRenderingContext2D, map: GameMap): void {
 }
 
 // 离屏缓冲：先拷贝 AI 区再模糊，避免 filter 直接糊主画布。
+// 刷新节流：毛玻璃下的内容（AI 棋子/字牌/入场唐僧）变化缓慢，而「主画布回读（GPU→CPU
+// 同步停顿）+ blur(5px) 光栅化」是 2D Canvas 最贵的操作组合——降到 ~8Hz 刷新一次缓存，
+// 中间帧直接贴现成的模糊层，视觉无感（毛玻璃本身 5px 糊 + 42% 宣纸纱）。
 let endlessFrostScratch: HTMLCanvasElement | null = null;
-function endlessFrostScratchCanvas(w: number, h: number): HTMLCanvasElement {
-  if (!endlessFrostScratch) endlessFrostScratch = document.createElement('canvas');
-  if (endlessFrostScratch.width !== w || endlessFrostScratch.height !== h) {
-    endlessFrostScratch.width = w;
-    endlessFrostScratch.height = h;
+let endlessFrostBlurred: HTMLCanvasElement | null = null;
+let endlessFrostRefreshAt = -1e9;
+const ENDLESS_FROST_REFRESH_MS = 120;
+
+function frostCanvas(ref: HTMLCanvasElement | null, w: number, h: number): HTMLCanvasElement {
+  // 用平台助手建离屏画布（Web=document.createElement；微信=wx.createCanvas——
+  // 原实现直接 document.createElement 在小游戏无 DOM 环境会抛错）
+  if (!ref) return createOffscreenCanvas(w, h);
+  if (ref.width !== w || ref.height !== h) {
+    ref.width = w;
+    ref.height = h;
   }
-  return endlessFrostScratch;
+  return ref;
 }
 
 /** 无尽：按地图形状给整块 AI 半场铺毛玻璃蒙层。 */
 function drawEndlessFrost(ctx: CanvasRenderingContext2D, map: GameMap): void {
   const w = COLS * CELL;
   const h = map.id === 'baiguling' ? 6 * CELL : FENCE_ROW * CELL;
-  const scratch = endlessFrostScratchCanvas(w, h);
-  const sctx = scratch.getContext('2d');
-  if (!sctx) return;
-  sctx.setTransform(1, 0, 0, 1, 0, 0);
-  sctx.clearRect(0, 0, w, h);
-  // 主画布带 dpr transform，从 bitmap 取样须用物理像素矩形
-  const m = ctx.getTransform();
-  const sx = BOARD_X * m.a + m.e;
-  const sy = BOARD_Y * m.d + m.f;
-  const sw = w * m.a;
-  const sh = h * m.d;
-  sctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, w, h);
+  const now = performance.now();
+  if (now - endlessFrostRefreshAt >= ENDLESS_FROST_REFRESH_MS) {
+    endlessFrostRefreshAt = now;
+    const scratch = endlessFrostScratch = frostCanvas(endlessFrostScratch, w, h);
+    const sctx = scratch.getContext('2d');
+    if (sctx) {
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+      sctx.clearRect(0, 0, w, h);
+      // 主画布带 dpr transform，从 bitmap 取样须用物理像素矩形
+      const m = ctx.getTransform();
+      const sx = BOARD_X * m.a + m.e;
+      const sy = BOARD_Y * m.d + m.f;
+      const sw = w * m.a;
+      const sh = h * m.d;
+      sctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, w, h);
+      // 模糊成品缓存到独立层（blur 只在刷新帧跑）
+      const blurred = endlessFrostBlurred = frostCanvas(endlessFrostBlurred, w, h);
+      const bctx = blurred.getContext('2d');
+      if (bctx) {
+        bctx.setTransform(1, 0, 0, 1, 0, 0);
+        bctx.clearRect(0, 0, w, h);
+        bctx.filter = 'blur(5px)';
+        bctx.drawImage(scratch, 0, 0);
+        bctx.filter = 'none';
+      }
+    }
+  }
+  if (!endlessFrostBlurred) return;
 
   ctx.save();
   clipAiHalfPath(ctx, map);
   ctx.clip();
-  // 毛玻璃：模糊底图 + 宣纸色薄纱
-  ctx.filter = 'blur(5px)';
-  ctx.drawImage(scratch, BOARD_X, BOARD_Y, w, h);
-  ctx.filter = 'none';
+  // 毛玻璃：贴缓存的模糊底图 + 宣纸色薄纱
+  ctx.drawImage(endlessFrostBlurred, BOARD_X, BOARD_Y, w, h);
   ctx.fillStyle = 'rgba(244,233,220,0.42)';
   ctx.fillRect(BOARD_X, BOARD_Y, w, h);
   ctx.restore();

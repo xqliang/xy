@@ -17,6 +17,15 @@ const client = await page.createCDPSession();
 await client.send('Emulation.setCPUThrottlingRate', { rate: 4 });
 
 await page.evaluateOnNewDocument(() => {
+  // 预置「全部教程已看」：否则首局 battleIntro 教程 modal 会冻结仿真（shouldStepSim 的
+  // tutorial 门控），布阵动画永不提交、棋盘空转——基准就测不到真实战斗负载。
+  try {
+    const ids = ['battleIntro','firstSummon','firstPlacement','firstHeroWord','firstShovel',
+      'firstActiveReady','firstHeroCombo','firstMergeable','firstFragmentDrop','merchantFirstOpen','wuxingMap'];
+    const seen = {}; for (const id of ids) seen[id] = true;
+    localStorage.setItem('dasheng.tutorial', JSON.stringify({ seen }));
+    localStorage.setItem('dasheng.finishedGame', '1');
+  } catch { /* 非 web 环境忽略 */ }
   window.__prof = { gaps: [], durs: [], longtasks: [], heap: [], t0: 0, last: null, janks: [] };
   const orig = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = (cb) =>
@@ -73,26 +82,36 @@ await page.waitForFunction('window.__game && window.__game.snapshot');
 await page.waitForFunction('window.__assetsReady===true', { timeout: 15000 }).catch(() => {});
 
 // 战斗：布阵一次（测量窗之前完成），然后纯挂机 30s 观察自然卡顿
-await page.evaluate(() => {
+// MODE=endless 跑无尽模式（验证 drawEndlessFrost 降频等无尽专属路径）
+const ENDLESS = process.env.MODE === 'endless';
+await page.evaluate((endless) => {
   const g = window.__game;
-  g.restart(7, 1); g.enterBattle();
+  g.markNotFirstGame();
+  // 强制第 1 波征兵出悟空两字：保证有激活武将（updateGenerals 每帧目标选取是热路径，
+  // 纯随机种子下经常一个武将都没有，测不到该路径）
+  g.forceWaveHero('wukong', 1);
+  g.restart(7, 1, undefined, endless); g.enterBattle();
   for (let k = 0; k < 25; k++) { if (!g.summon()) { g.autoPlace(); if (!g.summon()) break; } g.autoPlace(); }
   if (g.battle.status === 'ready') g.wave();
-});
+}, ENDLESS);
 // 预热 3s（跳过开局动画/首帧图片解码），再开测
 await sleep(3000);
 console.log('warmup state:', await page.evaluate(() => {
   const g = window.__game;
-  return { status: g.battle?.status, wave: g.battle?.wave };
+  return { status: g.battle?.status, wave: g.battle?.wave,
+    units: g.battle?.units.size ?? 0, words: g.battle?.words.size ?? 0,
+    generals: g.battle?.activeGenerals().length ?? 0, monsters: g.battle?.monsters.length ?? 0 };
 }).catch((e) => 'eval-failed: ' + e.message));
 
 // 30s 测量窗；每 2s 巡检一次，终局/暂停就重开对局保持战斗循环活着
-const startBattle = () => page.evaluate(() => {
+const startBattle = () => page.evaluate((endless) => {
   const g = window.__game;
-  g.restart(7, 1); g.enterBattle();
+  g.markNotFirstGame();
+  g.forceWaveHero('wukong', 1);
+  g.restart(7, 1, undefined, endless); g.enterBattle();
   for (let k = 0; k < 25; k++) { if (!g.summon()) { g.autoPlace(); if (!g.summon()) break; } g.autoPlace(); }
   if (g.battle.status === 'ready') g.wave();
-});
+}, ENDLESS);
 await reset();
 const t0 = Date.now();
 while (Date.now() - t0 < 30000) {
