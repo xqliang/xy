@@ -9,6 +9,7 @@ export const ECONOMY = {
   PEACH_PER_MINI_BOSS: 6, // 击杀小 Boss 6 桃
   PEACH_PER_BOSS: 10, // 击杀大 Boss 10 桃
   TANGSENG_INITIAL_HP: 3, // 唐僧初始 3 滴血（道具可拉高）
+  ENDLESS_TANGSENG_INITIAL_HP: 5, // 无尽模式唐僧默认血（更耐久，鼓励冲高波数）
   TANGSENG_MAX_HP: 9, // 唐僧血量上限（无论怎么加都不会超过 9 滴）
   MAX_PEACH: 200, // 蟠桃数量上限（防溢出）
   /** 第 n 波怪物数 = 10 + n - 1 */
@@ -28,6 +29,7 @@ export const PEACH_PER_ELITE = ECONOMY.PEACH_PER_ELITE;
 export const PEACH_PER_MINI_BOSS = ECONOMY.PEACH_PER_MINI_BOSS;
 export const PEACH_PER_BOSS = ECONOMY.PEACH_PER_BOSS;
 export const TANGSENG_INITIAL_HP = ECONOMY.TANGSENG_INITIAL_HP;
+export const ENDLESS_TANGSENG_INITIAL_HP = ECONOMY.ENDLESS_TANGSENG_INITIAL_HP;
 export const TANGSENG_MAX_HP = ECONOMY.TANGSENG_MAX_HP;
 export const MAX_PEACH = ECONOMY.MAX_PEACH;
 export const MONSTER_BASE = ECONOMY.MONSTER_BASE;

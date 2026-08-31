@@ -2511,11 +2511,17 @@ function drawTangsengHearts(
   const n = Math.max(0, Math.floor(hp));
   if (n <= 0) return;
   const perRow = 3;
-  const fontPx = Math.round(CELL * 0.28 * 0.75); // 再缩小 1/4
-  const rowGap = fontPx * 0.95;
-  const colGap = fontPx * 0.95;
+  const fontPx = Math.round(CELL * 0.28 * 0.5); // 心再缩小些（9 滴血=3 行时头顶不拥挤）
+  const rowGap = fontPx * 0.74; // ❤ 字形实际高度远小于字号，上下再压紧些
+  const colGap = fontPx * 1.0; // 加了白描边后每颗略宽，横向间距放大一点点防粘连
   ctx.font = `${fontPx}px sans-serif`;
   ctx.fillStyle = '#e03030';
+  // 描一圈浅色边：心可能叠在栅栏/深色地块上，纯红容易糊在一起看不清；
+  // 先描白边再填红，露出外圈白轮廓，任何底色上都清晰。
+  ctx.strokeStyle = 'rgba(255,248,236,0.95)';
+  ctx.lineWidth = Math.max(1.5, fontPx * 0.16);
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
   // 判断是向上还是向下堆叠：
   // - 默认从头顶向上堆（头顶空间充裕时）
   // - 当唐僧在棋盘顶部，向上空间不够放所有心时，改为从头顶向下堆（但不超过脚底）
@@ -2535,7 +2541,9 @@ function drawTangsengHearts(
     const totalW = (count - 1) * colGap;
     const startX = cx - totalW / 2;
     for (let i = 0; i < count; i++) {
-      ctx.fillText('❤', startX + i * colGap, rowY);
+      const hx = startX + i * colGap;
+      ctx.strokeText('❤', hx, rowY); // 先描白边
+      ctx.fillText('❤', hx, rowY);   // 再填红心，白边只露外圈
     }
     remaining -= count;
     row++;
@@ -2543,6 +2551,7 @@ function drawTangsengHearts(
 }
 
 /** 唐僧立绘：无圆形底座；相对原尺寸缩小 1/5；脚底椭圆阴影；头顶按心数画 ❤（每行最多 3） */
+const TANGSENG_DROP_PX = 7; // 立绘整体下移，给头顶血心（9 滴=3 行）留出堆叠空间
 function drawTangsengFigure(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -2550,6 +2559,7 @@ function drawTangsengFigure(
   hp: number,
   opts?: { rad?: number; defeated?: boolean; hopY?: number },
 ) {
+  y += TANGSENG_DROP_PX; // 下移一点：头顶更空，血心不再顶到上方
   const rad = (opts?.rad ?? CELL * 0.46) * 0.8; // 缩小 1/5
   const defeated = opts?.defeated ?? false;
   const hopY = opts?.hopY ?? 0; // 入场小跳的离地高度（px）：身体抬升、影子留地面
@@ -2667,6 +2677,15 @@ function emergeScale(t: number): number {
   const c1 = 1.70158, c3 = c1 + 1;
   const ease = 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
   return 0.2 + 0.8 * ease;
+}
+
+// 同批出怪防重叠：按怪物 id 派生一个稳定的 [-1,1) 抖动量（同一只每帧一致，不闪）。
+// 用途：门口涌出时给每只一点上下错位 + 打散踏步相位，避免大量出怪完全叠在一起。
+const SPAWN_STACK_JITTER_PX = 5; // 上下错位幅度（像素），叠加在怪物渲染 y 上
+function monsterJitterUnit(id: number | undefined): number {
+  if (id == null) return 0;
+  const s = Math.sin(id * 12.9898) * 43758.5453;
+  return (s - Math.floor(s)) * 2 - 1; // 取小数部分映射到 [-1,1)
 }
 
 // 落子掉落：从各自半场顶加速落入格心，着地时由 battle 播 sfx
@@ -2929,8 +2948,12 @@ function drawMonsterAt(
   trailDir = 1,
 ) {
   const rad = rad0 * emergeScale(m.spawnT);
-  // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)
-  const phase = m.dist * 5.2;
+  // 同批出怪防重叠：按 id 稳定错位——整体（含影子）上下平移 ±SPAWN_STACK_JITTER_PX，
+  // 相当于落在略不同的路径行上；再给踏步相位加个偏移，让相邻怪的弹跳不同步。
+  const jitter = monsterJitterUnit(m.id);
+  y += jitter * SPAWN_STACK_JITTER_PX;
+  // 行走摆动：以沿路进度为相位，上下小幅弹跳(踏步感)；叠加 id 相位偏移打散同批同步感
+  const phase = m.dist * 5.2 + jitter * Math.PI;
   const bob = Math.abs(Math.sin(phase)) * rad0 * 0.16;
   const cy = y - bob; // 身体上抬
   // 地面阴影（跳起时变小变淡）

@@ -250,6 +250,7 @@ export const ECONOMY_LIVE_PEACH_KEYS = new Set([
 export const ECONOMY_START_KEYS = new Set([
   'INITIAL_PEACH',
   'TANGSENG_INITIAL_HP',
+  'ENDLESS_TANGSENG_INITIAL_HP',
 ]);
 
 /**

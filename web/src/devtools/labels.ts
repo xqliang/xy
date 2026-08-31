@@ -8,6 +8,7 @@ export const PARAM_ZH: Record<string, string> = {
   PEACH_PER_MINI_BOSS: '小 Boss 掉桃',
   PEACH_PER_BOSS: '妖王掉桃',
   TANGSENG_INITIAL_HP: '唐僧初始血量',
+  ENDLESS_TANGSENG_INITIAL_HP: '唐僧初始血量（无尽模式）',
   TANGSENG_MAX_HP: '唐僧血量上限（最多 9 滴）',
   MAX_PEACH: '蟠桃数量上限（防溢出）',
   MONSTER_BASE: '【未接线】参考怪数基数（实战硬编码 10+n−1）',

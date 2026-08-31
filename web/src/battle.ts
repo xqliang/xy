@@ -2560,8 +2560,12 @@ export class Battle {
     this.aiCells = placeableByProximity(map).map(mirrorCell); // 按贴路远近排序，AI 优先占贴路格
     // 局外功德加成注入（桃子封顶 MAX_PEACH，血量封顶 TANGSENG_MAX_HP）
     this.peach = Math.min(ECONOMY.MAX_PEACH, this.peach + meta.bonusPeach);
-    this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.tangsengMaxHP + meta.bonusHp);
-    this.tangsengHP = Math.min(this.tangsengMaxHP, this.tangsengHP + meta.bonusHp);
+    // 无尽模式唐僧默认更高血（ENDLESS_TANGSENG_INITIAL_HP）；普通/对战沿用初始血。再叠功德加成。
+    const baseTangsengHp = this.endless
+      ? ECONOMY.ENDLESS_TANGSENG_INITIAL_HP
+      : ECONOMY.TANGSENG_INITIAL_HP;
+    this.tangsengMaxHP = Math.min(ECONOMY.TANGSENG_MAX_HP, baseTangsengHp + meta.bonusHp);
+    this.tangsengHP = Math.min(this.tangsengMaxHP, baseTangsengHp + meta.bonusHp);
     this.aiTangsengHP = Math.min(ECONOMY.TANGSENG_MAX_HP, this.aiTangsengHP + meta.bonusHp); // 对手同享，维持对称（封顶）
     this.mods.atkMul += meta.atkPct;
     this.mods.frqMul += meta.frqPct;
@@ -8134,15 +8138,24 @@ export class Battle {
       this.updateFx(dt);
       return;
     }
-    // 生成妖怪：每批随机 1..N 只（N 随波次升高）；同批「鱼贯而出」——沿路径单列排在出怪口(门)后方，
-    // 逐只从门口涌出（不再在门口两侧随机散开）。第 i 只排在门后 i×JITTER 格，front 先出、后面跟上。
+    // 生成妖怪：每批随机 1..N 只（N 随波次升高）。同批怪都从出怪口(门)「开门冒出」：
+    // 旧做法把第 i 只沿路径往门后推 i×JITTER 格（可达 1.5 格），使后面的怪出生在网格外、
+    // 视觉上像从旁边平移进来而非从门口涌出。现改为每只只在门后随机 0~JITTER 格（≤0.5 格，
+    // 仍贴着门口），配合入场「由小变大」缩放(emergeScale)+ 渲染层 ±5px 上下错位，既保证从门口
+    // 冒出、又避免大量出怪时完全重叠。
     if (this.spawnRemaining > 0) {
       this.spawnTimer -= dt;
       if (this.spawnTimer <= 0) {
         const cap = spawnBatchCap(this.wave);
         const n = Math.min(this.spawnRemaining, 1 + this.rng.int(cap));
         for (let i = 0; i < n; i++) {
-          this.spawnMonster(-i * BOARD_POWER.SPAWN_DIST_JITTER);
+          // 随机延后 0~0.5 格（贴门口的浅纵深，避免完全叠在一起）；仍从门口冒出。
+          // 用「波次+本波序号」的确定性哈希取偏移，而非 this.rng：这是纯表现层的浅纵深，
+          // 不该消耗/扰动战斗 RNG 流（否则会重排所有确定性对局，影响平衡 sim 复现）。
+          const ord = this.waveMonsterCount - this.spawnRemaining; // 本波第几只
+          const h = Math.sin((this.wave * 131 + ord) * 12.9898) * 43758.5453;
+          const frac = h - Math.floor(h); // [0,1)
+          this.spawnMonster(-frac * BOARD_POWER.SPAWN_DIST_JITTER);
           this.spawnRemaining -= 1;
         }
         this.spawnTimer = this.currentSpawnInterval();
