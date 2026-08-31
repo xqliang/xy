@@ -150,6 +150,7 @@ export const TUNING_SKILL_KEYS = new Set([
   'atkBuffMul', 'frqBuffMul', 'freezeStunDur',
   'wuxingAdvMul', 'wuxingDisMul',
   'heroStunDurMain', 'heroStunDurTransit', 'heroKnockPushMain', 'heroKnockPushTransit',
+  'bossCcResist', // BOSS/小 Boss 对武将控制（定身/击退/哮天犬）的抗性倍率
   'heroStunDmgMul', 'heroChargeStunDmgMul', 'heroKnockDmgMul',
   'heroSlowDmgMulMain', 'heroSlowDmgMulTransit', 'heroSlowDur', 'heroHealSlowDur',
   'CC_TIME_BONUS', 'PUSH_CELL_BONUS', 'SLOW_TIME_BONUS', // CC 伤害系数（时长/格数放大输出）

@@ -234,11 +234,16 @@ export const TUNING = {
   // —— 武将大招控制分档 ——
   heroStunDurMain: 1.5, // 满5 定身时长
   heroStunDurTransit: 1.0, // 满3 定身时长
-  heroKnockPushMain: 1.5, // 满5 击退格数
+  heroKnockPushMain: 1.0, // 满5 击退格数（1.5→1.0：1.5格/10s×双击退英雄 = 每10s抹掉5s行程，
+  //   是所有控制里单位 CD 价值最高的一档，压回与定身同量级）
   heroKnockPushTransit: 1.0, // 满3 击退格数
+  bossCcResist: 0.5, // BOSS/小 Boss 对武将控制（定身/击退/哮天犬咬）的效果倍率：
+  // 高血量单体在多个控制武将射程内会被近乎全锁（理论压制 ~97%），减半抗性
+  // 让 BOSS 保留推进威胁；普通妖/精英不受影响
   heroStunDmgMul: 0.8, // 定身附带轻伤（牛魔线另乘冲撞倍率）
   heroChargeStunDmgMul: 2.0, // 牛魔/青牛定身附带重创
-  heroKnockDmgMul: 1.2, // 击退附带轻伤
+  heroKnockDmgMul: 1.35, // 击退附带伤害（1.2→1.35：击退格数 1.5→1.0 后按盘面价值
+  //   估算公式 atk×mul×(1+push×PUSH_CELL_BONUS) 回补，价值从控制时长转移到直伤）
   // —— 控制系 CC 伤害系数（根据控制时长/格数放大输出，让控制收益可量化）——
   // bonus = baseMul × (1 + ccBonus)；CC 越久/越远，额外伤害越高
   CC_TIME_BONUS: 0.35, // 每秒定身 +35% 伤害（定住越久，塔白打越多）
@@ -1079,6 +1084,13 @@ export interface BattleCoreState {
 }
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
+
+/**
+ * BOSS/小 Boss 对武将控制的抗性倍率（定身/击退/哮天犬咬一律乘它；普通妖/精英=1）。
+ * 背景：高血量单体在多个控制武将射程内会被近乎全锁（理论压制 ~97%），
+ * 减半抗性让 BOSS 保留推进威胁，普通波次的控制手感不变。
+ */
+const bossCcResistMul = (m: Monster) => (m.isBoss || m.isMiniBoss) ? TUNING.bossCcResist : 1;
 
 /**
  * 原地压缩数组：保留谓词为真的元素（保序、零分配）。
@@ -6921,7 +6933,7 @@ export class Battle {
             if (!pick || t.m.maxHp > pick.m.maxHp) pick = t;
           }
           if (pick) {
-            pick.m.stunT = Math.max(pick.m.stunT ?? 0, TUNING.heroDogStunDur);
+            pick.m.stunT = Math.max(pick.m.stunT ?? 0, TUNING.heroDogStunDur * bossCcResistMul(pick.m));
             this.biteTarget = { c: Math.round(pick.p.c), r: Math.round(pick.p.r), mid: pick.m.id };
             // 光束角度：从施法者中心→咬点（让狗朝向光束冲锋方向）
             const beamAng = Math.atan2(pick.p.r - gAy, pick.p.c - gAx);
@@ -6936,7 +6948,7 @@ export class Battle {
         const isCharge = g.def.id === 'niumowang' || g.def.id === 'qingniu';
         const dmgMul = isCharge ? TUNING.heroChargeStunDmgMul : TUNING.heroStunDmgMul;
         for (const t of inRange) {
-          t.m.stunT = Math.max(t.m.stunT, dur);
+          t.m.stunT = Math.max(t.m.stunT, dur * bossCcResistMul(t.m));
           // CC 价值只进盘面战力估算（heroSkillFocusDps），实际伤害只用基础倍率，避免重复扣血
           hurt(t.m, damage(atk * dmgMul), t.p, 0.12);
         }
@@ -6945,7 +6957,7 @@ export class Battle {
       case 'knock': {
         const push = g.def.maxTier === 5 ? TUNING.heroKnockPushMain : TUNING.heroKnockPushTransit;
         for (const t of inRange) {
-          t.m.dist = Math.max(entranceDist, t.m.dist - push);
+          t.m.dist = Math.max(entranceDist, t.m.dist - push * bossCcResistMul(t.m));
           // CC 价值只进盘面战力估算，实际伤害只用基础倍率
           hurt(t.m, damage(atk * TUNING.heroKnockDmgMul), t.p, 0.12);
         }

@@ -111,18 +111,18 @@ export const GENERALS: GeneralDef[] = [
 
   // ——— 铁：狂风击退 ———
   { id: 'tieshan', name: '铁扇', chars: ['铁', '扇'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退1.5格，附带1.2×攻', atk: 4.11, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
+    skillName: '芭蕉扇·狂风', skillDesc: '狂风群体击退1.0格，附带1.35×攻', atk: 4.11, frq: 1.4, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-tieshan',
     maxTier: 5, atkStyle: '狂风击退', family: '铁', element: 'wood' },
   { id: 'tiebei', name: '铁背', chars: ['铁', '背'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '铁背开山', skillDesc: '击退1.0格＋1.2×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tiebei',
+    skillName: '铁背开山', skillDesc: '击退1.0格＋1.35×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2.0, targets: 1.5, skillCd: 12, weight: 3, asset: 'hero-tiebei',
     maxTier: 3, atkStyle: '狂风击退', family: '铁', element: 'earth' },
 
   // ——— 沙：杖扫击退 ———
   { id: 'shaseng', name: '沙僧', chars: ['沙', '僧'], role: '控制', rank: 'T1', skill: 'knock',
-    skillName: '降妖宝杖', skillDesc: '横扫击退1.5格，附带1.2×攻', atk: 4.42, frq: 1.3, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-shaseng',
+    skillName: '降妖宝杖', skillDesc: '横扫击退1.0格，附带1.35×攻', atk: 4.42, frq: 1.3, rge: 2.5, targets: 2, skillCd: 10, weight: 1, asset: 'hero-shaseng',
     maxTier: 5, atkStyle: '杖扫击退', family: '沙', element: 'water' },
   { id: 'liusha', name: '流沙', chars: ['流', '沙'], role: '过渡', rank: 'T2', skill: 'knock',
-    skillName: '流沙涌', skillDesc: '短距击退1.0格＋1.2×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-liusha',
+    skillName: '流沙涌', skillDesc: '短距击退1.0格＋1.35×攻（过渡）', atk: 4.7, frq: 1.2, rge: 2, targets: 1.5, skillCd: 11, weight: 3, asset: 'hero-liusha',
     maxTier: 3, atkStyle: '杖扫击退', family: '沙', element: 'earth' },
 
   // ——— 白：单体突进 ———
