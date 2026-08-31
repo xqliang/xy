@@ -1081,6 +1081,33 @@ export interface BattleCoreState {
   weaponBonuses: WeaponBonuses; aiWeaponBonuses: WeaponBonuses;
   // A8 RNG（4 条内部状态）
   rngS: number; aiRngS: number; aiSpawnRngS: number; bossScheduleRngS: number;
+  // A9 布阵在途 + 聚宝盆累计（全部可选：旧档没有这些字段，恢复时按空态回退——
+  // 旧档本来就把在途布阵丢掉了，语义一致）。不入档会导致：① 恢复后待落的兵/字牌
+  // 凭空消失（花桃不落子）；② 自动布阵规划器因「虚占格/回放队列」消失走出不同分支
+  // （battle-resume-serialize 曾据此分叉）；③ 聚宝盆 4 杀计数清零、桃经济错位。
+  pendingPlace?: { token: TrayToken; c: number; r: number; dropAnim: boolean; trayIndex?: number; keepInTray?: boolean }[];
+  aiPendingPlace?: { token: TrayToken; c: number; r: number }[];
+  digFx?: { c: number; r: number; t: number }[];
+  aiDigFx?: { c: number; r: number; t: number }[];
+  placeDropFx?: PlaceDropFx[];
+  autoPlaceDragFx?: AutoPlaceDragFx[];
+  autoPlacePlayback?: AutoPlacePlaybackStep[];
+  autoPlacePlaying?: boolean;
+  autoPlacePlaybackWait?: boolean;
+  autoPlacePlaybackGap?: number;
+  autoPlaceRepositionPending?: boolean;
+  aiAutoPlacePlayback?: AutoPlacePlaybackStep[];
+  aiAutoPlacePlaying?: boolean;
+  aiAutoPlacePlaybackWait?: boolean;
+  aiAutoPlacePlaybackGap?: number;
+  placeDropAnimDepth?: number;
+  placeDropStagger?: { player: number; ai: number };
+  jubaAccum?: number;
+  aiJubaAccum?: number;
+  // 布阵防抖守卫：上次「布阵无操作」时的盘面键。不入档则恢复局失去防抖记忆，
+  // autoPlaceTray 会重复规划出原局已判定的空操作（resume-sim 曾据此分叉）。
+  lastAutoPlaceBoardKey?: string | null;
+  lastAiAutoPlaceBoardKey?: string | null;
 }
 
 const cellKey = (c: number, r: number) => `${c},${r}`;
@@ -8652,6 +8679,28 @@ export class Battle {
         aiRepositionTimer: this.aiRepositionTimer, aiLastRepositionPair: this.aiLastRepositionPair, wasDangerNear: this.wasDangerNear,
         aiSkill: this.aiSkill, versusBand: this.versusBand, weaponBonuses: this.weaponBonuses, aiWeaponBonuses: this.aiWeaponBonuses,
         rngS: this.rng.getState(), aiRngS: this.aiRng.getState(), aiSpawnRngS: this.aiSpawnRng.getState(), bossScheduleRngS: this.bossScheduleRng.getState(),
+        // A9 布阵在途 + 聚宝盆累计（拷贝快照，防止后续 step 原地改动污染存档）
+        pendingPlace: this.pendingPlace.map((p) => ({ ...p, token: { ...p.token } as TrayToken })),
+        aiPendingPlace: this.aiPendingPlace.map((p) => ({ ...p, token: { ...p.token } as TrayToken })),
+        digFx: this.digFx.map((d) => ({ ...d })),
+        aiDigFx: this.aiDigFx.map((d) => ({ ...d })),
+        placeDropFx: this.placeDropFx.map((d) => ({ ...d })),
+        autoPlaceDragFx: this.autoPlaceDragFx.map((d) => ({ ...d, token: { ...d.token } as TrayToken })),
+        autoPlacePlayback: this.autoPlacePlayback.map((s) => ({ ...s })),
+        autoPlacePlaying: this.autoPlacePlaying,
+        autoPlacePlaybackWait: this.autoPlacePlaybackWait,
+        autoPlacePlaybackGap: this.autoPlacePlaybackGap,
+        autoPlaceRepositionPending: this.autoPlaceRepositionPending,
+        aiAutoPlacePlayback: this.aiAutoPlacePlayback.map((s) => ({ ...s })),
+        aiAutoPlacePlaying: this.aiAutoPlacePlaying,
+        aiAutoPlacePlaybackWait: this.aiAutoPlacePlaybackWait,
+        aiAutoPlacePlaybackGap: this.aiAutoPlacePlaybackGap,
+        placeDropAnimDepth: this.placeDropAnimDepth,
+        placeDropStagger: { ...this.placeDropStagger },
+        jubaAccum: this.jubaAccum,
+        aiJubaAccum: this.aiJubaAccum,
+        lastAutoPlaceBoardKey: this.lastAutoPlaceBoardKey,
+        lastAiAutoPlaceBoardKey: this.lastAiAutoPlaceBoardKey,
       },
     };
   }
@@ -8706,6 +8755,29 @@ export class Battle {
     this.aiUnlocked.clear(); for (const k of c.aiUnlocked) this.aiUnlocked.add(k);
     // 4 条 RNG 内部状态回填
     this.rng.setState(c.rngS); this.aiRng.setState(c.aiRngS); this.aiSpawnRng.setState(c.aiSpawnRngS); this.bossScheduleRng.setState(c.bossScheduleRngS);
+    // A9 布阵在途 + 聚宝盆累计：旧档缺字段按空态回退（旧档本就丢在途布阵，语义一致）。
+    // 恢复时逐项深拷贝：parse 出的值对象已独立，这里防的是与原局共享引用。
+    this.pendingPlace = (c.pendingPlace ?? []).map((p) => ({ ...p, token: { ...p.token } as TrayToken }));
+    this.aiPendingPlace = (c.aiPendingPlace ?? []).map((p) => ({ ...p, token: { ...p.token } as TrayToken }));
+    this.digFx = (c.digFx ?? []).map((d) => ({ ...d }));
+    this.aiDigFx = (c.aiDigFx ?? []).map((d) => ({ ...d }));
+    this.placeDropFx = (c.placeDropFx ?? []).map((d) => ({ ...d }));
+    this.autoPlaceDragFx = (c.autoPlaceDragFx ?? []).map((d) => ({ ...d, token: { ...d.token } as TrayToken }));
+    this.autoPlacePlayback = (c.autoPlacePlayback ?? []).map((s) => ({ ...s }));
+    this.autoPlacePlaying = c.autoPlacePlaying ?? false;
+    this.autoPlacePlaybackWait = c.autoPlacePlaybackWait ?? false;
+    this.autoPlacePlaybackGap = c.autoPlacePlaybackGap ?? 0;
+    this.autoPlaceRepositionPending = c.autoPlaceRepositionPending ?? false;
+    this.aiAutoPlacePlayback = (c.aiAutoPlacePlayback ?? []).map((s) => ({ ...s }));
+    this.aiAutoPlacePlaying = c.aiAutoPlacePlaying ?? false;
+    this.aiAutoPlacePlaybackWait = c.aiAutoPlacePlaybackWait ?? false;
+    this.aiAutoPlacePlaybackGap = c.aiAutoPlacePlaybackGap ?? 0;
+    this.placeDropAnimDepth = c.placeDropAnimDepth ?? 0;
+    this.placeDropStagger = c.placeDropStagger ? { ...c.placeDropStagger } : { player: 0, ai: 0 };
+    this.jubaAccum = c.jubaAccum ?? 0;
+    this.aiJubaAccum = c.aiJubaAccum ?? 0;
+    this.lastAutoPlaceBoardKey = c.lastAutoPlaceBoardKey ?? null;
+    this.lastAiAutoPlaceBoardKey = c.lastAiAutoPlaceBoardKey ?? null;
   }
 }
 
