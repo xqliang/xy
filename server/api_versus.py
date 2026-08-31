@@ -549,6 +549,33 @@ class VersusHub:
         m["no_contest"] = True
         self._forget_match_state(m["match_id"])
 
+    def forfeit(self, mid: str, uid: str) -> bool:
+        """matched 动画期一方主动退出：作废已成形的对局，避免对手干等一个永不 hello 的玩家。
+        按 matchId 找对局（本实例 or 跨实例 _load_match_from_redis 懒认领，与 ws_hello 同）；
+        校验 uid 属于该局。分流（幂等，已终局返回 False）：
+          - 对手已在对局中(connected_ever) → 判对手胜（我方逃跑），并推 result 给在线对手。
+          - 对手也未连接(双方都还在动画屏) → _set_no_contest 作废（不判胜/不写战绩）。
+        返回是否执行了作废/判负（供端点回 200/ignored）。时钟用 self._now()（与 enqueue/cancel 一致）。"""
+        with self.lock:
+            now = self._now()
+            m = self.matches.get(mid) or self._load_match_from_redis(mid, now)
+            if not m or (m["a"]["uid"] != uid and m["b"]["uid"] != uid):
+                return False
+            if m.get("ended"):
+                return False
+            me, opp = self._sides(m, uid)
+            me_key = "a" if me is m["a"] else "b"      # 我（放弃方）的 side key
+            opp_key = "b" if me_key == "a" else "a"     # 对手 side key
+            if opp.get("connected_ever"):
+                # 对手在场 → 我方(me)判负(Surrender 语义：matched 后逃跑)，对手胜，推 result 给在线对手
+                self._set_result(m, me_key, "Surrender", now)
+                if opp.get("ws_send"):
+                    self._ws_push_locked(opp, me, m, {"type": "result", **m["result"][opp_key]}, cascade=False)
+            else:
+                # 双方都未入场 → 作废，不计战绩
+                self._set_no_contest(m, now)
+            return True
+
     def _set_draw(self, m, now: int) -> None:
         # 双方 EPS 内阵亡 → 平局（可覆盖先到阵亡者已判的胜负）
         m["result"] = {"a": {"outcome": "draw", "reason": "draw"},
@@ -1042,6 +1069,17 @@ def handle_versus_cancel(handler, db: DB) -> None:
     uid = require_auth(handler, db, body)
     if not uid: return
     send_json(handler, 200, _hub(handler).cancel(str(body.get("ticket") or "")))
+
+
+def handle_versus_forfeit(handler, db: DB) -> None:
+    # matched 动画期主动退出：作废已成形的对局（cancel 只清队列 ticket、对已建对局无效）。
+    # 收 matchId（客户端 pvpPendingMatch.matchId），服务端按 uid 校验后作废/判对手胜。
+    body = _read_body(handler)
+    if body is None: return
+    uid = require_auth(handler, db, body)
+    if not uid: return
+    ok = _hub(handler).forfeit(str(body.get("matchId") or ""), uid)
+    send_json(handler, 200, {"ok": ok})
 
 def handle_versus_room_create(handler, db: DB) -> None:
     # 房主建私房：返回房间码 + 邀请链接（Origin 作 base_url，供前端拼 share link）。

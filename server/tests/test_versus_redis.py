@@ -338,3 +338,51 @@ def test_surrender_winner_disconnected_unaffected():
     m["b"]["gone_ms"] = h._now()                 # 胜方断线
     h._set_result(m, "a", "Surrender", h._now())
     assert m["result"]["a"]["reason"] == "selfSurrender"
+
+
+# ---------------------------------------------------------------- matched 后退出作废对局 ----
+def test_forfeit_opponent_online_judges_opponent_win():
+    # matched 动画期一方(a)退出：若对手(b)已在对局中(connected_ever) → 判对手胜（我方逃跑）。
+    # 注：result 的 key 是 side('a'/'b')，A1=a、B1=b。
+    h = _redis_hub()
+    mid, m = _mk_match(h, ua="A1", ub="B1")
+    m["b"]["connected_ever"] = True               # 对手已 hello 在场
+    m["a"]["connected_ever"] = True               # 本方也曾连（在动画前），此刻主动放弃
+    ok = h.forfeit(mid, "A1")
+    assert ok is True
+    assert m["ended"] is True
+    assert m["result"]["b"] == {"outcome": "win", "reason": "opponentSurrender"}   # 对手(B1=b)胜
+    assert m["result"]["a"]["reason"] == "selfSurrender"                            # 本方(A1=a)逃判负
+
+
+def test_forfeit_both_offline_is_no_contest():
+    # matched 动画期双方都还没 hello，一方(a)退出 → 作废对局（不判胜/不写战绩），对手不再干等。
+    h = _redis_hub()
+    mid, m = _mk_match(h, ua="A1", ub="B1")
+    # connected_ever 保持默认 False（双方都未 hello）
+    ok = h.forfeit(mid, "A1")
+    assert ok is True
+    assert m["ended"] is True
+    assert m.get("no_contest") is True
+    assert m["result"] is None                      # 不判胜、不计战绩（match 默认 result=None，未被写入）
+
+
+def test_forfeit_wrong_uid_rejected():
+    # 非本局 uid 试图作废 → 拒绝（不改对局态）。
+    h = _redis_hub()
+    mid, m = _mk_match(h, ua="A1", ub="B1")
+    ok = h.forfeit(mid, "INTRUDER")
+    assert ok is False
+    assert not m.get("ended")
+
+
+def test_forfeit_already_ended_is_idempotent():
+    # 已终局对局再 forfeit → no-op（幂等），不覆盖已有 result。
+    h = _redis_hub()
+    mid, m = _mk_match(h, ua="A1", ub="B1")
+    m["b"]["connected_ever"] = True
+    h._set_result(m, "a", "TangsengDead", h._now())   # 已判负终局
+    before = dict(m["result"])
+    ok = h.forfeit(mid, "A1")
+    assert ok is False                              # 已终局，forfeit 不再动作
+    assert m["result"] == before                    # result 不变

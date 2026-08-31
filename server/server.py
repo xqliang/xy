@@ -31,6 +31,7 @@ from api_versus import (  # noqa: E402
     VersusHub,
     handle_versus_cancel,
     handle_versus_enqueue,
+    handle_versus_forfeit,
     handle_versus_poll,
     handle_versus_room_create,
     handle_versus_room_join,
@@ -110,6 +111,7 @@ class Handler(SimpleHTTPRequestHandler):
             ("POST", "/api/versus/enqueue"): handle_versus_enqueue,
             ("POST", "/api/versus/poll"): handle_versus_poll,
             ("POST", "/api/versus/cancel"): handle_versus_cancel,
+            ("POST", "/api/versus/forfeit"): handle_versus_forfeit,
             ("POST", "/api/versus/room/create"): handle_versus_room_create,
             ("POST", "/api/versus/room/join"): handle_versus_room_join,
         }
