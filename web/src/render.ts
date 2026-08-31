@@ -29,6 +29,7 @@ import { drawPeachIcon } from './peach-icon';
 import { drawElementBadge, drawCounterBadge, counterRelation, softenElementColor } from './wuxing-ui';
 import { showAutoplaceBtn, wuxingEnabled } from './dev-flags';
 import { isWeChat, createOffscreenCanvas } from './platform';
+import { qualityFlags, QUALITY_TIERS, type QualityTier } from './quality';
 import { remainingShares } from './share-quota';
 
 /** 征兵按钮与 HUD 蟠桃图标显示边长（1.5× 基础后再 ×0.7） */
@@ -853,7 +854,8 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       const tipAng = fromAng + phase * Math.PI * 2;
       const flex = Math.sin(phase * Math.PI);
       const alpha = Math.min(1, pulse * 1.15);
-      drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
+      // 低端机降载：扇区残影每招要画多个径向渐变切片，中/低档省略（只留旋转鞭体，视觉主体仍在）。
+      if (!qf().basicReduce) drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
       drawCurvedWhip(ctx, tipAng, reach, alpha, 1, flex, tier);
       break;
     }
@@ -1383,6 +1385,9 @@ function drawSleepingZ(
   s: number,
   nowMs: number,
 ) {
+  // 低端机降载：睡眠「Z」是纯装饰浮字动画，每未激活字牌一次（含 2 个 save + 3 次 strokeText/fillText）。
+  // 中/低档整函数跳过，只损失「睡着」的可爱提示。
+  if (qf().basicReduce) return;
   const cycleS = 2.1;
   const t = nowMs / 1000;
   ctx.save();
@@ -2761,6 +2766,9 @@ function drawGroundShadow(
   rad: number,
   alpha = 0.28,
 ) {
+  // 低端机降载：地面阴影是纯装饰椭圆，被每单位/每武将格/每字牌各调一次，是 save 大户之一。
+  // 中/低档整函数跳过（一次省掉「实体数」个 save + fill），只损失落地阴影的层次感。
+  if (qf().basicReduce) return;
   const shW = Math.max(1, rad * 1.3);
   ctx.save();
   ctx.fillStyle = `rgba(20,16,12,${alpha})`;
@@ -2780,6 +2788,19 @@ export function setFxQuality(q: number): void {
 /** 当前特效画质档位（供 main 迟滞判断 / 测试探针）。 */
 export function getFxQuality(): number {
   return fxQuality;
+}
+
+// —— 画质档位（三档 high/mid/low，见 quality.ts）：驱动「不适合用标量表达」的开/关降载
+// （命中爆点减量、关发光叠加、关毛玻璃）。currentTier 由 main 经 setQualityTier 同步。——
+let currentTier: QualityTier = 'high';
+/** main 帧率监视器/开机分级据 quality 档位调用：同步档位 + 刷新标量（标量反喂 setFxQuality 供粒子缩放）。 */
+export function setQualityTier(tier: QualityTier): void {
+  currentTier = tier;
+  setFxQuality(QUALITY_TIERS[tier]);
+}
+/** 当前档位的降载开关（爆点/发光/blur）。渲染各特效点按需读取。 */
+export function qf() {
+  return qualityFlags(currentTier);
 }
 
 // 单条火舌（灼烧专用）：底宽尖窄，随 phase 左右摇曳；外层暗橙红 + 内层亮黄，配合调用方 lighter 叠加出发光。
@@ -3895,7 +3916,12 @@ function drawStealFx(ctx: CanvasRenderingContext2D, b: Battle) {
 }
 
 function drawBursts(ctx: CanvasRenderingContext2D, b: Battle) {
-  for (const bt of b.bursts) {
+  // 低端机降载：普攻命中环(hit)最频繁，中/低档隔一个画一个（减半绘制量）；击杀(death)/合成(merge)
+  // 反馈对战斗可读性重要，仍全画。用索引跳帧，状态无关、无闪烁。
+  const reduceHit = qf().reduceBursts;
+  for (let bi = 0; bi < b.bursts.length; bi++) {
+    const bt = b.bursts[bi]!;
+    if (reduceHit && bt.kind === 'hit' && (bi & 1)) continue;
     const { x, y } = cellCenterPx(bt.c, bt.r);
     const t = 1 - bt.ttl / bt.maxTtl; // 0→1
     ctx.save();
@@ -10152,6 +10178,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
       }
       case 'cavalry': {
         // 骑：命中层只画扇区残影；鞭体只在单位出招 glyph 画一条，避免双鞭
+        // 低端机降载：扇区残影是多个径向渐变切片，中/低档命中层整段跳过（含 translate，避免污染后续状态）。
+        if (qf().basicReduce) break;
         const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
         const ox = a.x + Math.cos(ang) * CELL * 0.08;
         const oy = a.y + Math.sin(ang) * CELL * 0.08;

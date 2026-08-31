@@ -43,7 +43,7 @@ import {
   drawGameStartHint,
   stepGameStartHint,
   type GameStartHintState,
-  setFxQuality,
+  setQualityTier,
   drawScreenBackdrop,
   takeScrim,
   type UiState,
@@ -97,7 +97,8 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize } from './platform';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize, getDevicePerfLevel } from './platform';
+import { pickInitialTier, updateQualityTier, type QualityTier } from './quality';
 import { canShare, consumeShare, remainingShares } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
@@ -212,9 +213,16 @@ const MIN_FRAME_MS = 1000 / 60 - 4;
 const MENU_FRAME_MS = 1000 / 30 - 2;
 let lastMenuInputAt = -1e9; // 上次菜单交互时刻（performance.now 基）；初始远古→开机即 30fps
 const MENU_INPUT_BURST_MS = 1000;
-// 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，fxQualityLevel=当前档位(1=满/0.4=省)。
+// 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，qualityTier=当前画质档(high/mid/low)。
 let frameMsEma = 0;
-let fxQualityLevel = 1;
+let qualityTier: QualityTier = 'high';
+
+// 开机按设备性能分级定初始档：差的机器开局即中/低档，不必等 EMA 爬到降档线（消除开局就卡）。
+// 经 render.setQualityTier 同步档位 + 刷新标量（标量反喂 setFxQuality 供粒子缩放）。
+function initQualityTier(): void {
+  qualityTier = pickInitialTier(getDevicePerfLevel());
+  setQualityTier(qualityTier);
+}
 
 // 切后台暂停：停 rAF 循环与背景音；若在匹配屏则放弃匹配（cancel 服务端 ticket，防残留被别人匹配到）。
 onAppHide(() => { pauseLoop(); abandonPvpMatching(); });
@@ -694,6 +702,10 @@ void (async () => {
       if (ok) track('login');
       scheduleFrame();
     });
+    // 开机按设备性能定初始画质档（差的机器开局即低档），须在续玩恢复/进战斗之前——否则开局头几帧
+    // 仍是满档绘制。getDevicePerfLevel 内部 try/catch，jsbridge 未就绪回退 null→高档，安全；
+    // 战斗中 EMA 会继续动态调整（见 frame()）。此处所有模块级 let 已初始化，无 TDZ。
+    initQualityTier();
     // 续玩恢复优先（PvP/PvE 统一）：有有效未终局快照则恢复进战斗、跳过首页；否则走原首页逻辑。
     // PvP 深链（versusCode 非空）优先于本地续玩：保留原 `versusCode == null` 守卫——此时不恢复本地局，
     // 直接进 PvP 匹配（见下方 enterPvpMatching），避免点了对战邀请却被塞回旧的单人局。
@@ -2948,13 +2960,13 @@ function frame(now: number): void {
   // 小游戏运行时缺失的全局等）都不再中断循环；帧尾 catch 复位画布、finally 照常重排下一帧，
   // 绝不因单帧异常而永久定格白屏（此前无外层 try，一次抛错就让 rAF 停摆）。
   try {
-  // 帧率自适应特效档位：连续动画中测平滑帧时(EMA)，过慢降灼烧/冰冻粒子密度、恢复则复原（迟滞防抖）。
-  // 忽略切前台/入场的巨帧(elapsed≥120ms)。阈值参照 60fps 上限(MIN_FRAME_MS≈12.7ms)：>26ms(≈<38fps)降、<19ms(≈>52fps)复。
-  // 仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
+  // 帧率自适应画质档位：连续动画中测平滑帧时(EMA)，三档(high/mid/low)升降，迟滞防抖（升档阈值严于降档）。
+  // 忽略切前台/入场的巨帧(elapsed≥120ms)。仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
+  // 档位经 render.setQualityTier 同步：刷新标量(供灼烧/冰冻粒子缩放) + 驱动爆点减量/关发光/关 blur 等基础渲染降载。
   if (screen === 'battle' && needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
     frameMsEma = frameMsEma <= 0 ? elapsed : frameMsEma * 0.9 + elapsed * 0.1;
-    if (fxQualityLevel > 0.5 && frameMsEma > 26) { fxQualityLevel = 0.4; setFxQuality(0.4); }
-    else if (fxQualityLevel < 0.9 && frameMsEma < 19) { fxQualityLevel = 1; setFxQuality(1); }
+    const next = updateQualityTier(qualityTier, frameMsEma);
+    if (next !== qualityTier) { qualityTier = next; setQualityTier(next); }
   }
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
@@ -3428,6 +3440,8 @@ interface GameHook {
   resumeProbe: () => { screen: string; hasSave: boolean; wave: number; status: string | null; toast: string | null; resumePopup: boolean };
   // 自测探针：唐僧入场走跳（冒烟验证 introT 推进 + hopY 振荡、归位后归零）。
   tangsengIntro: () => { t: number; done: boolean; hopY: number };
+  // 自测探针：强制切画质档位（低端机降载冒烟用：验证切档不崩 + 低档确有绘制差异）。
+  setQualityTier: (tier: QualityTier) => void;
 }
 const hook: GameHook = {
   get battle() {
@@ -3649,5 +3663,7 @@ const hook: GameHook = {
   resumeProbe: () => ({ screen, hasSave: !!readSession(), wave: battle.wave, status: battle.status, toast: peekBattleToast(), resumePopup }),
   // 自测探针：唐僧入场走跳（hopY 与 drawTangseng 同源 introHopY，供 headless 冒烟验证）。
   tangsengIntro: () => ({ t: battle.introT, done: battle.introDone, hopY: introHopY(battle) }),
+  // 自测探针：强制切画质档位（同步档位 + 刷新标量，与 EMA 自动调档同源 setQualityTier）。
+  setQualityTier: (tier: QualityTier) => { qualityTier = tier; setQualityTier(tier); },
 };
 (window as unknown as { __game: GameHook }).__game = hook;

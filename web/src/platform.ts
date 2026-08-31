@@ -52,6 +52,18 @@ export function getViewportSize(): { w: number; h: number } {
   return { w: window.innerWidth || 0, h: window.innerHeight || 0 };
 }
 
+// 设备性能分级（低端机自适应降画质用）：微信取 wx.getSystemInfoSync().benchmarkLevel
+// （数值越大越强，机型基准差异大只做粗分；部分机型/旧版无此字段 → null）。Web 无此概念 → null。
+// 时序同 getViewportSize：jsbridge 未就绪时 getSystemInfoSync 抛错 → catch 回 null（后续帧可再取）。
+export function getDevicePerfLevel(): number | null {
+  if (!isWeChat) return null;
+  try {
+    const info = typeof wx.getSystemInfoSync === 'function' ? wx.getSystemInfoSync() : null;
+    const lv = info?.benchmarkLevel;
+    return typeof lv === 'number' && Number.isFinite(lv) ? lv : null;
+  } catch { return null; } // jsbridge 未就绪：取不到，交由调用方回退高档
+}
+
 // 音频上下文：Web = AudioContext；微信 = wx.createWebAudioContext()（API 兼容 WebAudio）。
 export function createAudioContext(): AudioContext | null {
   try {

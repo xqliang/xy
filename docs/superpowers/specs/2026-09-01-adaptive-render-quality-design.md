@@ -51,13 +51,25 @@
 
 ### 基础渲染降载(按档位开关)
 
-这是相比现有浅机制的主要增量。各降载项都用 `quality.ts` 的布尔开关读取,**默认高档全关、中/低档逐级开启**:
-- **径向渐变缓存化/复用**:`drawUnlockedCellFace` 等内容确定性(旧诊断 `cellHash01` 确定性=纯静态)的渐变,按签名缓存到离屏 canvas,复用而非每帧重建(参考已有 `boardLayerCache` 模式)。高档可仍每帧(现状),中/低档强制走缓存。
-- **全屏填充降频**:背景 cover + 半透明 fillRect 这类每帧重复的全屏填充,低档隔帧或降频重绘(内容静态时)。
-- **关 blur / 毛玻璃**:`drawEndlessFrost` 毛玻璃(已有 8Hz 缓存)与其它 `shadowBlur`/blur 发光,低档直接关闭或降强度。
-- **命中爆点减量**:`battle.ts` 的 `bursts`/飘字/fx 对象生成数随档位减少(这是特效与基础渲染的交界,归到基础渲染降载)。
+这是相比现有浅机制的主要增量。实测战斗屏每帧 Canvas API 计数(改前基线,`perf-count.mjs`,60fps):
+
+| 指标 | 改前(战斗) | 备注 |
+|---|---|---|
+| createRadialGradient/帧 | **0** | 棋盘整层已缓存(B 项生效),非热点——**初稿「径向渐变缓存化」经实测证伪,不做** |
+| ctx.save/帧 | **35.9** | ⚠️ 最大热点:地面阴影/睡眠Z/血条等样板 save |
+| fillText/帧 | 10 | 飘字/阶数徽标/状态图标 |
+| drawImage/帧 | 10.5 | 妖怪/单位立绘,随实体线性增长 |
+| fillRect/帧 | 2.5 | 背景填充 |
+
+据此,**实际落地的降载**(都用 `quality.ts` 布尔开关读取,默认高档全关、中/低档逐级开启):
+- **省地面阴影 `drawGroundShadow`**(中/低档整函数跳过):被每单位/每武将格/每字牌各调一次,是 save 大户;纯装饰椭圆,低档跳过只损失落地层次感。→ `basicReduce`
+- **省睡眠「Z」`drawSleepingZ`**(中/低档跳过):每未激活字牌一次(含 2 save + 3 fillText),纯装饰。→ `basicReduce`
+- **骑兵鞭扫扇区残影**(中/低档省略):`drawWhipSweepFill` 每招/每次命中画多个径向渐变切片;高档保留、中低档省略(鞭体仍画),归并了工作区遗留的手动删除改动。→ `basicReduce`
+- **命中爆点减量 `drawBursts`**(中/低档 hit 类隔一个画一个):普攻命中环最频繁,减半绘制;击杀/合成反馈仍全画(可读性重要)。→ `reduceBursts`
+- **`basicReduce` 语义**:`true`=非高档(开启了任何基础渲染降载),供上述「整函数跳过」类判断;`reduceBursts`/`disableGlow`/`disableBlur` 保留为后续扩展点(当前骑兵扇区/灼烧已分别覆盖发光与 blur 场景)。
 
 > 不做:降整体渲染分辨率(用户明确不降);不动 autoplace/AI/数值(避免 ai-balance 门禁);不暴露手动画质档。
+> 注:动态战斗场景下「三档逐帧计数对比」受战斗推进/待机动画干扰不可靠(暂停又会停 rAF),故降载生效性由单测(档位映射/EMA)+ 运行时探针(切档正确改变 render currentTier、切档零报错)验证,而非动态计数 diff。
 
 ### 遗留手动改动的归并
 
@@ -80,7 +92,9 @@
 ## 验证
 
 - **单元测试**(`web/tests/`):`quality.ts` 的档位常量、`pickInitialTier` 分级映射(含 benchmarkLevel 缺省回退)、EMA 迟滞升降序(给定帧时序列→期望档位序列,含防抖)。vitest 在 `web/` 跑。
-- **渲染计数器回归**:`web/tools/perf-count.mjs` 测改前/改后每帧 `createRadialGradient`/`save`/`fillText`/`drawImage` 计数,确认中/低档基础渲染降载生效(渐变/填充/drawImage 下降)。基准用 `perf-profile2.mjs`(已内置「教程全已见」预置,避免空棋盘),4x CPU 节流模拟低端,对比改前/改后帧 JS 耗时 p99 与掉帧。
-- **视觉等价(高档)**:高档行为应与现状逐像素等价(只在不该变的地方变了才叫回归);`shot-diff.mjs` 不同端口对比高档截图。
-- **typecheck 不新增**:`web/` tsc 基线不干净,验收看「不新增报错」。
+- **改前基线**:`web/tools/perf-count.mjs`(战斗屏,已预置「教程全已见」)实测每帧计数,确认热点在 `save`(35.9/帧)而非径向渐变(0/帧,棋盘已缓存)——据此把降载聚焦到 save 大户(地面阴影/睡眠Z/爆点/骑兵扇区)。
+- **运行时探针**:`__game.setQualityTier(tier)` 强制切档,经 headless 断言:①切档确实改变 render 内部 `currentTier`(high↔low);②三档来回切换零 pageerror;③战斗 status 正常 playing。**档位逻辑正确性**由此与单测双重保证。
+- **视觉等价(高档)**:高档行为应与现状逐像素等价(降载全在 `basicReduce`/`reduceBursts` 守卫内,高档 `qf()` 全 false→与旧路径逐行等价)。
+- **typecheck 不新增**:`web/` tsc 基线不干净(26 处既有报错),改动前后均 26,验收看「不新增报错」。
 - **浏览器验证**:按 `verify-web-in-browser` 记忆,改渲染/循环后真机浏览器跑冒烟(`__game` 钩子),确认战斗能进、档位切换无白屏/无报错。
+- **全量单测不回归**:`web/` vitest 全量(含 `ai-balance`)通过——降载纯在渲染层,不碰 AI/数值,故不触发 ai-balance 门禁。
