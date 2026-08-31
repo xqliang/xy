@@ -937,14 +937,30 @@ class VersusHub:
                         snap.append((mid, blob))
                     except Exception:
                         logging.exception("pvp mstate 单局快照失败 match_id=%s，跳过", mid)
-                try:
-                    pipe = self.r.pipeline(transaction=False)
-                    for mid, blob in snap:
-                        pipe.set(k("mstate", mid), blob)
-                        pipe.pexpire(k("mstate", mid), MATCH_REAP_MS)
-                    pipe.execute()
-                except Exception:
-                    logging.exception("pvp mstate flush 失败（不影响对局，下轮重试）")
+                # C4-fencing：逐局 WATCH/MULTI，只有仍持 owner:{mid} 的实例能写 mstate，
+                # 挡住失去归属的旧 owner 覆盖新 owner 活态（照搬 _pair_once 的事务 idiom）。
+                # 逐局 try：单局异常只跳过该局，不中断整轮 flush（对齐快照循环的容错）。
+                for mid, blob in snap:
+                    try:
+                        for _ in range(3):                       # WatchError 重试上限
+                            pipe = self.r.pipeline()             # transaction=True
+                            try:
+                                pipe.watch(k("owner", mid))
+                                if pipe.get(k("owner", mid)) != self.instance_id:
+                                    pipe.unwatch()
+                                    break                        # 已不是我 → 跳过，不覆盖新 owner
+                                pipe.multi()
+                                pipe.set(k("mstate", mid), blob)
+                                pipe.pexpire(k("mstate", mid), MATCH_REAP_MS)
+                                pipe.pexpire(k("owner", mid), MATCH_REAP_MS)   # 续期 owner，与 mstate 同寿
+                                pipe.execute()
+                                break
+                            except WatchError:
+                                continue                         # owner 在事务窗内被改 → 重试（下轮 GET 会跳过）
+                            finally:
+                                pipe.reset()
+                    except Exception:
+                        logging.exception("pvp mstate fenced flush 单局失败 match_id=%s，跳过", mid)
 
     def _load_match_from_redis(self, mid: str, now: int) -> Optional[dict]:
         """懒认领：本实例 self.matches 无此局时，从 Redis mstate:{mid} 重建整局运行时并接管 owner。

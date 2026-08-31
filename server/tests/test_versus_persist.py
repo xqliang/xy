@@ -349,3 +349,25 @@ def test_owner_terminal_deletes_owner_key(rhub):
     rhub.ws_status("T1", mid, "surrender")           # 终局 → _set_result → _forget_match_state
     assert rhub.r.get(k("mstate", mid)) is None
     assert rhub.r.get(k("owner", mid)) is None
+
+
+def test_stale_owner_flush_is_fenced(rhub):
+    from rediskv import k
+    import json
+    mid = _mk(rhub, "S1", "S2")
+    rhub.ws_hello("S1", mid, lambda t: True)         # 仅 S1 在旧 owner 上连过
+    rhub.flush_active_matches()                      # owner=旧(rhub)
+    h2 = _reopen(rhub.db, rhub._redis_server, 2_000_000)
+    h2.ws_hello("S2", mid, lambda t: True)           # 新接管 → owner=h2；S2 connected_ever=True
+    h2.flush_active_matches()                        # 新写入：b(S2) connected_ever=True
+    rhub.flush_active_matches()                      # 旧再 flush → 应被 fence，不得覆盖
+    blob = json.loads(rhub.r.get(k("mstate", mid)))
+    assert blob["state"]["b"]["connected_ever"] is True   # 新 owner 的版本，未被旧(其 b 从未连)覆盖
+    assert rhub.r.get(k("owner", mid)) == h2.instance_id
+
+
+def test_single_instance_flush_still_writes(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "U1", "U2")
+    rhub.flush_active_matches()
+    assert rhub.r.get(k("mstate", mid)) is not None  # fence 恒过（owner==自己）
