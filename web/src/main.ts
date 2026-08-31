@@ -3147,6 +3147,8 @@ interface GameHook {
   openMenuPopup: (name: MenuPopup) => void;
   // 预览/截图：在战斗屏弹出铲子分享结果弹窗（success/fail）。
   previewShareResult: (ok: boolean) => void;
+  // 预览/截图：个人信息弹窗头像卷轴滚到起点/终点。
+  previewProfileScroll: (end: boolean) => void;
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 渲染桥。
   // 注（Task 5）：onPvpMatched 会尝试连一个真实 WS（ fabricated matchId），连不上则 PvpSocket 指数退避静默重连、
   // 本方半场照常本地运行（PvpSocket 不抛）。对无服务端的单机探针场景可接受。
@@ -3285,10 +3287,22 @@ const hook: GameHook = {
   curScreen: () => screen,
   // 预览/回归截图：切到首页并打开指定菜单弹窗（经 lazy 模块 ensure，与真实入口 openSettingsPopup 同源）。
   openMenuPopup: (name: MenuPopup) => {
-    menuPopupsLazy.ensure(() => { screen = 'menu'; menuPopup = name; scheduleFrame(); });
+    menuPopupsLazy.ensure(() => {
+      screen = 'menu';
+      if (name === 'profile') profilePopup = createProfilePopupState(); // profile 弹窗需 state 才绘制
+      menuPopup = name;
+      scheduleFrame();
+    });
   },
   // 预览/截图：在战斗屏弹出铲子分享结果弹窗（success/fail），供 popupshot 验证。
   previewShareResult: (ok: boolean) => { screen = 'battle'; shareShovelPopup = ok ? 'success' : 'fail'; scheduleFrame(); },
+  // 预览/截图：把个人信息弹窗头像卷轴滚到起点/终点，验证首尾头像边框完整。
+  previewProfileScroll: (end: boolean) => {
+    if (!profilePopup) return;
+    profilePopup.scrollX = end ? 1e9 : -1e9; // clamp 夹到 max / 0
+    clampProfileScroll(profilePopup);
+    scheduleFrame();
+  },
   // 测试钩子：直接起一局 PvP（绕过匹配 UI 与体力门），供 headless 冒烟验证本方权威 step + 对手快照渲染桥。
   // 注（Task 5）：对手半场现由 WS 快照重建，不在本机确定性重放；fabricated matchId 连不上真实服务端时
   // PvpSocket 指数退避静默重连（不抛），本方半场照常本地运行。

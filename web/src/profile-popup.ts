@@ -7,7 +7,7 @@ import { drawInkActionButton, drawInkPopupFrame, inkPopupCloseRect, roundRect } 
 import { loadUserId } from './user-id';
 import { clampNickname } from './nickname';
 
-const PANEL = { x: 40, y: 120, w: VIEW_W - 80, h: 512 };
+const PANEL = { x: 60, y: 200, w: VIEW_W - 120, h: 512 }; // 用户要求：收窄 40px(每边 20) + 下移 80px（原 x40/y120/w VIEW_W-80）
 // 关闭按钮：与其他 7 处水墨弹窗同源（宫檐标题栏上、跟随 BAND_LIFT/CLOSE_LIFT 布局常量）
 const CLOSE = inkPopupCloseRect(PANEL.x, PANEL.y);
 /** 横向滚动视口 */
@@ -16,6 +16,8 @@ const SCROLL = { x: PANEL.x + 24, y: PANEL.y + 80, w: PANEL.w - 48, h: 196 };
 const CELL_W = 108;
 const CELL_H = 168;
 const GAP = 14;
+/** 滚动内容左右各留的边距：让首/尾头像的边框在两端时完整显示，不被裁剪区或渐隐条压住 */
+const EDGE_PAD = 8;
 const NAME_H = 28;
 const IMG_PAD = 8;
 const COPY_BTN = { w: 56, h: 30 };
@@ -82,7 +84,7 @@ export function createProfilePopupState(): ProfilePopupState {
   // 打开时把当前头像滚到可视区中间
   const idx = Math.max(0, AVATARS.findIndex((a) => a.id === selectedId));
   const cellLeft = idx * (CELL_W + GAP);
-  st.scrollX = cellLeft - (SCROLL.w - CELL_W) / 2;
+  st.scrollX = cellLeft + EDGE_PAD - (SCROLL.w - CELL_W) / 2;
   clampProfileScroll(st);
   return st;
 }
@@ -98,6 +100,11 @@ export type ProfilePopupHit =
 
 function contentWidth(): number {
   return AVATARS.length * (CELL_W + GAP) - GAP;
+}
+
+/** 可滚动最大距离：内容宽 + 两侧 EDGE_PAD - 视口宽（保证两端各留出 EDGE_PAD） */
+function maxScrollX(): number {
+  return Math.max(0, contentWidth() + EDGE_PAD * 2 - SCROLL.w);
 }
 
 export function profilePopupHitAt(x: number, y: number, st: ProfilePopupState): ProfilePopupHit {
@@ -116,7 +123,7 @@ export function profilePopupHitAt(x: number, y: number, st: ProfilePopupState): 
     return { kind: 'nickname' };
   }
   if (x >= SCROLL.x && x <= SCROLL.x + SCROLL.w && y >= SCROLL.y && y <= SCROLL.y + SCROLL.h) {
-    const local = x - SCROLL.x + st.scrollX;
+    const local = x - SCROLL.x - EDGE_PAD + st.scrollX;
     const idx = Math.floor(local / (CELL_W + GAP));
     if (idx >= 0 && idx < AVATARS.length) {
       const cellX = idx * (CELL_W + GAP);
@@ -128,7 +135,7 @@ export function profilePopupHitAt(x: number, y: number, st: ProfilePopupState): 
 }
 
 export function clampProfileScroll(st: ProfilePopupState): void {
-  const max = Math.max(0, contentWidth() - SCROLL.w);
+  const max = maxScrollX();
   st.scrollX = Math.max(0, Math.min(max, st.scrollX));
 }
 
@@ -159,25 +166,29 @@ export function drawProfilePopup(ctx: CanvasRenderingContext2D, st: ProfilePopup
   ctx.clip();
   const rowY = SCROLL.y + (SCROLL.h - CELL_H) / 2;
   AVATARS.forEach((a, i) => {
-    const x = SCROLL.x - st.scrollX + i * (CELL_W + GAP);
+    const x = SCROLL.x + EDGE_PAD - st.scrollX + i * (CELL_W + GAP);
     drawAvatarCell(ctx, a, x, rowY, st.selectedId === a.id, st.unlocked.has(a.id));
   });
   ctx.restore();
 
-  // 左右渐隐 + 箭头，提示可横滑
+  // 左右渐隐 + 箭头，提示可横滑。仅在该方向还能滚动时画——否则会把处在两端的首/尾头像边框压暗（用户反馈边框要完整）。
+  const maxScroll = maxScrollX();
   const fadeW = 28;
-  const leftFade = ctx.createLinearGradient(SCROLL.x, 0, SCROLL.x + fadeW, 0);
-  leftFade.addColorStop(0, 'rgba(243,230,200,0.95)');
-  leftFade.addColorStop(1, 'rgba(243,230,200,0)');
-  ctx.fillStyle = leftFade;
-  ctx.fillRect(SCROLL.x, SCROLL.y, fadeW, SCROLL.h);
-  const rightFade = ctx.createLinearGradient(SCROLL.x + SCROLL.w - fadeW, 0, SCROLL.x + SCROLL.w, 0);
-  rightFade.addColorStop(0, 'rgba(243,230,200,0)');
-  rightFade.addColorStop(1, 'rgba(243,230,200,0.95)');
-  ctx.fillStyle = rightFade;
-  ctx.fillRect(SCROLL.x + SCROLL.w - fadeW, SCROLL.y, fadeW, SCROLL.h);
+  if (st.scrollX > 2) {
+    const leftFade = ctx.createLinearGradient(SCROLL.x, 0, SCROLL.x + fadeW, 0);
+    leftFade.addColorStop(0, 'rgba(243,230,200,0.95)');
+    leftFade.addColorStop(1, 'rgba(243,230,200,0)');
+    ctx.fillStyle = leftFade;
+    ctx.fillRect(SCROLL.x, SCROLL.y, fadeW, SCROLL.h);
+  }
+  if (st.scrollX < maxScroll - 2) {
+    const rightFade = ctx.createLinearGradient(SCROLL.x + SCROLL.w - fadeW, 0, SCROLL.x + SCROLL.w, 0);
+    rightFade.addColorStop(0, 'rgba(243,230,200,0)');
+    rightFade.addColorStop(1, 'rgba(243,230,200,0.95)');
+    ctx.fillStyle = rightFade;
+    ctx.fillRect(SCROLL.x + SCROLL.w - fadeW, SCROLL.y, fadeW, SCROLL.h);
+  }
 
-  const maxScroll = Math.max(0, contentWidth() - SCROLL.w);
   ctx.fillStyle = 'rgba(80,50,20,0.55)';
   ctx.font = 'bold 22px sans-serif';
   ctx.textAlign = 'center';
