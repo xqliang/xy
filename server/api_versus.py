@@ -64,7 +64,8 @@ class VersusHub:
                  gen_seed: Callable[[], int] | None = None,
                  gen_code: Callable[[], str] | None = None,
                  pick_map: Callable[[], str] | None = None,
-                 redis_client=None):
+                 redis_client=None,
+                 instance_id: str | None = None):
         self.db = db
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._gen_seed = gen_seed or (lambda: secrets.randbelow(2**31))
@@ -73,6 +74,9 @@ class VersusHub:
         # C1.2：注入 Redis 客户端（当前代码尚未使用，C1.3+ 匹配层迁移到 Redis 时经 self.r 读写）。
         # None 表示未接 Redis（进程内模式/部分单测），使用方须自行判空。
         self.r = redis_client
+        # C4-fencing：本进程唯一身份，作每局 owner:{mid} 令牌值；多实例下用于判"我是否仍持有该局"。
+        # 默认随机（每进程一个，server.py 无需传）；测试可传定值。
+        self.instance_id = instance_id or secrets.token_hex(8)
         self.lock = threading.Lock()
         self._flush_lock = threading.Lock()  # 串行化 flush（周期线程 vs SIGTERM），防重入；实际互斥由 flush 内 self.lock 保证
         self.queue: dict[str, dict] = {}          # 【已弃用·留空】随机队列(C1.3)+私房(C1.5)均迁 Redis；留空字段仅为 reset() 兼容，无写入方
@@ -173,6 +177,8 @@ class VersusHub:
         pipe.pexpire(k("match", mid), MATCH_REAP_MS)
         pipe.set(k("tm", tk_a), f"{mid}|{uid_a}"); pipe.pexpire(k("tm", tk_a), MATCH_REAP_MS)
         pipe.set(k("tm", tk_b), f"{mid}|{uid_b}"); pipe.pexpire(k("tm", tk_b), MATCH_REAP_MS)
+        # C4-fencing：建局即认领 owner（与轻量记录同 pipe/事务原子写）。撮合(_pair_once)与直连(_make_match)共用本方法。
+        pipe.set(k("owner", mid), self.instance_id); pipe.pexpire(k("owner", mid), MATCH_REAP_MS)
 
     def _make_match(self, e1: dict, e2: dict, now: int, map_id: str | None = None) -> str:
         # 独立成局入口（room_join / 直连测试用）：进程内运行时 + Redis 轻量记录（各自一次写）。
@@ -965,15 +971,25 @@ class VersusHub:
             self.ticket_match[ta] = (mid, m["a"]["uid"])
         if tb:
             self.ticket_match[tb] = (mid, m["b"]["uid"])
+        # C4-fencing：懒认领即抢占 owner（blind SET，last claim wins）。ws_hello/forfeit 都经此接管。
+        self.r.set(k("owner", mid), self.instance_id)
+        self.r.pexpire(k("owner", mid), MATCH_REAP_MS)
         return m
 
     def _forget_match_state(self, mid: str) -> None:
-        """终局/回收时同步删 Redis mstate，避免终局后 TTL 窗口内被重连「复活」成活跃局。
-        幂等；失败仅记日志（不影响终局落库）。self.r 为 None 直接返回。"""
+        """终局/回收时删 Redis mstate + owner；避免终局后 TTL 窗口内被重连「复活」。
+        C4-fencing：加 owner 守卫——owner:{mid} 属别的实例时不删（失去归属的旧 owner 的
+        _reap/forfeit 不得删掉新 owner 的活态）；owner 无主或属我 → 删 mstate + owner。
+        简单 GET-then-DEL（非事务）：最坏极小窗内多删一次，真 owner 下轮 flush(≤5s)重写 mstate 自愈。
+        幂等；失败仅记日志。self.r 为 None 直接返回。"""
         if self.r is None:
             return
         try:
+            owner = self.r.get(k("owner", mid))
+            if owner is not None and owner != self.instance_id:
+                return
             self.r.delete(k("mstate", mid))
+            self.r.delete(k("owner", mid))
         except Exception:
             logging.exception("pvp mstate 删除失败 match_id=%s", mid)
 

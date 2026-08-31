@@ -311,3 +311,41 @@ def test_end_deletes_redis_mstate(rhub):
     assert rhub.r.exists(k("mstate", mid))
     rhub.ws_status("E1", mid, "surrender")
     assert not rhub.r.exists(k("mstate", mid))
+
+
+def test_create_claims_owner(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "A1", "A2")
+    assert rhub.r.get(k("owner", mid)) == rhub.instance_id
+
+
+def test_lazy_load_takes_over_owner(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "B1", "B2")
+    rhub.flush_active_matches()
+    h2 = _reopen(rhub.db, rhub._redis_server, 2_000_000)
+    assert h2.instance_id != rhub.instance_id
+    h2.ws_hello("B1", mid, lambda t: True)          # 触发懒认领接管
+    assert rhub.r.get(k("owner", mid)) == h2.instance_id
+
+
+def test_stale_owner_forget_is_fenced(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "F1", "F2")
+    rhub.ws_hello("F1", mid, lambda t: True)
+    rhub.flush_active_matches()                      # owner=旧(rhub)，mstate 写入
+    h2 = _reopen(rhub.db, rhub._redis_server, 2_000_000)
+    h2.ws_hello("F1", mid, lambda t: True)           # 新接管 → owner=h2
+    rhub._forget_match_state(mid)                    # 旧（失去归属）尝试删 → 应被 fence
+    assert rhub.r.get(k("mstate", mid)) is not None  # 未被旧删
+    assert rhub.r.get(k("owner", mid)) == h2.instance_id
+
+
+def test_owner_terminal_deletes_owner_key(rhub):
+    from rediskv import k
+    mid = _mk(rhub, "T1", "T2")
+    rhub.flush_active_matches()
+    assert rhub.r.get(k("owner", mid)) is not None
+    rhub.ws_status("T1", mid, "surrender")           # 终局 → _set_result → _forget_match_state
+    assert rhub.r.get(k("mstate", mid)) is None
+    assert rhub.r.get(k("owner", mid)) is None
