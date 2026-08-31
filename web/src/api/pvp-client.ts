@@ -45,6 +45,11 @@ export function versusPoll(ticket: string): Promise<ApiResult<PollResp>> {
 export function versusCancel(ticket: string): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch<{ ok: boolean }>('/api/versus/cancel', J({ ticket }));
 }
+// matched 动画期主动退出：作废已成形的对局（cancel 只清队列 ticket、对已建对局无效）。
+// 服务端按 matchId+uid 校验后作废/判对手胜，避免对手干等一个永不 hello 的玩家。
+export function versusForfeit(matchId: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch<{ ok: boolean }>('/api/versus/forfeit', J({ matchId }));
+}
 export function versusRoomCreate(rank: number): Promise<ApiResult<RoomCreateResp>> {
   return apiFetch<RoomCreateResp>('/api/versus/room/create', J({ rank }));
 }

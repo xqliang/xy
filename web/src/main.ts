@@ -334,6 +334,7 @@ function openMapPopup(): void {
 const pvpNet = {
   enqueue: (rank: number) => pvpClient.versusEnqueue(rank),
   poll: pvpClient.versusPoll, cancel: pvpClient.versusCancel,
+  forfeit: pvpClient.versusForfeit,
   roomCreate: (rank: number) => pvpClient.versusRoomCreate(rank),
   roomJoin: (code: string) => pvpClient.versusRoomJoin(code),
 };
@@ -641,13 +642,18 @@ function enterPvpMatching(mode: 'random' | 'invite' | 'join', code?: string, not
   });
 }
 
-/** 放弃当前匹配（若在匹配屏）：cancel 服务端队列 ticket 并回首页。
- *  用于「点退出按钮」与「切后台/锁屏」——后者若不 cancel，ticket 会在服务端队列残留最长
+/** 放弃当前匹配（若在匹配屏）：cancel 服务端队列 ticket / 作废已成形的对局，并回首页。
+ *  用于「点退出按钮」与「切后台/锁屏」——后者若不处理，queuing 的 ticket 会在服务端队列残留最长
  *  ~2.5 分钟(QUEUE_TTL_MS)，期间别人匹配会匹配到这个已离开的玩家、成局后对手看到其从不加入。
+ *  - queuing：cancel 清队列 ticket。
+ *  - matched（pvpPendingMatch 已置，服务端已建对局）：cancel 对已建对局无效，需额外 forfeit(matchId)
+ *    作废对局（服务端判对手胜/作废），否则对手会干等一个在动画期就退出的玩家。
  *  cancel 后再 pump 的在途 poll 因 phase 已转 idle 会被守卫丢弃，不会误触发 onMatched 开局。 */
 function abandonPvpMatching(): void {
   if (screen !== 'pvpMatching' || !pvpController) return;
   void pvpController.cancel(); // 异步发 cancel；phase 立即转 idle，防在途 poll 误 matched
+  // matched 动画期退出：作废已成形的对局（cancel 只清队列、对已建对局无效），避免对手干等。
+  if (pvpPendingMatch) { void pvpNet.forfeit(pvpPendingMatch.matchId); pvpPendingMatch = null; }
   pvpController = null;
   screen = 'menu';
   scheduleFrame();

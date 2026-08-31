@@ -57,5 +57,24 @@ console.log('A3 回前台 curScreen =', s3, '（无未捕获错误:', pageerrs.l
 if (pageerrs.length) { console.log('❌ pageerror:', pageerrs.join('\n')); await browser.close(); process.exit(1); }
 console.log('✅ A3 回前台无异常');
 
-console.log('\n✅ PASS：切后台放弃匹配、清服务端 ticket（防残留被别人匹配到）');
+// A4：matched 动画期退出 → 作废已成形的对局（cancel 对已建对局无效，须 forfeit(matchId)），
+//     否则对手会干等一个在动画期就退出的玩家。断言：切后台回 menu + 发出 forfeit 请求。
+let forfeitHit = 0;
+await page.on('request', (req) => { if (/\/api\/versus\/forfeit/.test(req.url())) forfeitHit++; });
+await page.evaluate(() => window.__game.fakePvpMatch('matched'));   // 进 matched 动画态（pvpPendingMatch 已置）
+await sleep(150);
+const s4a = await cur();
+if (s4a !== 'pvpMatching') { console.log('❌ FAIL：matched 未停在匹配屏'); await browser.close(); process.exit(1); }
+await page.evaluate(() => {
+  Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+await sleep(300);
+const s4b = await cur();
+console.log('A4 matched 退出：curScreen =', s4b, '，forfeit 请求数 =', forfeitHit);
+if (s4b !== 'menu') { console.log('❌ FAIL：matched 退出未回 menu'); await browser.close(); process.exit(1); }
+if (forfeitHit < 1) { console.log('❌ FAIL：matched 退出未发 forfeit（对局未作废，对手会干等）'); await browser.close(); process.exit(1); }
+console.log('✅ A4 matched 退出作废对局（回 menu + 发 forfeit）');
+
+console.log('\n✅ PASS：切后台放弃匹配 + matched 退出作废对局（防残留被别人匹配到 / 对手干等）');
 await browser.close();
