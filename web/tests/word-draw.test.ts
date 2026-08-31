@@ -118,6 +118,30 @@ describe('征兵阶段权重', () => {
     expect(dup).toBe(0);
   });
 
+  it('地图上已有的字绝不再抽（含未达共享上限的「大」/「牛」）', () => {
+    // 大/牛 是共享字（charHeroCapacity>1），但用户要求：场上有 1 张就封死，不再出第 2 张
+    for (const [char, cap] of [['大', 2], ['牛', 3]] as const) {
+      const field = new Map<string, number>([[char, 1]]);
+      expect((field.get(char) ?? 0) < cap).toBe(true); // 前置：确未达共享上限
+      let dup = 0;
+      for (let i = 0; i < 300; i++) {
+        const rng = new FakeRng([i / 300, 0.5]);
+        const pick = pickWordChar(rng, 5, [], [], false, [], undefined, { fieldCharCounts: field });
+        if (pick.char === char) dup++;
+      }
+      expect(dup).toBe(0);
+    }
+  });
+
+  it('保底路径也不补地图上已有的字', () => {
+    const field = new Map<string, number>([['大', 1]]);
+    for (let i = 0; i < 300; i++) {
+      const rng = new FakeRng([i / 300, 0.5, 0.9]);
+      const picks = forcedMatchWordChars(rng, [], [], 2, { fieldCharCounts: field });
+      for (const p of picks) expect(p.char).not.toBe('大');
+    }
+  });
+
   it('出现次数越多，后续抽到同字的概率越低', () => {
     const counts = new Map<string, number>([['仙', 4]]);
     let xian = 0;

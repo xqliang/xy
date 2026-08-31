@@ -195,7 +195,9 @@ function isCharDrawBlocked(
   fieldCharCounts: ReadonlyMap<string, number> | undefined,
 ): boolean {
   if (trayCharsAlready.includes(char)) return true;
-  if (fieldCharCounts && isCharAtFieldCapacity(char, fieldCharCounts)) return true;
+  // 用户要求：地图上已有该字（哪怕是牛/大这类共享字、未达 charHeroCapacity 上限）就不再产出，
+  // 杜绝征兵重复单字（副作用：共享字每局只能建其中一个武将）。
+  if (fieldCharCounts && (fieldCharCounts.get(char) ?? 0) >= 1) return true;
   return false;
 }
 

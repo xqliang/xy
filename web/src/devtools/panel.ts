@@ -290,10 +290,17 @@ function objectFields(
   obj: Record<string, unknown>,
   filter?: (key: string) => boolean,
   onEdited?: () => void,
+  order?: readonly string[],
 ): HTMLElement {
   const wrap = document.createElement('div');
   const keys = Object.keys(obj).filter((k) => (filter ? filter(k) : true));
-  keys.sort();
+  if (order) {
+    // 按给定顺序显示（不在 order 里的排后面、再按字母）；用于让相关键相邻，如 cycleStrengthMul 紧跟 wavesPerCycle
+    const idx = (k: string) => { const i = order.indexOf(k); return i < 0 ? Number.MAX_SAFE_INTEGER : i; };
+    keys.sort((a, b) => idx(a) - idx(b) || a.localeCompare(b));
+  } else {
+    keys.sort();
+  }
   for (const key of keys) {
     const val = obj[key];
     if (typeof val === 'number') {
@@ -929,7 +936,7 @@ export class DevToolsPanel {
     body.appendChild(actions);
 
     body.appendChild(section('TUNING · 血量 / 波次 / 移速'));
-    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_WAVE_KEYS.has(k)));
+    body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_WAVE_KEYS.has(k), undefined, [...TUNING_MONSTER_WAVE_KEYS]));
 
     body.appendChild(section('TUNING · 精英 / 妖王血量护卫 / 小Boss / 骑兵 / 引妖王'));
     body.appendChild(objectFields(TUNING as unknown as Record<string, unknown>, (k) => TUNING_MONSTER_ELITE_KEYS.has(k)));

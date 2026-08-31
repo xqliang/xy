@@ -107,7 +107,7 @@ export const TUNING_MONSTER_WAVE_KEYS = new Set([
   'monsterSpd', 'dangerRemaining',
   'monsterHpBase', 'monsterHpStep', 'monsterHpEarlyFixed', 'monsterHpNoDiffTo', 'monsterHpRampMulByCycle',
   'spawnInterval', 'spawnIntervalMin',
-  'wavesPerCycle', 'cycleStrengthMul',
+  'cycleStrengthMul', 'wavesPerCycle',
 ]);
 
 /** 出怪：妖王 / 骑兵 / 精英 / 小 Boss / 双雄引妖王 */
