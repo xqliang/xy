@@ -25,8 +25,10 @@ const PAD = 24;
 const BTN_H = 46;
 const BTN_GAP = 14;
 
-const MAIN_PY = (VIEW_H - 248) / 2;
-const MAIN_PH = 248;
+const MAIN_PY = (VIEW_H - 264) / 2;
+// 弹窗高 264（原 248）：终止按钮底距弹窗底曾只有 14px（视觉贴边，用户反馈），加高到 30px
+// 留白——对齐并略超二次确认弹窗（PAD=24）的底部惯例；按钮自身位置不变，仅下缘延展。
+const MAIN_PH = 264;
 const MAIN_CLOSE = inkPopupCloseRect(PX, MAIN_PY);
 const MAIN_CONTINUE = { x: PX + PAD, y: MAIN_PY + 128, w: PW - PAD * 2, h: BTN_H };
 const MAIN_QUIT = { x: PX + PAD, y: MAIN_CONTINUE.y + BTN_H + BTN_GAP, w: PW - PAD * 2, h: BTN_H };
