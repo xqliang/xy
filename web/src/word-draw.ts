@@ -30,8 +30,22 @@ export const CORE_HERO_ROLES: GeneralRole[] = ['输出', '控制', '辅助'];
 
 /** 非配对时：已拥有字的权重倍率（尽量不重复；有 charCounts 时由出现次数衰减取代） */
 export const DUP_WEIGHT = 0.04;
-/** 半对孤儿所需配对字相对基础权重的倍率（非 forcePartner 软加权；保底见 PAIR_PITY_*） */
+/** 半对孤儿所需配对字相对基础权重的基准倍率（非 forcePartner 软加权；保底见 PAIR_PITY_*）。
+ *  注意 0.12<1 实为「压低」：配对字比非配对字权重低数倍，配对主要靠 6 次强制保底兜底。 */
 export const PARTNER_BOOST = 0.12;
+/**
+ * 配对字倍率随场上孤儿（未配对单字）数动态抬升（用户 2026-09-01 拍板：
+ * 「场上 4-5 个单字都没组合英雄，需要继续加大打字匹配的概率」——原恒定 0.12
+ * 让孤儿堆到 6-7 个也配不上）。阶梯：0-2 个孤儿维持原基准（前期凑对节奏不变），
+ * 3/4/5+ 逐级抬升（5+ 时 1.6——显著优先于非配对满3 字、接近满5 字档，仍非必出）——
+ * 与 PAIR_PITY 强制保底构成「软加权 + 硬保底」双层。
+ */
+export function partnerBoostMul(orphanCount: number): number {
+  if (orphanCount >= 5) return 1.6; // 孤儿堆满：配对字显著优先（高于非配对满5字的 1.75 之半，压过满3 档）
+  if (orphanCount === 4) return 0.9;
+  if (orphanCount === 3) return 0.3;
+  return PARTNER_BOOST;
+}
 /** 无配对需求时，满5 相对满3 的额外倍率（叠在 phaseWeight 之上） */
 export const HIGH_TIER_BIAS = 1.75;
 export const LOW_TIER_BIAS = 0.65;
@@ -239,8 +253,10 @@ function buildWeightedEntries(
       const isPartner = needed.has(c);
       if (!isPartner && exclude.has(c)) continue;
       const base = g.weight * pw;
-      // 配对最优先；无配对时偏向满5 高级字
-      let mult = isPartner ? PARTNER_BOOST : g.maxTier === 5 ? HIGH_TIER_BIAS * tier5BiasMul : LOW_TIER_BIAS;
+      // 配对最优先；无配对时偏向满5 高级字。配对字倍率随孤儿数动态抬升（见 partnerBoostMul）
+      let mult = isPartner
+        ? partnerBoostMul(orphanChars.length)
+        : g.maxTier === 5 ? HIGH_TIER_BIAS * tier5BiasMul : LOW_TIER_BIAS;
       const count = charCountOf(charCounts, c);
       if (!isPartner && count > 0) {
         mult *= OCCURRENCE_DECAY ** count;

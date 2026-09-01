@@ -24,6 +24,8 @@ import {
   YIN_SUPPORT_PRESS_MUL,
   RECENT_HERO_REPEAT_MUL,
   transitUpgradeBoostMul,
+  partnerBoostMul,
+  PARTNER_BOOST,
 } from '../src/word-draw';
 import { Battle, TUNING } from '../src/battle';
 import { hintGeneralForChar, charHeroCapacity } from '../src/generals';
@@ -552,5 +554,35 @@ describe('满3在场 → 抽同门满5非共享字爬坡（相对满3组成波�
       .find((e) => e.char === '二')?.w ?? 0;
     expect(formedEarly).toBeGreaterThan(formedLate);
     expect(formedLate).toBeCloseTo(none, 5);
+  });
+});
+
+describe('配对权重随孤儿数动态抬升（用户 2026-09-01：场上 4-5 个单字须加大匹配概率）', () => {
+  it('partnerBoostMul 阶梯：0-2 孤儿维持原基准；3/4/5+ 逐级抬升；更多孤儿不再涨', () => {
+    expect(partnerBoostMul(0)).toBeCloseTo(PARTNER_BOOST);
+    expect(partnerBoostMul(1)).toBeCloseTo(PARTNER_BOOST);
+    expect(partnerBoostMul(2)).toBeCloseTo(PARTNER_BOOST); // 前期凑对节奏不变
+    expect(partnerBoostMul(3)).toBeGreaterThan(PARTNER_BOOST * 2);
+    expect(partnerBoostMul(4)).toBeGreaterThan(partnerBoostMul(3));
+    expect(partnerBoostMul(5)).toBeGreaterThan(partnerBoostMul(4));
+    expect(partnerBoostMul(7)).toBeCloseTo(partnerBoostMul(5)); // 5+ 封顶
+    // 1.6 仍非必出：pickFromWeighted 按权重随机，顶格也只是显著优先（6 次强制保底兜底）
+  });
+
+  it('行为：5 个孤儿时配对字命中率显著高于 1 个孤儿时（同一波次均匀采样）', () => {
+    const rate = (orphans: string[]) => {
+      const need = new Set(pendingPartnerChars(orphans, []));
+      let hit = 0;
+      for (let i = 0; i < 3000; i++) {
+        const pick = pickWordChar(new FakeRng([i / 3000]), 5, orphans, [], false);
+        if (need.has(pick.char)) hit++;
+      }
+      return hit / 3000;
+    };
+    const r1 = rate(['大']);
+    const r5 = rate(['大', '哪', '铁', '二', '白']);
+    // 孤儿堆到 5 个：配对命中率明显抬升，且绝对值有保障（否则用户继续抱怨 6-7 个单字）
+    expect(r5).toBeGreaterThan(r1 * 1.5);
+    expect(r5).toBeGreaterThan(0.3);
   });
 });
