@@ -46,6 +46,7 @@ import {
   setQualityTier,
   drawScreenBackdrop,
   takeScrim,
+  drawFpsOverlay,
   type UiState,
 } from './render';
 import type { Cell } from './board';
@@ -98,7 +99,7 @@ import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weap
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
 import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize, getDevicePerfLevel } from './platform';
-import { pickInitialTier, updateQualityTier, type QualityTier } from './quality';
+import { pickInitialTier, updateQualityTier, fpsMeterTick, type QualityTier, type FpsMeterState } from './quality';
 import { canShare, consumeShare, remainingShares } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
@@ -216,6 +217,10 @@ const MENU_INPUT_BURST_MS = 1000;
 // 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，qualityTier=当前画质档(high/mid/low)。
 let frameMsEma = 0;
 let qualityTier: QualityTier = 'high';
+// FPS 调试显示：连点版本号 7 次开关（全平台含微信——纯 canvas 绘制，不依赖 DOM）。
+// fpsMeter 为滚动窗口统计（quality.ts 纯函数），frame() 每真绘制帧推进一次。
+let fpsOverlayOn = false;
+let fpsMeter: FpsMeterState = { windowStart: -1, frames: 0, fps: 0 };
 
 // 开机按设备性能分级定初始档：差的机器开局即中/低档，不必等 EMA 爬到降档线（消除开局就卡）。
 // 经 render.setQualityTier 同步档位 + 刷新标量（标量反喂 setFxQuality 供粒子缩放）。
@@ -1655,11 +1660,14 @@ function handleVersionSecretTap(): void {
   if (versionTapCount < VERSION_SECRET_TAPS) return;
   versionTapCount = 0;
   playSfx('click');
+  // FPS 调试浮层：连点 7 次 toggle（全平台——纯 canvas 绘制，微信小游戏也能用；
+  // 真机低端机排查帧率问题主要靠它，见 perf-diagnosis 记忆）。
+  fpsOverlayOn = !fpsOverlayOn;
   // DevTools 面板是 DOM 实现（document.createElement/<style>/<input>…），微信小游戏运行时无 DOM，
   // 触到 document 会抛 ReferenceError；旧代码 .then 无 .catch → 连点 7 下静默无反应（用户反馈「显示不出来」）。
   // 微信端明确提示不可用（应在网页端调参、真机只做验证）；.catch 兜底任何加载/构造错误。
   if (isWeChat) {
-    menuToast = 'DevTools 仅网页端可用（微信小游戏无 DOM）';
+    menuToast = fpsOverlayOn ? 'FPS 显示已开（再连 7 次关闭）' : 'FPS 显示已关';
     scheduleFrame();
     return;
   }
@@ -2960,6 +2968,9 @@ function frame(now: number): void {
   // 小游戏运行时缺失的全局等）都不再中断循环；帧尾 catch 复位画布、finally 照常重排下一帧，
   // 绝不因单帧异常而永久定格白屏（此前无外层 try，一次抛错就让 rAF 停摆）。
   try {
+  // FPS 调试显示的滚动窗口统计：每真绘制帧推进（被 frameBudget 跳掉的帧不会到这里），
+  // 菜单静置 30fps 时显示的就是真实 rAF 帧率。
+  if (fpsOverlayOn) fpsMeter = fpsMeterTick(fpsMeter, now);
   // 帧率自适应画质档位：连续动画中测平滑帧时(EMA)，三档(high/mid/low)升降，迟滞防抖（升档阈值严于降档）。
   // 忽略切前台/入场的巨帧(elapsed≥120ms)。仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
   // 档位经 render.setQualityTier 同步：刷新标量(供灼烧/冰冻粒子缩放) + 驱动爆点减量/关发光/关 blur 等基础渲染降载。
@@ -3292,6 +3303,8 @@ function frame(now: number): void {
     drawGuideArrow(ctx, target, label, now);
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
   }
+  // FPS 调试浮层：最顶层叠画（VIEW 内、微信裁剪 restore 前），所有界面通用。
+  if (fpsOverlayOn) drawFpsOverlay(ctx, { fps: fpsMeter.fps, emaMs: frameMsEma, tier: qualityTier });
   if (isWeChat) {
     ctx.restore(); // 撤掉帧首的 VIEW 裁剪（与帧首 save/clip 配对）；黑边区已在帧首由 drawScreenBackdrop 用当前页背景铺满
     // 弹窗蒙层只画在 VIEW 内（受上面的裁剪），上下/左右黑边露出未压暗的亮底；此处给黑边补一层同色蒙层，使其盖满整屏。
@@ -3442,6 +3455,9 @@ interface GameHook {
   tangsengIntro: () => { t: number; done: boolean; hopY: number };
   // 自测探针：强制切画质档位（低端机降载冒烟用：验证切档不崩 + 低档确有绘制差异）。
   setQualityTier: (tier: QualityTier) => void;
+  // 自测探针：FPS 调试浮层开关 + 读数（冒烟断言：开 overlay 后 fps 窗口滚动出数）。
+  setFpsOverlay: (on: boolean) => boolean;
+  fpsProbe: () => { fps: number; emaMs: number; tier: QualityTier; overlayOn: boolean };
 }
 const hook: GameHook = {
   get battle() {
@@ -3665,5 +3681,8 @@ const hook: GameHook = {
   tangsengIntro: () => ({ t: battle.introT, done: battle.introDone, hopY: introHopY(battle) }),
   // 自测探针：强制切画质档位（同步档位 + 刷新标量，与 EMA 自动调档同源 setQualityTier）。
   setQualityTier: (tier: QualityTier) => { qualityTier = tier; setQualityTier(tier); },
+  // 自测探针：FPS 调试浮层（与「版本号连点 7 次」同一开关状态，冒烟不必模拟连点）。
+  setFpsOverlay: (on: boolean) => { fpsOverlayOn = on; scheduleFrame(); return fpsOverlayOn; },
+  fpsProbe: () => ({ fps: fpsMeter.fps, emaMs: frameMsEma, tier: qualityTier, overlayOn: fpsOverlayOn }),
 };
 (window as unknown as { __game: GameHook }).__game = hook;

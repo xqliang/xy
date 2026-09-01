@@ -61,6 +61,11 @@
 | drawImage/帧 | 10.5 | 妖怪/单位立绘,随实体线性增长 |
 | fillRect/帧 | 2.5 | 背景填充 |
 
+> ⚠️ **上表基线数据已证伪(2026-09-01 下午复查)**:`perf-count.mjs` 未预置「教程已见」,
+> battleIntro modal 冻结了仿真,35.9/0 测的是**无战斗空转**状态。预置教程+强制开波后的真实基线
+> (CPU 4x 节流,`perf-tray-stall.mjs`/`perf-attrib.mjs`):**空场 save 249/帧、战斗 save 274/帧、
+> 战斗径向渐变 174/帧**。调用栈归因(perf-attrib.mjs)进一步锁定两大真凶,见下方「实测修正」。
+
 据此,**实际落地的降载**(都用 `quality.ts` 布尔开关读取,默认高档全关、中/低档逐级开启):
 - **省地面阴影 `drawGroundShadow`**(中/低档整函数跳过):被每单位/每武将格/每字牌各调一次,是 save 大户;纯装饰椭圆,低档跳过只损失落地层次感。→ `basicReduce`
 - **省睡眠「Z」`drawSleepingZ`**(中/低档跳过):每未激活字牌一次(含 2 save + 3 fillText),纯装饰。→ `basicReduce`
@@ -68,12 +73,29 @@
 - **命中爆点减量 `drawBursts`**(中/低档 hit 类隔一个画一个):普攻命中环最频繁,减半绘制;击杀/合成反馈仍全画(可读性重要)。→ `reduceBursts`
 - **`basicReduce` 语义**:`true`=非高档(开启了任何基础渲染降载),供上述「整函数跳过」类判断;`reduceBursts`/`disableGlow`/`disableBlur` 保留为后续扩展点(当前骑兵扇区/灼烧已分别覆盖发光与 blur 场景)。
 
+### 实测修正与追加降载(2026-09-01 下午,用户报告「征兵后卡、部署完不卡」驱动)
+
+用户真机观察触发的复查推翻了初稿基线,并用 `perf-tray-stall.mjs`(CPU 4x 节流三阶段对照)+
+`perf-attrib.mjs`(Canvas API 调用栈采样归因)锁定真相与两大真凶,追加三项降载:
+
+1. **「tray 有牌导致卡」证伪**:tray 满 5 token 的增量仅 ~6 save + ~6 drawImage/帧,帧率/JS 耗时无可测差异。用户感知的「征兵后慢」实为**征兵联动的间歇负载**(AI 对手同步征兵布阵跑 `planAutoPlaceSteps` 规划器尖峰+落档序列化),「跑着跑着快起来」= 攻击特效间歇——见真凶②。
+2. **真凶① 白骨岭骨栅栏 `drawBaigulingBoneFence`**:纯静态装饰(骨堆位置由 seed 决定)却每帧重画 ~90 骨堆×3~4 save/translate/rotate,占空场 save 的 **~58%**、drawImage 的 ~45%。→ **离屏整墙缓存**(参照 boardLayerCache 模式;签名=光栅倍率+素材就绪态,四周扩半格 padding 防边缘骨堆被裁)。零视觉损失(shot-diff 与动画噪声基线同量级)。空场 save 249→105。
+3. **真凶② 骑兵鞭扫 `drawWhipSweepFill`**:战斗中每帧 ~170 个 createRadialGradient 的 **100%** 来自它——每招把整圈环扇切 ~32 片、每片各建一个径向渐变,多骑兵攻击期(含 AI 半场)重叠。→ **整圈尾迹贴图化**:一次性预渲染(径向配色逐字同原版、alpha 沿角从头 0.42 衰减到尾 0.1),每帧 rotate+1 次 drawImage,零每帧渐变;**三档全生效**(替代原「中低档跳过」守卫,中低档视觉反而恢复完整)。战斗渐变 174→~0。视觉近似点(已确认):原版扇区有硬性「已扫过」边界,贴图版为整圈软尾迹,靠 pulse/fade 渐显渐隐表达。
+4. **FPS 调试浮层**:canvas 左上角小字「fps·EMA帧时·画质档」(fps 分级着色),挂「版本号连点 7 次」toggle、纯 canvas 绘制微信真机可用(DevTools 面板是 DOM 的微信开不了,FPS 显示恰最需要在真机用)。滚动窗口统计为纯函数 `quality.fpsMeterTick`(单测 7 条),`__game.setFpsOverlay/fpsProbe` 供冒烟。
+5. **公共修复**:`boardRasterScale` 从 `getTransform().a` 改为 `√(a²+b²)`——旋转上下文里 a 混入 cos 角度逐帧抖动,离屏缓存签名失稳导致每帧重建(鞭扫贴图首版实测踩中)。骨墙/棋盘/鞭扫三处缓存共用此函数。
+
+> 遗留(另一议题):autoplace 规划器尖峰(旧诊断 F 项)——用户「征兵后慢」的间歇源之一,4x 节流下 durP95 仍可见 ~26ms 尖峰;不碰 AI/数值故不过 ai-balance 门禁,本次不做。
+
 > 不做:降整体渲染分辨率(用户明确不降);不动 autoplace/AI/数值(避免 ai-balance 门禁);不暴露手动画质档。
 > 注:动态战斗场景下「三档逐帧计数对比」受战斗推进/待机动画干扰不可靠(暂停又会停 rAF),故降载生效性由单测(档位映射/EMA)+ 运行时探针(切档正确改变 render currentTier、切档零报错)验证,而非动态计数 diff。
 
 ### 遗留手动改动的归并
 
 工作区未提交的 `render.ts`(删骑兵鞭扫扇区特效)在 worktree 里**不采用其「无条件删除」形式**,改为:扇区残影在 `mid`/`low` 档省略、`high` 档保留,接入 `fxQuality`/档位开关。最终该工作区改动会被本设计的实现覆盖,不作为独立提交。
+
+> 更新(2026-09-01 下午):实测坐实鞭扫是战斗中每帧 ~170 个径向渐变的唯一来源(见「实测修正」),
+> 最终方案升级为**贴图化、三档全生效**——高档不再逐片渐变(旋转复用预渲染贴图),中低档恢复残影。
+> 主树工作区那笔手动删除改动依然不单独提交,由本实现覆盖。
 
 ## 取舍(已确认)
 
@@ -91,10 +113,14 @@
 
 ## 验证
 
-- **单元测试**(`web/tests/`):`quality.ts` 的档位常量、`pickInitialTier` 分级映射(含 benchmarkLevel 缺省回退)、EMA 迟滞升降序(给定帧时序列→期望档位序列,含防抖)。vitest 在 `web/` 跑。
+- **单元测试**(`web/tests/`):`quality.ts` 的档位常量、`pickInitialTier` 分级映射(含 benchmarkLevel 缺省回退)、EMA 迟滞升降序(给定帧时序列→期望档位序列,含防抖)、`fpsMeterTick` 滚动窗口帧率换算(首帧初始化/跨窗换算/切后台巨帧/不可变,7 条)。vitest 在 `web/` 跑。
 - **改前基线**:`web/tools/perf-count.mjs`(战斗屏,已预置「教程全已见」)实测每帧计数,确认热点在 `save`(35.9/帧)而非径向渐变(0/帧,棋盘已缓存)——据此把降载聚焦到 save 大户(地面阴影/睡眠Z/爆点/骑兵扇区)。
-- **运行时探针**:`__game.setQualityTier(tier)` 强制切档,经 headless 断言:①切档确实改变 render 内部 `currentTier`(high↔low);②三档来回切换零 pageerror;③战斗 status 正常 playing。**档位逻辑正确性**由此与单测双重保证。
-- **视觉等价(高档)**:高档行为应与现状逐像素等价(降载全在 `basicReduce`/`reduceBursts` 守卫内,高档 `qf()` 全 false→与旧路径逐行等价)。
+  > ⚠️ 已证伪(见「实测修正」):该基线实为 modal 冻结仿真的空转状态,真实基线为空场 save 249、战斗 save 274、战斗渐变 174/帧。
+- **改后复测**(`perf-tray-stall.mjs` CPU 4x 节流 + `perf-attrib.mjs` 调用栈归因):空场 save 249→105(-58%)、战斗 save 274→148(-48%)、战斗径向渐变 174→~0(-99.7%);「tray 有牌掉帧」证伪(tray 满 5 token 增量 ~6 API/帧,帧率无可测差异)。
+- **运行时探针**:`__game.setQualityTier(tier)` 强制切档 + `__game.setFpsOverlay(on)`/`fpsProbe()`,经 headless 断言:①切档确实改变 render 内部 `currentTier`(high↔low);②三档来回切换+FPS 浮层开关零 pageerror;③战斗 status 正常 playing;④FPS 浮层开 1.3s 后窗口滚动出数。**档位逻辑正确性**由此与单测双重保证。
+- **视觉等价**:
+  - 骨墙缓存:`shot-diff.mjs` 改前/改后 diff(4776~6109px/0.36~0.46%)与「同代码双开」动画噪声基线(4050px/0.31%)同量级、整体色调均值逐位一致——视觉等价。同源双开共享 localStorage 有 86% 假差异坑(教程 modal 只在第一个页签弹),对照须跨端口。
+  - 鞭扫贴图:`whip-sweep-shot.mjs` 连拍 12 张留档人工核对——贴图为**有意的视觉近似**(整圈软尾迹替代硬边界扇区,已与用户确认)。
 - **typecheck 不新增**:`web/` tsc 基线不干净(26 处既有报错),改动前后均 26,验收看「不新增报错」。
 - **浏览器验证**:按 `verify-web-in-browser` 记忆,改渲染/循环后真机浏览器跑冒烟(`__game` 钩子),确认战斗能进、档位切换无白屏/无报错。
 - **全量单测不回归**:`web/` vitest 全量(含 `ai-balance`)通过——降载纯在渲染层,不碰 AI/数值,故不触发 ai-balance 门禁。

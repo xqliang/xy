@@ -81,3 +81,30 @@ export function qualityFlags(tier: QualityTier): QualityFlags {
       return { basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false };
   }
 }
+
+// —— FPS 调试显示（挂「版本号连点 7 次」开关，canvas 左上角小字） —— //
+// 只做纯逻辑（滚动窗口帧率换算），绘制在 render.drawFpsOverlay、接线在 main.frame()。
+
+/** 滚动窗口时长（ms）：窗口越短刷新越快但数字抖，500ms 兼顾两者。 */
+export const FPS_METER_WINDOW_MS = 500;
+
+/** FPS 计量状态：windowStart=-1 表示尚未开始（首帧初始化；不用 0，因 rAF 时间戳 0 是合法值）。 */
+export interface FpsMeterState {
+  windowStart: number; // 当前统计窗口起点（rAF 时间戳 ms；-1=未初始化）
+  frames: number;      // 窗口内已绘帧数
+  fps: number;         // 上一个完整窗口换算出的帧率（0=样本不足）
+}
+
+/**
+ * FPS 滚动窗口推进（纯函数，每真绘制帧调一次；被 frameBudget 跳掉的帧不调）。
+ * 窗口未满只累计；跨过窗口边界时按「窗口实际跨度」换算 fps（切后台巨帧也能算出
+ * 真实的低值而非除零），随后从当前帧重开窗口。
+ */
+export function fpsMeterTick(prev: FpsMeterState, nowMs: number): FpsMeterState {
+  if (prev.windowStart < 0) return { windowStart: nowMs, frames: 1, fps: prev.fps };
+  const elapsed = nowMs - prev.windowStart;
+  if (elapsed < FPS_METER_WINDOW_MS) return { ...prev, frames: prev.frames + 1 };
+  // 本帧计入旧窗口后换算（frames+1），再从当前时刻重开新窗口
+  const fps = (prev.frames + 1) / (elapsed / 1000);
+  return { windowStart: nowMs, frames: 0, fps };
+}

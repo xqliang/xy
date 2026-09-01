@@ -661,7 +661,55 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.globalAlpha = 1;
 }
 
-/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 20%～85% 半径） */
+/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 20%～85% 半径）。
+ *
+ * 贴图化实现（2026-09-01 低端机降载实测驱动）：perf-attrib.mjs 实测战斗中每帧
+ * ~170 个 createRadialGradient 的 100% 来自本函数——原实现按角度把环扇切
+ * max(8, sweep/0.2)≈32 片、每片各建一个径向渐变，多骑兵攻击期重叠后每帧百级渐变，
+ * 低端机扛不住。现把「整圈环扇尾迹」一次性预渲染进离屏画布：径向渐变（r0=20%、
+ * r1=85% reach）与原版完全一致，alpha 沿角度从头(最亮 0.42)向尾(0.1)衰减——
+ * 之后每帧只 rotate 对齐扇区头 + 1 次 drawImage 复用，零每帧渐变，三档全生效
+ * （中低档不再跳过，视觉反而更完整）。
+ *
+ * 视觉近似点（已与用户确认接受）：原版扇区有硬性「已扫过 phase*2π」边界，
+ * 贴图版为整圈软尾迹恒显——扇区幅度随攻击进度的变化改为靠调用方的
+ * pulse/fade 整体渐显渐隐表达（起手淡入、收尾淡出）。
+ */
+let whipSweepCache: { canvas: HTMLCanvasElement; sig: string } | null = null;
+
+/** 离屏预渲染整圈鞭扫尾迹贴图（缓存按 reach+光栅倍率签名；只在未命中时画一次，非热路径）。 */
+function whipSweepSprite(reach: number, scl: number): HTMLCanvasElement {
+  const sig = `${reach.toFixed(1)}|${scl.toFixed(2)}`;
+  if (whipSweepCache && whipSweepCache.sig === sig) return whipSweepCache.canvas;
+  const r0 = reach * 0.20, r1 = reach * 0.85;
+  const edge = r1 + 2; // 半边长外扩 2px，避免贴图边缘裁到渐变
+  const w = Math.max(1, Math.ceil(edge * 2 * scl));
+  const cv = createOffscreenCanvas(w, w);
+  const c2 = cv.getContext('2d')!;
+  c2.setTransform(scl, 0, 0, scl, w / 2, w / 2); // 原点居中，逻辑坐标绘制
+  // 一次性逐小片铺出「沿角衰减」的整圈尾迹：θ=0 为头（along=1 最亮），θ→2π 为尾。
+  // 64 片在 2x 光栅下已平滑；每片径向配色与原版逐片渐变逐字一致。
+  const N = 64;
+  for (let i = 0; i < N; i++) {
+    const a0 = (i / N) * Math.PI * 2;
+    const a1 = ((i + 1) / N) * Math.PI * 2;
+    const along = 1 - (i + 0.5) / N; // 头(θ=0)→along 1；尾(θ≈2π)→along 0
+    const grad = c2.createRadialGradient(0, 0, r0, 0, 0, r1);
+    grad.addColorStop(0, 'rgba(145,120,90,0)');
+    grad.addColorStop(0.5, 'rgba(130,105,78,0.4)');
+    grad.addColorStop(1, 'rgba(110,88,64,0.14)');
+    c2.globalAlpha = 0.1 + 0.32 * along; // 原版沿角递增的 alpha 公式
+    c2.fillStyle = grad;
+    c2.beginPath();
+    c2.arc(0, 0, r1, a0, a1);
+    c2.arc(0, 0, r0, a1, a0, true);
+    c2.closePath();
+    c2.fill();
+  }
+  whipSweepCache = { canvas: cv, sig };
+  return cv;
+}
+
 function drawWhipSweepFill(
   ctx: CanvasRenderingContext2D,
   fromAng: number,
@@ -672,27 +720,15 @@ function drawWhipSweepFill(
   let sweep = toAng - fromAng;
   while (sweep <= 0) sweep += Math.PI * 2;
   if (sweep < 0.05 || alpha <= 0.02) return;
-  const r0 = reach * 0.20;
-  const r1 = reach * 0.85;
-  const slices = Math.max(8, Math.ceil(sweep / 0.2));
-  for (let i = 0; i < slices; i++) {
-    const t0 = i / slices;
-    const t1 = (i + 1) / slices;
-    const a0 = fromAng + sweep * t0;
-    const a1 = fromAng + sweep * t1;
-    const along = (t0 + t1) * 0.5;
-    ctx.globalAlpha = alpha * (0.1 + 0.32 * along);
-    const grad = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
-    grad.addColorStop(0, 'rgba(145,120,90,0)');
-    grad.addColorStop(0.5, 'rgba(130,105,78,0.4)');
-    grad.addColorStop(1, 'rgba(110,88,64,0.14)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(0, 0, r1, a0, a1);
-    ctx.arc(0, 0, r0, a1, a0, true);
-    ctx.closePath();
-    ctx.fill();
-  }
+  const scl = boardRasterScale(ctx);
+  const spr = whipSweepSprite(reach, scl);
+  const logical = (reach * 0.85 + 2) * 2; // 贴图逻辑边长（画布像素 / 光栅倍率）
+  ctx.save();
+  // 贴图头(θ=0, +x 方向)对准扇区头 tipAng；身体沿负角度铺开 = 原版 fromAng→tipAng 的扫过区
+  ctx.rotate(toAng);
+  ctx.globalAlpha = alpha; // 贴图内部已含沿角 0.1~0.42 分级，外层只乘攻击 pulse/fade
+  ctx.drawImage(spr, -logical / 2, -logical / 2, logical, logical);
+  ctx.restore();
 }
 
 // 弯曲鞭梢：虚线、粗→细、只画外段；tier 越高越粗
@@ -854,8 +890,9 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       const tipAng = fromAng + phase * Math.PI * 2;
       const flex = Math.sin(phase * Math.PI);
       const alpha = Math.min(1, pulse * 1.15);
-      // 低端机降载：扇区残影每招要画多个径向渐变切片，中/低档省略（只留旋转鞭体，视觉主体仍在）。
-      if (!qf().basicReduce) drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
+      // 扇区残影已贴图化（每帧 1 次 drawImage、零渐变，见 drawWhipSweepFill）：
+      // 三档全画，中低档不再省略。
+      drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
       drawCurvedWhip(ctx, tipAng, reach, alpha, 1, flex, tier);
       break;
     }
@@ -1165,6 +1202,31 @@ export function drawGuideArrow(
 /** 征兵按钮矩形（与 getButtons 的 summon 项一致：x=180, y=CTRL_Y, w=200, h=78） */
 export function summonButtonRect(): { x: number; y: number; w: number; h: number } {
   return { x: 180, y: CTRL_Y, w: 200, h: 78 };
+}
+
+/**
+ * FPS 调试浮层：VIEW 左上角半透明小条「fps · EMA帧时 · 画质档」。
+ * 纯 canvas 绘制（微信小游戏无 DOM 也能用）；开关由 main.ts 的
+ * 「版本号连点 7 次」toggle（fpsOverlayOn），每帧最后叠画在所有 UI 之上。
+ * fps 分级着色：≥50 绿 / 30~49 黄 / <30 红，一眼看出健康度。
+ */
+export function drawFpsOverlay(
+  ctx: CanvasRenderingContext2D,
+  info: { fps: number; emaMs: number; tier: string },
+): void {
+  const fps = Math.max(0, Math.round(info.fps));
+  const label = `${fps} fps · ${info.emaMs > 0 ? info.emaMs.toFixed(1) : '–'} ms · ${info.tier}`;
+  ctx.save();
+  ctx.font = 'bold 12px "PingFang SC", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const w = ctx.measureText(label).width + 14;
+  ctx.fillStyle = 'rgba(12, 14, 22, 0.62)';
+  roundRect(ctx, 6, 6, w, 20, 5);
+  ctx.fill();
+  ctx.fillStyle = fps >= 50 ? '#7ee89a' : fps >= 30 ? '#ffd76a' : '#ff8a7a';
+  ctx.fillText(label, 13, 16.5);
+  ctx.restore();
 }
 
 // —— 首局引导「跳过」小按钮（与箭头配套，非模态，玩家可随时点）——
@@ -1735,10 +1797,13 @@ let boardLayerCache: { canvas: HTMLCanvasElement; sig: string } | null = null;
 
 // 离屏层按主画布当前光栅倍率（web=dpr；微信=fit×dpr）绘制，缩放贴回不糊。
 // 微信旧内核可能缺 getTransform，鸭子类型探测、失败按 2x 兜底。
+// 取 x 轴基向量模长 √(a²+b²) 而非 a 单值：对 rotate 免疫——旋转上下文（如鞭扫
+// 在 rotate(dir) 后绘制）里 a 混入 cos 角度会逐帧抖动，缓存签名失稳导致离屏层每帧重建。
 function boardRasterScale(ctx: CanvasRenderingContext2D): number {
   try {
-    const t = (ctx as CanvasRenderingContext2D & { getTransform?: () => { a: number } }).getTransform?.();
-    if (t && Number.isFinite(t.a) && t.a > 0) return Math.min(3, Math.max(1, t.a));
+    const t = (ctx as CanvasRenderingContext2D & { getTransform?: () => { a: number; b: number } }).getTransform?.();
+    const s = t ? Math.hypot(t.a, t.b) : 0;
+    if (Number.isFinite(s) && s > 0) return Math.min(3, Math.max(1, s));
   } catch { /* 缺方法：走兜底 */ }
   return 2;
 }
@@ -2386,8 +2451,35 @@ function drawTiledHFence(
   ctx.restore();
 }
 
-// 白骨岭：白骨堆画在台阶分界格线上（左 r=5|6、竖 c=3|4、右 r=3|4），连续无开口
+// 白骨岭：白骨堆画在台阶分界格线上（左 r=5|6、竖 c=3|4、右 r=3|4），连续无开口。
+// —— 离屏缓存：骨墙是纯静态装饰（骨堆位置由 seed 决定、无时间维度），但曾每帧从头重画
+// ~90 个骨堆 × 每堆 3~4 次 save/translate/rotate/ellipse——perf-attrib.mjs 实测占空场
+// save 的 ~58%、drawImage 的 ~45%（低端机恒定负担）。整墙一次性画进离屏画布，
+// 每帧 1 次 drawImage（参照 boardLayerCache 模式）。
+// 签名含光栅倍率 + 栅栏点缀素材就绪态（素材异步加载，就绪后签名变化触发整墙重画一次）。
+let boneFenceCache: { canvas: HTMLCanvasElement; sig: string } | null = null;
+
 function drawBaigulingBoneFence(ctx: CanvasRenderingContext2D) {
+  const scl = boardRasterScale(ctx);
+  const sig = `baiguling|${scl.toFixed(2)}|${sprite('fence-baiguling') ? 1 : 0}`;
+  if (!boneFenceCache || boneFenceCache.sig !== sig) {
+    // 四周扩半格 padding：首尾骨堆的骨头 ellipse 会伸出棋盘边缘 ~CELL*0.16，
+    // 按棋盘净尺寸建画布会把这些裁掉（与逐帧直绘有细小差异）；扩边后逐像素等价。
+    const PAD = CELL * 0.5;
+    const w = COLS * CELL + PAD * 2, h = ROWS * CELL + PAD * 2;
+    const cv = createOffscreenCanvas(Math.max(1, Math.ceil(w * scl)), Math.max(1, Math.ceil(h * scl)));
+    const c2 = cv.getContext('2d')!;
+    // 坐标系与主画布一致（平移掉含 padding 的画布原点 + 光栅倍率），骨堆绘制代码零改动复用
+    c2.setTransform(scl, 0, 0, scl, -(BOARD_X - PAD) * scl, -(BOARD_Y - PAD) * scl);
+    drawBaigulingBoneFencePaint(c2);
+    boneFenceCache = { canvas: cv, sig };
+  }
+  const pad = CELL * 0.5;
+  ctx.drawImage(boneFenceCache.canvas, BOARD_X - pad, BOARD_Y - pad, COLS * CELL + pad * 2, ROWS * CELL + pad * 2);
+}
+
+// 骨墙矢量绘制主体（棋盘坐标系）：供离屏缓存一次性调用
+function drawBaigulingBoneFencePaint(ctx: CanvasRenderingContext2D) {
   const yLeft = BOARD_Y + 6 * CELL;
   const yRight = BOARD_Y + 4 * CELL;
   const xStep = BOARD_X + 4 * CELL;
@@ -10178,8 +10270,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
       }
       case 'cavalry': {
         // 骑：命中层只画扇区残影；鞭体只在单位出招 glyph 画一条，避免双鞭
-        // 低端机降载：扇区残影是多个径向渐变切片，中/低档命中层整段跳过（含 translate，避免污染后续状态）。
-        if (qf().basicReduce) break;
+        // 扇区残影已贴图化（每帧 1 次 drawImage、零渐变，见 drawWhipSweepFill）：
+        // 三档全画，中低档不再整段跳过。
         const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
         const ox = a.x + Math.cos(ang) * CELL * 0.08;
         const oy = a.y + Math.sin(ang) * CELL * 0.08;
