@@ -1308,11 +1308,11 @@ export function drawHandCursor(
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = 'rgba(96,74,52,0.6)';
   ctx.stroke();
-  // emoji 手指：悬停 👆 / 按下 👇（字号略大于衬圈，指尖大致落在触点）
+  // emoji 手指：恒用向上的指点手势 👆（用户拍板：不用 👆/👇 切换——按下反馈靠下沉+涟漪表达足够）
   ctx.font = '24px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","PingFang SC",sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(press > 0.6 ? '👇' : '👆', x, y + 5 + down);
+  ctx.fillText('👆', x, y + 5 + down);
   ctx.restore();
 }
 
