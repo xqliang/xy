@@ -10,6 +10,10 @@ export interface GameSettings {
   sfxEnabled: boolean;
   musicVolume: number; // 0..1
   sfxVolume: number; // 0..1
+  /** 精简特效（低端机更流畅）：true=关阴影/减爆点/关发光等降载；false=特效全开（默认）。
+   *  2026-09-01 用户拍板：画质档由用户手动设置（2 档），替代曾因帧时波动导致
+   *  阴影「偶尔出现/消失」的 EMA 自动调档。 */
+  fxLite: boolean;
 }
 
 const DEFAULTS: GameSettings = {
@@ -18,6 +22,7 @@ const DEFAULTS: GameSettings = {
   sfxEnabled: true,
   musicVolume: 0.7,
   sfxVolume: 0.8,
+  fxLite: false,
 };
 
 function clamp01(n: number): number {
@@ -39,6 +44,7 @@ export function normalizeSettings(raw: Partial<GameSettings> = {}): GameSettings
       typeof raw.musicVolume === 'number' ? raw.musicVolume : DEFAULTS.musicVolume,
     ),
     sfxVolume: clamp01(typeof raw.sfxVolume === 'number' ? raw.sfxVolume : DEFAULTS.sfxVolume),
+    fxLite: readBool(raw.fxLite, DEFAULTS.fxLite),
   };
 }
 
@@ -84,6 +90,10 @@ export function setMusicVolume(current: GameSettings, v: number): GameSettings {
 
 export function setSfxVolume(current: GameSettings, v: number): GameSettings {
   return updateSettings({ ...current, sfxVolume: clamp01(v) });
+}
+
+export function setFxLite(current: GameSettings, on: boolean): GameSettings {
+  return updateSettings({ ...current, fxLite: on });
 }
 
 let cached: GameSettings | null = null;

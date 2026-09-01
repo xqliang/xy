@@ -36,9 +36,10 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
 // —— 设置弹窗 —— //
 const SET_PW = 400;
 const SET_PAD = 28;
-const SET_PH = 220;
+const SET_PH = 258;
 const SET_DAMAGE_TOP = 10;
 const SET_DAMAGE_H = 20;
+const SET_FX_ROW_GAP = 14; // 「精简特效」复选框行与上一行（伤害数字）的间距
 const SET_AFTER_DAMAGE = 16;
 const SET_AFTER_DIVIDER = 20;
 const SET_ROW_GAP = 52;
@@ -55,6 +56,7 @@ type SettingsLayout = {
   close: ReturnType<typeof inkPopupCloseRect>;
   body: number;
   damageCheck: { x: number; y: number; w: number; h: number };
+  fxCheck: { x: number; y: number; w: number; h: number };
   dividerY: number;
   musicRowY: number;
   sfxRowY: number;
@@ -74,7 +76,8 @@ function settingsLayout(): SettingsLayout {
   const trackX = labelX + SET_ROW_LABEL_W;
   const trackW = enableX - SET_ENABLE_GAP - trackX;
   const damageTop = body + SET_DAMAGE_TOP;
-  const dividerY = damageTop + SET_DAMAGE_H + SET_AFTER_DAMAGE;
+  const fxTop = damageTop + SET_DAMAGE_H + SET_FX_ROW_GAP;
+  const dividerY = fxTop + SET_DAMAGE_H + SET_AFTER_DAMAGE;
   const musicRowY = dividerY + SET_AFTER_DIVIDER + SET_TRACK_H / 2;
   const sfxRowY = musicRowY + SET_ROW_GAP;
   const trackAt = (rowY: number) => ({ x: trackX, y: rowY - SET_TRACK_H / 2, w: trackW, h: SET_TRACK_H });
@@ -86,6 +89,7 @@ function settingsLayout(): SettingsLayout {
     close: inkPopupCloseRect(px, py),
     body,
     damageCheck: { x: labelX, y: damageTop, w: SET_DAMAGE_H, h: SET_DAMAGE_H },
+    fxCheck: { x: labelX, y: fxTop, w: SET_DAMAGE_H, h: SET_DAMAGE_H },
     dividerY,
     musicRowY,
     sfxRowY,
@@ -122,6 +126,7 @@ export function settingsSfxKnobRect(settings: GameSettings): { x: number; y: num
 export type SettingsHit =
   | { kind: 'close' }
   | { kind: 'toggleDamage' }
+  | { kind: 'toggleFx' }
   | { kind: 'toggleMusic' }
   | { kind: 'toggleSfx' }
   | { kind: 'musicKnob' }
@@ -191,6 +196,9 @@ export function settingsHitAt(x: number, y: number, settings: GameSettings): Set
   if (inRect(x, y, layout.damageCheck) || inRect(x, y, { x: layout.damageCheck.x, y: layout.damageCheck.y, w: 140, h: 24 })) {
     return { kind: 'toggleDamage' };
   }
+  if (inRect(x, y, layout.fxCheck) || inRect(x, y, { x: layout.fxCheck.x, y: layout.fxCheck.y, w: 240, h: 24 })) {
+    return { kind: 'toggleFx' };
+  }
   if (inRect(x, y, settingsMusicKnobRect(settings)) || inRect(x, y, settingsTrackHit(layout.musicTrack))) {
     return { kind: 'musicKnob' };
   }
@@ -221,6 +229,7 @@ export function drawSettingsPopup(ctx: CanvasRenderingContext2D, settings: GameS
   const layout = settingsLayout();
   drawInkPopupFrame(ctx, layout.px, layout.py, SET_PW, layout.ph, '设置', layout.close);
   drawInkCheckbox(ctx, layout.damageCheck, '显示伤害数字', settings.showDamageNumbers, 'none');
+  drawInkCheckbox(ctx, layout.fxCheck, '精简特效（低端机更流畅）', settings.fxLite, 'none');
   drawSettingsDivider(ctx, layout);
   drawSettingsVolumeRow(
     ctx,

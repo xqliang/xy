@@ -101,8 +101,8 @@ import { drawWeaponPickups, weaponPickupHitAt, weaponPickupRect } from './weapon
 import { loadBag, addWeapon, addWeaponFragment, toggleEquip, weaponBonuses, weaponById, isWeaponFragmentsComplete, type BagState } from './weapons';
 import { playSfx, startAmbient, startMenuMusic, stopAmbient, applyAudioVolumes, prefetchMenuBgm, bootstrapMenuMusic, resumeAudioAfterGesture } from './sfx';
 import { showRewardedAd } from './ads';
-import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize, getDevicePerfLevel } from './platform';
-import { pickInitialTier, updateQualityTier, fpsMeterTick, type QualityTier, type FpsMeterState } from './quality';
+import { getGameCanvas, onAppHide, onAppShow, isWeChat, onNetworkOnline, onWxTouch, type WxTouchEvent, getVersusInviteCode, shareVersusInvite, shareToFriend, onWxShowVersus, getViewportSize } from './platform';
+import { fpsMeterTick, type QualityTier, type FpsMeterState } from './quality';
 import { canShare, consumeShare, remainingShares } from './share-quota';
 import { loadUserId, copyUserId, ensureUserId } from './user-id';
 import {
@@ -138,6 +138,7 @@ import {
   resetSettings,
   setShowDamageNumbers,
   setMusicEnabled,
+  setFxLite,
   setSfxEnabled,
   setMusicVolume,
   setSfxVolume,
@@ -228,12 +229,12 @@ let qualityTierSwitchAt = 0;
 let fpsOverlayOn = false;
 let fpsMeter: FpsMeterState = { windowStart: -1, frames: 0, fps: 0, durAcc: 0, durMs: 0 };
 
-// 开机按设备性能分级定初始档：差的机器开局即中/低档，不必等 EMA 爬到降档线（消除开局就卡）。
+// 画质档（2 档手动，用户设置驱动；2026-09-01 用户拍板替代 EMA 自动调档——自动调档在
+// 临界设备上让阴影「偶尔出现/消失」，改为「特效全开（默认）/精简」设置项，见 settings.fxLite）。
 // 经 render.setQualityTier 同步档位 + 刷新标量（标量反喂 setFxQuality 供粒子缩放）。
-function initQualityTier(): void {
-  qualityTier = pickInitialTier(getDevicePerfLevel());
+function applySettingsFxTier(): void {
+  qualityTier = gameSettings.fxLite ? 'low' : 'high';
   setQualityTier(qualityTier);
-  // 初始档也计为一次切档（驻留期从开机起算）：EMA 本身要 ~1s 收敛，3s 驻留后接管不迟钝
   qualityTierSwitchAt = performance.now();
 }
 
@@ -739,10 +740,10 @@ void (async () => {
       if (ok) track('login');
       scheduleFrame();
     });
-    // 开机按设备性能定初始画质档（差的机器开局即低档），须在续玩恢复/进战斗之前——否则开局头几帧
-    // 仍是满档绘制。getDevicePerfLevel 内部 try/catch，jsbridge 未就绪回退 null→高档，安全；
-    // 战斗中 EMA 会继续动态调整（见 frame()）。此处所有模块级 let 已初始化，无 TDZ。
-    initQualityTier();
+    // 开机按用户设置定画质档（2 档手动：特效全开（默认）/精简），须在续玩恢复/进战斗之前——
+    // 否则开局头几帧仍是满档绘制。曾按 benchmarkLevel 开机分级 + 战斗中 EMA 自动调档，
+    // 2026-09-01 用户拍板改为纯手动设置（自动调档在临界设备上让阴影「偶尔出现/消失」）。
+    applySettingsFxTier();
     // 续玩恢复优先（PvP/PvE 统一）：有有效未终局快照则恢复进战斗、跳过首页；否则走原首页逻辑。
     // PvP 深链（versusCode 非空）优先于本地续玩：保留原 `versusCode == null` 守卫——此时不恢复本地局，
     // 直接进 PvP 匹配（见下方 enterPvpMatching），避免点了对战邀请却被塞回旧的单人局。
@@ -934,7 +935,11 @@ let merchant: MerchantUiState = {
   testMode: false,
   scrollY: 0,
 };
-let gameSettings: GameSettings = safePersisted(getSettings, resetSettings());
+// 直接 getSettings（loadSettings→parseStoredJson 已全量 try/catch 容错，不会抛）。
+// 曾写成 safePersisted(getSettings, resetSettings())——JS 参数急切求值让 resetSettings()
+// 在每次模块加载时无条件执行，把用户设置静默重置为默认（音效/音量长期不持久的根因；
+// 2026-09-01 加 fxLite 后因档位一眼可见而暴露）。
+let gameSettings: GameSettings = getSettings();
 
 function isSettleOpen(): boolean {
   // Task 10：PvP 结算屏也视为「结算打开」态（冻结战斗 + 阻断暂停弹窗 + 点击返回生效）。
@@ -1895,6 +1900,13 @@ function handleMenuPopupPointer(x: number, y: number): boolean {
     }
     if (hit.kind === 'toggleDamage') {
       gameSettings = setShowDamageNumbers(gameSettings, !gameSettings.showDamageNumbers);
+      return true;
+    }
+    if (hit.kind === 'toggleFx') {
+      // 精简特效（2 档手动画质，默认全开）：即时切档并持久化——替代曾因帧时波动
+      // 让阴影「偶尔出现/消失」的 EMA 自动调档（2026-09-01 用户拍板）
+      gameSettings = setFxLite(gameSettings, !gameSettings.fxLite);
+      applySettingsFxTier();
       return true;
     }
     if (hit.kind === 'toggleMusic') {
@@ -3009,16 +3021,12 @@ function frame(now: number): void {
   // 小游戏运行时缺失的全局等）都不再中断循环；帧尾 catch 复位画布、finally 照常重排下一帧，
   // 绝不因单帧异常而永久定格白屏（此前无外层 try，一次抛错就让 rAF 停摆）。
   try {
-  // 帧率自适应画质档位：连续动画中测平滑帧时(EMA)，三档(high/mid/low)升降，双重迟滞防抖
-  // （阈值迟滞：升档阈值严于降档；时间迟滞：切档后至少驻留 QUALITY_TIER_MIN_DWELL_MS——
-  // 弱机上开关式降载省的帧时可能超过阈值迟滞带，降↔升正反馈震荡即「阴影有时无闪烁」的根因）。
-  // 忽略切前台/入场的巨帧(elapsed≥120ms)。仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
-  // 档位经 render.setQualityTier 同步：刷新标量(供灼烧/冰冻粒子缩放) + 驱动爆点减量/关发光/关 blur 等基础渲染降载。
+  // 帧时 EMA 仅作 FPS 浮层显示（ms 读数）：画质档 2026-09-01 起改为设置驱动的 2 档手动
+  // （特效全开/精简，见 applySettingsFxTier），不再 EMA 自动调档——自动调档在临界设备上
+  // 让开关式降载（阴影等）「偶尔出现/消失」，迟滞（阈值带+时间驻留）都压不住正反馈震荡。
+  // 仅战斗屏统计：菜单静置 30fps 是刻意降频，不该计入。
   if (screen === 'battle' && needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
     frameMsEma = frameMsEma <= 0 ? elapsed : frameMsEma * 0.9 + elapsed * 0.1;
-    const sinceSwitch = qualityTierSwitchAt > 0 ? now - qualityTierSwitchAt : Infinity;
-    const next = updateQualityTier(qualityTier, frameMsEma, sinceSwitch);
-    if (next !== qualityTier) { qualityTier = next; setQualityTier(next); qualityTierSwitchAt = now; }
   }
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();
