@@ -2844,8 +2844,10 @@ function drawGroundShadow(
   alpha = 0.28,
 ) {
   // 低端机降载：地面阴影是纯装饰椭圆，被每单位/每武将格/每字牌各调一次，是 save 大户之一。
-  // 中/低档整函数跳过（一次省掉「实体数」个 save + fill），只损失落地阴影的层次感。
-  if (qf().basicReduce) return;
+  // **仅低档**跳过（一次省掉「实体数」个 save + fill）——曾挂在 basicReduce（中/低都关），
+  // 但开关式降载省的帧时可能超过阈值迟滞带，弱机上 mid↔high 摇摆造成阴影「有时无」
+  // 频繁闪烁（2026-09-01 真机反馈），故收紧为低档专属；中档保留（用户拍板）。
+  if (qf().noGroundShadow) return;
   const shW = Math.max(1, rad * 1.3);
   ctx.save();
   ctx.fillStyle = `rgba(20,16,12,${alpha})`;

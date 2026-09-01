@@ -84,20 +84,22 @@ describe('时间迟滞（最短驻留）——防降载↔帧时正反馈震荡'
 
 describe('档位降载开关 qualityFlags', () => {
   it('高档：全关（无降载）', () => {
-    expect(qualityFlags('high')).toEqual({ basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false });
+    expect(qualityFlags('high')).toEqual({ basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false, noGroundShadow: false });
   });
-  it('中档：基础降载 + 减爆点 + 关发光，不开 blur 关', () => {
+  it('中档：基础降载 + 减爆点 + 关发光，不开 blur 关；**保留地面阴影**（开关式降载省的帧时超过阈值迟滞带，中档也关会 mid↔high 摇摆闪烁）', () => {
     const f = qualityFlags('mid');
     expect(f.basicReduce).toBe(true);
     expect(f.reduceBursts).toBe(true);
     expect(f.disableGlow).toBe(true);
     expect(f.disableBlur).toBe(false);
+    expect(f.noGroundShadow).toBe(false); // 阴影仅低档省（用户拍板：中档保留）
   });
-  it('低档：全部降载（基础降载+减爆点+关发光+关 blur）', () => {
+  it('低档：全部降载（基础降载+减爆点+关发光+关 blur+省阴影）', () => {
     const f = qualityFlags('low');
     expect(f.basicReduce).toBe(true);
     expect(f.reduceBursts).toBe(true);
     expect(f.disableGlow).toBe(true);
     expect(f.disableBlur).toBe(true);
+    expect(f.noGroundShadow).toBe(true);
   });
 });

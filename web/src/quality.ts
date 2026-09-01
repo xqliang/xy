@@ -72,21 +72,23 @@ export function pickInitialTier(benchmarkLevel: number | null): QualityTier {
 
 /** 档位 → 渲染降载开关。高档全关（现状）；中/低档逐级开启。 */
 export interface QualityFlags {
-  basicReduce: boolean;  // 基础渲染降载总开关（true=非高档）：省地面阴影/睡眠Z等纯装饰层
+  basicReduce: boolean;  // 基础渲染降载总开关（true=非高档）：省睡眠Z等纯装饰层
   reduceBursts: boolean; // 命中/击杀爆点减量（渲染时跳帧绘制部分爆点）
   disableGlow: boolean;  // 关发光叠加（globalCompositeOperation='lighter'、shadowBlur 发光）
   disableBlur: boolean;  // 关毛玻璃/blur 滤镜（如无尽冰封磨砂）
+  noGroundShadow: boolean; // 省地面阴影（仅低档）：开关式降载省的帧时可能超过阈值迟滞带，
+                           // 中档也关会让弱机 mid↔high 摇摆（阴影「有时无」闪烁），故收紧到低档
 }
 export function qualityFlags(tier: QualityTier): QualityFlags {
   const reduced = tier !== 'high';
   switch (tier) {
     case 'low':
-      return { basicReduce: reduced, reduceBursts: true, disableGlow: true, disableBlur: true };
+      return { basicReduce: reduced, reduceBursts: true, disableGlow: true, disableBlur: true, noGroundShadow: true };
     case 'mid':
-      return { basicReduce: reduced, reduceBursts: true, disableGlow: true, disableBlur: false };
+      return { basicReduce: reduced, reduceBursts: true, disableGlow: true, disableBlur: false, noGroundShadow: false };
     case 'high':
     default:
-      return { basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false };
+      return { basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false, noGroundShadow: false };
   }
 }
 
