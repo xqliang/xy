@@ -215,8 +215,11 @@ const MENU_FRAME_MS = 1000 / 30 - 2;
 let lastMenuInputAt = -1e9; // 上次菜单交互时刻（performance.now 基）；初始远古→开机即 30fps
 const MENU_INPUT_BURST_MS = 1000;
 // 帧率自适应特效档位状态（见 frame()）：frameMsEma=平滑帧时(ms)，qualityTier=当前画质档(high/mid/low)。
+// qualityTierSwitchAt=上次切档时刻（rAF 时基）：时间迟滞（最短驻留 3s）用——弱机上开关式降载
+// （如关阴影）省的帧时超过阈值迟滞带，降↔升正反馈震荡（阴影「有时无」闪烁），驻留期禁止再切。
 let frameMsEma = 0;
 let qualityTier: QualityTier = 'high';
+let qualityTierSwitchAt = 0;
 // FPS 调试显示：连点版本号 7 次开关（全平台含微信——纯 canvas 绘制，不依赖 DOM）。
 // fpsMeter 为滚动窗口统计（quality.ts 纯函数），frame() 每真绘制帧推进一次。
 let fpsOverlayOn = false;
@@ -227,6 +230,8 @@ let fpsMeter: FpsMeterState = { windowStart: -1, frames: 0, fps: 0, durAcc: 0, d
 function initQualityTier(): void {
   qualityTier = pickInitialTier(getDevicePerfLevel());
   setQualityTier(qualityTier);
+  // 初始档也计为一次切档（驻留期从开机起算）：EMA 本身要 ~1s 收敛，3s 驻留后接管不迟钝
+  qualityTierSwitchAt = performance.now();
 }
 
 // 切后台暂停：停 rAF 循环与背景音；若在匹配屏则放弃匹配（cancel 服务端 ticket，防残留被别人匹配到）。
@@ -2997,13 +3002,16 @@ function frame(now: number): void {
   // 小游戏运行时缺失的全局等）都不再中断循环；帧尾 catch 复位画布、finally 照常重排下一帧，
   // 绝不因单帧异常而永久定格白屏（此前无外层 try，一次抛错就让 rAF 停摆）。
   try {
-  // 帧率自适应画质档位：连续动画中测平滑帧时(EMA)，三档(high/mid/low)升降，迟滞防抖（升档阈值严于降档）。
+  // 帧率自适应画质档位：连续动画中测平滑帧时(EMA)，三档(high/mid/low)升降，双重迟滞防抖
+  // （阈值迟滞：升档阈值严于降档；时间迟滞：切档后至少驻留 QUALITY_TIER_MIN_DWELL_MS——
+  // 弱机上开关式降载省的帧时可能超过阈值迟滞带，降↔升正反馈震荡即「阴影有时无闪烁」的根因）。
   // 忽略切前台/入场的巨帧(elapsed≥120ms)。仅战斗屏统计：菜单静置 30fps 是刻意降频，不该把 EMA 推过降档线误伤战斗特效密度。
   // 档位经 render.setQualityTier 同步：刷新标量(供灼烧/冰冻粒子缩放) + 驱动爆点减量/关发光/关 blur 等基础渲染降载。
   if (screen === 'battle' && needsContinuousLoop() && elapsed > 0 && elapsed < 120) {
     frameMsEma = frameMsEma <= 0 ? elapsed : frameMsEma * 0.9 + elapsed * 0.1;
-    const next = updateQualityTier(qualityTier, frameMsEma);
-    if (next !== qualityTier) { qualityTier = next; setQualityTier(next); }
+    const sinceSwitch = qualityTierSwitchAt > 0 ? now - qualityTierSwitchAt : Infinity;
+    const next = updateQualityTier(qualityTier, frameMsEma, sinceSwitch);
+    if (next !== qualityTier) { qualityTier = next; setQualityTier(next); qualityTierSwitchAt = now; }
   }
   // 首页及背包/图鉴/排行仍播首页 BGM；战斗播地图氛围音；其余界面静音。均幂等。
   if (usesMenuMusic(screen)) startMenuMusic();

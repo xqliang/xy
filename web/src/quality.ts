@@ -28,11 +28,19 @@ const DOWN_MS = 26;   // high→mid、mid→low 的降档阈值
 const UP_HIGH_MS = 17; // mid→high：帧时回落到多快才敢升回满档
 const UP_MID_MS = 21;  // low→mid：帧时回落到多快才升回中档
 
+/** 切档最短驻留（ms）：阈值迟滞之外的**时间迟滞**。弱机上「关阴影」这类开关式降载省的帧时
+ *  可能超过阈值迟滞带宽度——降档后帧时骤降破升档线、升回后负载回来又破降档线，正反馈震荡
+ *  （真机现象：地面阴影「有时无、频繁切换」）。切档后至少驻留此时长，期间任何方向都不切。 */
+export const QUALITY_TIER_MIN_DWELL_MS = 3_000;
+
 /**
  * 据当前档位与平滑帧时(EMA)算下一档（纯函数，便于单测）。
- * 迟滞：降档用 DOWN_MS，升档用更严的 UP_*_MS，避免帧时在阈值附近来回跳档。
+ * 双重迟滞：①阈值迟滞——降档用 DOWN_MS，升档用更严的 UP_*_MS；②时间迟滞——
+ * sinceSwitchMs（距上次切档毫秒；缺省 Infinity=不限制，兼容旧调用/开机初始）小于
+ * QUALITY_TIER_MIN_DWELL_MS 时直接保持原档，防降载↔帧时正反馈震荡。
  */
-export function updateQualityTier(prev: QualityTier, emaMs: number): QualityTier {
+export function updateQualityTier(prev: QualityTier, emaMs: number, sinceSwitchMs = Infinity): QualityTier {
+  if (sinceSwitchMs < QUALITY_TIER_MIN_DWELL_MS) return prev; // 时间迟滞：驻留期内不切档
   if (prev === 'high') {
     return emaMs > DOWN_MS ? 'mid' : 'high';
   }

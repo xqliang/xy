@@ -63,6 +63,25 @@ describe('EMA 迟滞升降档 updateQualityTier', () => {
   });
 });
 
+describe('时间迟滞（最短驻留）——防降载↔帧时正反馈震荡', () => {
+  // 真机现象：弱机上关阴影（中低档降载）省的帧时超过迟滞带宽度 → 降档后帧时骤降破升档线
+  // → 升回 → 阴影回来帧时又超标 → 再降……阴影「有时无、频繁切换」。修法=切档后至少驻留
+  // QUALITY_TIER_MIN_DWELL_MS，期间任何方向都不切（sinceSwitchMs 默认 Infinity=不限制，兼容旧调用）。
+  it('切档后未满驻留时长 → 即便 EMA 满足升降条件也保持原档（双向）', () => {
+    expect(updateQualityTier('high', 30, 1_000)).toBe('high');   // 降档被驻留挡住
+    expect(updateQualityTier('mid', 14, 1_000)).toBe('mid');     // 升档被驻留挡住
+    expect(updateQualityTier('mid', 30, 2_999)).toBe('mid');     // 差 1ms 也不切
+  });
+  it('驻留满后恢复按 EMA 正常切（阈值迟滞仍生效）', () => {
+    expect(updateQualityTier('high', 30, 3_000)).toBe('mid');    // 满 3s：可降
+    expect(updateQualityTier('mid', 14, 5_000)).toBe('high');    // 满 3s：可升
+  });
+  it('sinceSwitchMs 缺省（旧调用/开机初始）不限制', () => {
+    expect(updateQualityTier('high', 30)).toBe('mid');
+    expect(updateQualityTier('mid', 14)).toBe('high');
+  });
+});
+
 describe('档位降载开关 qualityFlags', () => {
   it('高档：全关（无降载）', () => {
     expect(qualityFlags('high')).toEqual({ basicReduce: false, reduceBursts: false, disableGlow: false, disableBlur: false });
