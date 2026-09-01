@@ -661,75 +661,9 @@ function drawUnitWeapon(ctx: CanvasRenderingContext2D, type: UnitType, tier: num
   ctx.globalAlpha = 1;
 }
 
-/** 鞭扫残影：环形扇区渐变填充（与鞭体同为 20%～85% 半径）。
- *
- * 贴图化实现（2026-09-01 低端机降载实测驱动）：perf-attrib.mjs 实测战斗中每帧
- * ~170 个 createRadialGradient 的 100% 来自本函数——原实现按角度把环扇切
- * max(8, sweep/0.2)≈32 片、每片各建一个径向渐变，多骑兵攻击期重叠后每帧百级渐变，
- * 低端机扛不住。现把「整圈环扇尾迹」一次性预渲染进离屏画布：径向渐变（r0=20%、
- * r1=85% reach）与原版完全一致，alpha 沿角度从头(最亮 0.42)向尾(0.1)衰减——
- * 之后每帧只 rotate 对齐扇区头 + 1 次 drawImage 复用，零每帧渐变，三档全生效
- * （中低档不再跳过，视觉反而更完整）。
- *
- * 视觉近似点（已与用户确认接受）：原版扇区有硬性「已扫过 phase*2π」边界，
- * 贴图版为整圈软尾迹恒显——扇区幅度随攻击进度的变化改为靠调用方的
- * pulse/fade 整体渐显渐隐表达（起手淡入、收尾淡出）。
- */
-let whipSweepCache: { canvas: HTMLCanvasElement; sig: string } | null = null;
-
-/** 离屏预渲染整圈鞭扫尾迹贴图（缓存按 reach+光栅倍率签名；只在未命中时画一次，非热路径）。 */
-function whipSweepSprite(reach: number, scl: number): HTMLCanvasElement {
-  const sig = `${reach.toFixed(1)}|${scl.toFixed(2)}`;
-  if (whipSweepCache && whipSweepCache.sig === sig) return whipSweepCache.canvas;
-  const r0 = reach * 0.20, r1 = reach * 0.85;
-  const edge = r1 + 2; // 半边长外扩 2px，避免贴图边缘裁到渐变
-  const w = Math.max(1, Math.ceil(edge * 2 * scl));
-  const cv = createOffscreenCanvas(w, w);
-  const c2 = cv.getContext('2d')!;
-  c2.setTransform(scl, 0, 0, scl, w / 2, w / 2); // 原点居中，逻辑坐标绘制
-  // 一次性逐小片铺出「沿角衰减」的整圈尾迹：θ=0 为头（along=1 最亮），θ→2π 为尾。
-  // 64 片在 2x 光栅下已平滑；每片径向配色与原版逐片渐变逐字一致。
-  const N = 64;
-  for (let i = 0; i < N; i++) {
-    const a0 = (i / N) * Math.PI * 2;
-    const a1 = ((i + 1) / N) * Math.PI * 2;
-    const along = 1 - (i + 0.5) / N; // 头(θ=0)→along 1；尾(θ≈2π)→along 0
-    const grad = c2.createRadialGradient(0, 0, r0, 0, 0, r1);
-    grad.addColorStop(0, 'rgba(145,120,90,0)');
-    grad.addColorStop(0.5, 'rgba(130,105,78,0.4)');
-    grad.addColorStop(1, 'rgba(110,88,64,0.14)');
-    c2.globalAlpha = 0.1 + 0.32 * along; // 原版沿角递增的 alpha 公式
-    c2.fillStyle = grad;
-    c2.beginPath();
-    c2.arc(0, 0, r1, a0, a1);
-    c2.arc(0, 0, r0, a1, a0, true);
-    c2.closePath();
-    c2.fill();
-  }
-  whipSweepCache = { canvas: cv, sig };
-  return cv;
-}
-
-function drawWhipSweepFill(
-  ctx: CanvasRenderingContext2D,
-  fromAng: number,
-  toAng: number,
-  reach: number,
-  alpha: number,
-) {
-  let sweep = toAng - fromAng;
-  while (sweep <= 0) sweep += Math.PI * 2;
-  if (sweep < 0.05 || alpha <= 0.02) return;
-  const scl = boardRasterScale(ctx);
-  const spr = whipSweepSprite(reach, scl);
-  const logical = (reach * 0.85 + 2) * 2; // 贴图逻辑边长（画布像素 / 光栅倍率）
-  ctx.save();
-  // 贴图头(θ=0, +x 方向)对准扇区头 tipAng；身体沿负角度铺开 = 原版 fromAng→tipAng 的扫过区
-  ctx.rotate(toAng);
-  ctx.globalAlpha = alpha; // 贴图内部已含沿角 0.1~0.42 分级，外层只乘攻击 pulse/fade
-  ctx.drawImage(spr, -logical / 2, -logical / 2, logical, logical);
-  ctx.restore();
-}
+// 鞭扫扇区残影已删除（2026-09-01 用户拍板）：原实现每招每帧画 ~32 个径向渐变切片
+// （perf-attrib 实测占战斗中全部 ~170 渐变/帧），曾贴图化优化过，最终决定整个去掉、
+// 只留 drawCurvedWhip 鞭子轨迹（视觉主体仍在，攻击范围感靠鞭梢指向表达）。
 
 // 弯曲鞭梢：虚线、粗→细、只画外段；tier 越高越粗
 function drawCurvedWhip(
@@ -883,16 +817,14 @@ function drawWeaponGlyph(ctx: CanvasRenderingContext2D, type: UnitType, s: numbe
       ctx.closePath(); ctx.fill();
       break;
     }
-    case 'cavalry': { // 骑：虚线弯鞭 + 扇区残影；转速由 firePulse 衰减控制（阶越高越快）
+    case 'cavalry': { // 骑：虚线弯鞭；转速由 firePulse 衰减控制（阶越高越快）
       const phase = 1 - pulse;
       const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
       const fromAng = -Math.PI;
       const tipAng = fromAng + phase * Math.PI * 2;
       const flex = Math.sin(phase * Math.PI);
       const alpha = Math.min(1, pulse * 1.15);
-      // 扇区残影已贴图化（每帧 1 次 drawImage、零渐变，见 drawWhipSweepFill）：
-      // 三档全画，中低档不再省略。
-      drawWhipSweepFill(ctx, fromAng, tipAng, reach, alpha * 0.9);
+      // 扇区残影已删（低端机渐变大户，见上方删除注记），只留鞭体轨迹
       drawCurvedWhip(ctx, tipAng, reach, alpha, 1, flex, tier);
       break;
     }
@@ -10269,18 +10201,8 @@ function drawFx(ctx: CanvasRenderingContext2D, b: Battle) {
         break;
       }
       case 'cavalry': {
-        // 骑：命中层只画扇区残影；鞭体只在单位出招 glyph 画一条，避免双鞭
-        // 扇区残影已贴图化（每帧 1 次 drawImage、零渐变，见 drawWhipSweepFill）：
-        // 三档全画，中低档不再整段跳过。
-        const reach = (UNITS.cavalry.rge + TUNING.rangeTolerance) * CELL;
-        const ox = a.x + Math.cos(ang) * CELL * 0.08;
-        const oy = a.y + Math.sin(ang) * CELL * 0.08;
-        const eio = prog < 0.5 ? 2 * prog * prog : 1 - Math.pow(-2 * prog + 2, 2) / 2;
-        const fromAng = ang - Math.PI;
-        const tipAng = fromAng + eio * Math.PI * 2;
-        const fade = Math.min(1, 1.1 - prog * 0.4);
-        ctx.translate(ox, oy);
-        drawWhipSweepFill(ctx, fromAng, tipAng, reach, fade * 0.95);
+        // 骑：命中层原本只画扇区残影（鞭体在单位出招 glyph 画，避免双鞭）；
+        // 扇区残影已删（低端机渐变大户），命中层无内容可画。
         break;
       }
       default: {

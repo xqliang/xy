@@ -18,7 +18,7 @@
 import { Battle } from './battle';
 import type { BattleSaveConfig, BattleCoreState } from './battle';
 import { mapById } from './board';
-import { storeGet, storeSet, storeRemove } from './storage';
+import { storeGet, storeSetAsync, storeRemove } from './storage';
 import { APP_VERSION } from './version';
 
 /** 跨平台存储键名（走 ./storage）。PvP/PvE 共用同一槽位，同一时刻只有一局在进行。 */
@@ -173,7 +173,10 @@ export function sessionSaveCheckpoint(
     since >= SESSION_SAVE_MAX_INTERVAL_MS;
   if (!shouldWrite) return false;
 
-  storeSet(SESSION_KEY, JSON.stringify(buildSessionSave(kind, b, opts)));
+  // 异步写（storeSetAsync）：微信端 wx.setStorageSync 的同步跨进程 IPC 在低端机上
+  // 每次落档阻塞一帧几十 ms（征兵/部署后顿挫 + 2s 心跳周期性微顿的元凶），改异步移出
+  // JS 线程；序列化仍同步完成（快照一致）。Web 端行为零变化（localStorage 内存操作）。
+  storeSetAsync(SESSION_KEY, JSON.stringify(buildSessionSave(kind, b, opts)));
   lastWriteMs = now;
   return true;
 }
