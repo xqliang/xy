@@ -8821,7 +8821,9 @@ function drawMonsterSelection(
     ['移速', `${m.spd.toFixed(2)} 格/s`],
   ];
   if (mini) {
-    rows.push(['光环', `${mini.skillName}·${mini.desc}`]);
+    // 光环行只放技能名（短）；desc 全文太长（如黄狮精「随机卷走3格内一件兵器/英雄/桃树/炸药/空白阵位」），
+    // 右对齐塞进行内会向左延伸压住 label——改画在面板底部预留区（见下方换行绘制）。
+    rows.push(['光环', mini.skillName]);
   } else if (skill) {
     rows.push(['技能', `${skill.icon}${skill.name}`]);
   } else {
@@ -8842,9 +8844,32 @@ function drawMonsterSelection(
     ctx.fillText(k, px + 12, ry);
     ctx.textAlign = 'right';
     ctx.fillStyle = k === '状态' ? '#ffd0c0' : k === '增益' ? '#c8ffd8' : '#fff6e6';
-    const shown = k === '状态' || k === '增益' ? v : v.length > 14 ? `${v.slice(0, 13)}…` : v;
+    // 按像素截断（通用防重叠）：右对齐值向左延伸，可用宽 = 面板宽 - 左右 padding - label 宽 - 间隙。
+    // 旧实现按字符数截 14 字——14 个 13px 中文字 ≈182px，窄面板里仍会压住左侧 label。
+    const labelW = ctx.measureText(k).width;
+    const valueMaxW = pw - 12 - 12 - labelW - 10;
+    let shown = v;
+    while (ctx.measureText(shown).width > valueMaxW && shown.length > 1) shown = shown.slice(0, -1);
+    if (shown !== v) shown += '…';
     ctx.fillText(shown, px + pw - 12, ry);
     ry += 17;
+  }
+  // 小 Boss 光环 desc 全文：面板 148px 高度本就为此预留（基础行只画到 ~93px），12px 小字
+  // 按像素宽度换行（中文无空格，逐字累加测量），最多 2 行、超出截断加省略号。
+  if (mini) {
+    ctx.font = '12px "PingFang SC", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,240,210,0.62)';
+    const maxW = pw - 24;
+    const lines: string[] = [];
+    let cur = '';
+    for (const ch of mini.desc) {
+      if (ctx.measureText(cur + ch).width > maxW && cur) { lines.push(cur); cur = ch; if (lines.length >= 2) break; }
+      else cur += ch;
+    }
+    if (lines.length < 2 && cur) lines.push(cur);
+    else if (lines.length >= 2 && cur) lines[1] = `${lines[1]!.slice(0, -1)}…`;
+    lines.forEach((ln, i) => ctx.fillText(ln, px + 12, ry + 4 + i * 15));
   }
   ctx.restore();
 }
