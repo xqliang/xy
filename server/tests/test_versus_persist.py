@@ -213,9 +213,12 @@ def test_reload_lazy_opponent_no_show_no_contest(rhub):
 
 
 def test_reloaded_never_connected_side_no_contest_after_disconnect_grace(rhub):
-    # 分支1 守卫回归：C2 回放把两侧 gone_ms=now；从未连接侧过 DISCONNECT_GRACE_MS(45s)
+    # 分支1 守卫回归：C2 回放把两侧 gone_ms=now；从未连接侧过 DISCONNECT_GRACE_MS(15s)
     # 也不得经分支1 误判胜，必须走分支2 no-contest。
-    from api_versus import DISCONNECT_GRACE_MS
+    # 推进量取 max(宽限, 连接宽限)+1：回放局 created_ms 会刷新为恢复时刻（api_versus.py
+    # _load_match_from_redis），分支2 以它起算 20s——DISCONNECT_GRACE_MS 调小到 15s 后
+    # 仅推宽限不够越过连接宽限（本测试原耦合「宽限>连接宽限」的隐含假设，解耦之）。
+    from api_versus import DISCONNECT_GRACE_MS, MATCH_CONNECT_GRACE_MS
     import json
     mid = _mk(rhub, "N1", "N2")
     rhub.ws_hello("N1", mid, lambda t: True)   # N1 连过；N2 从未连接
@@ -223,7 +226,7 @@ def test_reloaded_never_connected_side_no_contest_after_disconnect_grace(rhub):
     h2 = _reopen(rhub.db, rhub._redis_server, 20_000_000)
     sent = []
     h2.ws_hello("N1", mid, lambda t: (sent.append(t), True)[1])
-    h2._clock["ms"] += DISCONNECT_GRACE_MS + 1
+    h2._clock["ms"] += max(DISCONNECT_GRACE_MS, MATCH_CONNECT_GRACE_MS) + 1
     base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
     h2.ws_snap("N1", mid, {"type": "snap", "t": 1, "s": base})
     m = h2.matches[mid]
@@ -233,7 +236,7 @@ def test_reloaded_never_connected_side_no_contest_after_disconnect_grace(rhub):
 
 
 def test_connected_then_dropped_still_wins(rhub):
-    # 分支1 不变回归：一方连过(connected_ever=True)后掉线超 45s → 仍判对方胜 + 写 pvp_results。
+    # 分支1 不变回归：一方连过(connected_ever=True)后掉线超 15s → 仍判对方胜 + 写 pvp_results。
     from api_versus import DISCONNECT_GRACE_MS
     mid = _mk(rhub, "D1", "D2")
     rhub.ws_hello("D1", mid, lambda t: True)

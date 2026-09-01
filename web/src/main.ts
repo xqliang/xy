@@ -832,9 +832,10 @@ let pvpOppGone = false;                         // 对手已断线（WS oppGone�
 let pvpOppGoneStart = 0;                        // 对手断线时刻(ms)：倒计时起点，0=未开始
 let pvpNoShow = false;              // C5：服务端判对手打空气 → frame() 退体力+自动重匹配
 let pvpMatchingNote = '';           // C5：匹配中界面提示（如「对手未应战，正在重新匹配…」）
-/** 断线倒计时时长（ms）：与服务端 DISCONNECT_GRACE_MS(45s) 对齐——客户端倒计时 ≥ 服务端宽限，
- *  确保不早于服务端权威 result 就回首页。起点是 netDead 判死时刻（其前还有 NET_DEAD_THRESHOLD_MS 的无入站检测窗，二者不同）。 */
-const DISCONNECT_COUNTDOWN_MS = 45_000;   // 与服务端 DISCONNECT_GRACE_MS 对齐（10s→45s）：断线倒计时/复活窗口
+/** 断线倒计时时长（ms）：与服务端 DISCONNECT_GRACE_MS(15s) 对齐——客户端倒计时 ≥ 服务端宽限，
+ *  确保不早于服务端权威 result 就回首页（正常由服务端 result 驱动结算，倒计时到点未收到是兜底）。
+ *  起点是 netDead 判死时刻（其前还有 NET_DEAD_THRESHOLD_MS 的无入站检测窗，二者不同）。45s→15s（用户拍板：45s 判胜太久）。 */
+const DISCONNECT_COUNTDOWN_MS = 15_000;   // 与服务端 DISCONNECT_GRACE_MS 对齐（45s→15s）：断线倒计时/复活窗口
 /** 对手快照停更预警阈值：快照正常 100ms/份，停更 1.5s（≈15 份未达）即显示「对方网络中断」横幅——
  *  覆盖对方异常退出（杀进程/断网，服务端要 ~10s 才判死推 oppGone）的空窗；弱网抖动偶发 1s 停更不误报。 */
 const PVP_OPP_STALL_WARN_MS = 1_500;
