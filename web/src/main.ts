@@ -37,6 +37,8 @@ import {
   summonButtonRect,
   guideSkipRect,
   drawGuideSkip,
+  drawDeployGuideDemo,
+  drawSkillGuideDemo,
   introHopY,
   mapBadgeRect,
   activeSlotRect,
@@ -837,6 +839,9 @@ let pvpOppGone = false;                         // 对手已断线（WS oppGone�
 let pvpOppGoneStart = 0;                        // 对手断线时刻(ms)：倒计时起点，0=未开始
 let pvpNoShow = false;              // C5：服务端判对手打空气 → frame() 退体力+自动重匹配
 let pvpMatchingNote = '';           // C5：匹配中界面提示（如「对手未应战，正在重新匹配…」）
+// 本局是否使用过任意主动技能（点击或拖放施放都算）：首次技能就绪的「施放演示动画」
+// （拖到兵器/路径格/点按）播到玩家真用过一次为止——用过即视为已学会。
+let activeUsedThisGame = false;
 /** 断线倒计时时长（ms）：与服务端 DISCONNECT_GRACE_MS(15s) 对齐——客户端倒计时 ≥ 服务端宽限，
  *  确保不早于服务端权威 result 就回首页（正常由服务端 result 驱动结算，倒计时到点未收到是兜底）。
  *  起点是 netDead 判死时刻（其前还有 NET_DEAD_THRESHOLD_MS 的无入站检测窗，二者不同）。45s→15s（用户拍板：45s 判胜太久）。 */
@@ -1526,6 +1531,7 @@ function newGame() {
   ui.peachPopup = false;
   ui.bombPopup = null;
   pendingFirstSummonTutorial = false;
+  activeUsedThisGame = false; // 新局重置：本局没用过主动技 → 技能就绪施放演示可再播（对局中途购买的技能也有引导）
   // Task 10 首局体验：首局单人开启「第 1 波押后 + 征兵/部署动态引导」。
   // newGame 只服务单人（PvP 走 enterPvpMatching，不经过这里），故无需再判 pvp；
   // 「是否首局」用对局历史判定（!hasFinishedGame）——既准又可被测试直控（resetFinishedGame）。
@@ -2287,7 +2293,7 @@ function handleButton(x: number, y: number): boolean {
         const i = btn.id === 'act1' ? 1 : 0;
         const def = activeById(battle.activeSlots[i]?.id ?? '');
         if (def && isDragActiveEffect(def.effect)) return true; // 拖拽类技能不响应点按触发
-        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); pvpSaveDirty = true; } // 主动技释放改动战斗态 → 尽快落档
+        if (battle.activeSlots[i]?.ready) { battle.triggerActive(i); pvpSaveDirty = true; activeUsedThisGame = true; } // 主动技释放改动战斗态 → 尽快落档；用过了→停施放演示
         else {
           ui.activePopup = i;
           ui.activePopupUntil = performance.now() + 2500;
@@ -2854,7 +2860,7 @@ function onPointerUp(e?: PointerEvent, cancelled = false) {
         const actId = battle.activeSlots[ui.dragActiveSlot]?.id;
         if (slotDef && isBombActiveEffect(slotDef.effect)) { battle.placeBomb(ui.dragActiveSlot, target); }
         else { battle.applyPillActive(ui.dragActiveSlot, target); }
-        pvpSaveDirty = true; // 炸药预埋 / 仙丹·风火轮拖放施放改动战斗态 → 尽快落档
+        pvpSaveDirty = true; activeUsedThisGame = true; // 炸药预埋 / 仙丹·风火轮拖放施放改动战斗态 → 尽快落档；用过了→停施放演示
       }
     }
   } else if (ui.dragPos) {
@@ -3339,11 +3345,24 @@ function frame(now: number): void {
   // Task 10 首局动态引导：非模态箭头 + 「跳过」。仅 battle 屏、引导活跃、且无 modal 教程时画
   // （modal 教程开着时箭头让位，关掉后由 updateFirstGameGuide 恢复）。箭头与波次押后在
   // battle.ts 的 holdFirstWaveForSetup 联动，这里只管绘制。
+  // deploy 阶段优先画「手型拖拽演示」（从候选区拖一枚令牌到推荐空格，循环）——比箭头
+  // 更直观地示范「拖放」手势；无可演示内容（无令牌/棋盘满/玩家正在拖）时回退箭头。
   if (screen === 'battle' && isGuideActive() && !tutorialOverlay && battle.status !== 'won' && battle.status !== 'lost') {
-    const target = guidePhase === 'summon' ? summonButtonRect() : trayRowRect();
-    const label = guidePhase === 'summon' ? '点击征兵' : '把兵器拖到战场部署';
-    drawGuideArrow(ctx, target, label, now);
+    const demoDrawn = guidePhase === 'deploy' && drawDeployGuideDemo(ctx, battle, ui, now);
+    if (!demoDrawn) {
+      const target = guidePhase === 'summon' ? summonButtonRect() : trayRowRect();
+      const label = guidePhase === 'summon' ? '点击征兵' : '把兵器拖到战场部署';
+      drawGuideArrow(ctx, target, label, now);
+    }
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
+  }
+  // 首次主动技能就绪的施放演示（与本局是否用过绑定，非首局限定——技能引导对每个新玩家
+  // 都有价值，用过一次即学会）：有 ready 槽且本局未使用过任何主动技时，按技能目标类型
+  // 循环演示拖拽/点按（仙丹→兵器格、轰天雷→路径格、即时技→点按+范围虚线圈）。
+  // modal 教程开着/玩家正在拖技能槽时让位。
+  if (screen === 'battle' && !tutorialOverlay && !activeUsedThisGame && battle.status === 'playing' && ui.dragActiveSlot === null) {
+    const readyIdx = battle.activeSlots.findIndex((s) => s.ready);
+    if (readyIdx === 0 || readyIdx === 1) drawSkillGuideDemo(ctx, battle, readyIdx, now);
   }
   // FPS 调试浮层：最顶层叠画（VIEW 内、微信裁剪 restore 前），所有界面通用。
   // 帧尾先推进滚动窗口（fps + 平均帧内 JS 耗时——dur 低而 fps 低=GPU/合成瓶颈，dur 高=JS 瓶颈）。

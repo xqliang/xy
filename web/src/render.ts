@@ -11,10 +11,12 @@ import {
   lenOf,
   mirrorCell,
   placeableCells,
+  placeableByProximity,
   type Cell,
   type GameMap,
 } from './board';
-import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
+import { guideDemoPhase, pickDemoDeployCell, guideSkillTargetKind, instantSkillRadiusCells } from './guide-demo';
+import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, findTrayIndex, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
 import { generalById, generalStat, primaryGeneralForChar, inactivePartnerHint, sortedPartnerChars, qualityColor, qualityName, BOND_NAME, GENERAL_TUNING, BOND_GENERAL, heroAttackFxTtl } from './generals';
@@ -1270,8 +1272,298 @@ export function drawGuideSkip(ctx: CanvasRenderingContext2D): void {
   ctx.restore();
 }
 
+// —— 首引「拖拽/施放」循环演示（手型 + 虚线高亮；相位机纯函数在 guide-demo.ts） —— //
+
+/**
+ * 手型光标（矢量，食指按压手势）：触点在 (x,y)，掌与蜷起的三指落在触点右下方，
+ * 食指从掌伸向触点。press 0→1 为悬停→按下（指尖压扁 + 到位涟漪扩散）。
+ * 无 shadowBlur（低端机教训：每帧滤镜是帧率杀手），立体感用偏移深色底圆。
+ */
+export function drawHandCursor(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  press: number,
+  alpha: number,
+): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // 按下涟漪：press 接近 1 时从触点扩散一圈（反馈「点下去了」）
+  if (press > 0.55) {
+    const ripple = (press - 0.55) / 0.45;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 + ripple * 12, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,220,150,${(1 - ripple) * 0.6})`;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+  const down = press * 1.5; // 按下时整体下沉（px）
+  // 投影底（偏移深色椭圆，不用 shadowBlur）
+  ctx.fillStyle = 'rgba(30,22,12,0.30)';
+  ctx.beginPath();
+  ctx.ellipse(x + 4, y + 7 + down, 15, 11, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  // 掌部（圆角胶囊，触点右下方，微旋转让手势自然）
+  const fill = '#fdf6ec';
+  const line = 'rgba(96,74,52,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(x + 14, y + 20 + down, 13, 10, -0.55, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = line;
+  ctx.stroke();
+  // 蜷起的三根指头（掌上缘一排小圆）
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(x + 6 + i * 6.5, y + 13 + i * 1.8 + down, 3.9, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = line;
+    ctx.stroke();
+  }
+  // 食指：圆头粗线从掌伸到触点 + 指尖圆（按下时指尖压扁）
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y + 15 + down);
+  ctx.lineTo(x + 1, y + 1 + down * 0.6);
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = fill;
+  ctx.stroke();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(240,220,196,1)';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(x, y + down * 0.6, 4.6, 4.6 * (1 - 0.22 * press), 0, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = line;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 演示参数：from→to 的拖动（ghost 跟手）或点按（ghost 缺省），目标按类型虚线高亮。 */
+export interface GuideDragDemoSpec {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  /** 拖动的内容（tray 令牌/技能图标），跟手绘制；点按演示（即时技）可缺省。 */
+  ghost?: (ctx: CanvasRenderingContext2D, x: number, y: number) => void;
+  /** 目标格虚线高亮框（拖到兵器格/路径格/技能槽本身）。 */
+  targetRect?: { x: number; y: number; w: number; h: number } | null;
+  /** 即时技作用范围虚线圈（如陨石半径 2 格，圈心=最前怪）。 */
+  targetCircle?: { x: number; y: number; r: number } | null;
+  nowMs: number;
+}
+
+/**
+ * 首引「拖拽/点按」循环演示：手型从 from 按住（拿起 ghost）→ 沿弧线拖到 to →
+ * 放下（目标虚线高亮脉冲）→ 停顿 → 淡出 → 间歇 → 循环（相位机 guide-demo.ts）。
+ * 纯视觉层（不影响命中/状态）；玩家真实拖拽时由调用方停画（避免双演示抢戏）。
+ */
+export function drawGuideDragDemo(ctx: CanvasRenderingContext2D, spec: GuideDragDemoSpec): void {
+  const st = guideDemoPhase({ t: spec.nowMs / 1000 });
+  if (st.alpha <= 0) return; // rest：本轮间歇
+  const { from, to } = spec;
+  // 弧线插值（move 相位用缓动 k；其余相位停在手当前位置语义上）
+  const ctrl = { x: (from.x + to.x) / 2 + 46, y: (from.y + to.y) / 2 - 60 }; // 控制点右上抬，拖动弧线自然
+  const bezier = (k: number) => {
+    const u = 1 - k;
+    return {
+      x: u * u * from.x + 2 * u * k * ctrl.x + k * k * to.x,
+      y: u * u * from.y + 2 * u * k * ctrl.y + k * k * to.y,
+    };
+  };
+  let pos: { x: number; y: number };
+  let press: number;
+  switch (st.phase) {
+    case 'pressFrom': pos = from; press = Math.min(1, st.rawK * 1.6); break;
+    case 'move': pos = bezier(st.k); press = 0.45; break;
+    case 'pressTo': pos = to; press = Math.min(1, st.rawK * 1.6); break;
+    case 'hold': pos = to; press = 1; break;
+    default: pos = to; press = 0.3; break; // fade：松手姿态
+  }
+  // 目标高亮强度：拖动中淡显，pressTo/hold 加亮并在 hold 期方波闪烁（给玩家看清落点）
+  const tgtGlow = st.phase === 'hold'
+    ? 0.65 + 0.35 * Math.round(Math.sin(st.tInPhase * Math.PI * 4) * 0.5 + 0.5)
+    : st.phase === 'pressTo' ? 0.9 : st.phase === 'move' ? 0.35 : 0.2;
+  if (spec.targetRect) {
+    const r = spec.targetRect;
+    ctx.save();
+    ctx.globalAlpha = st.alpha * tgtGlow;
+    roundRect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, 8);
+    ctx.setLineDash([7, 5]);
+    ctx.lineDashOffset = -(spec.nowMs / 90) % 12; // 蚂蚁线流动
+    ctx.strokeStyle = '#ffd76a';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,200,80,0.10)';
+    ctx.fill();
+    ctx.restore();
+  }
+  if (spec.targetCircle) {
+    const c = spec.targetCircle;
+    ctx.save();
+    ctx.globalAlpha = st.alpha * tgtGlow;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.setLineDash([9, 7]);
+    ctx.lineDashOffset = -(spec.nowMs / 110) % 16;
+    ctx.strokeStyle = 'rgba(140,220,255,0.9)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 圈心落点小十字
+    ctx.strokeStyle = 'rgba(140,220,255,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(c.x - 5, c.y); ctx.lineTo(c.x + 5, c.y);
+    ctx.moveTo(c.x, c.y - 5); ctx.lineTo(c.x, c.y + 5);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // 轨迹虚线（拖动中从 from 画到当前位置）
+  if (st.phase === 'move' || st.phase === 'fade') {
+    ctx.save();
+    ctx.globalAlpha = st.alpha * (st.phase === 'fade' ? 0.5 : 0.8);
+    ctx.strokeStyle = 'rgba(120,90,40,0.8)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  // ghost 跟手（拖拽悬浮感：略高于触点；hold 吸附到目标中心=「放好了」）
+  if (spec.ghost) {
+    const ghostY = st.phase === 'hold' || st.phase === 'fade' ? to.y : pos.y - 16;
+    ctx.save();
+    ctx.globalAlpha = st.alpha * (st.phase === 'hold' || st.phase === 'pressTo' ? 1 : 0.92);
+    spec.ghost(ctx, st.phase === 'hold' || st.phase === 'fade' ? to.x : pos.x, ghostY);
+    ctx.restore();
+  }
+  // 手型最后画（压在 ghost 之上）
+  drawHandCursor(ctx, pos.x, pos.y + (spec.ghost ? 8 : 0), press, st.alpha);
+}
+
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
+}
+
+/**
+ * 首引布阵拖拽演示（guidePhase 'deploy' 用）：从候选区挑第一枚可部署令牌，手型拿起、
+ * 沿弧线拖到「贴路径的推荐空格」放下（虚线框高亮 + 兵器攻击范围环），循环播放。
+ * 返回 false = 当前无可演示内容（无令牌/棋盘满/玩家正在拖），调用方回退箭头引导。
+ */
+export function drawDeployGuideDemo(
+  ctx: CanvasRenderingContext2D,
+  b: Battle,
+  ui: UiState,
+  nowMs: number,
+): boolean {
+  if (ui.dragTrayIndex !== null) return false; // 玩家真实拖拽中：演示让位（避免双 ghost 抢戏）
+  const idx = findTrayIndex(b.tray, (t) => t.kind === 'unit' || t.kind === 'word');
+  if (idx < 0) return false;
+  const token = b.tray[idx]!;
+  const occupied = new Set<string>([...b.units.keys(), ...b.words.keys(), ...b.trees.keys()]);
+  const cell = pickDemoDeployCell(placeableByProximity(b.map), occupied);
+  if (!cell) return false; // 棋盘无空位
+  const from = traySlotCenter(idx);
+  const to = cellCenterPx(cell.c, cell.r);
+  const tokenSize = token.kind === 'word' ? CELL * 0.78 : TRAY_H - 16;
+  drawGuideDragDemo(ctx, {
+    from,
+    to,
+    ghost: (c2, x, y) => drawTrayToken(c2, token, x, y, tokenSize),
+    targetRect: { x: BOARD_X + cell.c * CELL, y: BOARD_Y + cell.r * CELL, w: CELL, h: CELL },
+    nowMs,
+  });
+  // 兵器顺手画攻击范围环（与 autoPlace 演示同款，帮玩家理解「放这里能打到路」）
+  if (token.kind === 'unit') {
+    const stat = getUnitStat(token.type, token.tier);
+    drawRangeRing(ctx, to.x, to.y, stat.rge);
+  }
+  return true;
+}
+
+/**
+ * 首次主动技能就绪的施放演示：按技能目标类型分三种——
+ *   unit（仙丹/风火轮）：手型从技能槽拖到场上第一个可投放的兵器格（金色虚线框）；
+ *   cell（轰天雷）：拖到路径中段可埋格（金色虚线框）；
+ *   instant（掌/陨石/冰封/紧箍咒）：手型点按技能槽；有作用范围的（陨石/紧箍咒）
+ *     在最前怪处画青色虚线范围圈，让玩家预读「点了会砸哪里」。
+ * 场上无可投放目标时静默不画（罕见，等目标出现）。
+ */
+export function drawSkillGuideDemo(
+  ctx: CanvasRenderingContext2D,
+  b: Battle,
+  slotIdx: 0 | 1,
+  nowMs: number,
+): void {
+  const slot = b.activeSlots[slotIdx];
+  const def = slot ? activeById(slot.id) : undefined;
+  if (!def || !slot) return;
+  const at = activeSlotCenter(slotIdx);
+  const kind = guideSkillTargetKind(def.effect);
+
+  if (kind === 'instant') {
+    // 点按演示：手型从槽右下方移入按下；范围圈画在最前怪
+    let circle: { x: number; y: number; r: number } | null = null;
+    const rad = instantSkillRadiusCells(def.effect);
+    if (rad > 0 && b.monsters.length > 0) {
+      let front = b.monsters[0]!;
+      for (const m of b.monsters) if (m.dist > front.dist) front = m;
+      const p = posAtDistance(b.map, front.dist);
+      const c = cellCenterPx(p.c, p.r);
+      circle = { x: c.x, y: c.y, r: rad * CELL };
+    }
+    const rect = activeSlotRect(slotIdx);
+    drawGuideDragDemo(ctx, {
+      from: { x: at.x + 44, y: at.y + 58 },
+      to: at,
+      targetRect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+      targetCircle: circle,
+      nowMs,
+    });
+    return;
+  }
+
+  // 拖拽演示：找落点目标（兵器格 / 可埋路径格）
+  let cell: Cell | null = null;
+  if (kind === 'unit') {
+    // guideSkillTargetKind 返回 'unit' 已保证 effect ∈ {atkBuff, frqBuff}（isPillActiveEffect），
+    // 此处收窄类型喂给 canApplyPill（其签名只收 pill 类效果）
+    const effect = def.effect as 'atkBuff' | 'frqBuff';
+    for (const u of b.units.values()) {
+      if (b.canApplyPill(u.cell, effect)) { cell = u.cell; break; }
+    }
+    if (!cell) {
+      outer: for (const g of b.activeGenerals()) {
+        for (const c of g.cells) {
+          if (b.canApplyPill(c, effect)) { cell = c; break outer; }
+        }
+      }
+    }
+  } else {
+    const path = b.map.path;
+    const mid = Math.floor(path.length / 2);
+    for (let i = 0; i < path.length; i++) {
+      const cand = path[(mid + i) % path.length]!;
+      if (b.canPlaceBomb(cand)) { cell = cand; break; }
+    }
+  }
+  if (!cell) return; // 场上暂无合法目标（如仙丹但兵器都被投过）：静默等目标
+  const to = cellCenterPx(cell.c, cell.r);
+  drawGuideDragDemo(ctx, {
+    from: at,
+    to,
+    ghost: (c2, x, y) => drawSkillGlyph(c2, x, y, CELL * 0.3, def.icon, '#b5762a', true, def.id),
+    targetRect: { x: BOARD_X + cell.c * CELL, y: BOARD_Y + cell.r * CELL, w: CELL, h: CELL },
+    nowMs,
+  });
 }
 // —— 候选区令牌离屏贴图缓存 ——
 // 实测元凶（2026-09-01 用户真机 21fps→点征兵立马 9fps→部署完恢复；AI 征兵不影响）：
