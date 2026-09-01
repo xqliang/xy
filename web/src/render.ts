@@ -1271,6 +1271,53 @@ export function drawGuideSkip(ctx: CanvasRenderingContext2D): void {
 function traySlotCenter(i: number): { x: number; y: number } {
   return { x: TRAY_LEFT + i * TRAY_SLOT + TRAY_SLOT / 2, y: TRAY_Y + TRAY_H / 2 };
 }
+// —— 候选区令牌离屏贴图缓存 ——
+// 实测元凶（2026-09-01 用户真机 21fps→点征兵立马 9fps→部署完恢复；AI 征兵不影响）：
+// tray 出现令牌后每帧多 ~12 次文字光栅化（字牌 strokeText/fillText + 阶数徽标 + 增益徽标）
+// + 数次立绘 drawImage（perf-summon-drop.mjs 实测 +6 fillText/+6 strokeText/+8 drawImage/帧）。
+// 弱 GPU 上文字光栅化（尤其描边）单次可达 ms 级——12 次/帧直接把 21fps 打到 9。
+// 令牌内容纯静态（drawUnit 无时间驱动动画、buffAtkT 只影响徽标有无）→ 按可视签名
+// 缓存整枚贴图，每帧 1 次 drawImage，文字光栅化归零（只在令牌出现/变化时一次）。
+
+/** 令牌 → 可视内容签名：只含影响 drawTrayToken 输出的字段（数值型 buff 剩余秒数
+ *  取布尔、growT/buffAtkMul 等不进绘制的字段排除）。纯函数，供缓存 key 与单测。 */
+export function trayTokenCacheKey(t: TrayToken): string {
+  switch (t.kind) {
+    case 'unit':
+      return `u|${t.type}|${t.tier}|${t.displaced ? 1 : 0}|${t.pillAtk ? 1 : 0}|${t.pillFrq ? 1 : 0}|${(t.buffAtkT ?? 0) > 0 ? 1 : 0}`;
+    case 'word':
+      return `w|${t.char}|${t.tier}|${t.displaced ? 1 : 0}`;
+    case 'tree':
+      return `t|${t.level}`;
+    default:
+      return 's'; // shovel 无可视变量
+  }
+}
+
+const TRAY_TOKEN_CACHE_MAX = 48; // 兵种×阶×增益/字牌×阶组合上限；小贴图超限 FIFO 逐出
+/** 徽标/「待」圈/阶数角标伸出令牌主体外，离屏画布四周留白防裁切。 */
+const TRAY_TOKEN_PAD = 0.35;
+const trayTokenCache = new Map<string, HTMLCanvasElement>();
+
+/** 取（或一次性建）令牌贴图：以令牌中心为原点、边长 (s+2*pad*s) 的正方形贴图。 */
+function trayTokenSprite(token: TrayToken, s: number, scl: number): HTMLCanvasElement {
+  const key = `${trayTokenCacheKey(token)}|${s.toFixed(1)}|${scl.toFixed(2)}`;
+  const hit = trayTokenCache.get(key);
+  if (hit) return hit;
+  const logical = s * (1 + TRAY_TOKEN_PAD * 2);
+  const w = Math.max(1, Math.ceil(logical * scl));
+  const cv = createOffscreenCanvas(w, w);
+  const c2 = cv.getContext('2d')!;
+  c2.setTransform(scl, 0, 0, scl, w / 2, w / 2); // 原点居中，与槽中心坐标系一致
+  drawTrayToken(c2, token, 0, 0, s);
+  if (trayTokenCache.size >= TRAY_TOKEN_CACHE_MAX) {
+    const oldest = trayTokenCache.keys().next().value;
+    if (oldest !== undefined) trayTokenCache.delete(oldest);
+  }
+  trayTokenCache.set(key, cv);
+  return cv;
+}
+
 function drawTrayToken(ctx: CanvasRenderingContext2D, token: TrayToken, x: number, y: number, s: number) {
   if (token.kind === 'shovel') {
     const spr = sprite('item-shovel');
@@ -1628,7 +1675,11 @@ function drawTray(ctx: CanvasRenderingContext2D, b: Battle, ui: UiState) {
           : token.kind === 'tree'
             ? CELL * 0.72
             : TRAY_H - 16;
-        drawTrayToken(ctx, token, c.x, c.y, tokenSize);
+        // 静态令牌贴图化：文字光栅化/立绘每帧→一次性（弱 GPU 上每帧 12 次文字是把
+        // 21fps 打到 9 的元凶，见 trayTokenSprite 注释）。丝带动画期不走此分支。
+        const spr = trayTokenSprite(token, tokenSize, boardRasterScale(ctx));
+        const logical = tokenSize * (1 + TRAY_TOKEN_PAD * 2);
+        ctx.drawImage(spr, c.x - logical / 2, c.y - logical / 2, logical, logical);
       }
     }
     if ((ui.selectedTrayIndex === i || autoDragTray === i) && token) {

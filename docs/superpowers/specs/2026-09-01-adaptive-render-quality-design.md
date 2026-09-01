@@ -78,12 +78,13 @@
 用户真机观察触发的复查推翻了初稿基线,并用 `perf-tray-stall.mjs`(CPU 4x 节流三阶段对照)+
 `perf-attrib.mjs`(Canvas API 调用栈采样归因)锁定真相与两大真凶,追加三项降载:
 
-1. **「tray 有牌导致卡」证伪**:tray 满 5 token 的增量仅 ~6 save + ~6 drawImage/帧,帧率/JS 耗时无可测差异。用户感知的「征兵后慢」实为**征兵联动的间歇负载**(AI 对手同步征兵布阵跑 `planAutoPlaceSteps` 规划器尖峰+落档序列化),「跑着跑着快起来」= 攻击特效间歇——见真凶②。
+1. **「tray 有牌导致卡」——headless 曾证伪、真机实锤(方法教训)**:CPU 节流下 tray 满 5 token 增量仅 ~6 save + ~6 drawImage/帧、帧率无差,一度证伪;但用户真机(FPS 浮层)报「正常 21fps、点征兵立马 9fps、部署完恢复,且 **AI 征兵布阵完全不影响**」——排除 AI 联动,锁定玩家 tray 令牌渲染。真凶是**每帧 ~12 次文字光栅化**(字牌 strokeText/fillText+阶数/增益徽标):**headless SwiftShader 的文字光栅化特性与真 GPU 不同,测不出这类瓶颈**(节流只放大 JS 不放大 GPU 光栅化),弱 GPU 上描边文字单次 ms 级 → 12 次/帧把 21fps 打到 9。→ 见真凶③。
 2. **真凶① 白骨岭骨栅栏 `drawBaigulingBoneFence`**:纯静态装饰(骨堆位置由 seed 决定)却每帧重画 ~90 骨堆×3~4 save/translate/rotate,占空场 save 的 **~58%**、drawImage 的 ~45%。→ **离屏整墙缓存**(参照 boardLayerCache 模式;签名=光栅倍率+素材就绪态,四周扩半格 padding 防边缘骨堆被裁)。零视觉损失(shot-diff 与动画噪声基线同量级)。空场 save 249→105。
 3. **真凶② 骑兵鞭扫 `drawWhipSweepFill`**:战斗中每帧 ~170 个 createRadialGradient 的 **100%** 来自它——每招把整圈环扇切 ~32 片、每片各建一个径向渐变,多骑兵攻击期(含 AI 半场)重叠。→ 曾先做整圈尾迹贴图化(rotate+1 次 drawImage、零渐变、三档全生效),用户验收后二次拍板**整个删掉扇区残影、只留 `drawCurvedWhip` 鞭体轨迹**(攻击范围感靠鞭梢指向表达),贴图化代码一并移除。战斗渐变 174→~0。
 4. **FPS 调试浮层**:canvas 左上角小字「fps·EMA帧时·画质档」(fps 分级着色),挂「版本号连点 7 次」toggle、纯 canvas 绘制微信真机可用(DevTools 面板是 DOM 的微信开不了,FPS 显示恰最需要在真机用)。滚动窗口统计为纯函数 `quality.fpsMeterTick`(单测 7 条),`__game.setFpsOverlay/fpsProbe` 供冒烟。
 5. **公共修复**:`boardRasterScale` 从 `getTransform().a` 改为 `√(a²+b²)`——旋转上下文里 a 混入 cos 角度逐帧抖动,离屏缓存签名失稳导致每帧重建(鞭扫贴图首版实测踩中)。骨墙/棋盘/鞭扫三处缓存共用此函数。
-6. **落档同步 IPC 阻塞(第三发现,征兵后持续卡顿主嫌)**:用户追报「点征兵那一刻起卡一段时间、停手恢复、跑着跑着又快/慢」——`perf-summon-jank.mjs`(CPU 6x 节流+逐帧 AI 状态对照)显示对战/无尽两种模式征兵后均满帧,headless 复现不了,结构排查坐实:session 落档(pvp-save)在**每次玩家输入后 500ms 节流内**+**每 2s 保底心跳**全量序列化并 `wx.setStorageSync` **同步跨进程 IPC** 写入(早期局实测 ~7.3KB;序列化本机仅 0.4ms,大头在微信 IPC,低端机每次一帧几十 ms)——连续操作(征兵→部署→合并)每步触发一次写=「卡一段时间」,停手只剩 2s 心跳=「恢复但仍周期性微顿」。→ **session 落档改 `storeSetAsync`**(微信走异步 `wx.setStorage`,fire-and-forget fail 静默;序列化仍同步保快照一致;Web 端 localStorage 内存操作行为零变化;旧内核缺异步 API 回退同步)。AI 征兵规划器尖峰(`planAutoPlaceSteps`,观测到 AI 第二次征兵帧 dur 6.5ms/maxGap 33ms)为次级间歇源,属遗留议题 F。
+6. **落档同步 IPC 阻塞(次嫌,微信端已修)**:用户追报「点征兵那一刻起卡一段时间、停手恢复、跑着跑着又快/慢」——`perf-summon-jank.mjs`(CPU 6x 节流+逐帧 AI 状态对照)显示对战/无尽两种模式征兵后均满帧,headless 复现不了,结构排查坐实:session 落档(pvp-save)在**每次玩家输入后 500ms 节流内**+**每 2s 保底心跳**全量序列化并 `wx.setStorageSync` **同步跨进程 IPC** 写入(早期局实测 ~7.3KB;序列化本机仅 0.4ms,大头在微信 IPC,低端机每次一帧几十 ms)——连续操作(征兵→部署→合并)每步触发一次写=「卡一段时间」,停手只剩 2s 心跳=「恢复但仍周期性微顿」。→ **session 落档改 `storeSetAsync`**(微信走异步 `wx.setStorage`,fire-and-forget fail 静默;序列化仍同步保快照一致;Web 端 localStorage 内存操作行为零变化;旧内核缺异步 API 回退同步)。AI 征兵规划器尖峰(`planAutoPlaceSteps`,观测到 AI 第二次征兵帧 dur 6.5ms/maxGap 33ms)为次级间歇源,属遗留议题 F。
+7. **真凶③ tray 令牌每帧文字光栅化(用户真机实锤)**:`drawTrayToken` 的字牌描边文字+阶数徽标+增益徽标每帧重画——令牌内容纯静态(drawUnit 无时间动画、buffAtkT 只影响徽标有无)→ **按可视签名离屏缓存整枚贴图**(`trayTokenCacheKey` 纯函数+单测 7 条;`trayTokenSprite` 按 签名+尺寸+光栅倍率 缓存,FIFO 上限 48;drawTray 落位分支改 1 次 drawImage)。40x 节流复测:征兵后文字增量 +12/帧→+2/帧(残余为战斗飘字噪声)。拖拽 ghost/自动布阵回放的单枚低频绘制不改。
 
 > 遗留(另一议题):autoplace 规划器尖峰(旧诊断 F 项)——用户「征兵后慢」的间歇源之一,4x 节流下 durP95 仍可见 ~26ms 尖峰;不碰 AI/数值故不过 ai-balance 门禁,本次不做。
 
