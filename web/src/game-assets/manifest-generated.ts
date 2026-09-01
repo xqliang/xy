@@ -8,7 +8,7 @@ export const HASHED_URLS: Record<string, string> = {
   "bgm-huoyanshan.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-huoyanshan-63a4dd03.mp3",
   "bgm-liushahe.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-liushahe-29d5a467.mp3",
   "bgm-menu.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-menu-f12ea1f1.mp3",
-  "bgm-pansidong.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-pansidong-5015a75b.mp3",
+  "bgm-pansidong.mp3": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/bgm-pansidong-8767500e.mp3",
   "fence-baiguling.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/fence-baiguling-f0a6be28.png",
   "fence-huangfengling.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/fence-huangfengling-9db5fe6c.png",
   "fence-liushahe.png": "https://user-growth.tos-cn-shanghai.volces.com/dev/xy/fence-liushahe-3bb97fd0.png",
