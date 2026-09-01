@@ -93,18 +93,28 @@ export interface FpsMeterState {
   windowStart: number; // 当前统计窗口起点（rAF 时间戳 ms；-1=未初始化）
   frames: number;      // 窗口内已绘帧数
   fps: number;         // 上一个完整窗口换算出的帧率（0=样本不足）
+  durAcc: number;      // 窗口内帧内 JS 耗时累加（ms；供跨窗换算平均）
+  durMs: number;       // 上一个完整窗口的平均帧内 JS 耗时（0=样本不足）——JS vs GPU 瓶颈分诊
 }
 
 /**
  * FPS 滚动窗口推进（纯函数，每真绘制帧调一次；被 frameBudget 跳掉的帧不调）。
  * 窗口未满只累计；跨过窗口边界时按「窗口实际跨度」换算 fps（切后台巨帧也能算出
- * 真实的低值而非除零），随后从当前帧重开窗口。
+ * 真实的低值而非除零），随后从当前帧重开窗口。durMs 为本帧 JS 耗时（帧开始到
+ * 绘制完成的 performance.now 差），缺省不累计。
  */
-export function fpsMeterTick(prev: FpsMeterState, nowMs: number): FpsMeterState {
-  if (prev.windowStart < 0) return { windowStart: nowMs, frames: 1, fps: prev.fps };
+export function fpsMeterTick(prev: FpsMeterState, nowMs: number, durMs = 0): FpsMeterState {
+  const dur = Math.max(0, Number.isFinite(durMs) ? durMs : 0);
+  if (prev.windowStart < 0) return { windowStart: nowMs, frames: 1, fps: prev.fps, durAcc: dur, durMs: prev.durMs };
   const elapsed = nowMs - prev.windowStart;
-  if (elapsed < FPS_METER_WINDOW_MS) return { ...prev, frames: prev.frames + 1 };
+  if (elapsed < FPS_METER_WINDOW_MS) return { ...prev, frames: prev.frames + 1, durAcc: prev.durAcc + dur };
   // 本帧计入旧窗口后换算（frames+1），再从当前时刻重开新窗口
-  const fps = (prev.frames + 1) / (elapsed / 1000);
-  return { windowStart: nowMs, frames: 0, fps };
+  const total = prev.frames + 1;
+  return {
+    windowStart: nowMs,
+    frames: 0,
+    fps: total / (elapsed / 1000),
+    durAcc: 0,
+    durMs: (prev.durAcc + dur) / total,
+  };
 }

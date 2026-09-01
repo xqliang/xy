@@ -1137,17 +1137,19 @@ export function summonButtonRect(): { x: number; y: number; w: number; h: number
 }
 
 /**
- * FPS 调试浮层：VIEW 左上角半透明小条「fps · EMA帧时 · 画质档」。
+ * FPS 调试浮层：VIEW 左上角半透明小条「fps · EMA帧时 · 帧内JS耗时 · 画质档」。
  * 纯 canvas 绘制（微信小游戏无 DOM 也能用）；开关由 main.ts 的
  * 「版本号连点 7 次」toggle（fpsOverlayOn），每帧最后叠画在所有 UI 之上。
- * fps 分级着色：≥50 绿 / 30~49 黄 / <30 红，一眼看出健康度。
+ * 着色/分诊：fps ≥50 绿 / 30~49 黄 / <30 红；**帧内 JS 耗时低而 fps 低 = GPU/合成
+ * 瓶颈（渲染指令多），JS 耗时高 = JS 瓶颈（序列化/规划器/GC）**——真机分诊全靠它。
  */
 export function drawFpsOverlay(
   ctx: CanvasRenderingContext2D,
-  info: { fps: number; emaMs: number; tier: string },
+  info: { fps: number; emaMs: number; durMs: number; tier: string },
 ): void {
   const fps = Math.max(0, Math.round(info.fps));
-  const label = `${fps} fps · ${info.emaMs > 0 ? info.emaMs.toFixed(1) : '–'} ms · ${info.tier}`;
+  const js = info.durMs > 0 ? `JS ${info.durMs.toFixed(1)}` : 'JS –';
+  const label = `${fps} fps · ${info.emaMs > 0 ? info.emaMs.toFixed(1) : '–'}ms · ${js}ms · ${info.tier}`;
   ctx.save();
   ctx.font = 'bold 12px "PingFang SC", sans-serif';
   ctx.textAlign = 'left';
