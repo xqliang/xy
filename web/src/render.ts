@@ -12,6 +12,7 @@ import {
   mirrorCell,
   placeableCells,
   placeableByProximity,
+  pathEntranceCell,
   type Cell,
   type GameMap,
 } from './board';
@@ -1275,9 +1276,10 @@ export function drawGuideSkip(ctx: CanvasRenderingContext2D): void {
 // —— 首引「拖拽/施放」循环演示（手型 + 虚线高亮；相位机纯函数在 guide-demo.ts） —— //
 
 /**
- * 手型光标（矢量，食指按压手势）：触点在 (x,y)，掌与蜷起的三指落在触点右下方，
- * 食指从掌伸向触点。press 0→1 为悬停→按下（指尖压扁 + 到位涟漪扩散）。
- * 无 shadowBlur（低端机教训：每帧滤镜是帧率杀手），立体感用偏移深色底圆。
+ * 手型光标：emoji 指点手势（👆）+ 白底衬圈（浅色棋盘上保可见性 + 触点定位）。
+ * press 0→1 为悬停→按下（手整体下沉 + 到位涟漪扩散）。首版纯矢量手型「样子非常奇怪」
+ * （用户反馈），改用 emoji——跨端字体（Apple/Segoe/Noto Color Emoji）都画得很形象，
+ * 且与桃子图标的 emoji fallback 同一先例；按下时用 👇 更贴「按在屏幕上」。
  */
 export function drawHandCursor(
   ctx: CanvasRenderingContext2D,
@@ -1292,54 +1294,25 @@ export function drawHandCursor(
   if (press > 0.55) {
     const ripple = (press - 0.55) / 0.45;
     ctx.beginPath();
-    ctx.arc(x, y, 8 + ripple * 12, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(255,220,150,${(1 - ripple) * 0.6})`;
+    ctx.arc(x, y, 10 + ripple * 14, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,220,150,${(1 - ripple) * 0.65})`;
     ctx.lineWidth = 2.5;
     ctx.stroke();
   }
-  const down = press * 1.5; // 按下时整体下沉（px）
-  // 投影底（偏移深色椭圆，不用 shadowBlur）
-  ctx.fillStyle = 'rgba(30,22,12,0.30)';
+  const down = press * 2; // 按下时整体下沉（px）
+  // 白底衬圈：任何背景下都圈住触点，emoji 不糊进画面
   ctx.beginPath();
-  ctx.ellipse(x + 4, y + 7 + down, 15, 11, -0.5, 0, Math.PI * 2);
+  ctx.arc(x, y + 4 + down * 0.5, 15, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,253,247,0.9)';
   ctx.fill();
-  // 掌部（圆角胶囊，触点右下方，微旋转让手势自然）
-  const fill = '#fdf6ec';
-  const line = 'rgba(96,74,52,0.85)';
-  ctx.beginPath();
-  ctx.ellipse(x + 14, y + 20 + down, 13, 10, -0.55, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.lineWidth = 1.6;
-  ctx.strokeStyle = line;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(96,74,52,0.6)';
   ctx.stroke();
-  // 蜷起的三根指头（掌上缘一排小圆）
-  for (let i = 0; i < 3; i++) {
-    ctx.beginPath();
-    ctx.arc(x + 6 + i * 6.5, y + 13 + i * 1.8 + down, 3.9, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = line;
-    ctx.stroke();
-  }
-  // 食指：圆头粗线从掌伸到触点 + 指尖圆（按下时指尖压扁）
-  ctx.beginPath();
-  ctx.moveTo(x + 10, y + 15 + down);
-  ctx.lineTo(x + 1, y + 1 + down * 0.6);
-  ctx.lineWidth = 7;
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = fill;
-  ctx.stroke();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = 'rgba(240,220,196,1)';
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(x, y + down * 0.6, 4.6, 4.6 * (1 - 0.22 * press), 0, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = line;
-  ctx.stroke();
+  // emoji 手指：悬停 👆 / 按下 👇（字号略大于衬圈，指尖大致落在触点）
+  ctx.font = '24px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","PingFang SC",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(press > 0.6 ? '👇' : '👆', x, y + 5 + down);
   ctx.restore();
 }
 
@@ -1456,6 +1429,7 @@ function traySlotCenter(i: number): { x: number; y: number } {
 /**
  * 首引布阵拖拽演示（guidePhase 'deploy' 用）：从候选区挑第一枚可部署令牌，手型拿起、
  * 沿弧线拖到「贴路径的推荐空格」放下（虚线框高亮 + 兵器攻击范围环），循环播放。
+ * 推荐格必须**已开垦**（解锁集内）且未被占——拖到未挖的灰格上会演示出错误操作。
  * 返回 false = 当前无可演示内容（无令牌/棋盘满/玩家正在拖），调用方回退箭头引导。
  */
 export function drawDeployGuideDemo(
@@ -1469,7 +1443,13 @@ export function drawDeployGuideDemo(
   if (idx < 0) return false;
   const token = b.tray[idx]!;
   const occupied = new Set<string>([...b.units.keys(), ...b.words.keys(), ...b.trees.keys()]);
-  const cell = pickDemoDeployCell(placeableByProximity(b.map), occupied);
+  // placeableByProximity 返回玩家半场全部可放格（含未开垦），须再过滤「已解锁」：
+  // 演示落点只能是真正可部署的空格
+  const unlocked = new Set(b.unlockedCells().map((c) => `${c.c},${c.r}`));
+  const cell = pickDemoDeployCell(
+    placeableByProximity(b.map).filter((c) => unlocked.has(`${c.c},${c.r}`)),
+    occupied,
+  );
   if (!cell) return false; // 棋盘无空位
   const from = traySlotCenter(idx);
   const to = cellCenterPx(cell.c, cell.r);
@@ -1486,6 +1466,45 @@ export function drawDeployGuideDemo(
     const stat = getUnitStat(token.type, token.tier);
     drawRangeRing(ctx, to.x, to.y, stat.rge);
   }
+  return true;
+}
+
+/**
+ * 洛阳铲首次出现的挖掘演示（guidePhase 'deploy' 且候选区有铲子时，优先于兵器演示）：
+ * 手型从铲子槽拿起、拖到「锁定灰格中离怪物入口最近」的推荐挖掘格（与 firstShovel
+ * 教程的推荐策略一致——贴近出口尽早防守），虚线框高亮落点，循环播放。
+ * 返回 false = 无可演示内容（无铲子/无锁定格/玩家在拖），调用方走兵器演示。
+ */
+export function drawShovelGuideDemo(
+  ctx: CanvasRenderingContext2D,
+  b: Battle,
+  ui: UiState,
+  nowMs: number,
+): boolean {
+  if (ui.dragTrayIndex !== null) return false; // 玩家真实拖拽中：演示让位
+  const idx = findTrayIndex(b.tray, (t) => t.kind === 'shovel');
+  if (idx < 0) return false;
+  const locked = b.lockedCells();
+  if (locked.length === 0) return false;
+  // 推荐挖掘格：锁定格中离怪物入口最近（与 firstShovelDigSpotAnchor 同策略）
+  const gate = pathEntranceCell(b.map.path);
+  let best: Cell | null = null;
+  let bestD = Infinity;
+  for (const c of locked) {
+    const d = Math.hypot(c.c - gate.c, c.r - gate.r);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  if (!best) return false;
+  const token = b.tray[idx]!;
+  const from = traySlotCenter(idx);
+  const to = cellCenterPx(best.c, best.r);
+  drawGuideDragDemo(ctx, {
+    from,
+    to,
+    ghost: (c2, x, y) => drawTrayToken(c2, token, x, y, TRAY_H - 16),
+    targetRect: { x: BOARD_X + best.c * CELL, y: BOARD_Y + best.r * CELL, w: CELL, h: CELL },
+    nowMs,
+  });
   return true;
 }
 

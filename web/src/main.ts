@@ -38,6 +38,7 @@ import {
   guideSkipRect,
   drawGuideSkip,
   drawDeployGuideDemo,
+  drawShovelGuideDemo,
   drawSkillGuideDemo,
   introHopY,
   mapBadgeRect,
@@ -3345,10 +3346,12 @@ function frame(now: number): void {
   // Task 10 首局动态引导：非模态箭头 + 「跳过」。仅 battle 屏、引导活跃、且无 modal 教程时画
   // （modal 教程开着时箭头让位，关掉后由 updateFirstGameGuide 恢复）。箭头与波次押后在
   // battle.ts 的 holdFirstWaveForSetup 联动，这里只管绘制。
-  // deploy 阶段优先画「手型拖拽演示」（从候选区拖一枚令牌到推荐空格，循环）——比箭头
-  // 更直观地示范「拖放」手势；无可演示内容（无令牌/棋盘满/玩家正在拖）时回退箭头。
+  // deploy 阶段优先画「手型拖拽演示」（循环示范拖放手势）——比箭头更直观；
+  // 候选区有洛阳铲时**铲子演示优先**（首次出铲的教学点：拖到未挖的灰格开垦），
+  // 无铲子走兵器部署演示（拖到已开垦的推荐空格）；无可演示内容回退箭头。
   if (screen === 'battle' && isGuideActive() && !tutorialOverlay && battle.status !== 'won' && battle.status !== 'lost') {
-    const demoDrawn = guidePhase === 'deploy' && drawDeployGuideDemo(ctx, battle, ui, now);
+    const demoDrawn = guidePhase === 'deploy'
+      && (drawShovelGuideDemo(ctx, battle, ui, now) || drawDeployGuideDemo(ctx, battle, ui, now));
     if (!demoDrawn) {
       const target = guidePhase === 'summon' ? summonButtonRect() : trayRowRect();
       const label = guidePhase === 'summon' ? '点击征兵' : '把兵器拖到战场部署';

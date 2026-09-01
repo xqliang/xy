@@ -15,6 +15,16 @@ const NOISE = /favicon|\/api\/|CORS|Failed to load resource/i;
 page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !NOISE.test(m.text())) errs.push(m.text()); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+await page.evaluateOnNewDocument(() => {
+  try {
+    // 只预置「modal 教程」已见（防 battleIntro 等弹窗挡点击/盖画面），**不预置 playedOnce**——
+    // 保留首局 guidePhase 非模态引导（summon→deploy→演示动画）。预置 playedOnce 会让
+    // guidePhase 直接 done、演示永不触发（曾踩坑：modal 间歇性吞掉征兵按钮点击）。
+    const ids = ['battleIntro','firstSummon','firstPlacement','firstHeroWord','firstShovel','firstActiveReady','firstHeroCombo','firstMergeable','firstFragmentDrop','merchantFirstOpen','wuxingMap'];
+    const seen = {}; for (const id of ids) seen[id] = true;
+    localStorage.setItem('dasheng.tutorial', JSON.stringify({ seen }));
+  } catch {}
+});
 
 // —— 场景 1：首局布阵演示 —— //
 await page.goto(URL, { waitUntil: 'networkidle0' });
@@ -30,7 +40,7 @@ const clicked = await page.evaluate(() => {
 console.log('canvas css 尺寸:', JSON.stringify(clicked));
 // 征兵按钮中心（x=280）：在按钮行可能的 y 区间自上而下探针点击，summonCount>0 即成功
 let summonOk = false;
-for (const y of [clicked.canvasH - 60, clicked.canvasH - 80, clicked.canvasH - 100, clicked.canvasH - 45, clicked.canvasH - 120]) {
+for (const y of [895, 915, 905, 925]) {
   await page.mouse.click(280, y);
   await sleep(300);
   summonOk = await page.evaluate(() => window.__game.battle.summonCount > 0);
