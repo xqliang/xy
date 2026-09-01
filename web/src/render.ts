@@ -2782,16 +2782,8 @@ function drawBaigulingBoneFencePaint(ctx: CanvasRenderingContext2D) {
   const x0 = BOARD_X;
   const x1 = BOARD_X + COLS * CELL;
   ctx.save();
-  ctx.strokeStyle = 'rgba(45, 42, 36, 0.55)';
-  ctx.lineWidth = CELL * 0.38;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x0, yLeft);
-  ctx.lineTo(xStep, yLeft);
-  ctx.lineTo(xStep, yRight);
-  ctx.lineTo(x1, yRight);
-  ctx.stroke();
+  // 曾有一条 CELL*0.38 宽的半透明深灰衬底线沿栅栏线铺底（视觉偏脏）；用户拍板去掉——
+  // 骨堆自带深色描边（rgba(40,36,30,0.82)），无衬底依然清晰，墙更轻盈。
   const step = CELL * 0.32;
   const segs: { x0: number; y0: number; x1: number; y1: number }[] = [
     { x0, y0: yLeft, x1: xStep, y1: yLeft },
