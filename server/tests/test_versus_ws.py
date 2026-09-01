@@ -477,6 +477,44 @@ def test_reconnect_within_grace_recovers():
         a2.close(); b.close()
 
 
+def test_reconnect_after_timeout_gets_result_not_recovery():
+    # 6c.（Task 7 终局守卫）断线超时判负后重连：hello 不再恢复对战，直接收 result(lose)——
+    # 修「B 重连进去还能继续对战」：判负方应被结算弹窗送回首页，且后续业务消息全部被忽略。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    with _ws_server(hub) as port:
+        a = WsClient(port, mid, "A1")
+        b = WsClient(port, mid, "B1")
+        _hello(a); _hello(b)
+        assert a.recv()["type"] == "welcome"
+        assert b.recv()["type"] == "welcome"
+
+        a.close()                                     # A 断开（裸断）
+        assert b.recv()["type"] == "oppGone"
+
+        hub._clock["ms"] += DISCONNECT_GRACE_MS + 500  # 越过宽限
+        b.send({"type": "snap", "t": 1, "s": _snap()})  # B 触发惰性判定 → A 断线超时判负
+        res = b.recv()
+        assert res["type"] == "result" and res["outcome"] == "win"
+        assert res["reason"] == "opponentDisconnectTimeout"
+
+        # A 超时判负后重连：首条推送应是终局 result（lose），而不是 welcome 恢复
+        a2 = WsClient(port, mid, "A1")
+        _hello(a2)
+        got = a2.recv()
+        assert got is not None and got["type"] == "result"
+        assert got["outcome"] == "lose"
+        assert got["reason"] == "selfDisconnect"
+
+        # 判负重连方发业务消息应被整体忽略（未置 hello_ok）：B 侧绝不能再收到 A2 的 oppSnap，
+        # 服务端对局保持终局态；且 A 侧 gone_ms 未被清零（终局守卫不走「恢复在线」路径）。
+        a2.send({"type": "snap", "t": 2, "s": _snap()})
+        with hub.lock:
+            assert hub.matches[mid]["ended"] is True
+            assert hub.matches[mid]["a"]["gone_ms"] > 0   # 未清零=未恢复
+        a2.close(); b.close()
+
+
 def test_stale_close_does_not_clobber_reconnect():
     # 陈旧连接清理不得顶掉重连后的新连接（send 身份比对）：
     # A 断 → 重连 A2 → 旧 A 线程迟到的 ws_gone 必须被忽略，A2 仍可用。

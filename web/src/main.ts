@@ -388,7 +388,11 @@ function makePvpCallbacks(): Partial<PvpSocketOpts> {
       const snap = s as PvpSnap;
       normalizeSnapClock(snap, Date.now());
       oppView.ingest(snap);
-      pvpLastSnapRecv = Date.now(); // 记最近一次收到对手快照的时刻：对方断线倒计时期间若重连（新手快照）则撤弹窗
+      // 记最近一次收到对手快照的时刻（performance.now() 时基——与 frame() 的 rAF now、
+      // oppReconnected 的入参同时基）：对方断线倒计时期间若重连（新手快照）则撤弹窗。
+      // ⚠️ 曾用 Date.now()（epoch 时基）与时基差 ~1.7e12ms → oppReconnected 恒 true →
+      // oppGone 弹窗被「假重连」秒撤（用户观察「对方断线一直没提示」的根因，2026-09-01 修）。
+      pvpLastSnapRecv = performance.now();
     },
     onNextWave: (wave, startAtServerMs) => {
       // 沿用旧 tick-response：服务端纪元 → 本地开波 tick 缓存；pvpNextWave 存原始值（兼容旧语义）。
@@ -606,6 +610,26 @@ function drawReconnectingBanner(ctx: CanvasRenderingContext2D, attempt: number):
   ctx.restore();
 }
 
+/** 对手快照停更预警横幅：对手快照（正常 100ms/份）停更超阈值、但服务端 oppGone 还没到
+ *  （对方异常退出/断网时服务端要 ~10s 才判死）——这段空窗给本方即时反馈「对方网络中断」。
+ *  派生显示（无状态）：快照恢复即自动消失；服务端 oppGone 到达后由正式倒计时弹窗接管。 */
+function drawOppStalledBanner(ctx: CanvasRenderingContext2D): void {
+  const text = '对方网络中断，等待重连…';
+  ctx.save();
+  ctx.font = '14px "PingFang SC", serif';
+  const padX = 14, h = 28;
+  const w = ctx.measureText(text).width + padX * 2;
+  const x = (VIEW_W - w) / 2, y = HUD_H + 8;
+  ctx.fillStyle = 'rgba(26,18,8,0.66)';
+  if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); }
+  else ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#ffc98a'; // 暖橙区别于「本方重连」的米黄
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, VIEW_W / 2, y + h / 2);
+  ctx.restore();
+}
+
 /** 我方断线看门狗刚判死（pvpNetDead false→true）：记倒计时起点。 */
 function beginNetDeadCountdown(nowMs: number): void {
   if (!pvpNetDead) return;
@@ -782,7 +806,7 @@ let localSimTick = 0;                   // 本方 battle 已完成的固定步�
 //    兜底——非数据丢失但会丢该输入最近 ≤2s 的改动；见 Battle.serialize 的落档字段范围）。
 let pvpSaveDirty = false;
 let pvpLastSnapMs = 0;                  // 上次发本方快照的墙钟 ms（100ms 节流）
-let pvpLastSnapRecv = 0;                // 最近一次收到对手快照的墙钟 ms（对方断线倒计时期间据此判重连撤弹窗）
+let pvpLastSnapRecv = 0;                // 最近一次收到对手快照的时刻（performance.now() 时基；对方断线倒计时期间据此判重连撤弹窗、快照停更预警）
 let pvpNextWave: { wave: number; startAtServerMs: number } | null = null; // 服务端下一波（WS nextWave 缓存，Task 9 用）
 let pvpResult: { outcome: 'win' | 'lose' | 'draw'; reason: string } | null = null; // 服务端权威终局（WS result → frame 驱动结算）
 let pvpStatusReported = false;          // 终局 status 已上报一次性标志（surrender / tangsengDead 各只经 WS 发一次）
@@ -811,6 +835,9 @@ let pvpMatchingNote = '';           // C5：匹配中界面提示（如「对手
 /** 断线倒计时时长（ms）：与服务端 DISCONNECT_GRACE_MS(45s) 对齐——客户端倒计时 ≥ 服务端宽限，
  *  确保不早于服务端权威 result 就回首页。起点是 netDead 判死时刻（其前还有 NET_DEAD_THRESHOLD_MS 的无入站检测窗，二者不同）。 */
 const DISCONNECT_COUNTDOWN_MS = 45_000;   // 与服务端 DISCONNECT_GRACE_MS 对齐（10s→45s）：断线倒计时/复活窗口
+/** 对手快照停更预警阈值：快照正常 100ms/份，停更 1.5s（≈15 份未达）即显示「对方网络中断」横幅——
+ *  覆盖对方异常退出（杀进程/断网，服务端要 ~10s 才判死推 oppGone）的空窗；弱网抖动偶发 1s 停更不误报。 */
+const PVP_OPP_STALL_WARN_MS = 1_500;
 /** Cell → PvpAction cell 字符串（协议格式 r{r}c{c}；与内部 cellKey 的 `c,r` 顺序不同，勿混用） */
 const cs = (c: Cell): string => `r${c.r}c${c.c}`;
 /**
@@ -3283,6 +3310,14 @@ function frame(now: number): void {
     // 初次连接/成功 open 后为 0；手动关/鉴权失败后 pvpSock 会被 endPvpSession 置空，再加 state!=='closed' 双保险。
     if (pvpSock && !pvpResult && !pvpNetDead && !pvpOppGone && pvpSock.reconnectAttempt > 0 && pvpSock.state !== 'closed') {
       drawReconnectingBanner(ctx, pvpSock.reconnectAttempt);
+    }
+    // 对手快照停更预警：快照（正常 100ms/份）停更超阈值、本方 WS 正常、服务端 oppGone 未到——
+    // 填补「对方异常退出后服务端 ~10s 判死」空窗的即时反馈（用户报「对方断了却一直没提示」）。
+    // 派生显示无状态：快照恢复自动消失；oppGone 到达后 pvpOppGone 分支的正式倒计时弹窗接管。
+    if (pvpSock && oppView && !pvpResult && !pvpSettleResult && !pvpNetDead && !pvpOppGone
+      && pvpSock.reconnectAttempt === 0 && pvpLastSnapRecv > 0
+      && now - pvpLastSnapRecv > PVP_OPP_STALL_WARN_MS) {
+      drawOppStalledBanner(ctx);
     }
     // 对方断线弹窗：倒计时期间显示；结算屏一开（pvpSettleResult 非空）则让位给结算（避免两顶层重叠）。
     if (pvpOppGone && !pvpResult && !pvpSettleResult) drawOppGoneOverlay(ctx, (DISCONNECT_COUNTDOWN_MS - (now - pvpOppGoneStart)) / 1000);

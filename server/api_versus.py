@@ -737,6 +737,19 @@ class VersusHub:
                 return {"error": "bad_hello"}
             me, opp = self._sides(m, uid)
             self._ws_check_gone_locked(m, now)      # 顺便惰性检查对手宽限超时
+            # 终局守卫（Task 7）：对局已 ended（典型：本侧掉线超宽限被判负、或对局期间已被判终局）
+            # 时，重连方不再恢复对战——把终局 result 直接推给重连方（客户端 onResult → 结算画面 →
+            # 回首页），杜绝「对局已判我方负、重连却还能继续打」的幽灵续打。
+            # 时序：必须在 _ws_check_gone_locked 之后（它可能刚把本侧判负，且 result 只推给了
+            # 在线对手——本连接此刻才到、收不到）；ws_send 先登记才能推送（_ws_push_locked
+            # 从 side["ws_send"] 取发送器）。恢复字段（gone_ms 清零等）不再执行——已终局的
+            # 对局没有「恢复在线」语义；连接关闭时 _mark_gone 照常经陈旧连接保护清理。
+            if m.get("ended"):
+                my_key = "a" if m["a"] is me else "b"
+                my_result = (m.get("result") or {}).get(my_key) or {"outcome": "lose", "reason": "ended"}
+                me["ws_send"] = send
+                self._ws_push_locked(me, opp, m, {"type": "result", **my_result}, cascade=False)
+                return {"serverMs": now, "ended": True}
             me["ws_send"] = send
             me["gone_ms"] = 0                        # 重连清零，恢复在线
             me["connected_ever"] = True              # 标记该侧至少连过一次（撮合退队据此豁免）
@@ -1230,6 +1243,11 @@ def handle_versus_ws(handler, hub) -> None:
                     and str(msg.get("uid") or "") == uid:
                 res = hub.ws_hello(uid, match_id, ws_send)
                 if res and not res.get("error"):
+                    if res.get("ended"):
+                        # Task 7 终局重连：result 已在 ws_hello 内推送给本连接；不置 hello_ok、
+                        # 不发 welcome——后续业务消息（snap/waveCleared/status）全部被下方
+                        # 「hello 前忽略一切」挡住，杜绝判负后的幽灵续打；连接保持至客户端结算后自关。
+                        return
                     hello_ok = True
                     ws_send(json.dumps({"type": "welcome", "serverMs": res["serverMs"]},
                                        separators=(",", ":")))
