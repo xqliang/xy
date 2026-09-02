@@ -16,7 +16,7 @@ import {
   type Cell,
   type GameMap,
 } from './board';
-import { guideDemoPhase, pickDemoDeployCell, guideSkillTargetKind, instantSkillRadiusCells } from './guide-demo';
+import { guideDemoPhase, pickDemoDeployCell } from './guide-demo';
 import { Battle, TUNING, MAP_ELEMENT, PALM_PUSH_FADE_DUR, SKILL_META, MINI_BOSS_META, UNIT_STATUS_META, MONSTER_STATUS_META, PEACH_TREE, PEACH_FLOAT_FALL, DAMAGE_FLOAT_FALL, PLACE_TIMING, placeDragEase, SKILL_FX_DUR, BUFF_SKILL_FX_DUR, findTrayIndex, type TrayToken, type PeachTree, type HeroUltFx, type ErlangDogFx, type HitFx, type ActiveGeneral, type UnitStatusId, type MonsterStatusId, type MiniBossKind, type Monster, type PlacedUnit, type SkillFx, type SkillFxKind, type Burst } from './battle';
 import { passiveById, MAX_EQUIPPED_PASSIVES } from './passives';
 import { activeById, isPillActiveEffect, isBombActiveEffect, MAX_EQUIPPED_ACTIVES } from './actives';
@@ -1509,12 +1509,11 @@ export function drawShovelGuideDemo(
 }
 
 /**
- * 首次主动技能就绪的施放演示：按技能目标类型分三种——
- *   unit（仙丹/风火轮）：手型从技能槽拖到场上第一个可投放的兵器格（金色虚线框）；
- *   cell（轰天雷）：拖到路径中段可埋格（金色虚线框）；
- *   instant（掌/陨石/冰封/紧箍咒）：手型点按技能槽；有作用范围的（陨石/紧箍咒）
- *     在最前怪处画青色虚线范围圈，让玩家预读「点了会砸哪里」。
- * 场上无可投放目标时静默不画（罕见，等目标出现）。
+ * 首次轰天雷就绪的埋雷手势演示（手型从技能槽拖到推荐格，金色虚线框标落点，循环）。
+ * 2026-09-01 用户拍板：主动技能引导只有「需要拖放」的轰天雷要手势+虚线演示（拖到
+ * **离唐僧最近**的可埋路径格——守最后防线的直觉落点）；仙丹/风火轮及全部即时技
+ * 不画手势（首次就绪已有一次性 modal 教程描述用法，见 firstActiveReadySequence）。
+ * 场上暂无可埋格时静默不画。
  */
 export function drawSkillGuideDemo(
   ctx: CanvasRenderingContext2D,
@@ -1524,57 +1523,21 @@ export function drawSkillGuideDemo(
 ): void {
   const slot = b.activeSlots[slotIdx];
   const def = slot ? activeById(slot.id) : undefined;
-  if (!def || !slot) return;
+  if (!def || !slot || !isBombActiveEffect(def.effect)) return; // 手势演示仅轰天雷
   const at = activeSlotCenter(slotIdx);
-  const kind = guideSkillTargetKind(def.effect);
 
-  if (kind === 'instant') {
-    // 点按演示：手型从槽右下方移入按下；范围圈画在最前怪
-    let circle: { x: number; y: number; r: number } | null = null;
-    const rad = instantSkillRadiusCells(def.effect);
-    if (rad > 0 && b.monsters.length > 0) {
-      let front = b.monsters[0]!;
-      for (const m of b.monsters) if (m.dist > front.dist) front = m;
-      const p = posAtDistance(b.map, front.dist);
-      const c = cellCenterPx(p.c, p.r);
-      circle = { x: c.x, y: c.y, r: rad * CELL };
-    }
-    const rect = activeSlotRect(slotIdx);
-    drawGuideDragDemo(ctx, {
-      from: { x: at.x + 44, y: at.y + 58 },
-      to: at,
-      targetRect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
-      targetCircle: circle,
-      nowMs,
-    });
-    return;
-  }
-
-  // 拖拽演示：找落点目标（兵器格 / 可埋路径格）
+  // 推荐落点：可埋路径格中离唐僧最近（用户拍板——引导玩家把雷埋在唐僧口守底线）
+  const ts = b.tangsengRenderPos();
+  const tsPx = cellCenterPx(ts.c, ts.r);
   let cell: Cell | null = null;
-  if (kind === 'unit') {
-    // guideSkillTargetKind 返回 'unit' 已保证 effect ∈ {atkBuff, frqBuff}（isPillActiveEffect），
-    // 此处收窄类型喂给 canApplyPill（其签名只收 pill 类效果）
-    const effect = def.effect as 'atkBuff' | 'frqBuff';
-    for (const u of b.units.values()) {
-      if (b.canApplyPill(u.cell, effect)) { cell = u.cell; break; }
-    }
-    if (!cell) {
-      outer: for (const g of b.activeGenerals()) {
-        for (const c of g.cells) {
-          if (b.canApplyPill(c, effect)) { cell = c; break outer; }
-        }
-      }
-    }
-  } else {
-    const path = b.map.path;
-    const mid = Math.floor(path.length / 2);
-    for (let i = 0; i < path.length; i++) {
-      const cand = path[(mid + i) % path.length]!;
-      if (b.canPlaceBomb(cand)) { cell = cand; break; }
-    }
+  let bestD = Infinity;
+  for (const cand of b.map.path) {
+    if (!b.canPlaceBomb(cand)) continue;
+    const p = cellCenterPx(cand.c, cand.r);
+    const d = Math.hypot(p.x - tsPx.x, p.y - tsPx.y);
+    if (d < bestD) { bestD = d; cell = cand; }
   }
-  if (!cell) return; // 场上暂无合法目标（如仙丹但兵器都被投过）：静默等目标
+  if (!cell) return; // 暂无可埋格（都已埋/路径异常）：静默等
   const to = cellCenterPx(cell.c, cell.r);
   drawGuideDragDemo(ctx, {
     from: at,

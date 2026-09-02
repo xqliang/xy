@@ -481,10 +481,10 @@ function endPvpSession(): void {
 
 // —— Task 7.6：PvP 断线看门狗（弹窗「网络已断开」+ 单按钮「返回首页」）——
 // 布局常量：断线弹窗置于上半区（标题/提示在上方，不挡棋盘中部）。宽 340、高 200，水平居中、顶部留白。
-const NET_POP_W = 340;
+const NET_POP_W = 310; // 原 340，用户反馈偏宽收窄 30px
 const NET_POP_H = 200;
 const NET_POP_X = (VIEW_W - NET_POP_W) / 2;
-const NET_POP_Y = 24; // 顶部留 24px 边距
+const NET_POP_Y = 74; // 原 24：太贴顶导致 title 屋顶（drawInkPopupFrame 飞檐伸出弹窗顶）被 HUD 遮挡，下移 50px
 const NET_POP_PAD = 24;
 
 /** 断线弹窗右上角 × 命中测试：手动提前结束（都回首页）。 */
@@ -3367,13 +3367,18 @@ function frame(now: number): void {
     }
     drawGuideSkip(ctx); // 「跳过」与箭头同层，始终可点
   }
-  // 首次主动技能就绪的施放演示（与本局是否用过绑定，非首局限定——技能引导对每个新玩家
-  // 都有价值，用过一次即学会）：有 ready 槽且本局未使用过任何主动技时，按技能目标类型
-  // 循环演示拖拽/点按（仙丹→兵器格、轰天雷→路径格、即时技→点按+范围虚线圈）。
+  // 首次轰天雷就绪的埋雷手势演示（与本局是否用过绑定）：有 ready 的轰天雷槽且本局
+  // 未使用过任何主动技时循环演示「拖到离唐僧最近的可埋格」。其它技能（仙丹/风火轮
+  // 及全部即时技）2026-09-01 用户拍板不画手势——首次就绪已有一次性 modal 教程描述用法。
   // modal 教程开着/玩家正在拖技能槽时让位。
   if (screen === 'battle' && !tutorialOverlay && !activeUsedThisGame && battle.status === 'playing' && ui.dragActiveSlot === null) {
     const readyIdx = battle.activeSlots.findIndex((s) => s.ready);
-    if (readyIdx === 0 || readyIdx === 1) drawSkillGuideDemo(ctx, battle, readyIdx, now);
+    if (readyIdx === 0 || readyIdx === 1) {
+      const readyDef = activeById(battle.activeSlots[readyIdx]!.id);
+      if (readyDef && isBombActiveEffect(readyDef.effect)) {
+        drawSkillGuideDemo(ctx, battle, readyIdx, now);
+      }
+    }
   }
   // FPS 调试浮层：最顶层叠画（VIEW 内、微信裁剪 restore 前），所有界面通用。
   // 帧尾先推进滚动窗口（fps + 平均帧内 JS 耗时——dur 低而 fps 低=GPU/合成瓶颈，dur 高=JS 瓶颈）。

@@ -1,14 +1,13 @@
-// 首次引导「拖拽演示动画」的纯逻辑层（渲染在 render.ts、接线在 main.ts）。
+// 首次引导「拖拽/施放演示动画」的纯逻辑层（渲染在 render.ts、接线在 main.ts）。
 //
-// 背景：首局布阵（guidePhase 'deploy'）与首次主动技能就绪时，箭头引导对「拖放/施放」
-// 这种手势操作的传达力不够——用户需求：画一个手型按住→拖到目标→放下的循环演示；
-// 主动技能按作用目标（兵器/怪物/地图格）用不同的虚线高亮示意。
+// 背景：首局布阵（guidePhase 'deploy'）与首次轰天雷就绪时，箭头引导对「拖放」这种
+// 手势操作的传达力不够——用户需求：画一个手型按住→拖到目标→放下的循环演示。
+// （2026-09-01 收窄：技能侧手势演示只保留轰天雷——需拖放埋雷；仙丹/风火轮与即时技
+//  由一次性 modal 教程描述用法即可，见 firstActiveReadySequence。）
 //
-// 本模块只做三件可单测的事：
+// 本模块只做两件可单测的事：
 //   1. guideDemoPhase——循环时间相位机（起点按下→移动→终点按下→停顿→淡出→间歇）；
-//   2. pickDemoDeployCell——布阵演示的推荐空格（贴路径优先、过滤已占）；
-//   3. guideSkillTargetKind / instantSkillRadiusCells——主动技能的目标类型与即时技范围。
-import { isPillActiveEffect, isBombActiveEffect, type ActiveEffect } from './actives';
+//   2. pickDemoDeployCell——布阵演示的推荐空格（贴路径优先、过滤已占）。
 import type { Cell } from './board';
 
 // —— 1) 循环时间相位机 —— //
@@ -78,24 +77,4 @@ export function pickDemoDeployCell(proxCells: readonly Cell[], occupied: Readonl
     if (!occupied.has(`${c.c},${c.r}`)) return c;
   }
   return null;
-}
-
-// —— 3) 主动技能演示的目标类型 —— //
-
-/** 演示目标类型：拖到兵器/武将（仙丹·风火轮）、拖到路径格（轰天雷）、点按即放（其余即时技）。 */
-export type GuideSkillTargetKind = 'unit' | 'cell' | 'instant';
-
-export function guideSkillTargetKind(effect: ActiveEffect | string): GuideSkillTargetKind {
-  if (isPillActiveEffect(effect as ActiveEffect)) return 'unit';
-  if (isBombActiveEffect(effect as ActiveEffect)) return 'cell';
-  return 'instant';
-}
-
-/** 即时技演示的作用范围（格半径，画虚线圈示意；0=全场/无需画圈，演示点按即可）。 */
-export function instantSkillRadiusCells(effect: ActiveEffect | string): number {
-  switch (effect) {
-    case 'meteor': return 2;   // 天降陨石：对最前怪群半径 2
-    case 'jinggu': return 2.5; // 紧箍咒：以最前怪为中心半径 2.5
-    default: return 0;         // 如来神掌/冰封等全场或无需落点圈
-  }
 }

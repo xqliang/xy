@@ -2,7 +2,7 @@
 // 由 main.ts 在战斗页 isSettleOpen 时按帧调用，动画进度由「打开弹层的毫秒数」驱动。
 import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
-import { drawRankStarsAnimated, roundRect } from './menu-ui';
+import { drawRankStarsAnimated, roundRect, drawInkPopupRoof, INK_POPUP_HEAD_H } from './menu-ui';
 import { avatarById } from './avatar-catalog';
 import { sprite } from './assets';
 
@@ -116,41 +116,11 @@ function drawSettlePanel(
   ctx.lineWidth = 1.2;
   ctx.stroke();
 
-  // 标题条
-  const headH = 56;
-  roundRect(ctx, x, y, w, headH, 16);
-  const head = ctx.createLinearGradient(x, y, x, y + headH);
-  if (headTone === 'win') {
-    head.addColorStop(0, '#2f6a38');
-    head.addColorStop(1, '#1d4524');
-  } else if (headTone === 'lose') {
-    head.addColorStop(0, '#8a4020');
-    head.addColorStop(1, '#5a2810');
-  } else {
-    head.addColorStop(0, '#8a6820');
-    head.addColorStop(1, '#5a4210');
-  }
-  ctx.fillStyle = head;
-  ctx.fill();
-  // 盖住标题条下沿圆角，与面板齐平
-  ctx.fillRect(x, y + headH - 16, w, 16);
-
-  ctx.fillStyle = '#fff4e0';
-  ctx.font = 'bold 28px "PingFang SC", "STKaiti", serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 4;
-  ctx.fillText(title, x + w / 2, y + headH / 2);
-  ctx.shadowBlur = 0;
-
-  // 标题条底金线
-  ctx.strokeStyle = 'rgba(255,220,160,0.45)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 18, y + headH - 1);
-  ctx.lineTo(x + w - 18, y + headH - 1);
-  ctx.stroke();
+  // 标题栏改宫檐屋顶（2026-09-01 用户要求：结算弹窗与其它弹窗统一屋顶样式）：
+  // 原色块标题条（win 绿 / lose 赭红）退役，胜负氛围继续由 drawSettleAtmosphere 背景承担；
+  // headTone 参数保留（调用方语义不变，供日后氛围微调用）。
+  drawInkPopupRoof(ctx, x, y, w, title);
+  const headH = INK_POPUP_HEAD_H;
 
   return y + headH + 22;
 }

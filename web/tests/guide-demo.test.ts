@@ -4,8 +4,6 @@ import {
   guideDemoPhase,
   GUIDE_DEMO_PHASES,
   pickDemoDeployCell,
-  guideSkillTargetKind,
-  instantSkillRadiusCells,
   type GuideDemoInput,
 } from '../src/guide-demo';
 
@@ -75,24 +73,5 @@ describe('布阵演示推荐空格 pickDemoDeployCell', () => {
   it('全被占/空列表 → null（无可演示落点，调用方不画演示）', () => {
     expect(pickDemoDeployCell([{ c: 1, r: 2 }], new Set(['1,2']))).toBeNull();
     expect(pickDemoDeployCell([], new Set())).toBeNull();
-  });
-});
-
-describe('主动技能演示目标类型 guideSkillTargetKind / 即时技范围', () => {
-  it('仙丹/风火轮 → 拖到兵器（unit）；轰天雷 → 拖到路径格（cell）', () => {
-    expect(guideSkillTargetKind('atkBuff')).toBe('unit');
-    expect(guideSkillTargetKind('frqBuff')).toBe('unit');
-    expect(guideSkillTargetKind('bomb')).toBe('cell');
-  });
-  it('即时技（掌/陨石/冰封/紧箍咒）→ instant（演示点按）', () => {
-    for (const e of ['palm', 'meteor', 'freeze', 'jinggu']) {
-      expect(guideSkillTargetKind(e)).toBe('instant');
-    }
-  });
-  it('即时技范围圈：陨石 2 格、紧箍咒 2.5 格、全场技 0（不画圈）', () => {
-    expect(instantSkillRadiusCells('meteor')).toBe(2);
-    expect(instantSkillRadiusCells('jinggu')).toBe(2.5);
-    expect(instantSkillRadiusCells('palm')).toBe(0);
-    expect(instantSkillRadiusCells('freeze')).toBe(0);
   });
 });
