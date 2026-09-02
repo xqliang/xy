@@ -128,21 +128,13 @@ export function drawInkPopupRoof(ctx: CanvasRenderingContext2D, x: number, y: nu
   ctx.fillText(title, titleCx, titleCy);
 }
 
-export function drawInkPopupFrame(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  title: string,
-  closeR: { x: number; y: number; w: number; h: number },
-): number {
-  // 半透明压暗底层界面（菜单/战场），卷轴浮在其上（小游戏下同时记录蒙层色，帧尾给黑边补色）
-  fillViewScrim(ctx, 'rgba(28,22,16,0.38)');
-
-  // —— 弹窗外框：四边包一圈朱红木边，与顶部宫檐檐梁同色，构成「檐梁 + 四边」连续红框 ——
-  // 做法：先把整块弹窗填成朱红（外框底色），再在内缩 FRAME_W 处铺米色纸面 body，
-  //       露出的四边红色即为边框；顶边被宫檐盖住，与檐梁自然连成一圈红。
+/**
+ * 水墨弹窗 body 边框（drawInkPopupFrame 的边框+纸面段抽出，供结算屏等复用）：
+ * 四边一圈朱红木边（与顶部宫檐檐梁同色，构成「檐梁 + 四边」连续红框）——整块填朱红
+ * 作外框底，再内缩 FRAME_W 铺米色纸面，露出的四边即边框；顶边被宫檐盖住与檐梁连成
+ * 一圈。红框自带受光渐变/深棕外描边/暖金高光线，纸面带凹嵌阴影线与内高光。
+ */
+export function drawInkPopupBody(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   const FRAME_W = 9;          // 红木边框厚度（px）
   const OUTER_R = 14;         // 弹窗外圆角
   const BODY_R = 8;           // 内层米色纸面圆角
@@ -183,6 +175,22 @@ export function drawInkPopupFrame(
   ctx.strokeStyle = 'rgba(255,250,235,0.5)';
   ctx.lineWidth = 1;
   ctx.stroke();
+}
+
+export function drawInkPopupFrame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  title: string,
+  closeR: { x: number; y: number; w: number; h: number },
+): number {
+  // 半透明压暗底层界面（菜单/战场），卷轴浮在其上（小游戏下同时记录蒙层色，帧尾给黑边补色）
+  fillViewScrim(ctx, 'rgba(28,22,16,0.38)');
+
+  // 边框 + 纸面（drawInkPopupBody）与宫檐屋顶（drawInkPopupRoof）构成完整水墨弹窗
+  drawInkPopupBody(ctx, x, y, w, h);
 
   const headH = INK_POPUP_HEAD_H;
   // 标题栏视觉完全由厚重宫檐承担（详见 drawInkPopupRoof；此处为该函数的历史位置，抽出以便结算屏复用）。

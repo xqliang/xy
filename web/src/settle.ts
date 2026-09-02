@@ -2,7 +2,7 @@
 // 由 main.ts 在战斗页 isSettleOpen 时按帧调用，动画进度由「打开弹层的毫秒数」驱动。
 import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
-import { drawRankStarsAnimated, roundRect, drawInkPopupRoof, INK_POPUP_HEAD_H } from './menu-ui';
+import { drawRankStarsAnimated, roundRect, drawInkPopupRoof, drawInkPopupBody, INK_POPUP_HEAD_H } from './menu-ui';
 import { avatarById } from './avatar-catalog';
 import { sprite } from './assets';
 
@@ -88,7 +88,7 @@ function drawSettlePanel(
   headTone: 'win' | 'lose' | 'endless',
   title: string,
 ): number {
-  // 投影
+  // 投影（结算大面板的落地感，保留；ink 弹窗自身无投影）
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
   ctx.shadowBlur = 28;
@@ -98,23 +98,9 @@ function drawSettlePanel(
   ctx.fill();
   ctx.restore();
 
-  // 宣纸渐变
-  roundRect(ctx, x, y, w, h, 16);
-  const body = ctx.createLinearGradient(x, y, x, y + h);
-  body.addColorStop(0, '#f3e8d0');
-  body.addColorStop(0.55, '#e6d4b0');
-  body.addColorStop(1, '#d8c294');
-  ctx.fillStyle = body;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(90,60,30,0.55)';
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-
-  // 内金线
-  roundRect(ctx, x + 7, y + 7, w - 14, h - 14, 12);
-  ctx.strokeStyle = 'rgba(180,140,90,0.4)';
-  ctx.lineWidth = 1.2;
-  ctx.stroke();
+  // body 边框改水墨弹窗同款朱红木框（2026-09-01 用户要求：与屋顶化的标题栏配套统一），
+  // 替代原「宣纸渐变 + 棕描边 + 内金线」。
+  drawInkPopupBody(ctx, x, y, w, h);
 
   // 标题栏改宫檐屋顶（2026-09-01 用户要求：结算弹窗与其它弹窗统一屋顶样式）：
   // 原色块标题条（win 绿 / lose 赭红）退役，胜负氛围继续由 drawSettleAtmosphere 背景承担；
