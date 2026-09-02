@@ -505,7 +505,8 @@ export function skillRarityColor(cost: number): { label: string; color: string; 
 
 // —— 弹窗几何（与 menu-popups 同套 drawInkPopupFrame） —— //
 const PW = 444; // 原 504，两次各收窄 30px（504→474→444，用户拍板）
-const PH = 868;
+const PH = 838; // 原 868，收 30px：「我的道具」面板从底往上排，收高度即整体上移，
+                // 缩小其与上方购买区（内容不满时的底部空隙）的间隔（用户反馈偏大）
 const PX = (VIEW_W - PW) / 2;
 const PY = (VIEW_H - PH) / 2 + 22; // 居中基础上再下移 30px（原 -8 → +22）
 const CLOSE_R = inkPopupCloseRect(PX, PY);
