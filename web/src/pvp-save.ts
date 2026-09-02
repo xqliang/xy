@@ -52,6 +52,9 @@ export interface PvpSessionMeta {
   startAtServerMs: number;
   /** 落档时本地已推进的 sim tick 数，用于恢复后对齐本地时钟。 */
   localSimTick: number;
+  /** 对手展示资料（matched 下发；随档持久化）——刷新/重连恢复后结算屏仍能显示对手
+   *  头像昵称（2026-09-01 修：恢复路径曾不回填，掉线方重连收 result 结算时对手为空）。 */
+  opponent?: { uid?: string; nickname: string | null; avatarId: string; rankLevel?: number } | null;
 }
 
 /** v1 全状态存档结构（PvP/PvE 共用）。 */

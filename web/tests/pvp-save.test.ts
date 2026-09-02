@@ -107,3 +107,25 @@ describe('pvp-save restoreBattle 还原构造参数', () => {
     expect((rb as unknown as { aiAdjustIntervalScale: number }).aiAdjustIntervalScale).toBe(save.config.aiAdjustIntervalScale);
   });
 });
+
+describe('PvP 对手资料随档持久化（掉线重连结算屏不空）', () => {
+  it('pvp 元信息带 opponent → 往返保留；缺省（旧档）容错为 undefined', () => {
+    const b = makePveBattle();
+    const save = buildSessionSave('pvp', b, {
+      seed: 7,
+      pvp: {
+        matchId: 'm1', uid: 'U1', side: 'a', startAtServerMs: 1000, localSimTick: 12,
+        opponent: { nickname: '铁扇公主', avatarId: 'tieshan', rankLevel: 3 },
+      },
+    });
+    localStorage.setItem(SESSION_KEY, JSON.stringify(save));
+    const back = readSession();
+    expect(back!.pvp!.opponent).toEqual({ nickname: '铁扇公主', avatarId: 'tieshan', rankLevel: 3 });
+
+    // 旧档（无 opponent 字段）：不挡恢复，读回 undefined（调用方回退 null）
+    const legacy = { ...save, pvp: { matchId: 'm1', uid: 'U1', side: 'a', startAtServerMs: 1000, localSimTick: 12 } };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(legacy));
+    const back2 = readSession();
+    expect(back2!.pvp!.opponent).toBeUndefined();
+  });
+});

@@ -124,7 +124,11 @@ class VersusHub:
             row = cur.fetchone()
         if not row:
             return {"uid": _mask(uid), "nickname": None, "avatarId": "wukong", "rankLevel": 0}
-        return {"uid": _mask(uid), "nickname": row["nickname"], "avatarId": row["avatar_id"], "rankLevel": int(row["rank_level"] or 0)}
+        # 昵称为 NULL（玩家从未设置）时回退 uid 掩码——与客户端本人端 displayName() 的回退
+        # 同语义（2026-09-01 修：曾回 None 让对手端显示「对手」而本人端显示掩码，两边看到的
+        # 「对方昵称」不一致）。avatar_id 登录 upsert 恒有默认值，无需回退。
+        return {"uid": _mask(uid), "nickname": row["nickname"] or _mask(uid),
+                "avatarId": row["avatar_id"], "rankLevel": int(row["rank_level"] or 0)}
 
     def _new_side(self, uid: str, rank: int, now: int) -> dict:
         # 新建对局一方的实时状态壳。

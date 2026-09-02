@@ -1620,7 +1620,17 @@ function resumePvpSession(save: SessionSaveV1): void {
     pvpAcc = 0; localSimTick = 0; pvpLastSnapMs = 0; pvpLastSnapRecv = 0; pvpNextWave = null; pvpResult = null; pvpStatusReported = false;
     pvpNetDead = false; pvpNetDeadStart = 0; pvpOppGone = false; pvpOppGoneStart = 0; pvpNoShow = false;
     pvpSaveDirty = false;                     // 恢复的 PvP 局从干净脏标起步（快进后由帧尾 MAX 心跳补写，无需继承旧脏标）
-    pvpOpponent = null;                      // 已知简化：存档无对手档案，置 null（见函数头注释）
+    // 对手资料从存档恢复（2026-09-01 修：曾置 null——掉线方刷新重连收 result 结算时
+    // 对手头像/昵称为空。存档现随 PvpSessionMeta 持久化 opponent，见 sessionCheckpointNow；
+    // rankLevel/uid 旧档缺省兜底，结算屏只用 nickname/avatarId）
+    pvpOpponent = meta.opponent
+      ? {
+          uid: meta.opponent.uid ?? '',
+          nickname: meta.opponent.nickname ?? null,
+          avatarId: meta.opponent.avatarId || '',
+          rankLevel: meta.opponent.rankLevel ?? 0,
+        }
+      : null;
     pvpSurrendered = false; pvpSettleResult = null; pvpSettleStart = 0;
     pvpSide = meta.side;                      // 恢复落档时的真实座位（覆盖 onPvpMatched 默认 'a'）
     pvpMatchStartMs = meta.startAtServerMs; pvpWaveStartTicks.clear(); pvpPrevWaveActive = false;
@@ -2108,6 +2118,13 @@ function sessionCheckpointNow(io: SessionSaveCheckpointIo): boolean {
         side: pvpSide ?? 'a',
         startAtServerMs: pvpMatchStartMs,
         localSimTick,
+        // 对手资料随档持久化：掉线/刷新恢复后结算屏仍能显示对手头像昵称
+        opponent: pvpOpponent ? {
+          uid: pvpOpponent.uid,
+          nickname: pvpOpponent.nickname ?? null,
+          avatarId: pvpOpponent.avatarId ?? '',
+          rankLevel: pvpOpponent.rankLevel,
+        } : null,
       },
     }, io);
   }
