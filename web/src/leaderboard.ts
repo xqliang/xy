@@ -115,7 +115,7 @@ export function drawLeaderboard(ctx: CanvasRenderingContext2D, _playerLevel: num
 
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 30px "PingFang SC", sans-serif';
-  ctx.fillText('排行榜', VIEW_W / 2, 56);
+  ctx.fillText('昨日排行榜', VIEW_W / 2, 56);
   ctx.fillStyle = '#c8d0e8';
   ctx.font = '13px "PingFang SC", sans-serif';
   ctx.fillText(cache?.day ? `每日榜 · ${cache.day}` : '每日重置 · 冲击更高境界', VIEW_W / 2, 88);
@@ -131,7 +131,7 @@ export function drawLeaderboard(ctx: CanvasRenderingContext2D, _playerLevel: num
   if (!rows.length) {
     ctx.fillStyle = '#c8d0e8';
     ctx.font = '18px "PingFang SC", sans-serif';
-    ctx.fillText(cache ? '今日暂无人上榜' : '加载中…', VIEW_W / 2, VIEW_H / 2);
+    ctx.fillText(cache ? '昨日暂无人上榜' : '加载中…', VIEW_W / 2, VIEW_H / 2);
     return;
   }
 

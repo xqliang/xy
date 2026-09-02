@@ -148,14 +148,17 @@ def test_leaderboard_and_events(server_base):
     _req(server_base, "POST", "/api/player/login", {}, uid)
     st, body = _req(server_base, "POST", "/api/leaderboard/submit", {"rankLevel": 3}, uid)
     assert st == 200
+    today = body["day"]  # submit 响应带回写入的 day（=当天）
     st, body = _req(server_base, "POST", "/api/leaderboard/submit", {"rankLevel": 2}, uid)
     assert st == 200
-    st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
+    # 默认榜=昨日结算榜（2026-09-02 用户拍板：凌晨到早上当天榜几乎为空）：今天的提交不在默认视图；
+    # 显式传 day=今天 可查当日。
+    st, body = _req(server_base, "GET", f"/api/leaderboard/daily?day={today}", uid=uid)
     assert st == 200
     assert body["me"]["rankLevel"] == 3
     assert body["entries"][0]["rankLevel"] >= 3
 
-    # 改昵称后今日榜快照应立即更新（不必再 submit）
+    # 改昵称后当日榜快照应立即更新（不必再 submit）
     st, body = _req(
         server_base,
         "POST",
@@ -165,7 +168,7 @@ def test_leaderboard_and_events(server_base):
     )
     assert st == 200
     assert body["nickname"] == "新昵称侠"
-    st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
+    st, body = _req(server_base, "GET", f"/api/leaderboard/daily?day={today}", uid=uid)
     assert st == 200
     assert body["me"]["name"] == "新昵称侠"
     me_entry = next((e for e in body["entries"] if e.get("me")), None)
@@ -203,3 +206,43 @@ def test_leaderboard_and_events(server_base):
     assert row["wins"] >= 1
     assert row["ad_clicks"] >= 1
     assert row["stamina_spent"] >= 5
+
+
+def test_leaderboard_daily_defaults_to_yesterday(server_base):
+    """默认榜=昨日结算榜（2026-09-02 用户拍板：凌晨到早上当天榜几乎为空）；
+    昨日为空时回退「最近有数据的一天」（新服首日/停服多日兜底）。"""
+    for k, v in DSN_ENV.items():
+        os.environ.setdefault(k, v)
+    from config import load_config
+    from db import DB
+
+    db = DB(load_config())
+    yesterday = db.day_offsets(2)[1]
+    day_before = db.day_offsets(3)[2]
+
+    uid = "11223344"
+    _req(server_base, "POST", "/api/player/login", {}, uid)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO daily_leaderboard (day, uid, rank_level, avatar_id, nickname, updated_at)"
+            " VALUES (%s,%s,%s,%s,%s,%s)",
+            (yesterday, uid, 9, "wukong", "昨日侠", db.now()),
+        )
+    st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
+    assert st == 200
+    assert body["day"] == yesterday
+    assert body["me"]["rankLevel"] == 9
+    assert any(e["name"] == "昨日侠" for e in body["entries"])
+
+    # 昨日清空 → 默认回退到最近有数据的一天（前天）
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM daily_leaderboard WHERE day=%s", (yesterday,))
+        cur.execute(
+            "INSERT INTO daily_leaderboard (day, uid, rank_level, avatar_id, nickname, updated_at)"
+            " VALUES (%s,%s,%s,%s,%s,%s)",
+            (day_before, uid, 7, "wukong", "前天侠", db.now()),
+        )
+    st, body = _req(server_base, "GET", "/api/leaderboard/daily", uid=uid)
+    assert st == 200
+    assert body["day"] == day_before
+    assert body["me"]["rankLevel"] == 7

@@ -82,7 +82,9 @@ def handle_daily(handler, db: DB) -> None:
     except ValueError:
         limit = 50
     limit = max(1, min(100, limit))
-    day = (qs.get("day") or [db.today()])[0]
+    # 默认展示「昨日结算榜」而非当天：凌晨到早上当天榜几乎为空（玩家还没打），
+    # 昨日榜是完整定稿的一天（2026-09-02 用户拍板）。显式传 day 参数不受影响。
+    day = (qs.get("day") or [db.day_offsets(2)[1]])[0]
     with db.cursor() as cur:
         cur.execute(
             """
@@ -95,6 +97,27 @@ def handle_daily(handler, db: DB) -> None:
             (day, limit),
         )
         rows = cur.fetchall()
+        # 默认（昨日）榜为空时回退「最近有数据的一天」：新服首日/停服多日时昨天也无行，
+        # 显示最近一次定稿的榜总比空榜好。显式指定 day 的请求不回退（所见即所查）。
+        if not rows and not qs.get("day"):
+            cur.execute(
+                "SELECT MAX(day) AS d FROM daily_leaderboard WHERE day <= %s",
+                (day,),
+            )
+            latest = cur.fetchone()
+            if latest and latest["d"] and latest["d"] != day:
+                day = latest["d"]
+                cur.execute(
+                    """
+                    SELECT uid, rank_level, avatar_id, nickname
+                    FROM daily_leaderboard
+                    WHERE day=%s
+                    ORDER BY rank_level DESC, updated_at ASC
+                    LIMIT %s
+                    """,
+                    (day, limit),
+                )
+                rows = cur.fetchall()
         cur.execute(
             "SELECT uid, rank_level, avatar_id, nickname FROM daily_leaderboard WHERE day=%s AND uid=%s",
             (day, uid),
