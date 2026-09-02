@@ -481,10 +481,10 @@ function endPvpSession(): void {
 
 // —— Task 7.6：PvP 断线看门狗（弹窗「网络已断开」+ 单按钮「返回首页」）——
 // 布局常量：断线弹窗置于上半区（标题/提示在上方，不挡棋盘中部）。宽 340、高 200，水平居中、顶部留白。
-const NET_POP_W = 310; // 原 340，用户反馈偏宽收窄 30px
+const NET_POP_W = 370; // 原 340；曾收窄 30 至 310，用户反馈再加宽 60（310→370）
 const NET_POP_H = 200;
 const NET_POP_X = (VIEW_W - NET_POP_W) / 2;
-const NET_POP_Y = 74; // 原 24：太贴顶导致 title 屋顶（drawInkPopupFrame 飞檐伸出弹窗顶）被 HUD 遮挡，下移 50px
+const NET_POP_Y = 104; // 原 24（贴顶屋顶被遮）；曾下移至 74，用户反馈再下移 30（74→104）
 const NET_POP_PAD = 24;
 
 /** 断线弹窗右上角 × 命中测试：手动提前结束（都回首页）。 */
