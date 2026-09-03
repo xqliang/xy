@@ -77,7 +77,7 @@ import {
 import { isPausePopupOpen as isPausePopupOpenPure, shouldStepSim, pausePopupContext } from './pvp-pause';
 import { drawInkPopupFrame, drawPlainPopupFrame, drawInkActionButton, inkPopupCloseRect } from './menu-ui'; // Task 7.6：断线弹窗复用卷轴框 + 水墨按钮；续玩弹窗用简化普通框（无宫檐）
 import { loadRank, recordWin, recordLose, rankName, type RankState, type RankChange } from './rank';
-import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, type PvpSettleResult, REASON_SELF_TANGSENG_DEAD_OPP_GONE } from './settle';
+import { drawSettle, isSettleAnimDone, SETTLE_ANIM_MS, drawEndlessSettle, type EndlessResult, drawPvpSettle, pvpSettleReturnBtnRect, type PvpSettleResult, REASON_SELF_TANGSENG_DEAD_OPP_GONE } from './settle';
 import { pvpSettle } from './pvp-settle';
 import { loadEndlessEnabled, setEndlessEnabled, recordBestWave, getBestWave } from './endless';
 import { loadStamina, addStamina, spendStamina, syncStamina, STAMINA_MAX, STAMINA_COST, type Stamina } from './stamina';
@@ -111,6 +111,7 @@ import {
   submitLeaderboard,
   syncAvatarUnlocks,
   updateProfile,
+  displayName,
 } from './cloud-sync';
 import { bootstrapAuth, getToken, clearToken } from './auth';
 import { apiFetch } from './api/client';
@@ -2502,11 +2503,22 @@ function onPointerDown(e: PointerEvent) {
     const animDone = pvpSettleResult
       ? isSettleAnimDone(performance.now() - pvpSettleStart)
       : (endlessResult || isSettleAnimDone(performance.now() - settleStart));
+    if (pvpSettleResult) {
+      // PvP 结算改为**按钮返回**（2026-09-03 用户反馈「点击返回」小字不醒目）：
+      // 动画完成后只有「返回首页」按钮命中才离开；点窗外不再返回（按钮明确）。
+      if (animDone) {
+        const btn = pvpSettleReturnBtnRect(pvpSettleResult);
+        if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+          // leaveSettleToMenu 开头会调 endPvpSession()：清 pvpSock/pvpSettleResult 等全部对局态。
+          leaveSettleToMenu();
+        }
+      }
+      return;
+    }
     if (animDone) {
-      // leaveSettleToMenu 开头会调 endPvpSession()：PvP 下清 pvpSock/pvpSettleResult 等全部对局态。
       leaveSettleToMenu();
-    } else if (!pvpSettleResult) {
-      // 单人结算才允许「点击跳到终态」；PvP 无加减星动画，保持计时不动。
+    } else {
+      // 单人结算才允许「点击跳到终态」
       settleStart = performance.now() - SETTLE_ANIM_MS;
     }
     return;
@@ -3278,6 +3290,8 @@ function frame(now: number): void {
         outcome: pvpResult.outcome,
         reason: pvpResult.reason,
         opponent: { nickname: pvpOpponent?.nickname ?? null, avatarId: pvpOpponent?.avatarId ?? '' },
+        // 我方展示资料（对阵卡左侧；昵称缺省回 uid 掩码，与对手端看我的口径一致）
+        me: { nickname: displayName(), avatarId: loadProfile().avatarId },
         rankChange,
         merit: meritGain,
       };

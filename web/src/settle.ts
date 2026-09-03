@@ -2,7 +2,7 @@
 // 由 main.ts 在战斗页 isSettleOpen 时按帧调用，动画进度由「打开弹层的毫秒数」驱动。
 import { VIEW_W, VIEW_H, fillViewScrim } from './render';
 import { rankName, STARS_PER_TIER, type RankChange } from './rank';
-import { drawRankStarsAnimated, roundRect, drawInkPopupRoof, drawInkPopupBody, INK_POPUP_HEAD_H } from './menu-ui';
+import { drawRankStarsAnimated, roundRect, drawInkPopupRoof, drawInkPopupBody, drawInkActionButton, INK_POPUP_HEAD_H } from './menu-ui';
 import { avatarById } from './avatar-catalog';
 import { sprite } from './assets';
 
@@ -235,6 +235,9 @@ export interface PvpSettleResult {
   outcome: 'win' | 'lose' | 'draw';
   reason: string;
   opponent: { nickname: string | null; avatarId: string };
+  /** 我方展示资料（main.ts 组装时带上；结算屏画「我 vs 对手」对阵卡——曾只有对手信息，
+   *  「对手/你的」混排一眼分不清胜负，2026-09-03 改对阵式）。 */
+  me?: { nickname: string | null; avatarId: string };
   // PvP 现也结算段位/功德（与单人一致的观感）：胜/负带 rankChange（复用加减星动画），平局为 null（不动段位）；
   // merit=本局获得功德，用于结算屏「功德+N」展示。实际写入/持久化/弹商人由 main.ts 落地。
   rankChange: RankChange | null;
@@ -269,9 +272,11 @@ function pvpSettleTitle(outcome: PvpSettleResult['outcome']): string {
   return '平局';
 }
 
-// PvP 结算屏：结果 + 对手信息 + 段位星级变化 + 功德+N（段位/功德已由 main.ts 结算落地）。
-// 标题条色调沿用单人（win 绿 / lose 赭红 / draw 黄），复用卷轴骨架与单人同款加减星动画。
-// 平局不动段位（rankChange=null）→ 只展示对手信息 + 参与功德，用矮面板。点击返回由 main.ts 在动画完成后处理。
+// PvP 结算屏：**我 vs 对手对阵卡**（双方头像/昵称/胜负徽标并排，一眼看清谁赢谁输——
+// 2026-09-03 用户反馈旧版只有对手信息、「对手/你的」混排分不清）+ 胜负原因行 + 段位星级
+// 变化 + 功德 + 「返回首页」按钮（旧版小字「点击返回」不醒目）。复用卷轴骨架（屋顶+木框）
+// 与单人同款加减星动画。按钮命中由 main.ts 按 pvpSettleReturnBtnRect 处理（仅按钮返回，
+// 不再全屏任意点击——按钮更明确）。
 export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult, tMs: number): void {
   const tone: 'win' | 'lose' | 'endless' = r.outcome === 'win' ? 'win' : r.outcome === 'lose' ? 'lose' : 'endless';
   const rc = r.rankChange;
@@ -279,10 +284,10 @@ export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult,
   ctx.save();
   drawSettleAtmosphere(ctx, tone);
 
-  // 有段位变化时面板更高（容纳星排 + 功德）；平局/无变化用矮面板并下移居中
-  const panelH = rc ? (tierShift ? 456 : 424) : 320;
+  // 对阵区（头像+徽标）固定高；有段位变化面板更高（星排+晋级行），平局用矮面板
+  const panelH = rc ? (tierShift ? 512 : 480) : 380;
   const panelX = (VIEW_W - PANEL_W) / 2;
-  const panelY = VIEW_H * (rc ? 0.15 : 0.24);
+  const panelY = VIEW_H * (rc ? 0.1 : 0.2);
   const title = pvpSettleTitle(r.outcome);
   const contentTop = drawSettlePanel(ctx, panelX, panelY, PANEL_W, panelH, tone, title);
 
@@ -290,57 +295,101 @@ export function drawPvpSettle(ctx: CanvasRenderingContext2D, r: PvpSettleResult,
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // —— 对手头像（圆形裁剪 + 底部对齐，与 profile-popup 一致）——
-  const a = avatarById(r.opponent.avatarId);
-  const spr = a ? sprite(a.art) : undefined;
-  const AV = 92; // 头像框边长（比旧版略小，给下方段位/功德让位）
-  const avY = contentTop;
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,248,230,0.9)';
-  ctx.fill();
-  ctx.clip();
-  if (spr) {
-    const sc = Math.min(AV / spr.width, AV / spr.height);
-    ctx.drawImage(spr, cx - (spr.width * sc) / 2, avY + AV - spr.height * sc, spr.width * sc, spr.height * sc);
+  // —— 对阵卡：左=我 / 右=对手，各带头像、昵称、胜负徽标 ——
+  const me = r.me ?? { nickname: null, avatarId: '' };
+  const vsY = contentTop + 8;
+  const AV = 76; // 头像框边长
+  const meX = cx - 108, oppX = cx + 108;
+  const drawSide = (px: number, nickname: string | null, avatarId: string, badge: string, badgeColor: string, isMe: boolean) => {
+    const a = avatarId ? avatarById(avatarId) : undefined;
+    const spr = a ? sprite(a.art) : undefined;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, vsY + AV / 2, AV / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,248,230,0.9)';
+    ctx.fill();
+    ctx.clip();
+    if (spr) {
+      const sc = Math.min(AV / spr.width, AV / spr.height);
+      ctx.drawImage(spr, px - (spr.width * sc) / 2, vsY + AV - spr.height * sc, spr.width * sc, spr.height * sc);
+    } else {
+      ctx.fillStyle = '#a07018';
+      ctx.font = 'bold 30px serif';
+      ctx.fillText('?', px, vsY + AV / 2);
+    }
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(120,90,40,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, vsY + AV / 2, AV / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    // 昵称（我方缺省「你」；对手缺省「对手」——侧别由徽标与位置表达，不再前缀「对手：」）
+    ctx.fillStyle = '#5a3a12';
+    ctx.font = 'bold 18px "PingFang SC", "STKaiti", serif';
+    ctx.fillText(nickname ?? (isMe ? '你' : '对手'), px, vsY + AV + 18);
+    // 胜负徽标：绿「胜」/ 红「负」/ 黄「平」，大字一眼可辨
+    const bw = 40, bh = 30;
+    const bx = px - bw / 2, by = vsY + AV + 34;
+    roundRect(ctx, bx, by, bw, bh, 7);
+    ctx.fillStyle = badgeColor;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,248,230,0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#fff6e4';
+    ctx.font = 'bold 17px "PingFang SC", "STKaiti", serif';
+    ctx.fillText(badge, px, by + bh / 2 + 1);
+  };
+  const winColor = '#2f6a38', loseColor = '#8a3420', drawColor = '#8a6820';
+  if (r.outcome === 'draw') {
+    drawSide(meX, me.nickname, me.avatarId, '平', drawColor, true);
+    drawSide(oppX, r.opponent.nickname, r.opponent.avatarId, '平', drawColor, false);
   } else {
-    ctx.fillStyle = '#a07018';
-    ctx.font = 'bold 36px serif';
-    ctx.fillText('?', cx, avY + AV / 2);
+    const iWon = r.outcome === 'win';
+    drawSide(meX, me.nickname, me.avatarId, iWon ? '胜' : '负', iWon ? winColor : loseColor, true);
+    drawSide(oppX, r.opponent.nickname, r.opponent.avatarId, iWon ? '负' : '胜', iWon ? loseColor : winColor, false);
   }
-  ctx.restore();
-  ctx.strokeStyle = 'rgba(120,90,40,0.6)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(cx, avY + AV / 2, AV / 2, 0, Math.PI * 2);
-  ctx.stroke();
+  // 中央 VS 分隔
+  ctx.fillStyle = 'rgba(90,58,24,0.55)';
+  ctx.font = 'bold 22px "PingFang SC", "STKaiti", serif';
+  ctx.fillText('VS', cx, vsY + AV / 2);
 
-  // 对手昵称 + 终局原因
-  ctx.fillStyle = '#5a3a12';
-  ctx.font = 'bold 20px "PingFang SC", "STKaiti", serif';
-  ctx.fillText(`对手：${r.opponent.nickname ?? '对手'}`, cx, avY + AV + 20);
+  // —— 胜负原因（一行，主语明确：「对手掉线 / 你已掉线 / 对手唐僧被消灭…」）——
+  const reasonY = vsY + 150;
   ctx.fillStyle = '#7a5230';
   ctx.font = '16px "PingFang SC", serif';
-  ctx.fillText(pvpReasonText(r.reason), cx, avY + AV + 44);
+  ctx.fillText(`胜负判定：${pvpReasonText(r.reason)}`, cx, reasonY);
 
-  // —— 段位星级变化（平局不动段位→跳过星排）+ 功德+N ——
-  let meritY = avY + AV + 84;
+  // —— 段位星级变化（平局不动段位→跳过星排）+ 功德 +N ——
+  let meritY = reasonY + 34;
   if (rc) {
     const progress = Math.max(0, Math.min(1, (tMs - HOLD_MS) / ANIM_MS));
-    const rankNameY = avY + AV + 78;
+    const rankNameY = reasonY + 38;
     const starsY = rankNameY + 46;
     drawRankChangeStars(ctx, rc, progress, cx, rankNameY, starsY, { gap: 50, size: 40 });
     meritY = starsY + (tierShift ? 86 : 54);
   }
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
   ctx.fillStyle = '#a07018';
   ctx.font = 'bold 22px "PingFang SC", serif';
   ctx.fillText(`功德 +${r.merit}`, cx, meritY);
 
-  drawSettleHint(ctx, isSettleAnimDone(tMs) ? '点击返回' : '点击跳过', panelY + panelH - 26);
+  // —— 返回按钮（替代旧小字「点击返回」；命中见 pvpSettleReturnBtnRect）——
+  drawInkActionButton(ctx, pvpSettleReturnBtnRect(r), '返回首页', false, 'primary');
 
   ctx.restore();
+}
+
+/** PvP 结算屏面板高度（绘制与命中共用，防两处布局常量漂移）。 */
+export function pvpSettlePanelH(r: PvpSettleResult): number {
+  const rc = r.rankChange;
+  const tierShift = !!rc && (rc.promoted || rc.demoted);
+  return rc ? (tierShift ? 512 : 480) : 380;
+}
+
+/** PvP 结算屏「返回首页」按钮矩形（命中测试与绘制共用，保证一致）。 */
+export function pvpSettleReturnBtnRect(r: PvpSettleResult): { x: number; y: number; w: number; h: number } {
+  const panelY = VIEW_H * (r.rankChange ? 0.1 : 0.2);
+  const w = 200, h = 48;
+  return { x: (VIEW_W - w) / 2, y: panelY + pvpSettlePanelH(r) - h - 20, w, h };
 }
