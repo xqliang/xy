@@ -1801,8 +1801,10 @@ function handleMenu(id: string) {
     // 未解锁时只飘字提示、不进入匹配；体力门槛在其后、彼此独立（先查解锁，再查体力）。
     // 用 pvpUnlocked()（纯谓词，见 play-history.ts）而非直接读标记，便于单测门槛决策。
     if (!pvpUnlocked()) {
-      menuToast = '先玩一局单人关卡熟悉玩法';
-      pushMenuFloatToast('先玩一局单人关卡熟悉玩法，再来真人对战', { replace: true });
+      // 措辞 2026-09-03 改：旧文案「先玩一局单人关卡」玩家不知道指什么（用户反馈）——
+      // 按首页按钮名引导：点【开始游戏】玩一局本地闯关即可解锁。
+      menuToast = '先点【开始游戏】玩一局闯关';
+      pushMenuFloatToast('先点【开始游戏】玩一局闯关，即可解锁真人对战', { replace: true });
       scheduleFrame();
       return;
     }
