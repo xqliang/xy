@@ -148,6 +148,10 @@ class VersusHub:
                 # gone_ms：0 表示在线；非 0 为该侧 WS 断开的服务器时刻(ms)。宽限 DISCONNECT_GRACE_MS 内
                 #          同 uid 重连 hello 会清零恢复；超时则惰性判定为 DisconnectTimeout 终局。
                 "ws_send": None, "gone_ms": 0,
+                # cleared_wave：本侧已清完的最高波次号（waveCleared 上报维护）。波次 barrier
+                # （2026-09-03）：双方都清完 w 才排 w+1——进度由慢方拖底、两端完全同步。
+                # 随 mstate 序列化（side 全量拷）自动持久化，跨实例回放不丢。
+                "cleared_wave": 0,
                 "connected_ever": False}   # 里程碑 B：是否曾有过 ws_hello（撮合退队用）
 
     # —— 撮合成局：拆成「进程内运行时」+「Redis 轻量记录」两半 ——
@@ -835,9 +839,17 @@ class VersusHub:
             me, opp = self._sides(m, uid)
             me["last_tick_ms"] = now
             w = int(wave or 0)
+            me["cleared_wave"] = max(int(me.get("cleared_wave", 0) or 0), w)
+            opp_cleared = int(opp.get("cleared_wave", 0) or 0)
             if w and (w + 1) not in m["wave_schedule"]:
-                m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
-                m["first_clear"][w] = uid
+                # 波次 barrier（2026-09-03，用户反馈低帧率方进度落后）：**双方都清完 w 才排 w+1**，
+                # 替代「先清者定下一波」——先清方节奏不再拖着慢方开新波（慢方本地 sim 时间轴落后时
+                # 同 tick 堆积更难）。快方清完先干等，进度由慢方拖底、两端完全同步；在线挂机不清的
+                # 拖累由终局兜底（挂机方唐僧死即终局），不会无限等。对端还没清完：不排，等它的
+                # waveCleared 到达（其 cleared_wave 提升后走进本分支）由**后清方**触发补排。
+                if opp_cleared >= w:
+                    m["wave_schedule"][w + 1] = now + INTER_WAVE_DELAY_MS
+                    m["first_clear"][w] = uid
             # 清波者的 wave 视图提升到至少已清波号：清波上报可能先于「wave 已推进」的快照到达
             #（me["wave"] 取自最近快照，100ms 节流下有滞后）。不提升的话 _next_wave_for 会按旧
             # wave 算出更早的波 → 给清波者重推已宣告过的旧波，而真正刚排程的 w+1 反而不推。

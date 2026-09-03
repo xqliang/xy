@@ -349,7 +349,8 @@ def test_snap_relayed_verbatim_both_directions():
 
 
 def test_wave_cleared_pushes_nextwave_to_both():
-    # 4. A 发 waveCleared{wave:1} → 双方收 nextWave{wave:2, startAtServerMs}（首清排程）。
+    # 4. 波次 barrier（2026-09-03）：双方都清完 w=1 才排/推 nextWave{wave:2}——先清方上报
+    # 不触发（等后清方），后清方上报触发、双方同纪元。进度由慢方拖底（用户反馈低帧率方落后）。
     hub = _fake_hub()
     mid = _fake_match(hub)
     with _ws_server(hub) as port:
@@ -359,12 +360,21 @@ def test_wave_cleared_pushes_nextwave_to_both():
         assert a.recv()["type"] == "welcome"
         assert b.recv()["type"] == "welcome"
 
+        # 先清方 A 上报：对端未清 → 不排不推（双方都无 nextWave）
         a.send({"type": "waveCleared", "wave": 1})
+        time.sleep(0.2)
+        got = a.recv(timeout=0.5)
+        assert got is None or got.get("type") != "nextWave", f"对端未清不应推 nextWave: {got}"
+        with hub.lock:
+            assert 2 not in hub.matches[mid]["wave_schedule"]
+
+        # 后清方 B 上报：双方都已清 1 → 排 wave 2 并推双方
+        b.send({"type": "waveCleared", "wave": 1})
         na = a.recv()
         nb = b.recv()
         assert na["type"] == "nextWave"
         assert nb["type"] == "nextWave"
-        # 两侧 nextWave 同纪元（首清者排程，双方共享）
+        # 两侧 nextWave 同纪元（后清者排程，双方共享）
         assert na["wave"] == 2 and nb["wave"] == 2
         assert na["startAtServerMs"] == nb["startAtServerMs"]
         expected = hub._now() + INTER_WAVE_DELAY_MS
@@ -372,7 +382,7 @@ def test_wave_cleared_pushes_nextwave_to_both():
         # 服务端排程状态确实落地
         with hub.lock:
             assert hub.matches[mid]["wave_schedule"][2] == expected
-            assert hub.matches[mid]["first_clear"][1] == "A1"
+            assert hub.matches[mid]["first_clear"][1] == "B1"  # 触发者=后清方 B
         a.close(); b.close()
 
 
@@ -804,8 +814,11 @@ def test_wave_cleared_then_snap_no_double_announce():
     sends_a: list = []
     hub.ws_hello("A1", mid, lambda t: (sends_a.append(t), True)[1])
     base = {"wave": 0, "tangsengHP": 3, "kills": 0, "units": []}
+    sends_b: list = []
+    hub.ws_hello("B1", mid, lambda t: (sends_b.append(t), True)[1])
     hub.ws_snap("A1", mid, {"type": "snap", "t": 1, "s": base})       # 宣告波 1
-    hub.ws_wave_cleared("A1", mid, 1)                                 # 排程波 2 + 直推两侧
+    hub.ws_wave_cleared("A1", mid, 1)                                 # 先清方：barrier 不排（等 B）
+    hub.ws_wave_cleared("B1", mid, 1)                                 # 后清方：排程波 2 + 直推两侧
     hub.ws_snap("A1", mid, {"type": "snap", "t": 2, "s": {**base, "wave": 1}})
     nxt = [x for x in _sent(sends_a) if x[0] == "nextWave"]
     assert nxt == [("nextWave", 1), ("nextWave", 2)]                  # 无重复
@@ -837,8 +850,11 @@ def test_snap_announces_wave1_and_dedups_nextwave():
         a.send({"type": "snap", "t": 2, "s": _snap(wave=0)})
         assert a.recv(timeout=0.5) is None
 
-        # A 清波 1 → 排程波 2，A 收到 nextWave{wave:2}（ws_wave_cleared 直推，并记 last_next_wave=2）。
+        # 波次 barrier（2026-09-03）：A 单方清波 1 → 不排不推（等 B 也清完）；
+        # B 也清完 → 排程波 2，A 收到 nextWave{wave:2}（ws_wave_cleared 直推，并记 last_next_wave=2）。
         a.send({"type": "waveCleared", "wave": 1})
+        assert a.recv(timeout=0.5) is None
+        b.send({"type": "waveCleared", "wave": 1})
         nw2 = a.recv()
         assert nw2["type"] == "nextWave" and nw2["wave"] == 2
 
@@ -898,6 +914,8 @@ def test_ws_handshake_sets_tcp_nodelay():
 def test_wave_holds_while_opponent_gone_and_resumes_on_reconnect():
     # 对手掉线期间我方清波不开新波（两端进度一致，用户拍板）；对手重连后我方首条
     # snap 触发补推 nextWave（startAtServerMs 已过期 → 客户端立即开波）。
+    # 波次 barrier（同日）：双方都清完 w=1 才排 w+1——本测试 A 掉线前已清波 1（满足
+    # barrier），掉线后 B 清波即排程 wave 2，但 gone 门控拦住宣告；A 重连后 B 的 snap 补推。
     hub = _fake_hub()
     mid = _fake_match(hub)
     with _ws_server(hub) as port:
@@ -907,12 +925,19 @@ def test_wave_holds_while_opponent_gone_and_resumes_on_reconnect():
         assert a.recv()["type"] == "welcome"
         assert b.recv()["type"] == "welcome"
 
+        # A 先清波 1（barrier 前半）：对端 B 未清 → 不排不推，双方无 nextWave
+        a.send({"type": "waveCleared", "wave": 1})
+        time.sleep(0.2)
+        assert a.recv(timeout=0.5) is None
+        with hub.lock:
+            assert 2 not in hub.matches[mid]["wave_schedule"]
+
         # A 掉线（裸断）→ B 收 oppGone
         a.close()
         assert b.recv()["type"] == "oppGone"
 
-        # B 清波 w=1：排程照写（wave_schedule[2]），但对端掉线 → 宣告被门控（B 收不到 nextWave）。
-        # send 后小睡等服务端线程处理（send 只入 socket，处理异步——曾因竞态误判排程未生效）。
+        # B 清波 w=1：barrier 满足（双方都已清）→ 排程照写 wave 2；但 A 掉线 → 宣告被
+        # gone 门控（B 收不到 nextWave）。send 后小睡等服务端线程处理（send 只入 socket）。
         b.send({"type": "waveCleared", "wave": 1})
         time.sleep(0.3)
         with hub.lock:

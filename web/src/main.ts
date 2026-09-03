@@ -3156,7 +3156,9 @@ function frame(now: number): void {
           // 对手半场不在此步进——由 WS 快照每帧镜像渲染（见下方渲染桥）。
           // Task 10：服务端 result 一到即冻结本方半场（`&& !pvpResult`）——胜可能来自对手唐僧死而本方仍 playing，
           // 继续 step 会让本方唐僧也死，破坏「冻结定格」语义，所以终局后不再步进。
-          const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 8);
+          // maxSteps 16（原 8）：卡顿后单帧最多补 16 步（≈533ms 欠账），极端卡顿的恢复力翻倍——
+          // 丢步会让本方 sim 时间轴落后服务器时钟（波次堆积），能多追就多追；雪崩兜底仍由 maxSteps 封顶。
+          const { steps, rest } = drainFixedSteps(pvpAcc, dt, PVP_SIM_DT, 16);
           pvpAcc = rest;
           for (let i = 0; i < steps; i++) {
             maybeOpenPvpWave(battle, localSimTick);              // 到点开波（step 前；本方输入即时施加在 handler，step 前已就绪）
