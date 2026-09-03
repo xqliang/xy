@@ -893,3 +893,55 @@ def test_ws_handshake_sets_tcp_nodelay():
     handle_versus_ws(_Handler(), _fake_hub())
     assert set_calls == [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
     assert any(b"101" in b for b in sent)   # 握手响应确已写出（选项在真升级路径上设置）
+
+
+def test_wave_holds_while_opponent_gone_and_resumes_on_reconnect():
+    # 对手掉线期间我方清波不开新波（两端进度一致，用户拍板）；对手重连后我方首条
+    # snap 触发补推 nextWave（startAtServerMs 已过期 → 客户端立即开波）。
+    hub = _fake_hub()
+    mid = _fake_match(hub)
+    with _ws_server(hub) as port:
+        a = WsClient(port, mid, "A1")
+        b = WsClient(port, mid, "B1")
+        _hello(a); _hello(b)
+        assert a.recv()["type"] == "welcome"
+        assert b.recv()["type"] == "welcome"
+
+        # A 掉线（裸断）→ B 收 oppGone
+        a.close()
+        assert b.recv()["type"] == "oppGone"
+
+        # B 清波 w=1：排程照写（wave_schedule[2]），但对端掉线 → 宣告被门控（B 收不到 nextWave）。
+        # send 后小睡等服务端线程处理（send 只入 socket，处理异步——曾因竞态误判排程未生效）。
+        b.send({"type": "waveCleared", "wave": 1})
+        time.sleep(0.3)
+        with hub.lock:
+            sched = dict(hub.matches[mid]["wave_schedule"])
+            b_lnw = hub.matches[mid]["b"]["last_next_wave"]
+        assert 2 in sched, f"排程应照写 wave 2: {sched}"
+        assert b_lnw is None, f"掉线期间不应宣告 nextWave（去重标记未记）: {b_lnw}"
+
+        # B 再发 snap：snap 路径的宣告块同样被 gone 门控 → 仍无 nextWave
+        b.send({"type": "snap", "t": 1, "s": _snap(wave=1)})
+        got = b.recv(timeout=1.0)
+        assert got is None or got.get("type") != "nextWave", f"掉线期间不应收到 nextWave: {got}"
+
+        # A 重连（宽限内）→ B 的下一条 snap 触发补推 nextWave（wave=2，startAt 已过期）
+        a2 = WsClient(port, mid, "A1")
+        _hello(a2)
+        assert a2.recv()["type"] == "welcome"
+        b.send({"type": "snap", "t": 2, "s": _snap(wave=1)})
+        nxt = None
+        for _ in range(3):
+            msg = b.recv(timeout=1.0)
+            if msg and msg.get("type") == "nextWave":
+                nxt = msg
+                break
+        assert nxt is not None, "重连后应补推 nextWave"
+        assert nxt["wave"] == 2
+        # 推进可控时钟越过排程点，验证 startAt 已过期（客户端到点即开/过期立即开）。
+        # 生产里真实时间恒在走（重连时 3s 间隔早已过去）；测试时钟冻结须手动拨。
+        hub._clock["ms"] += INTER_WAVE_DELAY_MS + 1000
+        with hub.lock:
+            assert hub.matches[mid]["wave_schedule"][2] <= hub._now()
+        a2.close(); b.close()

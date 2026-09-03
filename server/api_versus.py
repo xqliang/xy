@@ -814,7 +814,10 @@ class VersusHub:
             # 客户端首快照 wave=0 → 宣告 nextWave{wave:1}，否则客户端永不被告知波 1 开始时刻、
             # maybeOpenPvpWave 永不开波（实测「连接正常但不出怪」即此因）。
             nxt = self._next_wave_for(m, me)
-            if nxt and nxt.get("wave") != me.get("last_next_wave"):
+            # 对端掉线期间不宣告下一波（2026-09-03 用户拍板「保证进度一致」）：对手 sim 冻结、
+            # 我方继续开新波会造成两端波次分叉。掉线期暂停宣告；对手重连（hello 清 gone）后本宣告块
+            # 按「去重标记未记」自动补推（startAtServerMs 已过期 → 客户端立即开波），双方重新对齐。
+            if nxt and nxt.get("wave") != me.get("last_next_wave") and not opp.get("gone_ms"):
                 me["last_next_wave"] = nxt["wave"]
                 self._ws_push_locked(me, opp, m, {"type": "nextWave", **nxt})
             if opp.get("ws_send"):
@@ -841,12 +844,15 @@ class VersusHub:
             me["wave"] = max(int(me.get("wave", 0) or 0), w)
             # 两侧各自按自己的当前波次视角下发 nextWave（沿用 _next_wave_for）。
             # 同时把该侧 last_next_wave 记到宣告的波次，避免 ws_snap 路径因去重标记未同步而重复宣告同一 nextWave。
+            # 对端掉线期间不宣告（两端进度一致，见 ws_snap 宣告块注释）：掉线方 ws_send 本就是 None
+            # 推不出去；关键是**在线方也暂缓**——其清完当前波后不开新波，等对手重连由 snap 路径补推。
+            opp_gone = bool(opp.get("gone_ms"))
             nxt_me = self._next_wave_for(m, me)
             nxt_opp = self._next_wave_for(m, opp)
-            if nxt_me:
+            if nxt_me and not opp_gone:
                 me["last_next_wave"] = nxt_me["wave"]
                 self._ws_push_locked(me, opp, m, {"type": "nextWave", **nxt_me})
-            if nxt_opp:
+            if nxt_opp and not opp_gone:
                 opp["last_next_wave"] = nxt_opp["wave"]
                 self._ws_push_locked(opp, me, m, {"type": "nextWave", **nxt_opp})
 

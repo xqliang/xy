@@ -3352,12 +3352,16 @@ function frame(now: number): void {
     if (pvpSock && !pvpResult && !pvpNetDead && !pvpOppGone && pvpSock.reconnectAttempt > 0 && pvpSock.state !== 'closed') {
       drawReconnectingBanner(ctx, pvpSock.reconnectAttempt);
     }
-    // 对手快照停更预警：快照（正常 100ms/份）停更超阈值、本方 WS 正常、服务端 oppGone 未到——
+    // 对手快照停更预警：快照（正常 100ms/份）停更超阈值、服务端 oppGone 未到——
     // 填补「对方异常退出后服务端 ~10s 判死」空窗的即时反馈（用户报「对方断了却一直没提示」）。
+    // 关键防误报（2026-09-03 修，用户报「我方断线却提示对方断线」）：须**本方连接有入站流量**
+    // （lastInboundAt 新鲜——应用层 ping/pong 2s 一轮保活）才把快照停更归因于对方；本方网络
+    // 断了收不到任何入站时，停更归因于自己（自己的「正在重连」横幅/断线判死流程接管），不显示本横幅。
     // 派生显示无状态：快照恢复自动消失；oppGone 到达后 pvpOppGone 分支的正式倒计时弹窗接管。
     if (pvpSock && oppView && !pvpResult && !pvpSettleResult && !pvpNetDead && !pvpOppGone
       && pvpSock.reconnectAttempt === 0 && pvpLastSnapRecv > 0
-      && now - pvpLastSnapRecv > PVP_OPP_STALL_WARN_MS) {
+      && now - pvpLastSnapRecv > PVP_OPP_STALL_WARN_MS
+      && pvpSock.lastInboundAt > 0 && Date.now() - pvpSock.lastInboundAt < 4_000) {
       drawOppStalledBanner(ctx);
     }
     // 对方断线弹窗：倒计时期间显示；结算屏一开（pvpSettleResult 非空）则让位给结算（避免两顶层重叠）。
