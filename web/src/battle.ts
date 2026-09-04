@@ -470,7 +470,7 @@ export type TrayToken =
       buffAtkMul?: number;
     }
   | { kind: 'shovel' }
-  | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean }
+  | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean; pillAtk?: boolean; pillFrq?: boolean }
   | { kind: 'tree'; level: number; growT: number };
 
 /** 候选区有效令牌（clearTraySlot 用 delete 留空洞，遍历须跳过） */
@@ -651,6 +651,11 @@ export interface PlacedWord {
   tier: number;
   cell: Cell;
   fabaofuBoosted?: boolean; // 法宝符：该字牌已参与过首次激活升阶
+  // 仙丹/风火轮随身（2026-09-04 修：武将拆开重合增益丢失）：武将 state 按格子对 prune，
+  // 拆开即丢；增益同时落到组成字牌上（与兵器「地图↔候选区往返不丢、合成并集继承」同惯例），
+  // 激活时从字牌并集继承回 state。本局永久型才随身（炼丹 buffAtkT 限时型不随身）。
+  pillAtk?: boolean;
+  pillFrq?: boolean;
 }
 
 function placedWordFromTray(token: Extract<TrayToken, { kind: 'word' }>, cell: Cell): PlacedWord {
@@ -660,6 +665,8 @@ function placedWordFromTray(token: Extract<TrayToken, { kind: 'word' }>, cell: C
     tier: token.tier,
     cell,
     ...(token.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
+    ...(token.pillAtk ? { pillAtk: true } : {}),   // 增益随身：候选区→地图
+    ...(token.pillFrq ? { pillFrq: true } : {}),
   };
 }
 
@@ -670,6 +677,8 @@ function trayWordFromPlaced(w: PlacedWord, extra?: { displaced?: boolean }): Ext
     general: w.general,
     tier: w.tier,
     ...(w.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
+    ...(w.pillAtk ? { pillAtk: true } : {}),   // 增益随身：地图→候选区
+    ...(w.pillFrq ? { pillFrq: true } : {}),
     ...extra,
   };
 }
@@ -3748,6 +3757,10 @@ export class Battle {
         }
       }
       const state = this.stateOfPair(cells, def);
+      // 增益随身继承（2026-09-04）：武将（重新）激活时从组成字牌并集找回仙丹/风火轮——
+      // state 按格子对 prune，拆开/换位重合是全新 state；字牌字段在 applyPillActive 时已双写。
+      if (!state.pillAtk && (w.pillAtk || right.pillAtk)) state.pillAtk = true;
+      if (!state.pillFrq && (w.pillFrq || right.pillFrq)) state.pillFrq = true;
       if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = Battle.initialHeroSkillCd(def);
       const tierVal = Math.min(w.tier, right.tier, cap);
       // 不变量：state.level 恒等于当前 tier（二者同步递增）。按格子对复用 state 时，
@@ -7725,8 +7738,18 @@ export class Battle {
       else t.u.pillFrq = true;
     } else if (isAtk) {
       t.g.state.pillAtk = true;
+      // 增益随身（2026-09-04）：同时落到组成字牌——武将 state 按格子对 prune，拆开重合/
+      // 换位重合（新 pairKey）都拿全新 state，只有字牌带着走才能找回（激活时并集继承）。
+      for (const c of t.g.cells) {
+        const w = this.words.get(cellKey(c.c, c.r));
+        if (w) w.pillAtk = true;
+      }
     } else {
       t.g.state.pillFrq = true;
+      for (const c of t.g.cells) {
+        const w = this.words.get(cellKey(c.c, c.r));
+        if (w) w.pillFrq = true;
+      }
     }
     this.setSkillFx(isAtk ? 'atkBuff' : 'frqBuff', cell, false);
     const statLabel = isAtk ? '攻击' : '攻速';
