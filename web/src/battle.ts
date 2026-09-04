@@ -470,7 +470,7 @@ export type TrayToken =
       buffAtkMul?: number;
     }
   | { kind: 'shovel' }
-  | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean; pillAtk?: boolean; pillFrq?: boolean }
+  | { kind: 'word'; char: string; general: string; tier: number; fabaofuBoosted?: boolean; displaced?: boolean; pillAtk?: boolean; pillFrq?: boolean; stunT?: number; slowT?: number; weakenT?: number; rangeCutT?: number; knockdownT?: number }
   | { kind: 'tree'; level: number; growT: number };
 
 /** 候选区有效令牌（clearTraySlot 用 delete 留空洞，遍历须跳过） */
@@ -656,6 +656,14 @@ export interface PlacedWord {
   // 激活时从字牌并集继承回 state。本局永久型才随身（炼丹 buffAtkT 限时型不随身）。
   pillAtk?: boolean;
   pillFrq?: boolean;
+  // 怪物减益随身（同日修：曾可拆开重合洗掉 debuff 作弊）：施加时双写 + 每帧衰减后同步到
+  // 字牌；激活时按「较长剩余」并集继承。候选区期间冻结不衰减（与增益同惯例——拆开本身
+  // 已废输出，无额外收益）。免疫窗口（*ImmuneT）不随身：拆开洗免疫对拆开者不利，无作弊面。
+  stunT?: number;
+  slowT?: number;
+  weakenT?: number;
+  rangeCutT?: number;
+  knockdownT?: number;
 }
 
 function placedWordFromTray(token: Extract<TrayToken, { kind: 'word' }>, cell: Cell): PlacedWord {
@@ -667,6 +675,11 @@ function placedWordFromTray(token: Extract<TrayToken, { kind: 'word' }>, cell: C
     ...(token.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
     ...(token.pillAtk ? { pillAtk: true } : {}),   // 增益随身：候选区→地图
     ...(token.pillFrq ? { pillFrq: true } : {}),
+    ...(token.stunT ? { stunT: token.stunT } : {}), // 减益随身（候选期冻结，放回继续）
+    ...(token.slowT ? { slowT: token.slowT } : {}),
+    ...(token.weakenT ? { weakenT: token.weakenT } : {}),
+    ...(token.rangeCutT ? { rangeCutT: token.rangeCutT } : {}),
+    ...(token.knockdownT ? { knockdownT: token.knockdownT } : {}),
   };
 }
 
@@ -679,6 +692,11 @@ function trayWordFromPlaced(w: PlacedWord, extra?: { displaced?: boolean }): Ext
     ...(w.fabaofuBoosted ? { fabaofuBoosted: true } : {}),
     ...(w.pillAtk ? { pillAtk: true } : {}),   // 增益随身：地图→候选区
     ...(w.pillFrq ? { pillFrq: true } : {}),
+    ...(w.stunT ? { stunT: w.stunT } : {}),   // 减益随身：地图→候选区（冻结剩余）
+    ...(w.slowT ? { slowT: w.slowT } : {}),
+    ...(w.weakenT ? { weakenT: w.weakenT } : {}),
+    ...(w.rangeCutT ? { rangeCutT: w.rangeCutT } : {}),
+    ...(w.knockdownT ? { knockdownT: w.knockdownT } : {}),
     ...extra,
   };
 }
@@ -782,6 +800,8 @@ export interface ActiveGeneral {
   pillAtk?: boolean;
   /** 风火轮：本局攻速 +40%（从 state.pillFrq 同步，写入请走 state） */
   pillFrq?: boolean;
+  /** AI 半场武将（aiActiveGenerals 产物）：减益双写字牌时选 aiWords 而非 words */
+  aiSide?: boolean;
 }
 
 export interface Monster {
@@ -3761,6 +3781,13 @@ export class Battle {
       // state 按格子对 prune，拆开/换位重合是全新 state；字牌字段在 applyPillActive 时已双写。
       if (!state.pillAtk && (w.pillAtk || right.pillAtk)) state.pillAtk = true;
       if (!state.pillFrq && (w.pillFrq || right.pillFrq)) state.pillFrq = true;
+      // 减益随身继承（同日修）：按「较长剩余」取回——拆开重合不能洗掉 debuff（用户报可绕开）；
+      // 候选区期间冻结（不衰减），重新激活后从冻结值继续走。
+      state.stunT = Math.max(state.stunT ?? 0, w.stunT ?? 0, right.stunT ?? 0) || undefined;
+      state.slowT = Math.max(state.slowT ?? 0, w.slowT ?? 0, right.slowT ?? 0) || undefined;
+      state.weakenT = Math.max(state.weakenT ?? 0, w.weakenT ?? 0, right.weakenT ?? 0) || undefined;
+      state.rangeCutT = Math.max(state.rangeCutT ?? 0, w.rangeCutT ?? 0, right.rangeCutT ?? 0) || undefined;
+      state.knockdownT = Math.max(state.knockdownT ?? 0, w.knockdownT ?? 0, right.knockdownT ?? 0) || undefined;
       if (!this.lastActivePairKeys.has(pairKey)) state.skillCd = Battle.initialHeroSkillCd(def);
       const tierVal = Math.min(w.tier, right.tier, cap);
       // 不变量：state.level 恒等于当前 tier（二者同步递增）。按格子对复用 state 时，
@@ -3824,6 +3851,12 @@ export class Battle {
         }
       }
       const aiState = this.stateOfPairForAi(cells, def);
+      // 减益随身继承（AI 侧，镜像玩家侧 activeGenerals）：拆开重合不能洗掉 debuff
+      aiState.stunT = Math.max(aiState.stunT ?? 0, w.stunT ?? 0, right.stunT ?? 0) || undefined;
+      aiState.slowT = Math.max(aiState.slowT ?? 0, w.slowT ?? 0, right.slowT ?? 0) || undefined;
+      aiState.weakenT = Math.max(aiState.weakenT ?? 0, w.weakenT ?? 0, right.weakenT ?? 0) || undefined;
+      aiState.rangeCutT = Math.max(aiState.rangeCutT ?? 0, w.rangeCutT ?? 0, right.rangeCutT ?? 0) || undefined;
+      aiState.knockdownT = Math.max(aiState.knockdownT ?? 0, w.knockdownT ?? 0, right.knockdownT ?? 0) || undefined;
       if (!this.lastAiActivePairKeys.has(pairKey)) aiState.skillCd = Battle.initialHeroSkillCd(def);
       const tierVal = Math.min(w.tier, right.tier, cap);
       if (aiState.level > tierVal) aiState.exp = 0; // 见 activeGenerals：清残留 exp 防纠正后连升
@@ -6277,6 +6310,27 @@ export class Battle {
       if ((s.weakenImmuneT ?? 0) > 0) s.weakenImmuneT = Math.max(0, s.weakenImmuneT! - dt);
       if ((s.rangeCutImmuneT ?? 0) > 0) s.rangeCutImmuneT = Math.max(0, s.rangeCutImmuneT! - dt);
       if ((s.knockdownImmuneT ?? 0) > 0) s.knockdownImmuneT = Math.max(0, s.knockdownImmuneT! - dt);
+      // 减益随身同步（AI 侧，镜像玩家侧 updateGenerals）
+      for (const cc of g.cells) {
+        const w = this.aiWords.get(cellKey(cc.c, cc.r));
+        if (!w) continue;
+        if ((s.stunT ?? 0) > 0 || w.stunT) w.stunT = s.stunT ?? 0;
+        if ((s.slowT ?? 0) > 0 || w.slowT) w.slowT = s.slowT ?? 0;
+        if ((s.weakenT ?? 0) > 0 || w.weakenT) w.weakenT = s.weakenT ?? 0;
+        if ((s.rangeCutT ?? 0) > 0 || w.rangeCutT) w.rangeCutT = s.rangeCutT ?? 0;
+        if ((s.knockdownT ?? 0) > 0 || w.knockdownT) w.knockdownT = s.knockdownT ?? 0;
+      }
+      // 减益随身同步（2026-09-04）：衰减后的剩余值写回组成字牌——拆开重合/候选区往返
+      // 按「较长剩余」继承（见 activeGenerals），不能靠拆开洗掉 debuff。
+      for (const cc of g.cells) {
+        const w = this.words.get(cellKey(cc.c, cc.r));
+        if (!w) continue;
+        if ((s.stunT ?? 0) > 0 || w.stunT) w.stunT = s.stunT ?? 0;
+        if ((s.slowT ?? 0) > 0 || w.slowT) w.slowT = s.slowT ?? 0;
+        if ((s.weakenT ?? 0) > 0 || w.weakenT) w.weakenT = s.weakenT ?? 0;
+        if ((s.rangeCutT ?? 0) > 0 || w.rangeCutT) w.rangeCutT = s.rangeCutT ?? 0;
+        if ((s.knockdownT ?? 0) > 0 || w.knockdownT) w.knockdownT = s.knockdownT ?? 0;
+      }
       if ((s.buffAtkT ?? 0) > 0) {
         s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
         if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
@@ -7165,7 +7219,10 @@ export class Battle {
     };
     if (ai) {
       for (const u of this.aiUnits) add(u.cell.c, u.cell.r, { kind: 'unit', u });
-      for (const g of this.aiActiveGenerals()) add((g.cells[0].c + g.cells[1].c) / 2, (g.cells[0].r + g.cells[1].r) / 2, { kind: 'general', g });
+      for (const g of this.aiActiveGenerals()) {
+        g.aiSide = true; // 供 applyGeneralStatus 双写字牌时选 aiWords
+        add((g.cells[0].c + g.cells[1].c) / 2, (g.cells[0].r + g.cells[1].r) / 2, { kind: 'general', g });
+      }
     } else {
       for (const u of this.units.values()) add(u.cell.c, u.cell.r, { kind: 'unit', u });
       for (const g of this.activeGenerals()) add((g.cells[0].c + g.cells[1].c) / 2, (g.cells[0].r + g.cells[1].r) / 2, { kind: 'general', g });
@@ -7501,33 +7558,47 @@ export class Battle {
     return t.kind === 'unit' ? this.applyUnitStatus(t.u, status) : this.applyGeneralStatus(t.g, status);
   }
 
-  /** 对神将施加状态；同种免疫期内返回 false（时长/免疫窗口与兵器侧完全同口径） */
+  /** 对神将施加状态；同种免疫期内返回 false（时长/免疫窗口与兵器侧完全同口径）。
+   *  减益双写组成字牌（2026-09-04 随身修复：防拆开重合洗掉 debuff）；免疫窗口只写 state。 */
   private applyGeneralStatus(g: ActiveGeneral, status: UnitStatusId): boolean {
     const s = g.state;
+    // 双写工具：把剩余秒数落到组成字牌（按侧选 words/aiWords）
+    const markWords = (key: 'stunT' | 'slowT' | 'weakenT' | 'rangeCutT' | 'knockdownT', val: number) => {
+      const store = g.aiSide ? this.aiWords : this.words;
+      for (const c of g.cells) {
+        const w = store.get(cellKey(c.c, c.r));
+        if (w) w[key] = val;
+      }
+    };
     switch (status) {
       case 'stun':
         if ((s.stunImmuneT ?? 0) > 0) return false;
         s.stunT = Math.max(s.stunT ?? 0, TUNING.stunDur);
+        markWords('stunT', s.stunT!);
         s.stunImmuneT = TUNING.debuffImmuneDur;
         return true;
       case 'slow':
         if ((s.slowImmuneT ?? 0) > 0) return false;
         s.slowT = Math.max(s.slowT ?? 0, TUNING.slowDur);
+        markWords('slowT', s.slowT!);
         s.slowImmuneT = TUNING.debuffImmuneDur;
         return true;
       case 'weaken':
         if ((s.weakenImmuneT ?? 0) > 0) return false;
         s.weakenT = Math.max(s.weakenT ?? 0, TUNING.weakenDur);
+        markWords('weakenT', s.weakenT!);
         s.weakenImmuneT = TUNING.debuffImmuneDur;
         return true;
       case 'webbind':
         if ((s.rangeCutImmuneT ?? 0) > 0) return false;
         s.rangeCutT = Math.max(s.rangeCutT ?? 0, TUNING.webbindDur);
+        markWords('rangeCutT', s.rangeCutT!);
         s.rangeCutImmuneT = TUNING.debuffImmuneDur;
         return true;
       case 'knockdown':
         if ((s.knockdownImmuneT ?? 0) > 0) return false;
         s.knockdownT = Math.max(s.knockdownT ?? 0, TUNING.knockdownDur);
+        markWords('knockdownT', s.knockdownT!);
         s.knockdownImmuneT = TUNING.debuffImmuneDur;
         return true;
       default: {

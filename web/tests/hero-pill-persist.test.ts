@@ -86,3 +86,60 @@ describe('武将增益随身：拆开重合/回候选区再放回不丢（2026-0
     expect(g2.state.pillAtk).toBe(true); // 修前：新 pairKey = 全新 state
   });
 });
+
+describe('武将减益随身：拆开重合不可洗掉 debuff（2026-09-04 用户报可绕开）', () => {
+  it('定身 → 拆开 → 原位重合：stunT 保留（按较长剩余继承）', () => {
+    const b = new Battle(1);
+    b.status = 'playing';
+    const { a, r } = placeErlangPair(b);
+    const g = b.activeGenerals()[0]!;
+    // 模拟怪物施制定身（applyGeneralStatus 私有，经类型断言直调——施加路径含字牌双写）
+    (b as unknown as { applyGeneralStatus: (g2: unknown, s: string) => boolean }).applyGeneralStatus(g, 'stun');
+    expect(g.state.stunT!).toBeGreaterThan(0);
+
+    // 拆开重合
+    const rightWord = b.words.get(`${r.c},${r.r}`)!;
+    b.words.delete(`${r.c},${r.r}`);
+    expect(b.activeGenerals().length).toBe(0);
+    b.words.set(`${r.c},${r.r}`, rightWord);
+    const g2 = b.activeGenerals()[0]!;
+    expect(g2.state.stunT! ?? 0).toBeGreaterThan(0); // 修前：拆开洗掉 debuff（可作弊）
+  });
+
+  it('定身 → 拆开 → 候选区往返重合：stunT 保留', () => {
+    const b = new Battle(1);
+    b.status = 'playing';
+    const { a, r } = placeErlangPair(b);
+    const g = b.activeGenerals()[0]!;
+    (b as unknown as { applyGeneralStatus: (g2: unknown, s: string) => boolean }).applyGeneralStatus(g, 'stun');
+    b.tray = [];
+    expect(b.recallToTray(r, 0)).toBe(true);
+    const token = b.tray[0]!;
+    expect(token.kind === 'word' && (token.stunT ?? 0) > 0).toBe(true); // 候选区随身（候选期冻结不衰减）
+    expect(b.placeFromTray(0, r)).toBe(true);
+    expect(b.activeGenerals()[0]!.state.stunT! > 0).toBe(true);
+  });
+
+  it('拆合继承的是「剩余值」而非重新满时长（字段在字牌上的值即剩余）', () => {
+    const b = new Battle(1);
+    b.status = 'playing';
+    const { a, r } = placeErlangPair(b);
+    const g = b.activeGenerals()[0]!;
+    (b as unknown as { applyGeneralStatus: (g2: unknown, s: string) => boolean }).applyGeneralStatus(g, 'slow');
+    const full = g.state.slowT!;
+    // 模拟随时间衰减到只剩 0.5s：衰减块每帧把 state 值同步到字牌（见 updateGenerals），
+    // 这里直接把字牌值压到 0.5（等价于衰减中段的字牌快照）
+    const leftWord = b.words.get(`${a.c},${a.r}`)!;
+    const rightWord = b.words.get(`${r.c},${r.r}`)!;
+    leftWord.slowT = 0.5;
+    rightWord.slowT = 0.5;
+    // 拆开重合 → 继承字牌上的剩余（max），而不是重置满时长
+    // （拆开须调一次 activeGenerals 触发 pruneHeroStates 删 state——线上真实对局每帧都在调）
+    b.words.delete(`${r.c},${r.r}`);
+    expect(b.activeGenerals().length).toBe(0);
+    b.words.set(`${r.c},${r.r}`, rightWord);
+    const g2 = b.activeGenerals()[0]!;
+    expect(g2.state.slowT).toBeCloseTo(0.5, 5);
+    expect(g2.state.slowT!).toBeLessThan(full);
+  });
+});
