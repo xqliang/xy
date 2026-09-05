@@ -143,3 +143,25 @@ describe('武将减益随身：拆开重合不可洗掉 debuff（2026-09-04 用�
     expect(g2.state.slowT!).toBeLessThan(full);
   });
 });
+
+describe('回归（2026-09-05）：定身随时间正常衰减消退（用户报永不过）', () => {
+  it('施加定身 → 连续 step：stunT 持续衰减并归零，字牌同步（不被继承拉回满值）', () => {
+    const b = new Battle(1);
+    b.status = 'playing';
+    const { a, r } = placeErlangPair(b);
+    const g = b.activeGenerals()[0]!;
+    (b as unknown as { applyGeneralStatus: (g2: unknown, s: string) => boolean }).applyGeneralStatus(g, 'stun');
+    const t0 = g.state.stunT!;
+    expect(t0).toBeGreaterThan(0);
+
+    b.step(1 / 30); // 衰减一帧
+    expect(g.state.stunT!).toBeLessThan(t0); // 修前：字牌停在满值，继承 max 每帧拉回 t0（永不过）
+
+    // 连续推进到归零（stunDur 秒量级，给足余量）
+    for (let i = 0; i < 600; i++) b.step(1 / 30);
+    const g2 = b.activeGenerals()[0]!;
+    expect(g2.state.stunT ?? 0).toBe(0);
+    const rightWord = b.words.get(`${r.c},${r.r}`)!;
+    expect(rightWord.stunT ?? 0).toBe(0); // 字牌也清零（拆合不再继承出 debuff）
+  });
+});

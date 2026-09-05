@@ -6320,17 +6320,6 @@ export class Battle {
         if ((s.rangeCutT ?? 0) > 0 || w.rangeCutT) w.rangeCutT = s.rangeCutT ?? 0;
         if ((s.knockdownT ?? 0) > 0 || w.knockdownT) w.knockdownT = s.knockdownT ?? 0;
       }
-      // 减益随身同步（2026-09-04）：衰减后的剩余值写回组成字牌——拆开重合/候选区往返
-      // 按「较长剩余」继承（见 activeGenerals），不能靠拆开洗掉 debuff。
-      for (const cc of g.cells) {
-        const w = this.words.get(cellKey(cc.c, cc.r));
-        if (!w) continue;
-        if ((s.stunT ?? 0) > 0 || w.stunT) w.stunT = s.stunT ?? 0;
-        if ((s.slowT ?? 0) > 0 || w.slowT) w.slowT = s.slowT ?? 0;
-        if ((s.weakenT ?? 0) > 0 || w.weakenT) w.weakenT = s.weakenT ?? 0;
-        if ((s.rangeCutT ?? 0) > 0 || w.rangeCutT) w.rangeCutT = s.rangeCutT ?? 0;
-        if ((s.knockdownT ?? 0) > 0 || w.knockdownT) w.knockdownT = s.knockdownT ?? 0;
-      }
       if ((s.buffAtkT ?? 0) > 0) {
         s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
         if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
@@ -6916,6 +6905,18 @@ export class Battle {
       if ((s.weakenImmuneT ?? 0) > 0) s.weakenImmuneT = Math.max(0, s.weakenImmuneT! - dt);
       if ((s.rangeCutImmuneT ?? 0) > 0) s.rangeCutImmuneT = Math.max(0, s.rangeCutImmuneT! - dt);
       if ((s.knockdownImmuneT ?? 0) > 0) s.knockdownImmuneT = Math.max(0, s.knockdownImmuneT! - dt);
+      // 减益随身同步（2026-09-05 修回归）：衰减后的剩余值写回组成字牌——此前同步块被
+      // 错装进 updateAiGenerals（写玩家 map 的死代码）而玩家侧缺失，字牌停在施加时的满值，
+      // activeGenerals 的「较长剩余」继承每帧把 state 拉回满值 → 定身永不过（用户实测报）。
+      for (const cc of g.cells) {
+        const w = this.words.get(cellKey(cc.c, cc.r));
+        if (!w) continue;
+        if ((s.stunT ?? 0) > 0 || w.stunT) w.stunT = s.stunT ?? 0;
+        if ((s.slowT ?? 0) > 0 || w.slowT) w.slowT = s.slowT ?? 0;
+        if ((s.weakenT ?? 0) > 0 || w.weakenT) w.weakenT = s.weakenT ?? 0;
+        if ((s.rangeCutT ?? 0) > 0 || w.rangeCutT) w.rangeCutT = s.rangeCutT ?? 0;
+        if ((s.knockdownT ?? 0) > 0 || w.knockdownT) w.knockdownT = s.knockdownT ?? 0;
+      }
       if ((s.buffAtkT ?? 0) > 0) {
         s.buffAtkT = Math.max(0, (s.buffAtkT ?? 0) - dt);
         if (s.buffAtkT <= 0) s.buffAtkMul = undefined;
