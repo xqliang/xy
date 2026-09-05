@@ -29,9 +29,11 @@ const CLOSE_LIFT = 5;
 const ROOF_BEAM_SPAN = 0.902; // bandW 基础 = w / ROOF_BEAM_SPAN
 const ROOF_BEAM_LEFT = 0.051; // bandLeft = x - ROOF_BEAM_LEFT * baseBandW - ROOF_EXTRA_W
 /** 宫檐在「檐梁对齐弹窗侧边」基础上左右各再外扩的像素。
- *  用户逐轮要求加宽：5 → 20（整体再宽约 30px，让檐梁底部红条正好压到弹窗 body 两侧边）。
+ *  用户逐轮要求加宽：5 → 20（整体再宽约 30px，让檐梁底部红条正好压到弹窗 body 两侧边）
+ *  → 26（2026-09-05 用户反馈檐梁端与 body 边框连接处露缝，再加宽 6px 确保相连；
+ *  实测素材檐梁 span≈0.93，两端素材收尾有渐变，多压出 3px/边才实接）。
  *  注：三段式绘制只拉伸中间檐梁段，故加宽只加宽平直红梁、翘角随之外挑，不变形。 */
-const ROOF_EXTRA_W = 20;
+const ROOF_EXTRA_W = 26;
 
 export function inkPopupCloseRect(
   popX: number,
